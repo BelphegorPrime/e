@@ -67,7 +67,7 @@ export function registerSpawnCommand(program: Command): void {
     .command('spawn')
     .description('Build and run a coding harness in a container')
     .argument(
-      '<harness>',
+      '[harness]',
       `coding harness to run (${Object.keys(HARNESSES).join(', ')})`,
     )
     .argument('[prompt...]', 'instruction passed to the harness')
@@ -107,10 +107,19 @@ export function registerSpawnCommand(program: Command): void {
     )
     .action(
       async (
-        harnessName: string,
+        harnessName: string | undefined,
         prompt: string[],
         opts: SpawnCommandOptions,
       ) => {
+        if (harnessName === undefined) {
+          console.error('error: missing required argument \'harness\'\n');
+          console.error('Available harnesses:');
+          for (const name of Object.keys(HARNESSES)) {
+            console.error(`  ${name}`);
+          }
+          process.exit(1);
+        }
+
         const harness = (() => {
           try {
             return resolveHarness(harnessName);
