@@ -11,9 +11,8 @@
     "start": "npm run build:ts && node dist/index.js --help",
     "test": "npm run build:ts && node dist/test-build.js",
     "build:ts": "tsc",
-    "build:js": "webpack --config webpack.config.js",
-    "build:bin": "pkg ./dist/bundle.js -t latest-linux-x64,latest-macos-x64,latest-win-x64,latest-linux-arm64,latest-win-arm64 --output ./command/e",
-    "build": "npm run build:ts && npm run build:js && npm run build:bin"
+    "build:bin": "pkg ./dist/index.js -t node24-linux-x64,node24-macos-x64,node24-win-x64,node24-linux-arm64,node24-macos-arm64,node24-win-arm64 --output ./command/e --fallback-to-source",
+    "build": "npm run build:ts && npm run build:bin"
   },
   "dependencies": {
     "commander": "^15.0.0"
@@ -21,10 +20,7 @@
   "devDependencies": {
     "@types/commander": "^2.12.0",
     "@types/node": "^26.1.2",
-    "pkg": "^5.8.1",
-    "ts-loader": "^9.6.2",
-    "typescript": "^7.0.2",
-    "webpack": "^5.109.2",
-    "webpack-cli": "^5.1.4"
+    "@yao-pkg/pkg": "^6.22.0",
+    "typescript": "^7.0.2"
   }
 }
