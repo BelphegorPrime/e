@@ -1,18 +1,16 @@
 import fs from 'fs';
 import type { Command } from 'commander';
 import { ContainerRuntime, type RunOptions } from './runtime/index';
-import { DockerRuntime } from './runtime/docker';
-import { PodmanRuntime } from './runtime/podman';
 import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
 import { orderEnvFiles, decideImageAction } from './spawnPlan';
 import { resolveHarness, HARNESSES } from './harness/index';
 import { harnessDir, isInitialized, findRoot, envFilePath } from './store';
 
-/** Available runtimes, in the order they are tried during auto-detection. */
-const RUNTIMES: Record<string, () => ContainerRuntime> = {
-  docker: () => new DockerRuntime(),
-  podman: () => new PodmanRuntime(),
+/** Available runtimes, mapping name → executable, in auto-detection order. */
+const RUNTIMES: Record<string, string> = {
+  docker: 'docker',
+  podman: 'podman',
 };
 
 /**
@@ -22,13 +20,13 @@ const RUNTIMES: Record<string, () => ContainerRuntime> = {
  */
 export function resolveRuntime(preferred?: string): ContainerRuntime {
   if (preferred) {
-    const factory = RUNTIMES[preferred];
-    if (!factory) {
+    const command = RUNTIMES[preferred];
+    if (!command) {
       throw new Error(
         `Invalid runtime "${preferred}". Valid values: ${Object.keys(RUNTIMES).join(', ')}.`,
       );
     }
-    const runtime = factory();
+    const runtime = new ContainerRuntime(command);
     if (!runtime.isAvailable()) {
       throw new Error(
         `Requested runtime "${preferred}" is not installed or not on PATH.`,
@@ -37,8 +35,8 @@ export function resolveRuntime(preferred?: string): ContainerRuntime {
     return runtime;
   }
 
-  for (const factory of Object.values(RUNTIMES)) {
-    const runtime = factory();
+  for (const command of Object.values(RUNTIMES)) {
+    const runtime = new ContainerRuntime(command);
     if (runtime.isAvailable()) {
       return runtime;
     }

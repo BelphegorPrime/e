@@ -26,14 +26,15 @@ export interface ContainerRunner {
 }
 
 /**
- * Base class for a container runtime (docker, podman, ...).
+ * A container runtime (docker, podman, ...).
  *
- * Docker and Podman share the same `run` CLI surface, so all of the shared
- * behaviour lives here; concrete runtimes only need to provide their `command`.
+ * Docker and Podman share the same CLI surface, so a single concrete class
+ * covers both — the only thing that varies is the `command` executable, passed
+ * in at construction.
  */
-export abstract class ContainerRuntime implements ContainerRunner {
+export class ContainerRuntime implements ContainerRunner {
   /** The executable invoked for this runtime, e.g. "docker". */
-  abstract readonly command: string;
+  constructor(readonly command: string) {}
 
   /** Returns true if this runtime is installed and responds to `--version`. */
   isAvailable(): boolean {
@@ -56,7 +57,7 @@ export abstract class ContainerRuntime implements ContainerRunner {
   /**
    * Builds an image from a build context, tagging it `imageTag`.
    * The Dockerfile defaults to `<contextDir>/Dockerfile`.
-   * Exits the process on failure.
+   * Throws on failure — the edge (the spawn action) owns the exit.
    */
   build(imageTag: string, contextDir: string, dockerfile?: string): void {
     const args = ['build', '-t', imageTag];
@@ -70,14 +71,12 @@ export abstract class ContainerRuntime implements ContainerRunner {
     });
 
     if (result.error) {
-      console.error(
+      throw new Error(
         `Failed to start ${this.command}: ${result.error.message}`,
       );
-      process.exit(1);
     }
     if (result.status !== 0) {
-      console.error(`Image build failed (exit code ${result.status ?? 1}).`);
-      process.exit(result.status ?? 1);
+      throw new Error(`Image build failed (exit code ${result.status ?? 1}).`);
     }
   }
 
