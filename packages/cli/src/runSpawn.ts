@@ -5,6 +5,27 @@ import type { ContainerRunner, RunOptions } from './runtime/index';
 import type { Harness } from './harness/index';
 import { slugify } from './slugify';
 
+/** How many counter collisions to absorb before giving up (a runaway guard). */
+const MAX_COUNTER_ATTEMPTS = 50;
+
+/**
+ * Highest run counter `N` among `branches` matching `<prefix>-N`, or 0 if none.
+ * Accepts both local (`e/<harness>/<slug>-2`) and remote-tracking
+ * (`origin/e/<harness>/<slug>-2`) shortnames, so the counter never reuses a
+ * number already taken on origin. The next run is `max + 1`.
+ */
+export function maxRunCounter(branches: string[], prefix: string): number {
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Match `<prefix>-<N>` at the end, allowing a leading `<remote>/` segment.
+  const pattern = new RegExp(`(?:^|/)${escaped}-(\\d+)$`);
+  let max = 0;
+  for (const branch of branches) {
+    const match = pattern.exec(branch);
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return max;
+}
+
 /** Collaborators the orchestrator drives. Injected so tests can fake them. */
 export interface RunSpawnDeps {
   git: Git;
@@ -40,6 +61,10 @@ export interface RunSpawnResult {
   exitCode: number;
   /** The run's branch, when one was created. */
   branch?: string;
+  /** True if the branch was pushed to origin. */
+  pushed?: boolean;
+  /** A non-fatal push warning: the branch is kept locally despite this. */
+  pushWarning?: string;
   /** A human-readable reason for a pre-run failure (e.g. not a git repo). */
   error?: string;
 }
@@ -47,11 +72,13 @@ export interface RunSpawnResult {
 /**
  * Drives one Run's lifecycle: require a git repo, build the image if needed,
  * cut an isolated worktree on a fresh branch from `HEAD`, run the harness
- * against it, capture any leftover uncommitted changes, then remove the
- * worktree (keeping the branch). All git stays in this host process.
+ * against it, capture any leftover uncommitted changes, remove the worktree
+ * (keeping the branch), and push a successful run's branch to origin. All git
+ * stays in this host process, so push credentials never enter the container.
  *
- * Slice #2: no run counter and no origin push — those extend this in later
- * slices. The branch is `e/<harness>/<slug>`.
+ * The branch is `e/<harness>/<slug>-N`, where `N` is the next counter after
+ * the existing run branches for this slug; a create collision (a concurrent
+ * spawn took the number first) bumps `N` and retries.
  */
 export async function runSpawn(
   deps: RunSpawnDeps,
@@ -86,14 +113,35 @@ export async function runSpawn(
   // leaves an orphan worktree behind.
   ensureImage();
 
+  // Pin the base to the commit HEAD points at now, so a later push-eligibility
+  // check compares against the run's actual starting point even if the host's
+  // HEAD moves while the agent works.
+  const base = git.headSha();
   const slug = params.name ?? slugify(prompt);
-  const branch = `e/${harness.name}/${slug}`;
-  const runName = `e-${harness.name}-${slug}`;
+  const prefix = `e/${harness.name}/${slug}`;
   const worktreesDir =
     params.worktreesDir ?? path.join(os.tmpdir(), 'e-worktrees');
-  const worktreePath = path.join(worktreesDir, runName);
 
-  git.addWorktree({ path: worktreePath, branch, base: 'HEAD' });
+  // Create the worktree on `<prefix>-N`, retrying at the next counter only when
+  // the branch/path already exists (a concurrent spawn claimed it between our
+  // enumeration and creation). Any other failure is surfaced immediately.
+  let counter = maxRunCounter(git.listRunBranches(prefix), prefix) + 1;
+  let branch: string;
+  let runName: string;
+  let worktreePath: string;
+  for (let attempt = 0; ; attempt++) {
+    branch = `${prefix}-${counter}`;
+    runName = branch.replace(/\//g, '-');
+    worktreePath = path.join(worktreesDir, runName);
+    try {
+      git.addWorktree({ path: worktreePath, branch, base });
+      break;
+    } catch (err) {
+      const isCollision = /already exists/i.test((err as Error).message);
+      if (!isCollision || attempt >= MAX_COUNTER_ATTEMPTS) throw err;
+      counter++;
+    }
+  }
 
   let exitCode: number;
   try {
@@ -120,5 +168,19 @@ export async function runSpawn(
     git.removeWorktree(worktreePath);
   }
 
-  return { ran: true, exitCode, branch };
+  // Publish only a successful run that actually produced commits, so aborted
+  // or no-op runs never litter origin. A push failure is non-fatal: the
+  // branch is kept locally and the reason surfaced as a warning.
+  let pushed = false;
+  let pushWarning: string | undefined;
+  if (exitCode === 0 && git.hasCommitsBeyondBase(branch, base)) {
+    try {
+      git.push(branch);
+      pushed = true;
+    } catch (err) {
+      pushWarning = `could not push ${branch} to origin (kept locally): ${(err as Error).message}`;
+    }
+  }
+
+  return { ran: true, exitCode, branch, pushed, pushWarning };
 }

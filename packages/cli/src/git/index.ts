@@ -3,14 +3,20 @@
  * abstraction: the orchestrator (`runSpawn`) depends only on this interface,
  * so it can be driven by a fake in tests, and all real git — including the
  * push credentials it implies — stays in the host process (ADR-0002).
- *
- * This is the slice-#2 surface: enough to create an isolated worktree, capture
- * leftover changes, and tear the worktree down. Run-counter enumeration and
- * origin push land in later slices and extend this port.
  */
 export interface Git {
   /** True if `cwd` is inside a git repository. */
   isRepo(): boolean;
+
+  /** The commit SHA that `HEAD` currently points at. */
+  headSha(): string;
+
+  /**
+   * Shortnames of existing run branches matching `<prefix>-*`, across both
+   * local heads and remote-tracking refs, so the run counter never reuses a
+   * number already taken locally or on origin.
+   */
+  listRunBranches(prefix: string): string[];
 
   /**
    * Create a worktree at `path`, checking out a new `branch` from `base`.
@@ -24,6 +30,12 @@ export interface Git {
 
   /** Stage everything (`add -A`) and commit it on the worktree's branch. */
   commitAll(worktreePath: string, message: string): void;
+
+  /** True if `branch` has any commits not reachable from `base`. */
+  hasCommitsBeyondBase(branch: string, base: string): boolean;
+
+  /** Push `branch` to origin. Throws on any failure (no remote, auth, reject). */
+  push(branch: string): void;
 
   /** Remove the worktree at `path`, keeping its branch. */
   removeWorktree(worktreePath: string): void;

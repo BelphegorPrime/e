@@ -15,6 +15,28 @@ export class HostGit implements Git {
     return result.status === 0;
   }
 
+  headSha(): string {
+    return this.capture(['rev-parse', 'HEAD'], 'resolve HEAD').trim();
+  }
+
+  listRunBranches(prefix: string): string[] {
+    // for-each-ref over both local heads and remote-tracking refs; `short`
+    // yields `<prefix>-N` for heads and `<remote>/<prefix>-N` for remotes.
+    const out = this.capture(
+      [
+        'for-each-ref',
+        '--format=%(refname:short)',
+        `refs/heads/${prefix}-*`,
+        `refs/remotes/*/${prefix}-*`,
+      ],
+      `list run branches for ${prefix}`,
+    );
+    return out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
   addWorktree(spec: WorktreeSpec): void {
     // `-b <branch>` makes the branch; git refuses if it already exists, and
     // refuses if `path` is non-empty — giving us atomic create for free.
@@ -38,6 +60,18 @@ export class HostGit implements Git {
       ['-C', worktreePath, 'commit', '-m', message],
       `commit changes in ${worktreePath}`,
     );
+  }
+
+  hasCommitsBeyondBase(branch: string, base: string): boolean {
+    const out = this.capture(
+      ['rev-list', '--count', `${base}..${branch}`],
+      `count commits on ${branch} beyond ${base}`,
+    );
+    return Number(out.trim()) > 0;
+  }
+
+  push(branch: string): void {
+    this.run(['push', 'origin', branch], `push ${branch} to origin`);
   }
 
   removeWorktree(worktreePath: string): void {

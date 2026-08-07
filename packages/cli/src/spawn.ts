@@ -182,7 +182,13 @@ export function registerSpawnCommand(program: Command): void {
           process.exit(result.exitCode);
         }
 
+        if (result.pushWarning) {
+          console.warn(`Warning: ${result.pushWarning}`);
+        }
         console.log(`\nRun branch: ${result.branch}`);
+        if (result.pushed) {
+          console.log('Pushed to origin. Open a PR or merge when you like.');
+        }
         process.exit(result.exitCode);
       },
     );

@@ -11,22 +11,61 @@ import { slugify } from './slugify';
 class FakeGit implements Git {
   repo: boolean;
   dirty: boolean;
+  hasCommits: boolean;
+  existingBranches: string[];
+  /** Branch names that throw on `addWorktree` (simulating a create collision). */
+  collideBranches: Set<string>;
+  /** When set, every `addWorktree` throws with this (non-collision) message. */
+  addWorktreeError?: string;
+  /** When set, `push` throws with this message. */
+  pushFails?: string;
+
   calls: string[] = [];
+  listedPrefixes: string[] = [];
   worktrees: WorktreeSpec[] = [];
   removed: string[] = [];
   commits: { path: string; message: string }[] = [];
+  pushed: string[] = [];
 
-  constructor(opts: { repo?: boolean; dirty?: boolean } = {}) {
+  constructor(
+    opts: {
+      repo?: boolean;
+      dirty?: boolean;
+      hasCommits?: boolean;
+      existingBranches?: string[];
+      collideBranches?: string[];
+      addWorktreeError?: string;
+      pushFails?: string;
+    } = {},
+  ) {
     this.repo = opts.repo ?? true;
     this.dirty = opts.dirty ?? false;
+    this.hasCommits = opts.hasCommits ?? true;
+    this.existingBranches = opts.existingBranches ?? [];
+    this.collideBranches = new Set(opts.collideBranches ?? []);
+    this.addWorktreeError = opts.addWorktreeError;
+    this.pushFails = opts.pushFails;
   }
 
   isRepo(): boolean {
     this.calls.push('isRepo');
     return this.repo;
   }
+  headSha(): string {
+    this.calls.push('headSha');
+    return 'basesha';
+  }
+  listRunBranches(prefix: string): string[] {
+    this.calls.push('listRunBranches');
+    this.listedPrefixes.push(prefix);
+    return this.existingBranches;
+  }
   addWorktree(spec: WorktreeSpec): void {
     this.calls.push('addWorktree');
+    if (this.addWorktreeError) throw new Error(this.addWorktreeError);
+    if (this.collideBranches.has(spec.branch)) {
+      throw new Error(`branch ${spec.branch} already exists`);
+    }
     this.worktrees.push(spec);
   }
   isDirty(): boolean {
@@ -36,6 +75,15 @@ class FakeGit implements Git {
   commitAll(worktreePath: string, message: string): void {
     this.calls.push('commitAll');
     this.commits.push({ path: worktreePath, message });
+  }
+  hasCommitsBeyondBase(): boolean {
+    this.calls.push('hasCommitsBeyondBase');
+    return this.hasCommits;
+  }
+  push(branch: string): void {
+    this.calls.push('push');
+    if (this.pushFails) throw new Error(this.pushFails);
+    this.pushed.push(branch);
   }
   removeWorktree(worktreePath: string): void {
     this.calls.push('removeWorktree');
@@ -107,14 +155,14 @@ test('errors and does not touch the runtime when not in a git repo', async () =>
   assert.ok(!git.calls.includes('addWorktree'));
 });
 
-test('creates a worktree from HEAD on branch e/<harness>/<slug> and runs the harness', async () => {
+test('creates a worktree from HEAD on branch e/<harness>/<slug>-1 and runs the harness', async () => {
   const { deps, git, runtime, ensureImageCalls } = makeDeps();
   const result = await runSpawn(deps, makeParams());
 
   const slug = slugify('Fix the flaky test');
   assert.equal(git.worktrees.length, 1);
-  assert.equal(git.worktrees[0].branch, `e/demo/${slug}`);
-  assert.equal(git.worktrees[0].base, 'HEAD');
+  assert.equal(git.worktrees[0].branch, `e/demo/${slug}-1`);
+  assert.equal(git.worktrees[0].base, 'basesha');
   assert.equal(ensureImageCalls(), 1);
 
   assert.equal(runtime.ran, true);
@@ -127,7 +175,7 @@ test('creates a worktree from HEAD on branch e/<harness>/<slug> and runs the har
 
   assert.equal(result.ran, true);
   assert.equal(result.exitCode, 0);
-  assert.equal(result.branch, `e/demo/${slug}`);
+  assert.equal(result.branch, `e/demo/${slug}-1`);
 });
 
 test('does not modify the working tree in place: worktree lives under worktreesDir', async () => {
@@ -181,6 +229,86 @@ test('refuses a detached run and does not touch the runtime', async () => {
 test('--name overrides the slug and flows into the branch', async () => {
   const { deps, git } = makeDeps();
   const result = await runSpawn(deps, makeParams({ name: 'my-custom-run' }));
-  assert.equal(git.worktrees[0].branch, 'e/demo/my-custom-run');
-  assert.equal(result.branch, 'e/demo/my-custom-run');
+  assert.equal(git.worktrees[0].branch, 'e/demo/my-custom-run-1');
+  assert.equal(result.branch, 'e/demo/my-custom-run-1');
+});
+
+test('numbers the run from the next counter after existing branches', async () => {
+  const slug = slugify('Fix the flaky test');
+  const { deps, git } = makeDeps({
+    git: new FakeGit({
+      existingBranches: [`e/demo/${slug}-1`, `e/demo/${slug}-2`],
+    }),
+  });
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(git.listedPrefixes[0], `e/demo/${slug}`);
+  assert.equal(result.branch, `e/demo/${slug}-3`);
+});
+
+test('counter considers remote-tracking branches', async () => {
+  const slug = slugify('Fix the flaky test');
+  const { deps, git } = makeDeps({
+    git: new FakeGit({ existingBranches: [`origin/e/demo/${slug}-4`] }),
+  });
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(result.branch, `e/demo/${slug}-5`);
+});
+
+test('bumps the counter and retries on an atomic-create collision', async () => {
+  const slug = slugify('Fix the flaky test');
+  const { deps, git } = makeDeps({
+    // A concurrent spawn already took -1 between our enumeration and create.
+    git: new FakeGit({ collideBranches: [`e/demo/${slug}-1`] }),
+  });
+  const result = await runSpawn(deps, makeParams());
+
+  assert.equal(result.branch, `e/demo/${slug}-2`);
+  assert.equal(git.worktrees.length, 1);
+  assert.equal(git.worktrees[0].branch, `e/demo/${slug}-2`);
+  assert.equal(git.calls.filter((c) => c === 'addWorktree').length, 2);
+});
+
+test('rethrows a non-collision worktree failure immediately without retrying', async () => {
+  const { deps, git } = makeDeps({
+    git: new FakeGit({ addWorktreeError: 'fatal: permission denied' }),
+  });
+  await assert.rejects(runSpawn(deps, makeParams()), /permission denied/);
+  // Exactly one attempt — no counter-bump storm on a genuine error.
+  assert.equal(git.calls.filter((c) => c === 'addWorktree').length, 1);
+});
+
+test('pushes the branch to origin when the run exits 0 with commits', async () => {
+  const { deps, git } = makeDeps();
+  const result = await runSpawn(deps, makeParams());
+  assert.deepEqual(git.pushed, [result.branch]);
+  assert.equal(result.pushed, true);
+});
+
+test('does not push when the run exits non-zero', async () => {
+  const { deps, git } = makeDeps({ runtime: new FakeRuntime(1) });
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(git.pushed.length, 0);
+  assert.ok(!git.calls.includes('push'));
+  assert.equal(result.pushed, false);
+});
+
+test('does not push when the run exits 0 but produced no commits', async () => {
+  const { deps, git } = makeDeps({ git: new FakeGit({ hasCommits: false }) });
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(git.pushed.length, 0);
+  assert.equal(result.pushed, false);
+});
+
+test('a push failure is non-fatal: branch kept, warning surfaced, exit code unchanged', async () => {
+  const { deps, git } = makeDeps({
+    git: new FakeGit({ pushFails: 'no configured remote' }),
+  });
+  const result = await runSpawn(deps, makeParams());
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.pushed, false);
+  assert.match(result.pushWarning ?? '', /no configured remote/);
+  assert.equal(git.pushed.length, 0);
+  // The worktree is still cleaned up and the branch (locally) preserved.
+  assert.deepEqual(git.removed, [git.worktrees[0].path]);
 });
