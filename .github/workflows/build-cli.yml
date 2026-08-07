@@ -1,0 +1,43 @@
+name: Build CLI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & package the `e` CLI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm run test --workspace @monorepo/cli
+
+      # Compiles TypeScript (build:ts) then cross-compiles standalone binaries
+      # for all 6 targets into packages/cli/command/ via @yao-pkg/pkg (build:bin).
+      - name: Build binaries
+        run: npm run build --workspace @monorepo/cli
+
+      - name: Upload CLI binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: e-cli-binaries
+          path: packages/cli/command/*
+          if-no-files-found: error
