@@ -6,6 +6,12 @@ export interface RunOptions {
   port?: string[];
   env?: string[];
   rm?: boolean;
+  /** Bind mounts, each "hostPath:containerPath". */
+  volume?: string[];
+  /** Working directory inside the container (-w). */
+  workdir?: string;
+  /** Path to an env file loaded into the container (--env-file). */
+  envFile?: string;
 }
 
 /**
@@ -27,6 +33,43 @@ export abstract class ContainerRuntime {
     return result.status === 0;
   }
 
+  /** Returns true if an image with the given tag already exists locally. */
+  imageExists(imageTag: string): boolean {
+    const result = spawnSync(this.command, ['image', 'inspect', imageTag], {
+      stdio: 'ignore',
+      shell: false,
+    });
+    return result.status === 0;
+  }
+
+  /**
+   * Builds an image from a build context, tagging it `imageTag`.
+   * The Dockerfile defaults to `<contextDir>/Dockerfile`.
+   * Exits the process on failure.
+   */
+  build(imageTag: string, contextDir: string, dockerfile?: string): void {
+    const args = ['build', '-t', imageTag];
+    if (dockerfile) args.push('-f', dockerfile);
+    args.push(contextDir);
+
+    console.log(`> ${this.command} ${args.join(' ')}`);
+    const result = spawnSync(this.command, args, {
+      stdio: 'inherit',
+      shell: false,
+    });
+
+    if (result.error) {
+      console.error(
+        `Failed to start ${this.command}: ${result.error.message}`,
+      );
+      process.exit(1);
+    }
+    if (result.status !== 0) {
+      console.error(`Image build failed (exit code ${result.status ?? 1}).`);
+      process.exit(result.status ?? 1);
+    }
+  }
+
   /** Builds the argument list passed to the runtime. */
   buildRunArgs(
     image: string,
@@ -39,7 +82,10 @@ export abstract class ContainerRuntime {
     if (!opts.attach) args.push('-d');
     if (opts.rm) args.push('--rm');
     if (opts.name) args.push('--name', opts.name);
+    if (opts.workdir) args.push('-w', opts.workdir);
+    if (opts.envFile) args.push('--env-file', opts.envFile);
 
+    for (const v of opts.volume ?? []) args.push('-v', v);
     for (const p of opts.port ?? []) args.push('-p', p);
     for (const e of opts.env ?? []) args.push('-e', e);
 
