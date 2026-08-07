@@ -3,12 +3,13 @@ name: Build CLI
 on:
   push:
     branches: [master]
+    tags: ['v*']
   pull_request:
     branches: [master]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -35,9 +36,51 @@ jobs:
       - name: Build binaries
         run: npm run build --workspace @monorepo/cli
 
-      - name: Upload CLI binaries
+      - name: Upload e-linux-x64
         uses: actions/upload-artifact@v4
         with:
-          name: e-cli-binaries
-          path: packages/cli/command/*
+          name: e-linux-x64
+          path: packages/cli/command/e-linux-x64
           if-no-files-found: error
+
+      - name: Upload e-linux-arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: e-linux-arm64
+          path: packages/cli/command/e-linux-arm64
+          if-no-files-found: error
+
+      - name: Upload e-macos-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: e-macos-x64
+          path: packages/cli/command/e-macos-x64
+          if-no-files-found: error
+
+      - name: Upload e-macos-arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: e-macos-arm64
+          path: packages/cli/command/e-macos-arm64
+          if-no-files-found: error
+
+      - name: Upload e-win-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: e-win-x64
+          path: packages/cli/command/e-win-x64.exe
+          if-no-files-found: error
+
+      - name: Upload e-win-arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: e-win-arm64
+          path: packages/cli/command/e-win-arm64.exe
+          if-no-files-found: error
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/cli/command/*
+          fail_on_unmatched_files: true
