@@ -1,9 +1,10 @@
 import fs from 'fs';
-import path from 'path';
 import type { Command } from 'commander';
 import { ContainerRuntime, type RunOptions } from './runtime/index';
 import { DockerRuntime } from './runtime/docker';
 import { PodmanRuntime } from './runtime/podman';
+import { HostGit } from './git/host';
+import { runSpawn, type RunSpawnResult } from './runSpawn';
 import {
   resolveHarness,
   harnessDir,
@@ -55,7 +56,6 @@ export function resolveRuntime(preferred?: string): ContainerRuntime {
 
 interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   runtime?: string;
-  mount?: string;
   rebuild?: boolean;
   dir?: string;
   /** Raw `--env-file <path>` value from the CLI (a single path). */
@@ -75,11 +75,7 @@ export function registerSpawnCommand(program: Command): void {
       '--runtime <runtime>',
       'container runtime to use (docker or podman)',
     )
-    .option('--name <name>', 'assign a name to the container')
-    .option(
-      '--mount <dir>',
-      'host directory to mount at /workspace (default: current directory)',
-    )
+    .option('--name <name>', 'name for the run (overrides the prompt-derived slug)')
     .option('--env-file <path>', 'load environment variables from a file')
     .option('--rebuild', 'force a rebuild of the harness image', false)
     .option(
@@ -93,7 +89,7 @@ export function registerSpawnCommand(program: Command): void {
     )
     .option(
       '--no-attach',
-      'run the container detached instead of in the foreground',
+      'run detached (unsupported with per-run worktrees; run in the foreground)',
     )
     .option(
       '--rm',
@@ -110,7 +106,11 @@ export function registerSpawnCommand(program: Command): void {
       'set an environment variable, e.g. KEY=value (repeatable)',
     )
     .action(
-      (harnessName: string, prompt: string[], opts: SpawnCommandOptions) => {
+      async (
+        harnessName: string,
+        prompt: string[],
+        opts: SpawnCommandOptions,
+      ) => {
         const harness = (() => {
           try {
             return resolveHarness(harnessName);
@@ -130,17 +130,19 @@ export function registerSpawnCommand(program: Command): void {
 
         const root = findHarnessRoot(opts.dir);
 
-        if (opts.rebuild || !runtime.imageExists(harness.imageTag)) {
-          if (root === undefined || !isInitialized(harness, root)) {
-            console.error(
-              `Harness "${harness.name}" is not initialized. Run \`e init\`${opts.dir ? ` --dir ${opts.dir}` : ''} first.`,
-            );
-            process.exit(1);
+        // Builds the harness image on demand. The orchestrator calls this
+        // after confirming a git repo but before creating the worktree, so a
+        // thrown failure never leaves orphan scaffolding.
+        const ensureImage = (): void => {
+          if (opts.rebuild || !runtime.imageExists(harness.imageTag)) {
+            if (root === undefined || !isInitialized(harness, root)) {
+              throw new Error(
+                `Harness "${harness.name}" is not initialized. Run \`e init\`${opts.dir ? ` --dir ${opts.dir}` : ''} first.`,
+              );
+            }
+            runtime.build(harness.imageTag, harnessDir(harness, root));
           }
-          runtime.build(harness.imageTag, harnessDir(harness, root));
-        }
-
-        const mountDir = path.resolve(opts.mount ?? process.cwd());
+        };
 
         // Load the shared `.e/.env` as the base environment (if present),
         // then the user's --env-file on top, so it overrides the base.
@@ -152,21 +154,36 @@ export function registerSpawnCommand(program: Command): void {
         if (opts.envFile) envFiles.push(opts.envFile);
 
         const runOptions: RunOptions = {
-          name: opts.name,
           attach: opts.attach,
           rm: opts.rm,
           port: opts.port,
           env: opts.env,
           envFile: envFiles,
-          volume: [`${mountDir}:/workspace`],
-          workdir: '/workspace',
         };
 
-        runtime.run(
-          harness.imageTag,
-          runOptions,
-          harness.buildCommand(prompt.join(' ')),
-        );
+        let result: RunSpawnResult;
+        try {
+          result = await runSpawn(
+            { git: new HostGit(), runtime, ensureImage },
+            {
+              harness,
+              prompt: prompt.join(' '),
+              name: opts.name,
+              runOptions,
+            },
+          );
+        } catch (err) {
+          console.error((err as Error).message);
+          process.exit(1);
+        }
+
+        if (result.error) {
+          console.error(result.error);
+          process.exit(result.exitCode);
+        }
+
+        console.log(`\nRun branch: ${result.branch}`);
+        process.exit(result.exitCode);
       },
     );
 }

@@ -18,12 +18,20 @@ export interface RunOptions {
 }
 
 /**
+ * The run surface the orchestrator depends on. Kept minimal so a fake can
+ * stand in for a real runtime in tests.
+ */
+export interface ContainerRunner {
+  run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number>;
+}
+
+/**
  * Base class for a container runtime (docker, podman, ...).
  *
  * Docker and Podman share the same `run` CLI surface, so all of the shared
  * behaviour lives here; concrete runtimes only need to provide their `command`.
  */
-export abstract class ContainerRuntime {
+export abstract class ContainerRuntime implements ContainerRunner {
   /** The executable invoked for this runtime, e.g. "docker". */
   abstract readonly command: string;
 
@@ -98,27 +106,31 @@ export abstract class ContainerRuntime {
     return args;
   }
 
-  /** Runs a container, streaming stdio, and exits with the container's code. */
-  run(image: string, opts: RunOptions, commandArgs: string[]): void {
+  /**
+   * Runs a container, streaming stdio, and resolves with the container's exit
+   * code. It deliberately does not exit the process — the caller (the Run
+   * orchestrator) still has to commit, tear down the worktree, and report —
+   * so lifecycle control stays with the caller. Rejects only if the runtime
+   * process itself fails to start.
+   */
+  run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number> {
     const runArgs = this.buildRunArgs(image, opts, commandArgs);
     console.log(`Using runtime: ${this.command}`);
     console.log(`> ${this.command} ${runArgs.join(' ')}`);
 
-    const child = spawn(this.command, runArgs, {
-      stdio: 'inherit',
-      shell: false,
-    });
+    return new Promise<number>((resolve, reject) => {
+      const child = spawn(this.command, runArgs, {
+        stdio: 'inherit',
+        shell: false,
+      });
 
-    child.on('error', (err) => {
-      console.error(`Failed to start ${this.command}: ${err.message}`);
-      process.exit(1);
-    });
+      child.on('error', (err) => {
+        reject(new Error(`Failed to start ${this.command}: ${err.message}`));
+      });
 
-    child.on('exit', (code, signal) => {
-      if (signal) {
-        process.exit(1);
-      }
-      process.exit(code ?? 0);
+      child.on('exit', (code, signal) => {
+        resolve(signal ? 1 : (code ?? 0));
+      });
     });
   }
 }
