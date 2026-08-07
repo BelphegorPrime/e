@@ -36,51 +36,73 @@ jobs:
       - name: Build binaries
         run: npm run build --workspace @monorepo/cli
 
+      # Repackage each raw pkg binary into a per-target archive whose inner
+      # file is named `e` (or `e.exe`), so extraction yields the `e` command
+      # regardless of the download filename.
+      - name: Package binaries
+        working-directory: packages/cli
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cd command
+          for t in linux-x64 linux-arm64 macos-x64 macos-arm64; do
+            cp "e-$t" e
+            chmod +x e
+            tar -czf "../release/e-$t.tar.gz" e
+            rm e
+          done
+          for t in win-x64 win-arm64; do
+            cp "e-$t.exe" e.exe
+            zip -j "../release/e-$t.zip" e.exe
+            rm e.exe
+          done
+          ls -la ../release
+
       - name: Upload e-linux-x64
         uses: actions/upload-artifact@v4
         with:
           name: e-linux-x64
-          path: packages/cli/command/e-linux-x64
+          path: packages/cli/release/e-linux-x64.tar.gz
           if-no-files-found: error
 
       - name: Upload e-linux-arm64
         uses: actions/upload-artifact@v4
         with:
           name: e-linux-arm64
-          path: packages/cli/command/e-linux-arm64
+          path: packages/cli/release/e-linux-arm64.tar.gz
           if-no-files-found: error
 
       - name: Upload e-macos-x64
         uses: actions/upload-artifact@v4
         with:
           name: e-macos-x64
-          path: packages/cli/command/e-macos-x64
+          path: packages/cli/release/e-macos-x64.tar.gz
           if-no-files-found: error
 
       - name: Upload e-macos-arm64
         uses: actions/upload-artifact@v4
         with:
           name: e-macos-arm64
-          path: packages/cli/command/e-macos-arm64
+          path: packages/cli/release/e-macos-arm64.tar.gz
           if-no-files-found: error
 
       - name: Upload e-win-x64
         uses: actions/upload-artifact@v4
         with:
           name: e-win-x64
-          path: packages/cli/command/e-win-x64.exe
+          path: packages/cli/release/e-win-x64.zip
           if-no-files-found: error
 
       - name: Upload e-win-arm64
         uses: actions/upload-artifact@v4
         with:
           name: e-win-arm64
-          path: packages/cli/command/e-win-arm64.exe
+          path: packages/cli/release/e-win-arm64.zip
           if-no-files-found: error
 
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: packages/cli/command/*
+          files: packages/cli/release/*
           fail_on_unmatched_files: true
