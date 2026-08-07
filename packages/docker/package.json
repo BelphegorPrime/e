@@ -1,0 +1,9 @@
+{
+  "name": "@monorepo/docker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "docker build -t myapp .",
+    "run": "docker run myapp"
+  }
+}
