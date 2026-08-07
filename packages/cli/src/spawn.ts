@@ -5,6 +5,7 @@ import { DockerRuntime } from './runtime/docker';
 import { PodmanRuntime } from './runtime/podman';
 import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
+import { orderEnvFiles, decideImageAction } from './spawnPlan';
 import {
   resolveHarness,
   harnessDir,
@@ -143,24 +144,37 @@ export function registerSpawnCommand(program: Command): void {
         // after confirming a git repo but before creating the worktree, so a
         // thrown failure never leaves orphan scaffolding.
         const ensureImage = (): void => {
-          if (opts.rebuild || !runtime.imageExists(harness.imageTag)) {
-            if (root === undefined || !isInitialized(harness, root)) {
-              throw new Error(
-                `Harness "${harness.name}" is not initialized. Run \`e init\`${opts.dir ? ` --dir ${opts.dir}` : ''} first.`,
-              );
-            }
+          // Preserve the short-circuit: with --rebuild the decision is always
+          // `build`, so skip the (otherwise wasted) image-inspect probe.
+          const imageExists =
+            !opts.rebuild && runtime.imageExists(harness.imageTag);
+          const initialized =
+            root !== undefined && isInitialized(harness, root);
+          const action = decideImageAction({
+            rebuild: Boolean(opts.rebuild),
+            imageExists,
+            initialized,
+          });
+          if (action === 'not-initialized') {
+            throw new Error(
+              `Harness "${harness.name}" is not initialized. Run \`e init\`${opts.dir ? ` --dir ${opts.dir}` : ''} first.`,
+            );
+          }
+          if (action === 'build') {
             runtime.build(harness.imageTag, harnessDir(harness, root));
           }
         };
 
         // Load the shared `.e/.env` as the base environment (if present),
         // then the user's --env-file on top, so it overrides the base.
-        const envFiles: string[] = [];
-        if (root !== undefined) {
-          const baseEnvFile = envFilePath(root);
-          if (fs.existsSync(baseEnvFile)) envFiles.push(baseEnvFile);
-        }
-        if (opts.envFile) envFiles.push(opts.envFile);
+        const baseEnvFile =
+          root !== undefined ? envFilePath(root) : undefined;
+        const envFiles = orderEnvFiles(
+          baseEnvFile !== undefined && fs.existsSync(baseEnvFile)
+            ? baseEnvFile
+            : undefined,
+          opts.envFile,
+        );
 
         const runOptions: RunOptions = {
           attach: opts.attach,
