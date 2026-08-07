@@ -6,12 +6,14 @@ import { renderEnvTemplate } from './harness/renderEnvTemplate';
 import {
   HARNESSES,
   type Harness,
+  envHarnessSections,
+} from './harness/index';
+import {
   dockerfilePath,
   harnessDir,
   harnessesBaseDir,
   envFilePath,
-  envHarnessSections,
-} from './harness/index';
+} from './store';
 
 interface InitCommandOptions {
   dir?: string;
@@ -49,8 +51,8 @@ export function registerInitCommand(program: Command): void {
  * can reconcile it themselves.
  */
 function writeDockerfile(harness: Harness, root: string | undefined): void {
-  const dir = harnessDir(harness, root);
-  const file = dockerfilePath(harness, root);
+  const dir = harnessDir(harness.name, root);
+  const file = dockerfilePath(harness.name, root);
   const content = renderDockerfile(harness.dockerfile);
   fs.mkdirSync(dir, { recursive: true });
 

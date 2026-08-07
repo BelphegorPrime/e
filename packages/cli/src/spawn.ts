@@ -6,14 +6,8 @@ import { PodmanRuntime } from './runtime/podman';
 import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
 import { orderEnvFiles, decideImageAction } from './spawnPlan';
-import {
-  resolveHarness,
-  harnessDir,
-  isInitialized,
-  findHarnessRoot,
-  envFilePath,
-  HARNESSES,
-} from './harness/index';
+import { resolveHarness, HARNESSES } from './harness/index';
+import { harnessDir, isInitialized, findRoot, envFilePath } from './store';
 
 /** Available runtimes, in the order they are tried during auto-detection. */
 const RUNTIMES: Record<string, () => ContainerRuntime> = {
@@ -138,7 +132,7 @@ export function registerSpawnCommand(program: Command): void {
           process.exit(1);
         }
 
-        const root = findHarnessRoot(opts.dir);
+        const root = findRoot(opts.dir);
 
         // Builds the harness image on demand. The orchestrator calls this
         // after confirming a git repo but before creating the worktree, so a
@@ -149,7 +143,7 @@ export function registerSpawnCommand(program: Command): void {
           const imageExists =
             !opts.rebuild && runtime.imageExists(harness.imageTag);
           const initialized =
-            root !== undefined && isInitialized(harness, root);
+            root !== undefined && isInitialized(harness.name, root);
           const action = decideImageAction({
             rebuild: Boolean(opts.rebuild),
             imageExists,
@@ -161,7 +155,7 @@ export function registerSpawnCommand(program: Command): void {
             );
           }
           if (action === 'build') {
-            runtime.build(harness.imageTag, harnessDir(harness, root));
+            runtime.build(harness.imageTag, harnessDir(harness.name, root));
           }
         };
 
