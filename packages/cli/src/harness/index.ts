@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { DockerfileParams } from './renderDockerfile';
+import type { EnvHarnessSection } from './renderEnvTemplate';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
 export interface Harness {
@@ -81,12 +82,37 @@ export function resolveHarness(name: string): Harness {
 }
 
 /**
- * Base directory that holds the harness Dockerfiles, under `root`.
+ * The `.e` directory under `root` that holds all of e's state (harness
+ * Dockerfiles, the shared `.env`, ...).
  * `root` defaults to the user's home directory; `e init --dir <path>` uses
  * `<path>` as the root instead (e.g. to init into the current project).
  */
-export function harnessesBaseDir(root: string = os.homedir()): string {
-  return path.join(root, '.e', 'harnesses');
+export function eBaseDir(root: string = os.homedir()): string {
+  return path.join(root, '.e');
+}
+
+/** Base directory that holds the harness Dockerfiles, under `root`. */
+export function harnessesBaseDir(root?: string): string {
+  return path.join(eBaseDir(root), 'harnesses');
+}
+
+/**
+ * Path to the shared `.env` file loaded as the base environment for every
+ * harness container. Lives alongside the `harnesses/` dir under `.e`.
+ */
+export function envFilePath(root?: string): string {
+  return path.join(eBaseDir(root), '.env');
+}
+
+/**
+ * Builds the per-harness sections for the shared `.env` template — one entry
+ * per harness, carrying that harness's `requiredEnv` verbatim (no dedup).
+ */
+export function envHarnessSections(): EnvHarnessSection[] {
+  return Object.values(HARNESSES).map((harness) => ({
+    name: harness.name,
+    env: harness.requiredEnv,
+  }));
 }
 
 /** Directory containing a single harness's Dockerfile. */

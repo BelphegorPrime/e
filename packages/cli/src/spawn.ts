@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { ContainerRuntime, type RunOptions } from './runtime/index';
@@ -8,6 +9,7 @@ import {
   harnessDir,
   isInitialized,
   findHarnessRoot,
+  envFilePath,
   HARNESSES,
 } from './harness/index';
 
@@ -51,11 +53,13 @@ export function resolveRuntime(preferred?: string): ContainerRuntime {
   );
 }
 
-interface SpawnCommandOptions extends RunOptions {
+interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   runtime?: string;
   mount?: string;
   rebuild?: boolean;
   dir?: string;
+  /** Raw `--env-file <path>` value from the CLI (a single path). */
+  envFile?: string;
 }
 
 export function registerSpawnCommand(program: Command): void {
@@ -138,13 +142,22 @@ export function registerSpawnCommand(program: Command): void {
 
         const mountDir = path.resolve(opts.mount ?? process.cwd());
 
+        // Load the shared `.e/.env` as the base environment (if present),
+        // then the user's --env-file on top, so it overrides the base.
+        const envFiles: string[] = [];
+        if (root !== undefined) {
+          const baseEnvFile = envFilePath(root);
+          if (fs.existsSync(baseEnvFile)) envFiles.push(baseEnvFile);
+        }
+        if (opts.envFile) envFiles.push(opts.envFile);
+
         const runOptions: RunOptions = {
           name: opts.name,
           attach: opts.attach,
           rm: opts.rm,
           port: opts.port,
           env: opts.env,
-          envFile: opts.envFile,
+          envFile: envFiles,
           volume: [`${mountDir}:/workspace`],
           workdir: '/workspace',
         };

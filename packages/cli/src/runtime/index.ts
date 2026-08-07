@@ -10,8 +10,11 @@ export interface RunOptions {
   volume?: string[];
   /** Working directory inside the container (-w). */
   workdir?: string;
-  /** Path to an env file loaded into the container (--env-file). */
-  envFile?: string;
+  /**
+   * Env files loaded into the container (--env-file), in order. Later files
+   * override earlier ones for the same key; `-e` vars override all of them.
+   */
+  envFile?: string[];
 }
 
 /**
@@ -83,7 +86,7 @@ export abstract class ContainerRuntime {
     if (opts.rm) args.push('--rm');
     if (opts.name) args.push('--name', opts.name);
     if (opts.workdir) args.push('-w', opts.workdir);
-    if (opts.envFile) args.push('--env-file', opts.envFile);
+    for (const f of opts.envFile ?? []) args.push('--env-file', f);
 
     for (const v of opts.volume ?? []) args.push('-v', v);
     for (const p of opts.port ?? []) args.push('-p', p);
