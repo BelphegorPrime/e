@@ -3,38 +3,38 @@ import type { Protocol } from '../harness/adapter';
 /**
  * The curated per-protocol, per-tier model **preference list** behind `auto`
  * resolution (ADR-0007). For a given `(protocol, tier)`, the entries are tried in
- * order and the first one that is a *prefix of* an available model id wins — so a
- * preferred `claude-opus-5` matches a dated `claude-opus-5-20260101`.
+ * order and the first one that matches an available model id wins — exact, or the
+ * preferred id followed by a version/date suffix (`anthropic.claude-haiku-4-5`
+ * matches `anthropic.claude-haiku-4-5-20251001-v1:0`), never a named sibling.
  *
- * This is an opinionated, human-reviewed list (the HITL gate). The Anthropic ids
- * are current; the **OpenAI and Google ids are provisional** and expected to be
- * corrected as models ship. A user can always bypass it with a concrete `model`
- * or a Provider `defaultModel`.
+ * This is an opinionated, human-reviewed list (the HITL gate), tuned to the
+ * maintainer's gateway — whose ids are namespaced by provider (`anthropic.`,
+ * `openai.`). A different gateway may name models differently; a user overrides
+ * with a concrete `model` or a Provider `defaultModel`. `google` is intentionally
+ * absent (that gateway offers only Gemma, no Gemini) — a `google` + `auto`
+ * provider gets a clear "no preference list" error. It is a {@link Partial}
+ * record for exactly that reason.
  */
-export const MODEL_PREFERENCES: Record<Protocol, Record<string, string[]>> = {
+export const MODEL_PREFERENCES: Partial<Record<Protocol, Record<string, string[]>>> = {
   'anthropic-messages': {
-    smart: ['claude-opus-5', 'claude-sonnet-5'],
-    fast: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
-    cheap: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'],
-    review: ['claude-opus-5', 'claude-sonnet-5'],
+    smart: ['anthropic.claude-opus-5', 'anthropic.claude-sonnet-5'],
+    fast: ['anthropic.claude-sonnet-5', 'anthropic.claude-haiku-4-5'],
+    cheap: ['anthropic.claude-haiku-4-5', 'anthropic.claude-sonnet-5'],
+    review: ['anthropic.claude-opus-5', 'anthropic.claude-sonnet-5'],
   },
+  // gpt-5.6 variants map to a capability ladder: luna < terra < sol
+  // (haiku/sonnet/opus equivalents). Same ranking for both OpenAI wire APIs.
   'openai-responses': {
-    smart: ['gpt-5-codex', 'gpt-5'],
-    fast: ['gpt-5', 'gpt-5-codex'],
-    cheap: ['gpt-5-mini', 'gpt-5-codex'],
-    review: ['gpt-5-codex', 'gpt-5'],
+    smart: ['openai.gpt-5.6-sol', 'openai.gpt-5.5'],
+    fast: ['openai.gpt-5.6-terra', 'openai.gpt-5.5'],
+    cheap: ['openai.gpt-5.6-luna', 'openai.gpt-oss-20b'],
+    review: ['openai.gpt-5.6-sol', 'openai.gpt-5.6-terra'],
   },
   'openai-chat': {
-    smart: ['gpt-5', 'gpt-5-codex'],
-    fast: ['gpt-5', 'gpt-5-mini'],
-    cheap: ['gpt-5-mini'],
-    review: ['gpt-5'],
-  },
-  google: {
-    smart: ['gemini-2.5-pro'],
-    fast: ['gemini-2.5-flash', 'gemini-2.5-pro'],
-    cheap: ['gemini-2.5-flash'],
-    review: ['gemini-2.5-pro'],
+    smart: ['openai.gpt-5.6-sol', 'openai.gpt-5.5'],
+    fast: ['openai.gpt-5.6-terra', 'openai.gpt-5.5'],
+    cheap: ['openai.gpt-5.6-luna', 'openai.gpt-oss-20b'],
+    review: ['openai.gpt-5.6-sol', 'openai.gpt-5.6-terra'],
   },
 };
 

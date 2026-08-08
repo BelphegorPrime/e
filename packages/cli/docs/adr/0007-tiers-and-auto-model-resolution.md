@@ -47,17 +47,25 @@ first-class tiers are:
 `default`-tier agents are not in the list: they carry a concrete model and skip
 auto resolution entirely.
 
-Initial rankings (first available wins). The **Anthropic ids are current**; the
-**OpenAI and Google ids are provisional best guesses** and are expected to be
-corrected — this is a maintenance surface that drifts as models ship, and a user
-can always override with a concrete `model` or their own `defaultModel`.
+Initial rankings (first available wins), tuned to the maintainer's gateway,
+whose model ids are **namespaced by provider** (`anthropic.…`, `openai.…`).
+Matching is exact or a preferred id followed by a version/date suffix
+(`anthropic.claude-haiku-4-5` → `anthropic.claude-haiku-4-5-20251001-v1:0`).
 
 | protocol | smart | fast | cheap | review |
 |---|---|---|---|---|
-| `anthropic-messages` | claude-opus-5, claude-sonnet-5 | claude-sonnet-5, claude-haiku-4-5-20251001 | claude-haiku-4-5-20251001, claude-sonnet-5 | claude-opus-5, claude-sonnet-5 |
-| `openai-responses` | gpt-5-codex, gpt-5 | gpt-5, gpt-5-codex | gpt-5-mini, gpt-5-codex | gpt-5-codex, gpt-5 |
-| `openai-chat` | gpt-5, gpt-5-codex | gpt-5, gpt-5-mini | gpt-5-mini | gpt-5 |
-| `google` | gemini-2.5-pro | gemini-2.5-flash, gemini-2.5-pro | gemini-2.5-flash | gemini-2.5-pro |
+| `anthropic-messages` | claude-opus-5, claude-sonnet-5 | claude-sonnet-5, claude-haiku-4-5 | claude-haiku-4-5, claude-sonnet-5 | claude-opus-5, claude-sonnet-5 |
+| `openai-responses` | gpt-5.6-sol, gpt-5.5 | gpt-5.6-terra, gpt-5.5 | gpt-5.6-luna, gpt-oss-20b | gpt-5.6-sol, gpt-5.6-terra |
+| `openai-chat` | gpt-5.6-sol, gpt-5.5 | gpt-5.6-terra, gpt-5.5 | gpt-5.6-luna, gpt-oss-20b | gpt-5.6-sol, gpt-5.6-terra |
+
+(ids above are shown without their `anthropic.` / `openai.` namespace for
+brevity; the encoded list carries the full namespaced ids.)
+
+The `gpt-5.6` variants form a capability ladder — **luna < terra < sol**, the
+haiku / sonnet / opus equivalents. `google` is **not curated**: the gateway
+offers only Gemma (no Gemini), so a `google` + `auto` provider gets a clear
+"no preference list" error rather than a guessed Gemma; a concrete `model` or
+`defaultModel` still works.
 
 ## Considered options
 
@@ -70,8 +78,9 @@ can always override with a concrete `model` or their own `defaultModel`.
 
 ## Consequences
 
-- `e` carries a maintenance burden: the preference list drifts and must be kept
-  current; the OpenAI/Google rows especially are provisional.
+- `e` carries a maintenance burden: the preference list drifts as models ship
+  and is tuned to one gateway's namespaced ids; another gateway may need a
+  concrete `model` or `defaultModel`, or an edit to the list.
 - Auto resolution makes a network call at spawn; it must degrade gracefully
   (`defaultModel`, then a clear error) so a flaky endpoint never hangs a run.
 - The models-list HTTP client is a seam so tests fake the endpoint; only

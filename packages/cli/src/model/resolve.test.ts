@@ -86,18 +86,18 @@ test('resolveProviderModel: auto resolves against the listed models for the tier
   const resolved = await resolveProviderModel(
     anthropic,
     'smart',
-    fakeLister(['claude-sonnet-5', 'claude-opus-5']),
+    fakeLister(['anthropic.claude-sonnet-5', 'anthropic.claude-opus-5']),
   );
-  assert.deepEqual(resolved, { model: 'claude-opus-5', fromAuto: true });
+  assert.deepEqual(resolved, { model: 'anthropic.claude-opus-5', fromAuto: true });
 });
 
 test('resolveProviderModel: an unreachable endpoint falls back to defaultModel', async () => {
   const resolved = await resolveProviderModel(
-    { ...anthropic, defaultModel: 'claude-sonnet-5' },
+    { ...anthropic, defaultModel: 'anthropic.claude-sonnet-5' },
     'smart',
     fakeLister(new Error('ECONNREFUSED')),
   );
-  assert.deepEqual(resolved, { model: 'claude-sonnet-5', fromAuto: true });
+  assert.deepEqual(resolved, { model: 'anthropic.claude-sonnet-5', fromAuto: true });
 });
 
 test('resolveProviderModel: an unreachable endpoint with no defaultModel is a clear error', async () => {

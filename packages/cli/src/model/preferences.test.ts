@@ -4,48 +4,47 @@ import { chooseModel, MODEL_PREFERENCES } from './preferences';
 
 test('chooseModel: returns the first preferred id available for the (protocol, tier)', () => {
   const chosen = chooseModel(
-    ['claude-sonnet-5', 'claude-opus-5', 'claude-haiku-4-5-20251001'],
+    ['anthropic.claude-sonnet-5', 'anthropic.claude-opus-5', 'anthropic.claude-haiku-4-5'],
     'anthropic-messages',
     'smart',
   );
   // smart prefers opus over sonnet, and opus is available.
-  assert.equal(chosen, 'claude-opus-5');
+  assert.equal(chosen, 'anthropic.claude-opus-5');
 });
 
 test('chooseModel: matches a preferred id as a prefix of a versioned available id', () => {
   const chosen = chooseModel(
-    ['claude-opus-5-20260101', 'claude-sonnet-5-20260101'],
+    ['anthropic.claude-haiku-4-5-20251001-v1:0'],
     'anthropic-messages',
-    'smart',
+    'cheap',
   );
-  // The preferred `claude-opus-5` prefix-matches the dated id, which is returned verbatim.
-  assert.equal(chosen, 'claude-opus-5-20260101');
-});
-
-test('chooseModel: does not match a named sibling family that merely shares a prefix', () => {
-  // `smart` prefers `gpt-5` then `gpt-5-codex`. `gpt-5-mini` shares the `gpt-5`
-  // prefix but is a different (cheaper) family — it must NOT satisfy `gpt-5`.
-  const chosen = chooseModel(
-    ['gpt-5-mini', 'gpt-5-codex'],
-    'openai-chat',
-    'smart',
-  );
-  assert.equal(chosen, 'gpt-5-codex');
-});
-
-test('chooseModel: prefers an exact id even when a sibling is listed first', () => {
-  const chosen = chooseModel(['gpt-5-mini', 'gpt-5'], 'openai-chat', 'smart');
-  assert.equal(chosen, 'gpt-5');
+  // The preferred `anthropic.claude-haiku-4-5` matches the dated/versioned id.
+  assert.equal(chosen, 'anthropic.claude-haiku-4-5-20251001-v1:0');
 });
 
 test('chooseModel: skips an unavailable top preference for the next available one', () => {
   const chosen = chooseModel(
-    ['claude-sonnet-5'],
+    ['anthropic.claude-sonnet-5'],
     'anthropic-messages',
     'smart',
   );
   // opus isn't available; sonnet (next in the smart list) is.
-  assert.equal(chosen, 'claude-sonnet-5');
+  assert.equal(chosen, 'anthropic.claude-sonnet-5');
+});
+
+test('chooseModel: does not match a named sibling that merely shares a prefix', () => {
+  // smart prefers opus-5 then sonnet-5. A `-thinking` sibling shares the opus-5
+  // prefix but is a different variant — it must NOT satisfy the preference, and
+  // with no sonnet-5 available and no defaultModel this is a loud failure.
+  assert.throws(
+    () =>
+      chooseModel(
+        ['anthropic.claude-opus-5-thinking'],
+        'anthropic-messages',
+        'smart',
+      ),
+    /No preferred model/,
+  );
 });
 
 test('chooseModel: falls back to defaultModel when nothing preferred is available', () => {
@@ -53,9 +52,9 @@ test('chooseModel: falls back to defaultModel when nothing preferred is availabl
     ['some-unlisted-model'],
     'anthropic-messages',
     'smart',
-    'claude-sonnet-5',
+    'anthropic.claude-sonnet-5',
   );
-  assert.equal(chosen, 'claude-sonnet-5');
+  assert.equal(chosen, 'anthropic.claude-sonnet-5');
 });
 
 test('chooseModel: throws a clear error when nothing matches and no defaultModel', () => {
@@ -67,17 +66,32 @@ test('chooseModel: throws a clear error when nothing matches and no defaultModel
 
 test('chooseModel: an unknown tier with no defaultModel is a clear error', () => {
   assert.throws(
-    () => chooseModel(['claude-opus-5'], 'anthropic-messages', 'default'),
+    () => chooseModel(['anthropic.claude-opus-5'], 'anthropic-messages', 'default'),
     /tier|preference/i,
   );
 });
 
-test('MODEL_PREFERENCES: covers the four curated tiers for every protocol', () => {
+test('chooseModel: a protocol with no curated list (google) errors clearly', () => {
+  // google is intentionally absent from the preference list (ADR-0007).
+  assert.throws(
+    () => chooseModel(['google.gemma-4-31b'], 'google', 'smart'),
+    /no.*preference list.*google|tier/i,
+  );
+});
+
+test('MODEL_PREFERENCES: the curated protocols each cover the four tiers', () => {
   const tiers = ['smart', 'fast', 'cheap', 'review'];
-  for (const protocol of Object.keys(MODEL_PREFERENCES)) {
+  const protocols = ['anthropic-messages', 'openai-responses', 'openai-chat'] as const;
+  for (const protocol of protocols) {
+    const rows = MODEL_PREFERENCES[protocol];
+    assert.ok(rows, `${protocol} missing`);
     for (const tier of tiers) {
-      const list = MODEL_PREFERENCES[protocol as keyof typeof MODEL_PREFERENCES][tier];
-      assert.ok(Array.isArray(list) && list.length > 0, `${protocol}/${tier} missing`);
+      assert.ok(
+        Array.isArray(rows[tier]) && rows[tier].length > 0,
+        `${protocol}/${tier} missing`,
+      );
     }
   }
+  // google is deliberately not curated (Gemma-only gateway; no Gemini).
+  assert.equal(MODEL_PREFERENCES.google, undefined);
 });
