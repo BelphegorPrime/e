@@ -251,7 +251,7 @@ test('creates a worktree from HEAD on branch e/<harness>/<slug>-1 and runs the h
   assert.equal(runtime.image, 'e-harness-demo');
   assert.equal(runtime.options?.workdir, '/workspace');
   assert.deepEqual(runtime.options?.volume, [
-    `${git.worktrees[0].path}:/workspace`,
+    { host: git.worktrees[0].path, container: '/workspace' },
   ]);
   assert.deepEqual(runtime.command, ['demo', '-p', 'Fix the flaky test']);
 

@@ -1,13 +1,32 @@
 import { spawn, spawnSync } from 'child_process';
 
+/**
+ * A bind mount as structured data, so callers describe *what* to mount and the
+ * runtime owns the `host:container[:ro]` argv format (rather than each caller
+ * hand-concatenating the string). `ro` defaults to read-write when omitted.
+ */
+export interface Mount {
+  /** Host path to mount. */
+  host: string;
+  /** Container path it appears at. */
+  container: string;
+  /** Mount read-only (`:ro`); omit or false for read-write. */
+  ro?: boolean;
+}
+
+/** Formats a {@link Mount} into the runtime's `-v host:container[:ro]` value. */
+export function formatMount(m: Mount): string {
+  return m.ro ? `${m.host}:${m.container}:ro` : `${m.host}:${m.container}`;
+}
+
 export interface RunOptions {
   name?: string;
   attach?: boolean;
   port?: string[];
   env?: string[];
   rm?: boolean;
-  /** Bind mounts, each "hostPath:containerPath". */
-  volume?: string[];
+  /** Bind mounts. */
+  volume?: Mount[];
   /** Working directory inside the container (-w). */
   workdir?: string;
   /**
@@ -83,6 +102,82 @@ export interface ContainerRunner {
 }
 
 /**
+ * Pure argv builders — one per runtime subcommand. Each returns the arguments
+ * that follow the runtime executable, so the corresponding method reduces to
+ * `spawnSync(this.command, xArgs(...))`. Extracted so every subcommand's argv is
+ * assertable without spawning a process (only `run`'s builder, {@link
+ * ContainerRuntime.buildRunArgs}, used to be reachable by a test).
+ */
+export function versionArgs(): string[] {
+  return ['--version'];
+}
+
+export function imageInspectArgs(imageTag: string): string[] {
+  return ['image', 'inspect', imageTag];
+}
+
+export function buildImageArgs(
+  imageTag: string,
+  contextDir: string,
+  dockerfile?: string,
+): string[] {
+  const args = ['build', '-t', imageTag];
+  if (dockerfile) args.push('-f', dockerfile);
+  args.push(contextDir);
+  return args;
+}
+
+export function networkCreateArgs(name: string): string[] {
+  return ['network', 'create', name];
+}
+
+export function networkRemoveArgs(name: string): string[] {
+  return ['network', 'rm', name];
+}
+
+export function sidecarRunArgs(spec: SidecarSpec): string[] {
+  const args = [
+    'run',
+    '-d',
+    '--name',
+    spec.name,
+    '--network',
+    spec.network,
+    '--network-alias',
+    spec.alias,
+  ];
+  for (const f of spec.envFile ?? []) args.push('--env-file', f);
+  args.push(spec.image);
+  return args;
+}
+
+export function containerRemoveArgs(name: string): string[] {
+  return ['rm', '-f', name];
+}
+
+export function tcpProbeArgs(network: string, host: string, port: number): string[] {
+  // BusyBox `nc HOST PORT` (empty stdin, 2s connect timeout) exits 0 on connect.
+  return [
+    'run',
+    '--rm',
+    '--network',
+    network,
+    'busybox',
+    'sh',
+    '-c',
+    `nc -w 2 ${host} ${port} < /dev/null`,
+  ];
+}
+
+export function execArgs(container: string, command: string[]): string[] {
+  return ['exec', container, ...command];
+}
+
+export function runningInspectArgs(name: string): string[] {
+  return ['inspect', '-f', '{{.State.Running}}', name];
+}
+
+/**
  * A container runtime (docker, podman, ...).
  *
  * Docker and Podman share the same CLI surface, so a single concrete class
@@ -95,7 +190,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Returns true if this runtime is installed and responds to `--version`. */
   isAvailable(): boolean {
-    const result = spawnSync(this.command, ['--version'], {
+    const result = spawnSync(this.command, versionArgs(), {
       stdio: 'ignore',
       shell: false,
     });
@@ -104,7 +199,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Returns true if an image with the given tag already exists locally. */
   imageExists(imageTag: string): boolean {
-    const result = spawnSync(this.command, ['image', 'inspect', imageTag], {
+    const result = spawnSync(this.command, imageInspectArgs(imageTag), {
       stdio: 'ignore',
       shell: false,
     });
@@ -117,9 +212,7 @@ export class ContainerRuntime implements ContainerRunner {
    * Throws on failure — the edge (the spawn action) owns the exit.
    */
   build(imageTag: string, contextDir: string, dockerfile?: string): void {
-    const args = ['build', '-t', imageTag];
-    if (dockerfile) args.push('-f', dockerfile);
-    args.push(contextDir);
+    const args = buildImageArgs(imageTag, contextDir, dockerfile);
 
     console.log(`> ${this.command} ${args.join(' ')}`);
     const result = spawnSync(this.command, args, {
@@ -153,7 +246,7 @@ export class ContainerRuntime implements ContainerRunner {
     if (opts.network) args.push('--network', opts.network);
     for (const f of opts.envFile ?? []) args.push('--env-file', f);
 
-    for (const v of opts.volume ?? []) args.push('-v', v);
+    for (const v of opts.volume ?? []) args.push('-v', formatMount(v));
     for (const p of opts.port ?? []) args.push('-p', p);
     for (const e of opts.env ?? []) args.push('-e', e);
 
@@ -193,7 +286,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */
   createNetwork(name: string): void {
-    const result = spawnSync(this.command, ['network', 'create', name], {
+    const result = spawnSync(this.command, networkCreateArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -211,7 +304,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Remove a network. Best-effort: swallows every failure so teardown never masks the run result. */
   removeNetwork(name: string): void {
-    spawnSync(this.command, ['network', 'rm', name], {
+    spawnSync(this.command, networkRemoveArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -223,18 +316,7 @@ export class ContainerRuntime implements ContainerRunner {
    * env-file). Throws if the container fails to start.
    */
   startSidecar(spec: SidecarSpec): void {
-    const args = [
-      'run',
-      '-d',
-      '--name',
-      spec.name,
-      '--network',
-      spec.network,
-      '--network-alias',
-      spec.alias,
-    ];
-    for (const f of spec.envFile ?? []) args.push('--env-file', f);
-    args.push(spec.image);
+    const args = sidecarRunArgs(spec);
 
     console.log(`> ${this.command} ${args.join(' ')}`);
     const result = spawnSync(this.command, args, {
@@ -255,7 +337,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Force-remove a container by name (even if running). Best-effort: never throws (teardown). */
   removeContainer(name: string): void {
-    spawnSync(this.command, ['rm', '-f', name], {
+    spawnSync(this.command, containerRemoveArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -268,26 +350,16 @@ export class ContainerRuntime implements ContainerRunner {
    * `busybox` image is a tiny public image the runtime auto-pulls on first use.
    */
   probeTcp(network: string, host: string, port: number): boolean {
-    const result = spawnSync(
-      this.command,
-      [
-        'run',
-        '--rm',
-        '--network',
-        network,
-        'busybox',
-        'sh',
-        '-c',
-        `nc -w 2 ${host} ${port} < /dev/null`,
-      ],
-      { stdio: 'ignore', shell: false },
-    );
+    const result = spawnSync(this.command, tcpProbeArgs(network, host, port), {
+      stdio: 'ignore',
+      shell: false,
+    });
     return result.status === 0;
   }
 
   /** Run a readiness command inside the sidecar (`exec`); true iff it exits 0. */
   probeHealthcheck(container: string, command: string[]): boolean {
-    const result = spawnSync(this.command, ['exec', container, ...command], {
+    const result = spawnSync(this.command, execArgs(container, command), {
       stdio: 'ignore',
       shell: false,
     });
@@ -296,11 +368,10 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** True if the named container is still running (`inspect` reports `Running: true`). */
   isRunning(name: string): boolean {
-    const result = spawnSync(
-      this.command,
-      ['inspect', '-f', '{{.State.Running}}', name],
-      { encoding: 'utf8', shell: false },
-    );
+    const result = spawnSync(this.command, runningInspectArgs(name), {
+      encoding: 'utf8',
+      shell: false,
+    });
     return result.status === 0 && result.stdout.trim() === 'true';
   }
 }

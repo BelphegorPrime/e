@@ -1,5 +1,6 @@
 import fs from 'fs';
 import { skillManifestPath, skillDir, skillsBaseDir } from '../store';
+import type { Mount } from '../runtime/index';
 
 /**
  * The **Skill** context (ADR-0006): a packaged capability — a `SKILL.md` plus
@@ -67,12 +68,12 @@ export function parseSkillList(values: string[]): string[] {
 }
 
 /**
- * The read-only bind-mount spec that places a skill for a run: the host source
- * dir mounted at `<skillsDir>/<name>` inside the container (outside `/workspace`,
- * so it never lands in the run's branch). Pure — the spawn edge collects these.
+ * The read-only bind mount that places a skill for a run: the host source dir
+ * mounted at `<skillsDir>/<name>` inside the container (outside `/workspace`, so
+ * it never lands in the run's branch). Pure — the spawn edge collects these.
  */
-export function skillMountSpec(sourceDir: string, skillsDir: string, name: string): string {
-  return `${sourceDir}:${skillsDir}/${name}:ro`;
+export function skillMountSpec(sourceDir: string, skillsDir: string, name: string): Mount {
+  return { host: sourceDir, container: `${skillsDir}/${name}`, ro: true };
 }
 
 /** The files of a shipped skill, keyed by path relative to the skill's own dir. */

@@ -1,7 +1,7 @@
 import path from 'path';
 import os from 'os';
 import type { Git } from './git/index';
-import type { ContainerRunner, RunOptions, SidecarSpec } from './runtime/index';
+import type { ContainerRunner, RunOptions, SidecarSpec, Mount } from './runtime/index';
 import type { Harness } from './harness/index';
 import type { Agent } from './agent';
 import { runName, runBranchPrefix, maxRunCounter, type RunName } from './naming';
@@ -89,11 +89,11 @@ export interface RunSpawnParams {
   /** Extra argv wiring the sidecars into the harness (e.g. Claude's `--mcp-config`). */
   mcpArgs?: string[];
   /**
-   * Extra read-only mounts for the agent container (`host:container:ro` specs),
-   * appended to the worktree volume — used to deliver a file harness's runtime
-   * config overlay (e.g. Codex's merged `config.toml`) outside `/workspace`.
+   * Extra read-only mounts for the agent container, appended to the worktree
+   * volume — used to deliver a file harness's runtime config overlay (e.g.
+   * Codex's merged `config.toml`) and per-run skills outside `/workspace`.
    */
-  configMounts?: string[];
+  configMounts?: Mount[];
   /** Readiness polling overrides (mainly for tests). */
   readiness?: ReadinessPolicy;
 }
@@ -279,7 +279,10 @@ export async function runSpawn(
         name: run.name,
         // The worktree is always mounted at /workspace; a file harness's config
         // overlay (if any) is appended as extra read-only mounts outside it.
-        volume: [`${worktreePath}:/workspace`, ...(params.configMounts ?? [])],
+        volume: [
+          { host: worktreePath, container: '/workspace' },
+          ...(params.configMounts ?? []),
+        ],
         workdir: '/workspace',
         // The agent joins the run's private network only when it has sidecars to
         // reach; a plain run stays on the default bridge, unchanged.

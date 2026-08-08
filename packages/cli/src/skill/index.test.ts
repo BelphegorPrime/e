@@ -67,8 +67,11 @@ test('parseSkillList flattens comma-separated and repeated values, trims, de-dup
 
 test('skillMountSpec places a skill read-only at <skillsDir>/<name>, outside /workspace', () => {
   const spec = skillMountSpec('/host/.e/skills/helper', '/root/.claude/skills', 'helper');
-  assert.equal(spec, '/host/.e/skills/helper:/root/.claude/skills/helper:ro');
+  assert.deepEqual(spec, {
+    host: '/host/.e/skills/helper',
+    container: '/root/.claude/skills/helper',
+    ro: true,
+  });
   // The container-side target is outside /workspace, so it never enters the branch.
-  const containerTarget = spec.split(':')[1];
-  assert.ok(!containerTarget.startsWith('/workspace'));
+  assert.ok(!spec.container.startsWith('/workspace'));
 });

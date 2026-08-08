@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { Command } from 'commander';
-import { ContainerRuntime, type RunOptions } from './runtime/index';
+import { ContainerRuntime, type RunOptions, type Mount } from './runtime/index';
 import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
 import { orderEnvFiles, decideImageAction, resolveSpawnTarget } from './spawnPlan';
@@ -341,7 +341,7 @@ export function registerSpawnCommand(program: Command): void {
         // skills dir is gated off. `--skill` accepts comma-separated or repeated.
         const perRunSkills = parseSkillList(opts.skill ?? []);
         const bakedSkills = agent.skills ?? [];
-        const skillMounts: string[] = [];
+        const skillMounts: Mount[] = [];
         if (perRunSkills.length > 0 || bakedSkills.length > 0) {
           try {
             if (!skillsSupported(harness) || !harness.skillsDir) {
@@ -406,7 +406,7 @@ export function registerSpawnCommand(program: Command): void {
         // pointed at that dir so both a provider agent and a default agent read
         // it. The base is the exact config the derived image baked (reused, never
         // re-derived), or empty for a default agent.
-        const configMounts: string[] = [];
+        const configMounts: Mount[] = [];
         const agentEnv: string[] = [...(opts.env ?? [])];
         if (mcpFileEndpoints !== undefined && fileAdapter?.renderConfigOverlay) {
           try {
@@ -419,9 +419,11 @@ export function registerSpawnCommand(program: Command): void {
             tempDirs.push(dir);
             const hostFile = path.join(dir, overlay.fileName);
             fs.writeFileSync(hostFile, overlay.content, { mode: 0o600 });
-            configMounts.push(
-              `${hostFile}:${fileAdapter.configDir}/${overlay.fileName}:ro`,
-            );
+            configMounts.push({
+              host: hostFile,
+              container: `${fileAdapter.configDir}/${overlay.fileName}`,
+              ro: true,
+            });
             // Read config from the mounted dir regardless of a baked default.
             agentEnv.push(`${fileAdapter.configDirEnv}=${fileAdapter.configDir}`);
           } catch (err) {
