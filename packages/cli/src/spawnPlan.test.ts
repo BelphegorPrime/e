@@ -274,7 +274,7 @@ test('planSpawn: a sidecar credential is rendered from storeEnv', () => {
 test('planSpawn: a missing sidecar credential is a hard error', () => {
   assert.throws(
     () => planSpawn(facts({ mcpServers: [secretMcp], storeEnv: {} })),
-    /needs "SECRET_TOKEN" set in \.e\/\.env/,
+    /MCP server "secret"[\s\S]*SECRET_TOKEN[\s\S]*not set in \.e\/\.env/,
   );
 });
 

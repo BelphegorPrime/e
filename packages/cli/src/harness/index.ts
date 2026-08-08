@@ -1,6 +1,11 @@
 import type { DockerfileParams } from './renderDockerfile';
 import type { EnvHarnessSection } from './renderEnvTemplate';
-import type { Protocol, HarnessAdapter, FileHarnessAdapter } from './adapter';
+import type {
+  Protocol,
+  HarnessAdapter,
+  FileHarnessAdapter,
+  ConfigOverlayDelivery,
+} from './adapter';
 import type { McpEndpoint } from '../mcp/index';
 import { claudeCodeAdapter, codexAdapter, piAdapter, PI_PROVIDER_ID } from './adapter';
 import { imageTag as eImageTag } from '../naming';
@@ -181,8 +186,13 @@ export function resolveHarness(name: string): Harness {
  */
 export type McpDeliveryForm = 'flag' | 'file' | 'none';
 
-/** The MCP delivery form a harness declares (see {@link McpDeliveryForm}). */
-export function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
+/**
+ * The MCP delivery form a harness declares — the single classifier of the
+ * `flag`/`file`/`none` fork. Internal: both {@link harnessCapabilities} (for
+ * gating) and {@link planMcpDelivery} (for wiring) derive from it, so the label
+ * and the wiring it implies can never disagree.
+ */
+function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
   if (harness.renderMcpArgs) return 'flag';
   // A file adapter delivers MCP only if it renders an overlay; pi is a file
   // harness for its provider but ships no MCP client, so it stays `none`.
@@ -194,19 +204,80 @@ export function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
 
 /**
  * The harness's file config adapter when it has one, else undefined — narrows the
- * {@link HarnessAdapter} union so callers avoid an `as FileHarnessAdapter` cast.
+ * {@link HarnessAdapter} union so {@link planMcpDelivery} avoids an
+ * `as FileHarnessAdapter` cast. Internal to this module.
  */
-export function fileAdapterFor(harness: Harness): FileHarnessAdapter | undefined {
+function fileAdapterFor(harness: Harness): FileHarnessAdapter | undefined {
   return harness.adapter?.kind === 'file' ? harness.adapter : undefined;
 }
 
 /**
- * Whether this harness supports Agent Skills — its declared skill capability. A
- * harness with no {@link Harness.skillsDir} cannot place skills, so `--skill` and
- * baked skills are rejected against it (capability gating).
+ * What a harness can do, as a small described value — the presence/form gates the
+ * spawn edge checks before a run (ADR-0006/0008). It replaces the scatter of
+ * optional-field probes (`adapter?`, `renderMcpArgs?`, `skillsDir?`) that
+ * `validateSpawn` used to reassemble by hand: each field states one capability.
+ * Gating only — `planSpawn` still fetches the real `adapter` and calls
+ * {@link planMcpDelivery} for the wiring a form implies. (Protocol compatibility
+ * is a set-membership check with its own home, `validateProviderProtocol`, so it
+ * is deliberately not a capability here.)
  */
-export function skillsSupported(harness: Harness): boolean {
-  return harness.skillsDir !== undefined;
+export interface HarnessCapabilities {
+  /** How a provider is delivered: env vars, a baked config file, or no adapter. */
+  provider: 'env' | 'file' | 'none';
+  /** How MCP config is delivered (see {@link McpDeliveryForm}). */
+  mcp: McpDeliveryForm;
+  /** The in-container skills dir, or undefined when the harness supports no skills. */
+  skills: string | undefined;
+}
+
+/** Describes a harness's capabilities for the spawn edge's gating (see {@link HarnessCapabilities}). */
+export function harnessCapabilities(harness: Harness): HarnessCapabilities {
+  return {
+    provider: harness.adapter ? harness.adapter.kind : 'none',
+    mcp: mcpDeliveryForm(harness),
+    skills: harness.skillsDir,
+  };
+}
+
+/**
+ * How the selected MCP servers reach a harness, as data — the wiring a
+ * {@link McpDeliveryForm} implies, decided in one place so `planSpawn` no longer
+ * re-branches on `renderMcpArgs` vs the file adapter (ADR-0006):
+ *  - `flag` — extra argv for the run command (Claude's `--mcp-config`).
+ *  - `file` — a config overlay merged onto `baseConfig` (Codex's `config.toml`).
+ *  - `none` — no delivery; the spawn edge rejects `--mcp` against such a harness
+ *    before ever calling this, so it is unreachable in a valid run (defensive).
+ */
+export type McpDelivery =
+  | { form: 'flag'; args: string[] }
+  | { form: 'file'; overlay: ConfigOverlayDelivery }
+  | { form: 'none' };
+
+/**
+ * Plans MCP delivery for a harness, given the selected `endpoints` and the baked
+ * provider `baseConfig` a file overlay merges onto (empty for a default agent).
+ * Dispatches on the single {@link mcpDeliveryForm} classifier — the label and the
+ * wiring share one source, so they cannot drift. The non-null assertions are
+ * guaranteed by that classifier: a `flag` form has `renderMcpArgs`; a `file` form
+ * has a file adapter with `planConfigOverlay`.
+ */
+export function planMcpDelivery(
+  harness: Harness,
+  endpoints: McpEndpoint[],
+  baseConfig: string,
+): McpDelivery {
+  const form = mcpDeliveryForm(harness);
+  switch (form) {
+    case 'flag':
+      return { form, args: harness.renderMcpArgs!(endpoints) };
+    case 'file':
+      return {
+        form,
+        overlay: fileAdapterFor(harness)!.planConfigOverlay!(baseConfig, endpoints),
+      };
+    case 'none':
+      return { form };
+  }
 }
 
 /**

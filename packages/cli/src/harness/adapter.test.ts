@@ -10,7 +10,7 @@ import {
   piApi,
   PI_PROVIDER_ID,
   validateProviderProtocol,
-  renderProviderEnvFile,
+  EnvFileRenderer,
   parseDotenv,
   type Provider,
 } from './adapter';
@@ -68,10 +68,13 @@ test('claudeCodeAdapter: never emits the secret value, only its env var name', (
   assert.ok(!('value' in auth));
 });
 
-test('renderProviderEnvFile: literals inline, fromEnv resolved from .e/.env', () => {
-  const content = renderProviderEnvFile(
+test('EnvFileRenderer: literals inline, fromEnv resolved from .e/.env', () => {
+  const renderer = new EnvFileRenderer((name) =>
+    name === 'MY_GATEWAY_KEY' ? 'sk-secret-123' : undefined,
+  );
+  const content = renderer.render(
     claudeCodeAdapter.renderProviderEnv(provider),
-    (name) => (name === 'MY_GATEWAY_KEY' ? 'sk-secret-123' : undefined),
+    'Provider API key',
   );
   assert.equal(
     content,
@@ -84,25 +87,28 @@ test('renderProviderEnvFile: literals inline, fromEnv resolved from .e/.env', ()
   );
 });
 
-test('renderProviderEnvFile: a missing key is a hard error naming the fix', () => {
+test('EnvFileRenderer: a missing key is a hard error naming the subject and the fix', () => {
+  const renderer = new EnvFileRenderer(() => undefined);
   assert.throws(
-    () =>
-      renderProviderEnvFile(
-        claudeCodeAdapter.renderProviderEnv(provider),
-        () => undefined,
-      ),
-    /MY_GATEWAY_KEY[\s\S]*\.e\/\.env/,
+    () => renderer.render(claudeCodeAdapter.renderProviderEnv(provider), 'Provider API key'),
+    /Provider API key[\s\S]*MY_GATEWAY_KEY[\s\S]*\.e\/\.env/,
   );
 });
 
-test('renderProviderEnvFile: an empty key value is rejected like a missing one', () => {
+test('EnvFileRenderer: an empty key value is rejected like a missing one', () => {
+  const renderer = new EnvFileRenderer(() => '');
   assert.throws(
-    () =>
-      renderProviderEnvFile(
-        claudeCodeAdapter.renderProviderEnv(provider),
-        () => '',
-      ),
+    () => renderer.render(claudeCodeAdapter.renderProviderEnv(provider), 'Provider API key'),
     /not set in \.e\/\.env/,
+  );
+});
+
+test('EnvFileRenderer: the same instance renders many files with a per-call subject', () => {
+  const renderer = new EnvFileRenderer((name) => (name === 'TOKEN' ? 'v' : undefined));
+  assert.equal(renderer.render([{ name: 'API', fromEnv: 'TOKEN' }], 'MCP server "x"'), 'API=v\n');
+  assert.throws(
+    () => renderer.render([{ name: 'API', fromEnv: 'MISSING' }], 'MCP server "x"'),
+    /MCP server "x"[\s\S]*MISSING/,
   );
 });
 

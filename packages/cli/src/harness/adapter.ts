@@ -160,7 +160,7 @@ export interface FileHarnessAdapter {
    * {@link configDir}/{@link configFileName}/{@link configDirEnv} fields. Pure —
    * the edge writes the file, formats the mount, and appends the env. **Optional**
    * — its presence is the harness's declared file-MCP capability; absent for pi
-   * (no MCP client). See {@link mcpDeliveryForm}.
+   * (no MCP client). See {@link planMcpDelivery}.
    */
   planConfigOverlay?(baseConfig: string, endpoints: McpEndpoint[]): ConfigOverlayDelivery;
 }
@@ -362,7 +362,7 @@ export function renderPiModelsJson(provider: Provider): string {
  * file baked into the derived agent image; only the API key is delivered at
  * runtime, by name. pi ships **no MCP client** (`docs/usage.md` Design
  * Principles), so it carries no `renderMcpServers`/`planConfigOverlay` — the
- * spawn edge capability-gates `--mcp pi` off (see {@link mcpDeliveryForm}). pi
+ * spawn edge capability-gates `--mcp pi` off (see {@link harnessCapabilities}). pi
  * requires the model declared in the file, so `modelInFile` is `true`.
  */
 export const piAdapter: FileHarnessAdapter = {
@@ -404,28 +404,36 @@ export function validateProviderProtocol(
 }
 
 /**
- * Renders adapter-produced {@link ContainerEnv} entries into `.env` file content
- * (one `NAME=value` line each), delivered to the container via `--env-file` so
- * no value lands on argv. A `fromEnv` entry's value is resolved via `resolve`
- * (the parsed `.e/.env`); a missing key is a hard error naming the fix, because
- * running with an empty credential would fail opaquely deep inside the harness.
+ * Renders {@link ContainerEnv} entries into `.env` file content (one `NAME=value`
+ * line each), delivered to the container via `--env-file` so no value lands on
+ * argv. Constructed once with the parsed `.e/.env` resolver and reused for every
+ * credential env-file a spawn writes — the provider's and each MCP server's — so
+ * the secret resolution and its single fail-loud live in one place (ADR-0006/0008).
  */
-export function renderProviderEnvFile(
-  entries: ContainerEnv[],
-  resolve: (name: string) => string | undefined,
-): string {
-  const lines = entries.map((entry) => {
-    if ('value' in entry) return `${entry.name}=${entry.value}`;
-    const value = resolve(entry.fromEnv);
-    if (value === undefined || value === '') {
-      throw new Error(
-        `Provider API key env "${entry.fromEnv}" is not set in .e/.env. ` +
-          `Add "${entry.fromEnv}=<key>" there — its value is injected at runtime, never baked into an image.`,
-      );
-    }
-    return `${entry.name}=${value}`;
-  });
-  return lines.join('\n') + '\n';
+export class EnvFileRenderer {
+  constructor(private readonly resolve: (name: string) => string | undefined) {}
+
+  /**
+   * Renders `entries` to env-file content. A `value` entry inlines its literal; a
+   * `fromEnv` entry is resolved by name, and a missing or empty value is a hard
+   * error. `subject` names who needs the key (e.g. `Provider API key`, `MCP server
+   * "everything"`) so the one message stays specific — running with an empty
+   * credential would otherwise fail opaquely deep inside the harness.
+   */
+  render(entries: ContainerEnv[], subject: string): string {
+    const lines = entries.map((entry) => {
+      if ('value' in entry) return `${entry.name}=${entry.value}`;
+      const value = this.resolve(entry.fromEnv);
+      if (value === undefined || value === '') {
+        throw new Error(
+          `${subject} env "${entry.fromEnv}" is not set in .e/.env. ` +
+            `Add "${entry.fromEnv}=<value>" there — its value is injected at runtime, never baked into an image.`,
+        );
+      }
+      return `${entry.name}=${value}`;
+    });
+    return lines.join('\n') + '\n';
+  }
 }
 
 /**

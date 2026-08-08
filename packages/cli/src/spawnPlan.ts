@@ -14,9 +14,9 @@
 
 import type { Agent } from './agent';
 import type { Harness } from './harness/index';
-import { mcpDeliveryForm, skillsSupported, fileAdapterFor } from './harness/index';
-import { validateProviderProtocol, renderProviderEnvFile } from './harness/adapter';
-import type { ConfigOverlayDelivery } from './harness/adapter';
+import { harnessCapabilities, planMcpDelivery } from './harness/index';
+import { validateProviderProtocol, EnvFileRenderer } from './harness/adapter';
+import type { ConfigOverlayDelivery, ContainerEnv } from './harness/adapter';
 import {
   planProviderDelivery,
   planAgentImage,
@@ -179,60 +179,55 @@ export interface SpawnFacts {
  */
 export function validateSpawn(facts: SpawnFacts): void {
   const { agent, harness } = facts;
+  const caps = harnessCapabilities(harness);
 
   validateProviderProtocol(agent.provider, harness);
 
-  if (agent.provider && !harness.adapter) {
+  if (agent.provider && caps.provider === 'none') {
     throw new Error(
       `Harness "${harness.name}" has no config adapter, so it cannot deliver a provider yet.`,
     );
   }
 
-  if (facts.mcpServers.length > 0 && mcpDeliveryForm(harness) === 'none') {
+  if (facts.mcpServers.length > 0 && caps.mcp === 'none') {
     throw new Error(
       `Harness "${harness.name}" has no MCP client, so it cannot use --mcp. ` +
         `Use a harness that supports MCP (e.g. claudeCode or codex).`,
     );
   }
 
-  if (facts.bakedSkills.length > 0 || facts.perRunSkills.length > 0) {
-    if (!skillsSupported(harness) || !harness.skillsDir) {
-      const kinds = [
-        facts.bakedSkills.length > 0 ? 'baked' : undefined,
-        facts.perRunSkills.length > 0 ? '--skill' : undefined,
-      ].filter(Boolean);
-      throw new Error(
-        `Harness "${harness.name}" does not support Skills, so it cannot receive ` +
-          `${kinds.join(' or ')} skills.`,
-      );
-    }
+  if (
+    (facts.bakedSkills.length > 0 || facts.perRunSkills.length > 0) &&
+    caps.skills === undefined
+  ) {
+    const kinds = [
+      facts.bakedSkills.length > 0 ? 'baked' : undefined,
+      facts.perRunSkills.length > 0 ? '--skill' : undefined,
+    ].filter(Boolean);
+    throw new Error(
+      `Harness "${harness.name}" does not support Skills, so it cannot receive ` +
+        `${kinds.join(' or ')} skills.`,
+    );
   }
 }
 
 /**
- * Renders an MCP server's required credentials into `.env` file content (one
- * `NAME=value` line each), resolving each by name from `storeEnv`. A missing key
- * is a hard, fail-fast error naming the fix (running with an empty credential
- * would fail opaquely deep inside the harness). Returns undefined for a
+ * Maps an MCP server's required credentials to {@link ContainerEnv} refs (each a
+ * `fromEnv` name) and renders them into `.env` file content via `renderer`,
+ * resolving each secret by name and failing loud on a missing one (the shared
+ * {@link EnvFileRenderer} owns that resolution). Returns undefined for a
  * credential-free server. Pure — the edge writes the content to a scratch file.
  */
 export function renderMcpCredentials(
   server: McpServer,
-  storeEnv: Record<string, string>,
-  destination: 'sidecar' | 'agent',
+  renderer: EnvFileRenderer,
 ): string | undefined {
   if (server.requiredEnv.length === 0) return undefined;
-  const lines = server.requiredEnv.map((name) => {
-    const value = storeEnv[name];
-    if (value === undefined || value === '') {
-      throw new Error(
-        `MCP server "${server.name}" needs "${name}" set in .e/.env. ` +
-          `Add "${name}=<value>" there — it is injected into the ${destination} at runtime, never baked into an image.`,
-      );
-    }
-    return `${name}=${value}`;
-  });
-  return lines.join('\n') + '\n';
+  const entries: ContainerEnv[] = server.requiredEnv.map((name) => ({
+    name,
+    fromEnv: name,
+  }));
+  return renderer.render(entries, `MCP server "${server.name}"`);
 }
 
 /**
@@ -273,20 +268,20 @@ export interface SpawnPlan {
  * MCP sidecar vs. remote vs. flag vs. file, the config overlay, the derived image,
  * skill mounts, and every credential env-file — is decided here, so the whole
  * thing is testable without a runtime, a container, or the network. Throws on a
- * missing credential (via {@link renderMcpCredentials}/{@link renderProviderEnvFile}).
+ * missing credential (via {@link renderMcpCredentials}/{@link EnvFileRenderer}).
  */
 export function planSpawn(facts: SpawnFacts, resolvedModel?: ResolvedModel): SpawnPlan {
   const { agent, harness, storeEnv, root } = facts;
+  // One renderer, bound to the store's secrets, for every credential env-file this
+  // spawn writes — the provider's and each MCP server's (ADR-0008).
+  const envRenderer = new EnvFileRenderer((name) => storeEnv[name]);
 
   // Provider delivery (env harness → runtime env; file harness → baked config).
   let delivery: ProviderDelivery | undefined;
   let providerEnvContent: string | undefined;
   if (agent.provider && harness.adapter && resolvedModel) {
     delivery = planProviderDelivery(harness.adapter, agent.provider, resolvedModel);
-    providerEnvContent = renderProviderEnvFile(
-      delivery.runtimeEnv,
-      (name) => storeEnv[name],
-    );
+    providerEnvContent = envRenderer.render(delivery.runtimeEnv, 'Provider API key');
   }
 
   // MCP: split by transport, render credentials, decide the delivery form.
@@ -304,24 +299,24 @@ export function planSpawn(facts: SpawnFacts, resolvedModel?: ResolvedModel): Spa
         port: server.port,
         healthcheck: server.healthcheck,
       });
-      const creds = renderMcpCredentials(server, storeEnv, 'sidecar');
+      const creds = renderMcpCredentials(server, envRenderer);
       if (creds) sidecarCredentials[server.name] = creds;
     }
     for (const server of selection.remoteServers) {
-      const creds = renderMcpCredentials(server, storeEnv, 'agent');
+      const creds = renderMcpCredentials(server, envRenderer);
       if (creds) remoteCredentials.push(creds);
     }
     // Claude takes MCP inline via a flag; a file harness (Codex) takes an overlay.
-    if (harness.renderMcpArgs) {
-      mcpArgs = harness.renderMcpArgs(selection.endpoints);
-    } else {
-      const fileAdapter = fileAdapterFor(harness);
-      if (fileAdapter?.planConfigOverlay) {
-        configOverlay = fileAdapter.planConfigOverlay(
-          delivery?.bakedConfig?.file.content ?? '',
-          selection.endpoints,
-        );
-      }
+    // One decision names both the form and its wiring, so validate and plan agree.
+    const mcp = planMcpDelivery(
+      harness,
+      selection.endpoints,
+      delivery?.bakedConfig?.file.content ?? '',
+    );
+    if (mcp.form === 'flag') {
+      mcpArgs = mcp.args;
+    } else if (mcp.form === 'file') {
+      configOverlay = mcp.overlay;
     }
   }
 

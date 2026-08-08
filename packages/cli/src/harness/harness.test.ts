@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HARNESSES, mcpDeliveryForm, fileAdapterFor, skillsSupported } from './index';
+import { HARNESSES, harnessCapabilities, planMcpDelivery } from './index';
 import type { McpEndpoint } from '../mcp/index';
 
 const claude = HARNESSES.claudeCode;
@@ -64,20 +64,52 @@ test('only Claude wires MCP inline today; the others have no renderMcpArgs', () 
   assert.equal(HARNESSES.pi.renderMcpArgs, undefined);
 });
 
-test('mcpDeliveryForm declares each harness capability: flag (Claude), file (Codex), none (pi)', () => {
-  assert.equal(mcpDeliveryForm(HARNESSES.claudeCode), 'flag');
-  assert.equal(mcpDeliveryForm(HARNESSES.codex), 'file');
+test('harnessCapabilities.mcp declares each harness form: flag (Claude), file (Codex), none (pi/opencode)', () => {
+  assert.equal(harnessCapabilities(HARNESSES.claudeCode).mcp, 'flag');
+  assert.equal(harnessCapabilities(HARNESSES.codex).mcp, 'file');
   // pi has no MCP client, so --mcp is gated off.
-  assert.equal(mcpDeliveryForm(HARNESSES.pi), 'none');
+  assert.equal(harnessCapabilities(HARNESSES.pi).mcp, 'none');
   // opencode has no MCP delivery wired yet, so it is gated off too.
-  assert.equal(mcpDeliveryForm(HARNESSES.opencode), 'none');
+  assert.equal(harnessCapabilities(HARNESSES.opencode).mcp, 'none');
 });
 
-test('fileAdapterFor narrows to the file adapter for a file harness (Codex and pi)', () => {
-  assert.equal(fileAdapterFor(HARNESSES.codex)?.kind, 'file');
-  assert.equal(fileAdapterFor(HARNESSES.claudeCode), undefined);
+test('harnessCapabilities.provider reflects the adapter kind (env Claude, file Codex/pi, none opencode)', () => {
+  assert.equal(harnessCapabilities(HARNESSES.claudeCode).provider, 'env');
+  assert.equal(harnessCapabilities(HARNESSES.codex).provider, 'file');
   // pi delivers its provider via a baked models.json, so it is a file harness too.
-  assert.equal(fileAdapterFor(HARNESSES.pi)?.kind, 'file');
+  assert.equal(harnessCapabilities(HARNESSES.pi).provider, 'file');
+  // opencode ships no config adapter yet.
+  assert.equal(harnessCapabilities(HARNESSES.opencode).provider, 'none');
+});
+
+test('planMcpDelivery wires Claude inline as a flag (--mcp-config args)', () => {
+  const endpoints: McpEndpoint[] = [
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+  ];
+  const delivery = planMcpDelivery(HARNESSES.claudeCode, endpoints, '');
+  if (delivery.form !== 'flag') return assert.fail(`expected flag, got ${delivery.form}`);
+  assert.equal(delivery.args[0], '--mcp-config');
+  assert.deepEqual(JSON.parse(delivery.args[1]).mcpServers.everything, {
+    type: 'http',
+    url: 'http://everything:3001/mcp',
+  });
+});
+
+test('planMcpDelivery wires Codex as a file overlay merged onto the baked base config', () => {
+  const endpoints: McpEndpoint[] = [
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+  ];
+  const delivery = planMcpDelivery(HARNESSES.codex, endpoints, 'model = "x"\n');
+  if (delivery.form !== 'file') return assert.fail(`expected file, got ${delivery.form}`);
+  // The overlay merges the MCP block onto the base config and mounts at Codex's dir.
+  assert.match(delivery.overlay.file.content, /model = "x"/);
+  assert.match(delivery.overlay.file.content, /\[mcp_servers\.everything\]/);
+  assert.equal(delivery.overlay.mountTo, '/root/.codex/config.toml');
+});
+
+test('planMcpDelivery reports no delivery for a harness without an MCP client (pi/opencode)', () => {
+  assert.deepEqual(planMcpDelivery(HARNESSES.pi, [], ''), { form: 'none' });
+  assert.deepEqual(planMcpDelivery(HARNESSES.opencode, [], ''), { form: 'none' });
 });
 
 test('pi buildCommand selects the e provider and resolved model when one is delivered', () => {
@@ -107,10 +139,14 @@ test('each harness places skills at a path outside /workspace; Claude differs fr
   }
 });
 
-test('skillsSupported reflects a declared skillsDir (all real harnesses support skills)', () => {
+test('harnessCapabilities.skills is the declared skillsDir (all real harnesses support skills)', () => {
   for (const h of Object.values(HARNESSES)) {
-    assert.equal(skillsSupported(h), true);
+    assert.equal(harnessCapabilities(h).skills, h.skillsDir);
+    assert.ok(harnessCapabilities(h).skills !== undefined);
   }
   // A harness with no skillsDir is gated off (defensive; no such harness ships).
-  assert.equal(skillsSupported({ ...HARNESSES.pi, skillsDir: undefined }), false);
+  assert.equal(
+    harnessCapabilities({ ...HARNESSES.pi, skillsDir: undefined }).skills,
+    undefined,
+  );
 });
