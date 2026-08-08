@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import {
   claudeCodeAdapter,
   codexAdapter,
+  piAdapter,
   renderCodexConfig,
   renderCodexMcpServers,
+  renderPiModelsJson,
+  piApi,
+  PI_PROVIDER_ID,
   validateProviderProtocol,
   renderProviderEnvFile,
   parseDotenv,
@@ -220,14 +224,14 @@ test('renderCodexMcpServers: renders remote headers verbatim as http_headers', (
 test('codexAdapter: renderMcpServers delegates to renderCodexMcpServers', () => {
   const endpoints = [{ name: 'everything', url: 'http://everything:3001/mcp' }];
   assert.equal(
-    codexAdapter.renderMcpServers(endpoints),
+    codexAdapter.renderMcpServers!(endpoints),
     renderCodexMcpServers(endpoints),
   );
 });
 
 test('codexAdapter.renderConfigOverlay: merges the MCP block onto the baked base config', () => {
   const base = renderCodexConfig(codexProvider);
-  const overlay = codexAdapter.renderConfigOverlay(base, [
+  const overlay = codexAdapter.renderConfigOverlay!(base, [
     { name: 'everything', url: 'http://everything:3001/mcp' },
   ]);
   assert.equal(overlay.fileName, 'config.toml');
@@ -242,11 +246,79 @@ test('codexAdapter.renderConfigOverlay: merges the MCP block onto the baked base
 });
 
 test('codexAdapter.renderConfigOverlay: a default agent (no base) yields an MCP-only config', () => {
-  const overlay = codexAdapter.renderConfigOverlay('', [
+  const overlay = codexAdapter.renderConfigOverlay!('', [
     { name: 'everything', url: 'http://everything:3001/mcp' },
   ]);
   assert.doesNotMatch(overlay.content, /model_provider/);
   assert.match(overlay.content, /^\[mcp_servers\.everything\]$/m);
   // No leading blank lines when there is no base config.
   assert.match(overlay.content, /^\[mcp_servers\.everything\]/);
+});
+
+const piProvider: Provider = {
+  baseUrl: 'https://gateway.example.com/v1',
+  model: 'claude-opus-5',
+  protocol: 'anthropic-messages',
+  apiKeyEnv: 'MY_GATEWAY_KEY',
+};
+
+test('piApi: maps e wire protocols to pi api names (two differ)', () => {
+  assert.equal(piApi('anthropic-messages'), 'anthropic-messages');
+  assert.equal(piApi('openai-chat'), 'openai-completions');
+  assert.equal(piApi('openai-responses'), 'openai-responses');
+  assert.equal(piApi('google'), 'google-generative-ai');
+});
+
+test('renderPiModelsJson: renders a single custom provider selecting the endpoint and model', () => {
+  const cfg = JSON.parse(renderPiModelsJson(piProvider));
+  const p = cfg.providers[PI_PROVIDER_ID];
+  assert.equal(p.baseUrl, 'https://gateway.example.com/v1');
+  assert.equal(p.api, 'anthropic-messages');
+  // pi requires the model declared in the file to select it.
+  assert.deepEqual(p.models, [{ id: 'claude-opus-5' }]);
+});
+
+test('renderPiModelsJson: references the API key by env var name via ${VAR}, never a value', () => {
+  const cfg = JSON.parse(renderPiModelsJson(piProvider));
+  // pi interpolates ${VAR} from the process env at request time; the baked file
+  // must carry the name, never a secret.
+  assert.equal(cfg.providers[PI_PROVIDER_ID].apiKey, '${MY_GATEWAY_KEY}');
+});
+
+test('renderPiModelsJson: maps openai-chat to pi openai-completions', () => {
+  const cfg = JSON.parse(
+    renderPiModelsJson({ ...piProvider, protocol: 'openai-chat' }),
+  );
+  assert.equal(cfg.providers[PI_PROVIDER_ID].api, 'openai-completions');
+});
+
+test('piAdapter: is a file-delivered adapter that renders models.json', () => {
+  assert.equal(piAdapter.kind, 'file');
+  const file = piAdapter.renderProviderFile(piProvider);
+  assert.equal(file.fileName, 'models.json');
+  assert.equal(file.content, renderPiModelsJson(piProvider));
+});
+
+test('piAdapter: bakes config under a relocated config dir outside /workspace', () => {
+  assert.equal(piAdapter.configDirEnv, 'PI_CODING_AGENT_DIR');
+  assert.ok(piAdapter.configDir.startsWith('/'));
+  assert.ok(!piAdapter.configDir.startsWith('/workspace'));
+});
+
+test('piAdapter: requires the model in the file; Codex does not (modelInFile)', () => {
+  // pi selects only models declared in models.json, so a resolved model is always
+  // baked; Codex can deliver an auto model on the command line via `-m`.
+  assert.equal(piAdapter.modelInFile, true);
+  assert.equal(codexAdapter.modelInFile, false);
+});
+
+test('piAdapter: the only runtime env is the API key, delivered by name', () => {
+  assert.deepEqual(piAdapter.renderRuntimeEnv(piProvider), [
+    { name: 'MY_GATEWAY_KEY', fromEnv: 'MY_GATEWAY_KEY' },
+  ]);
+});
+
+test('piAdapter: ships no MCP delivery (pi has no MCP client)', () => {
+  assert.equal(piAdapter.renderConfigOverlay, undefined);
+  assert.equal(piAdapter.renderMcpServers, undefined);
 });

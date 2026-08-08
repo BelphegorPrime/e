@@ -34,6 +34,16 @@ at runtime; a **file** harness (Codex) omits the `model` line from the baked
 `config.toml` and receives the resolved id at runtime via `codex exec -m <id>`.
 A concrete (non-`auto`) model keeps the baked path from ADR-0004 unchanged.
 
+**pi is the exception that must bake.** pi selects only models **declared** in
+`models.json`, so an `auto` id cannot be delivered command-line-only the way
+Codex's `-m` does — the file adapter's `modelInFile` flag forces the resolved
+model into the baked `models.json` and *also* passes it via `--provider e
+--model <id>` for selection. This reintroduces the ADR-0004 staleness the "bake
+`auto`" option was rejected for: a newly-shipped `auto` pick is not observed
+until the derived image is rebuilt (`--rebuild`). It is accepted here as pi's
+CLI leaves no alternative; the resolution itself still runs fresh at each spawn,
+so the staleness is bounded to the cached image, not the preference list.
+
 ## The curated preference list (HITL)
 
 This list is an opinionated call, reviewed by a human before encoding. The

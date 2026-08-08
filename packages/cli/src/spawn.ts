@@ -408,7 +408,7 @@ export function registerSpawnCommand(program: Command): void {
         // re-derived), or empty for a default agent.
         const configMounts: string[] = [];
         const agentEnv: string[] = [...(opts.env ?? [])];
-        if (mcpFileEndpoints !== undefined && fileAdapter) {
+        if (mcpFileEndpoints !== undefined && fileAdapter?.renderConfigOverlay) {
           try {
             const baseConfig =
               delivery?.bakedConfig?.file.fileName === fileAdapter.configFileName

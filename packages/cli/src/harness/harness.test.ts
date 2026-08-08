@@ -73,10 +73,27 @@ test('mcpDeliveryForm declares each harness capability: flag (Claude), file (Cod
   assert.equal(mcpDeliveryForm(HARNESSES.opencode), 'none');
 });
 
-test('fileAdapterFor narrows to the file adapter only for a file harness', () => {
+test('fileAdapterFor narrows to the file adapter for a file harness (Codex and pi)', () => {
   assert.equal(fileAdapterFor(HARNESSES.codex)?.kind, 'file');
   assert.equal(fileAdapterFor(HARNESSES.claudeCode), undefined);
-  assert.equal(fileAdapterFor(HARNESSES.pi), undefined);
+  // pi delivers its provider via a baked models.json, so it is a file harness too.
+  assert.equal(fileAdapterFor(HARNESSES.pi)?.kind, 'file');
+});
+
+test('pi buildCommand selects the e provider and resolved model when one is delivered', () => {
+  assert.deepEqual(HARNESSES.pi.buildCommand('do it', 'claude-opus-5'), [
+    'pi',
+    '-p',
+    'do it',
+    '--provider',
+    'e',
+    '--model',
+    'claude-opus-5',
+  ]);
+});
+
+test('pi buildCommand is plain when no provider/model is configured (default agent)', () => {
+  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', 'do it']);
 });
 
 test('each harness places skills at a path outside /workspace; Claude differs from the shared dir', () => {

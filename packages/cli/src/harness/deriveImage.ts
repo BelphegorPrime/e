@@ -128,11 +128,14 @@ export interface ProviderDelivery {
  *
  * - **env** harness (Claude Code): the whole provider (with the resolved model)
  *   becomes runtime env; nothing is baked from the provider.
- * - **file** harness (Codex): the provider is rendered into a config file to bake
- *   into the derived image ({@link ProviderDelivery.bakedConfig}). A concrete
- *   model is baked into the config; an `auto`-resolved model is omitted and
- *   delivered on the run command instead (`runtimeModel`). Only the API key is
- *   delivered as runtime env (by name; never baked).
+ * - **file** harness (Codex, pi): the provider is rendered into a config file to
+ *   bake into the derived image ({@link ProviderDelivery.bakedConfig}). The model
+ *   handling branches on the adapter's `modelInFile`: Codex (`false`) bakes a
+ *   concrete model but keeps an `auto`-resolved one out of the config and delivers
+ *   it on the run command (`runtimeModel`); pi (`true`) selects only models
+ *   declared in `models.json`, so the resolved model is always baked *and* passed
+ *   on the command line (`--provider`/`--model`) for selection. Only the API key
+ *   is delivered as runtime env (by name; never baked).
  */
 export function planProviderDelivery(
   adapter: HarnessAdapter,
@@ -144,15 +147,18 @@ export function planProviderDelivery(
     return { runtimeEnv: adapter.renderProviderEnv({ ...provider, model: resolved.model }) };
   }
 
-  // File harness: bake a concrete model into the config, but keep an
-  // auto-resolved one out of it (the provider still carries `auto`, which
-  // renderProviderFile omits) and deliver it on the command line instead.
-  const configProvider: Provider = resolved.fromAuto
-    ? provider
-    : { ...provider, model: resolved.model };
+  // File harness: bake the provider config into the derived image. `modelInFile`
+  // forces the resolved model into the config (pi requires it declared to be
+  // selectable) and passes it on the command line too; otherwise Codex keeps an
+  // auto model out of the config and delivers it via `-m` at runtime.
+  const bakeResolvedModel = adapter.modelInFile || !resolved.fromAuto;
+  const passModelOnCommand = adapter.modelInFile || resolved.fromAuto;
+  const configProvider: Provider = bakeResolvedModel
+    ? { ...provider, model: resolved.model }
+    : provider;
   return {
     runtimeEnv: adapter.renderRuntimeEnv(provider),
-    runtimeModel: resolved.fromAuto ? resolved.model : undefined,
+    runtimeModel: passModelOnCommand ? resolved.model : undefined,
     bakedConfig: {
       file: adapter.renderProviderFile(configProvider),
       configDir: adapter.configDir,

@@ -108,12 +108,21 @@ export interface FileHarnessAdapter {
   configDir: string;
   /** The config file name this harness reads under {@link configDir} (e.g. `config.toml`). */
   configFileName: string;
+  /**
+   * Whether a resolved model must be materialised into the config file. Codex can
+   * receive an `auto`-resolved model on the command line (`-m <id>`) and keep its
+   * config model-agnostic, so it sets `false`; pi selects only models **declared**
+   * in `models.json`, so it sets `true` and every resolved model is baked (ADR-0007
+   * staleness applies: a newly-shipped `auto` pick needs `--rebuild`). See
+   * {@link planProviderDelivery} and `docs/research/harness-cli-facts.md`.
+   */
+  modelInFile: boolean;
   /** Renders the Provider into this harness's native config file. */
   renderProviderFile(provider: Provider): RenderedConfigFile;
   /**
    * The runtime env the derived image still needs — the API key, by name only
    * (never baked). The baked config file points at it via the harness's own
-   * key-by-name mechanism (Codex `env_key`).
+   * key-by-name mechanism (Codex `env_key`, pi `${VAR}` interpolation).
    */
   renderRuntimeEnv(provider: Provider): ContainerEnv[];
   /**
@@ -121,16 +130,19 @@ export interface FileHarnessAdapter {
    * runtime-overlay fragment (ADR-0006 layer 3), to be merged onto the baked
    * base config and delivered outside `/workspace` via {@link configDir}.
    * Container sidecars use streamable HTTP (a `url`); returns an empty string
-   * when nothing is selected.
+   * when nothing is selected. **Optional** — absent for a file harness that ships
+   * no MCP client (pi), which the spawn edge capability-gates off.
    */
-  renderMcpServers(endpoints: McpEndpoint[]): string;
+  renderMcpServers?(endpoints: McpEndpoint[]): string;
   /**
    * Merges the selected MCP servers onto the baked `baseConfig` (the exact config
    * the derived image baked, reused not re-derived; empty for a default agent
    * with no provider), returning the complete runtime-overlay config file to
    * deliver at {@link configDir}. Pure — the spawn edge writes and mounts it.
+   * **Optional** — its presence is the harness's declared file-MCP capability;
+   * absent for pi (no MCP client). See {@link mcpDeliveryForm}.
    */
-  renderConfigOverlay(baseConfig: string, endpoints: McpEndpoint[]): RenderedConfigFile;
+  renderConfigOverlay?(baseConfig: string, endpoints: McpEndpoint[]): RenderedConfigFile;
 }
 
 /**
@@ -251,6 +263,9 @@ export const codexAdapter: FileHarnessAdapter = {
   configDirEnv: 'CODEX_HOME',
   configDir: '/root/.codex',
   configFileName: 'config.toml',
+  // Codex delivers an auto-resolved model on the command line (`codex exec -m`),
+  // so it keeps the config model-agnostic rather than baking the model.
+  modelInFile: false,
   renderProviderFile(provider: Provider): RenderedConfigFile {
     return { fileName: 'config.toml', content: renderCodexConfig(provider) };
   },
@@ -264,6 +279,79 @@ export const codexAdapter: FileHarnessAdapter = {
     const block = renderCodexMcpServers(endpoints);
     const content = (baseConfig ? baseConfig.trimEnd() + '\n\n' : '') + block;
     return { fileName: this.configFileName, content };
+  },
+};
+
+/**
+ * The fixed provider id `e` writes into pi's `models.json`. `e` owns the whole
+ * file, so there is only ever one custom provider and no id collision. Shared
+ * with pi's `buildCommand`, which selects it via `--provider <id>`.
+ */
+export const PI_PROVIDER_ID = 'e';
+
+/**
+ * Maps e's wire {@link Protocol} to pi's `api` field value. Two names differ from
+ * e's: our `openai-chat` is pi's `openai-completions`, and our `google` is pi's
+ * `google-generative-ai`. Grounding: pi `docs/models.md` "Supported APIs".
+ */
+export function piApi(protocol: Protocol): string {
+  switch (protocol) {
+    case 'anthropic-messages':
+      return 'anthropic-messages';
+    case 'openai-chat':
+      return 'openai-completions';
+    case 'openai-responses':
+      return 'openai-responses';
+    case 'google':
+      return 'google-generative-ai';
+  }
+}
+
+/**
+ * Renders a {@link Provider} into a pi `models.json` body: one custom provider
+ * (id `e`) carrying the endpoint, the mapped `api`, the API key referenced by env
+ * var name via pi's `${VAR}` interpolation (never a secret value — pi resolves it
+ * from the process env at request time), and the one model to select.
+ *
+ * Unlike Codex, pi selects only models **declared** in `models.json`, so the
+ * (spawn-resolved, concrete) model is always written here — {@link
+ * planProviderDelivery} guarantees a concrete id even for `auto`. Grounding: pi
+ * `docs/models.md`, `docs/providers.md`.
+ */
+export function renderPiModelsJson(provider: Provider): string {
+  const config = {
+    providers: {
+      [PI_PROVIDER_ID]: {
+        baseUrl: provider.baseUrl,
+        api: piApi(provider.protocol),
+        apiKey: `\${${provider.apiKeyEnv}}`,
+        models: [{ id: provider.model }],
+      },
+    },
+  };
+  return JSON.stringify(config, null, 2) + '\n';
+}
+
+/**
+ * pi's adapter. pi is configured through `models.json` under its config dir
+ * (relocatable via `PI_CODING_AGENT_DIR`), so the provider is rendered into a
+ * file baked into the derived agent image; only the API key is delivered at
+ * runtime, by name. pi ships **no MCP client** (`docs/usage.md` Design
+ * Principles), so it carries no `renderMcpServers`/`renderConfigOverlay` — the
+ * spawn edge capability-gates `--mcp pi` off (see {@link mcpDeliveryForm}). pi
+ * requires the model declared in the file, so `modelInFile` is `true`.
+ */
+export const piAdapter: FileHarnessAdapter = {
+  kind: 'file',
+  configDirEnv: 'PI_CODING_AGENT_DIR',
+  configDir: '/root/.pi/agent',
+  configFileName: 'models.json',
+  modelInFile: true,
+  renderProviderFile(provider: Provider): RenderedConfigFile {
+    return { fileName: 'models.json', content: renderPiModelsJson(provider) };
+  },
+  renderRuntimeEnv(provider: Provider): ContainerEnv[] {
+    return [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }];
   },
 };
 

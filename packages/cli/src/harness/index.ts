@@ -2,7 +2,7 @@ import type { DockerfileParams } from './renderDockerfile';
 import type { EnvHarnessSection } from './renderEnvTemplate';
 import type { Protocol, HarnessAdapter, FileHarnessAdapter } from './adapter';
 import type { McpEndpoint } from '../mcp/index';
-import { claudeCodeAdapter, codexAdapter } from './adapter';
+import { claudeCodeAdapter, codexAdapter, piAdapter, PI_PROVIDER_ID } from './adapter';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
 export interface Harness {
@@ -70,9 +70,19 @@ export const HARNESSES: Record<string, Harness> = {
     },
     requiredEnv: ['ANTHROPIC_API_KEY'],
     // pi speaks all four wire protocols (its `openai-completions` is our
-    // `openai-chat`). Its env-based adapter comes with the pi delivery slice.
+    // `openai-chat`). It is file-configured: a custom endpoint lives only in
+    // `models.json` (no base-url env var), so the provider is delivered via the
+    // file adapter, baked into the derived agent image. Grounding:
+    // `docs/research/harness-cli-facts.md`, pi `docs/models.md`.
     protocols: ['anthropic-messages', 'openai-chat', 'openai-responses', 'google'],
-    buildCommand: (prompt: string) => ['pi', '-p', prompt],
+    adapter: piAdapter,
+    // pi selects a configured provider explicitly; the resolved model is passed
+    // for selection when an agent declares a provider (a default agent runs
+    // `pi -p <prompt>` and uses pi's own built-in default).
+    buildCommand: (prompt: string, model?: string) =>
+      model
+        ? ['pi', '-p', prompt, '--provider', PI_PROVIDER_ID, '--model', model]
+        : ['pi', '-p', prompt],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
@@ -165,15 +175,19 @@ export function resolveHarness(name: string): Harness {
  *  - `flag` — inline on the command line (Claude Code's `--mcp-config`).
  *  - `file` — rendered into its native config file, delivered as a runtime
  *    overlay via its file adapter (Codex's `config.toml` / `CODEX_HOME`).
- *  - `none` — no MCP client at all (pi), or no MCP delivery wired yet; `--mcp` is
- *    rejected with a clear error at spawn.
+ *  - `none` — no MCP client at all (pi, whose file adapter renders no MCP), or no
+ *    MCP delivery wired yet; `--mcp` is rejected with a clear error at spawn.
  */
 export type McpDeliveryForm = 'flag' | 'file' | 'none';
 
 /** The MCP delivery form a harness declares (see {@link McpDeliveryForm}). */
 export function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
   if (harness.renderMcpArgs) return 'flag';
-  if (harness.adapter?.kind === 'file') return 'file';
+  // A file adapter delivers MCP only if it renders an overlay; pi is a file
+  // harness for its provider but ships no MCP client, so it stays `none`.
+  if (harness.adapter?.kind === 'file' && harness.adapter.renderConfigOverlay) {
+    return 'file';
+  }
   return 'none';
 }
 

@@ -6,7 +6,7 @@ import {
   planProviderDelivery,
   planAgentImage,
 } from './deriveImage';
-import { claudeCodeAdapter, codexAdapter, type Provider } from './adapter';
+import { claudeCodeAdapter, codexAdapter, piAdapter, type Provider } from './adapter';
 
 const providerBlock = {
   configFileName: 'config.toml',
@@ -134,6 +134,42 @@ test('planProviderDelivery: a file harness keeps an auto model out of the config
   assert.ok(plan.bakedConfig);
   assert.doesNotMatch(plan.bakedConfig.file.content, /^model = /m);
   assert.equal(plan.runtimeModel, 'gpt-5-codex');
+});
+
+const piProvider: Provider = {
+  baseUrl: 'https://gateway.example.com/v1',
+  model: 'auto',
+  protocol: 'anthropic-messages',
+  apiKeyEnv: 'MY_GATEWAY_KEY',
+};
+
+test('planProviderDelivery: pi bakes the resolved auto model into models.json AND passes it on the command', () => {
+  const plan = planProviderDelivery(piAdapter, piProvider, {
+    model: 'claude-opus-5',
+    fromAuto: true,
+  });
+  assert.ok(plan.bakedConfig);
+  assert.equal(plan.bakedConfig.file.fileName, 'models.json');
+  assert.equal(plan.bakedConfig.configDir, '/root/.pi/agent');
+  assert.equal(plan.bakedConfig.configDirEnv, 'PI_CODING_AGENT_DIR');
+  // pi requires the model declared in the file to select it, so even an
+  // auto-resolved model is baked (unlike Codex's command-only `-m`).
+  const cfg = JSON.parse(plan.bakedConfig.file.content);
+  assert.deepEqual(cfg.providers.e.models, [{ id: 'claude-opus-5' }]);
+  // ...and it is still passed on the command line for provider/model selection.
+  assert.equal(plan.runtimeModel, 'claude-opus-5');
+  assert.deepEqual(plan.runtimeEnv, piAdapter.renderRuntimeEnv(piProvider));
+});
+
+test('planProviderDelivery: pi bakes a concrete model too and passes it for selection', () => {
+  const plan = planProviderDelivery(
+    piAdapter,
+    { ...piProvider, model: 'claude-opus-5' },
+    { model: 'claude-opus-5', fromAuto: false },
+  );
+  const cfg = JSON.parse(plan.bakedConfig!.file.content);
+  assert.deepEqual(cfg.providers.e.models, [{ id: 'claude-opus-5' }]);
+  assert.equal(plan.runtimeModel, 'claude-opus-5');
 });
 
 test('planAgentImage: nothing to bake (no provider, no skills) derives no image', () => {
