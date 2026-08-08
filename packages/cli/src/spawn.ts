@@ -1,4 +1,6 @@
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import type { Command } from 'commander';
 import { ContainerRuntime, type RunOptions } from './runtime/index';
 import { HostGit } from './git/host';
@@ -6,6 +8,11 @@ import { runSpawn, type RunSpawnResult } from './runSpawn';
 import { orderEnvFiles, decideImageAction } from './spawnPlan';
 import { resolveHarness, HARNESSES } from './harness/index';
 import { findAgent } from './agent';
+import {
+  validateProviderProtocol,
+  renderProviderEnvFile,
+  parseDotenv,
+} from './harness/adapter';
 import { harnessDir, isInitialized, findRoot, envFilePath } from './store';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
@@ -54,6 +61,17 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   dir?: string;
   /** Raw `--env-file <path>` value from the CLI (a single path). */
   envFile?: string;
+}
+
+/**
+ * Reads the store's shared `.e/.env` into a key→value map, for resolving a
+ * provider's `apiKeyEnv` by name. This is the sole source of a provider's API
+ * key (ADR-0006); a missing or unreadable file yields an empty map, so an unset
+ * key surfaces as the adapter's clear "add it to .e/.env" error.
+ */
+function loadStoreEnv(baseEnvFile: string | undefined): Record<string, string> {
+  if (baseEnvFile === undefined || !fs.existsSync(baseEnvFile)) return {};
+  return parseDotenv(fs.readFileSync(baseEnvFile, 'utf8'));
 }
 
 export function registerSpawnCommand(program: Command): void {
@@ -132,6 +150,15 @@ export function registerSpawnCommand(program: Command): void {
         // harness, so this resolution cannot fail.
         const harness = resolveHarness(agent.harness);
 
+        // Reject a provider protocol the harness does not speak before building
+        // any image or cutting a worktree, so a mismatch fails fast and cheap.
+        try {
+          validateProviderProtocol(agent.provider, harness);
+        } catch (err) {
+          console.error((err as Error).message);
+          process.exit(1);
+        }
+
         let runtime: ContainerRuntime;
         try {
           runtime = resolveRuntime(opts.runtime);
@@ -176,6 +203,43 @@ export function registerSpawnCommand(program: Command): void {
           opts.envFile,
         );
 
+        // If the agent declares a provider, render it into a throwaway env-file
+        // (outside the worktree) via the harness adapter, and layer it last so
+        // the provider's endpoint/model/key take effect. The API key is resolved
+        // by name from `.e/.env` only (ADR-0006), never inlined on argv; the file
+        // is removed once the run returns.
+        let providerEnvDir: string | undefined;
+        const cleanupProviderEnv = (): void => {
+          if (providerEnvDir) {
+            fs.rmSync(providerEnvDir, { recursive: true, force: true });
+            providerEnvDir = undefined;
+          }
+        };
+        if (agent.provider) {
+          try {
+            if (!harness.adapter) {
+              throw new Error(
+                `Harness "${harness.name}" has no config adapter, so it cannot deliver a provider yet.`,
+              );
+            }
+            const storeEnv = loadStoreEnv(baseEnvFile);
+            const content = renderProviderEnvFile(
+              harness.adapter.renderProviderEnv(agent.provider),
+              (name) => storeEnv[name],
+            );
+            providerEnvDir = fs.mkdtempSync(
+              path.join(os.tmpdir(), 'e-provider-'),
+            );
+            const providerEnvFile = path.join(providerEnvDir, 'provider.env');
+            fs.writeFileSync(providerEnvFile, content, { mode: 0o600 });
+            envFiles.push(providerEnvFile);
+          } catch (err) {
+            cleanupProviderEnv();
+            console.error((err as Error).message);
+            process.exit(1);
+          }
+        }
+
         const runOptions: RunOptions = {
           attach: opts.attach,
           rm: opts.rm,
@@ -197,8 +261,13 @@ export function registerSpawnCommand(program: Command): void {
             },
           );
         } catch (err) {
+          cleanupProviderEnv();
           console.error((err as Error).message);
           process.exit(1);
+        } finally {
+          // The rendered provider env-file holds a resolved secret; drop it as
+          // soon as the run returns (the container already has its copy).
+          cleanupProviderEnv();
         }
 
         if (result.error) {

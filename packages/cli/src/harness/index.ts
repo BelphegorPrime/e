@@ -1,5 +1,7 @@
 import type { DockerfileParams } from './renderDockerfile';
 import type { EnvHarnessSection } from './renderEnvTemplate';
+import type { Protocol, HarnessAdapter } from './adapter';
+import { claudeCodeAdapter } from './adapter';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
 export interface Harness {
@@ -11,6 +13,18 @@ export interface Harness {
   dockerfile: DockerfileParams;
   /** Env vars this harness expects to find (typically supplied via --env-file). */
   requiredEnv: string[];
+  /**
+   * The wire protocols this harness speaks. A provider's protocol must be one of
+   * these — see {@link validateProviderProtocol}. Grounding:
+   * `docs/research/harness-cli-facts.md`.
+   */
+  protocols: readonly Protocol[];
+  /**
+   * The config adapter that renders a provider into this harness's native form
+   * (env vars for an env-based harness). Absent until a harness has an adapter;
+   * a default agent (no provider) never needs one.
+   */
+  adapter?: HarnessAdapter;
   /** Builds the container argv that invokes the harness with the given prompt. */
   buildCommand(prompt: string): string[];
 }
@@ -26,6 +40,9 @@ export const HARNESSES: Record<string, Harness> = {
       npmFlags: ['--ignore-scripts'],
     },
     requiredEnv: ['ANTHROPIC_API_KEY'],
+    // pi speaks all four wire protocols (its `openai-completions` is our
+    // `openai-chat`). Its env-based adapter comes with the pi delivery slice.
+    protocols: ['anthropic-messages', 'openai-chat', 'openai-responses', 'google'],
     buildCommand: (prompt: string) => ['pi', '-p', prompt],
   },
   claudeCode: {
@@ -36,6 +53,10 @@ export const HARNESSES: Record<string, Harness> = {
       npmPackage: '@anthropic-ai/claude-code',
     },
     requiredEnv: ['ANTHROPIC_API_KEY'],
+    // Claude Code speaks only the Anthropic Messages API and is configured via
+    // env vars, so it carries the env-based adapter.
+    protocols: ['anthropic-messages'],
+    adapter: claudeCodeAdapter,
     buildCommand: (prompt: string) => [
       'claude',
       '-p',
@@ -51,6 +72,8 @@ export const HARNESSES: Record<string, Harness> = {
       npmPackage: '@openai/codex',
     },
     requiredEnv: ['OPENAI_API_KEY'],
+    // Codex speaks only OpenAI Responses (`/v1/chat/completions` was removed).
+    protocols: ['openai-responses'],
     buildCommand: (prompt: string) => ['codex', 'exec', prompt],
   },
   opencode: {
@@ -61,6 +84,8 @@ export const HARNESSES: Record<string, Harness> = {
       npmPackage: 'opencode-ai',
     },
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
+    // opencode (Vercel AI SDK) speaks all four via its provider plugins.
+    protocols: ['anthropic-messages', 'openai-chat', 'openai-responses', 'google'],
     buildCommand: (prompt: string) => ['opencode', 'run', prompt],
   },
 };
