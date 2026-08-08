@@ -1,5 +1,4 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import type { Command } from 'commander';
 import { ContainerRuntime, type RunOptions, type Mount } from './runtime/index';
@@ -37,6 +36,7 @@ import {
 import type { SidecarPlan } from './runSpawn';
 import { writeIfAbsent } from './scaffold';
 import { imageTag } from './naming';
+import { RunScratch } from './runScratch';
 import {
   harnessDir,
   agentDir,
@@ -140,7 +140,7 @@ function resolveMcpServer(name: string, root: string | undefined): McpServer {
 function renderMcpEnvFile(
   server: McpServer,
   storeEnv: Record<string, string>,
-  registry: string[],
+  scratch: RunScratch,
   destination: 'sidecar' | 'agent',
 ): string[] | undefined {
   if (server.requiredEnv.length === 0) return undefined;
@@ -154,11 +154,7 @@ function renderMcpEnvFile(
     }
     return `${name}=${value}`;
   });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-'));
-  registry.push(dir);
-  const file = path.join(dir, `${server.name}.env`);
-  fs.writeFileSync(file, lines.join('\n') + '\n', { mode: 0o600 });
-  return [file];
+  return [scratch.file(`${server.name}.env`, lines.join('\n') + '\n')];
 }
 
 export function registerSpawnCommand(program: Command): void {
@@ -285,16 +281,11 @@ export function registerSpawnCommand(program: Command): void {
         const fileAdapter = fileAdapterFor(harness);
         let mcpFileEndpoints: McpEndpoint[] | undefined;
         const remoteAuthEnvFiles: string[] = [];
-        // Throwaway host dirs created for this run (MCP credential env-files, the
-        // Codex config overlay, the derived-image build context) — all removed
-        // once the run returns.
-        const tempDirs: string[] = [];
-        const cleanupTempDirs = (): void => {
-          for (const dir of tempDirs) {
-            fs.rmSync(dir, { recursive: true, force: true });
-          }
-          tempDirs.length = 0;
-        };
+        // Every throwaway host file/dir this run creates (MCP credential
+        // env-files, the Codex config overlay, the derived-image build context,
+        // the provider env-file) is owned by one RunScratch and removed by a
+        // single dispose() once the run returns.
+        const scratch = new RunScratch();
         if (mcpNames.length > 0) {
           try {
             if (mcpDeliveryForm(harness) === 'none') {
@@ -311,12 +302,12 @@ export function registerSpawnCommand(program: Command): void {
               port: server.port,
               healthcheck: server.healthcheck,
               // A sidecar's credentials go to the sidecar, never the agent.
-              envFile: renderMcpEnvFile(server, storeEnv, tempDirs, 'sidecar'),
+              envFile: renderMcpEnvFile(server, storeEnv, scratch, 'sidecar'),
             }));
             for (const server of plan.remoteServers) {
               // A remote server's credentials go to the agent, whose MCP client
               // expands `${VAR}` in the URL/headers — no sidecar, no network entry.
-              const file = renderMcpEnvFile(server, storeEnv, tempDirs, 'agent');
+              const file = renderMcpEnvFile(server, storeEnv, scratch, 'agent');
               if (file) remoteAuthEnvFiles.push(...file);
             }
             // Delivery form per harness (ADR-0006): Claude takes MCP inline on the
@@ -328,7 +319,7 @@ export function registerSpawnCommand(program: Command): void {
               mcpFileEndpoints = plan.endpoints;
             }
           } catch (err) {
-            cleanupTempDirs();
+            scratch.dispose();
             console.error((err as Error).message);
             process.exit(1);
           }
@@ -364,7 +355,7 @@ export function registerSpawnCommand(program: Command): void {
               skillMounts.push(skillMountSpec(skillDir(name, root), harness.skillsDir, name));
             }
           } catch (err) {
-            cleanupTempDirs();
+            scratch.dispose();
             console.error((err as Error).message);
             process.exit(1);
           }
@@ -418,15 +409,12 @@ export function registerSpawnCommand(program: Command): void {
               delivery?.bakedConfig?.file.content ?? '',
               mcpFileEndpoints,
             );
-            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-cfg-'));
-            tempDirs.push(dir);
-            const hostFile = path.join(dir, overlay.file.fileName);
-            fs.writeFileSync(hostFile, overlay.file.content, { mode: 0o600 });
+            const hostFile = scratch.file(overlay.file.fileName, overlay.file.content);
             configMounts.push({ host: hostFile, container: overlay.mountTo, ro: true });
             // Read config from the mounted dir regardless of a baked default.
             agentEnv.push(...overlay.env);
           } catch (err) {
-            cleanupTempDirs();
+            scratch.dispose();
             console.error((err as Error).message);
             process.exit(1);
           }
@@ -497,8 +485,7 @@ export function registerSpawnCommand(program: Command): void {
               // Baked skills are file trees, not rendered strings, so assemble a
               // temp build context: the rendered agent files plus each skill tree
               // copied to `skills/<name>/` (where the Dockerfile's COPY expects it).
-              const ctx = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-ctx-'));
-              tempDirs.push(ctx);
+              const ctx = scratch.dir();
               fs.cpSync(dir, ctx, { recursive: true });
               for (const name of agentImagePlan.skillNames) {
                 fs.cpSync(skillDir(name, root), path.join(ctx, 'skills', name), {
@@ -543,27 +530,15 @@ export function registerSpawnCommand(program: Command): void {
         // provider for an env harness, only the API key for a file harness. The
         // key is resolved by name from the already-loaded `.e/.env` (ADR-0006),
         // never inlined on argv; the file is removed once the run returns.
-        let providerEnvDir: string | undefined;
-        const cleanupProviderEnv = (): void => {
-          if (providerEnvDir) {
-            fs.rmSync(providerEnvDir, { recursive: true, force: true });
-            providerEnvDir = undefined;
-          }
-        };
         if (delivery) {
           try {
             const content = renderProviderEnvFile(
               delivery.runtimeEnv,
               (name) => storeEnv[name],
             );
-            providerEnvDir = fs.mkdtempSync(
-              path.join(os.tmpdir(), 'e-provider-'),
-            );
-            const providerEnvFile = path.join(providerEnvDir, 'provider.env');
-            fs.writeFileSync(providerEnvFile, content, { mode: 0o600 });
-            envFiles.push(providerEnvFile);
+            envFiles.push(scratch.file('provider.env', content));
           } catch (err) {
-            cleanupProviderEnv();
+            scratch.dispose();
             console.error((err as Error).message);
             process.exit(1);
           }
@@ -596,15 +571,13 @@ export function registerSpawnCommand(program: Command): void {
             },
           );
         } catch (err) {
-          cleanupProviderEnv();
-          cleanupTempDirs();
+          scratch.dispose();
           console.error((err as Error).message);
           process.exit(1);
         } finally {
           // The rendered env-files hold resolved secrets; drop them as soon as
           // the run returns (each container already has its copy).
-          cleanupProviderEnv();
-          cleanupTempDirs();
+          scratch.dispose();
         }
 
         if (result.error) {
