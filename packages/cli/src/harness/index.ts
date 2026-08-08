@@ -113,3 +113,15 @@ export function envHarnessSections(): EnvHarnessSection[] {
     env: harness.requiredEnv,
   }));
 }
+
+/**
+ * The deduped union of every harness's `requiredEnv` — the set of API keys
+ * `e init` collects into `.e/.env`, in first-seen order across the registry.
+ */
+export function requiredEnvKeys(): string[] {
+  const seen = new Set<string>();
+  for (const harness of Object.values(HARNESSES)) {
+    for (const key of harness.requiredEnv) seen.add(key);
+  }
+  return [...seen];
+}

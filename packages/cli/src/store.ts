@@ -49,6 +49,60 @@ export function envFilePath(root?: string): string {
   return path.join(eBaseDir(root), '.env');
 }
 
+/**
+ * Path to the host-only `config.json`. Unlike `.env`, this file holds
+ * orchestration settings for the host and is **never injected into a
+ * container** — nothing in the spawn path passes it as environment.
+ */
+export function configFilePath(root?: string): string {
+  return path.join(eBaseDir(root), 'config.json');
+}
+
+/** The favorite harness a bare `e spawn` resolves to when none is named. */
+export const DEFAULT_HARNESS = 'pi';
+
+/** Host-only orchestration settings, persisted in `config.json`. */
+export interface StoreConfig {
+  /** The favorite harness `e spawn` resolves to when no target is named. */
+  defaultHarness: string;
+}
+
+/**
+ * Resolves a parsed `config.json` body to a complete {@link StoreConfig},
+ * applying built-in defaults for anything absent or malformed. Pure: the glue
+ * hands it the already-parsed JSON (or `undefined` when the file is missing).
+ */
+export function resolveConfig(raw: unknown): StoreConfig {
+  const parsed = (raw ?? {}) as Partial<StoreConfig>;
+  const defaultHarness =
+    typeof parsed.defaultHarness === 'string' && parsed.defaultHarness.length > 0
+      ? parsed.defaultHarness
+      : DEFAULT_HARNESS;
+  return { defaultHarness };
+}
+
+/** Serializes a {@link StoreConfig} to the on-disk `config.json` text. */
+export function serializeConfig(config: StoreConfig): string {
+  return JSON.stringify(config, null, 2) + '\n';
+}
+
+/**
+ * Reads the host-only `config.json`, applying defaults for anything absent — a
+ * missing file yields the built-in defaults ({@link DEFAULT_HARNESS}).
+ */
+export function readConfig(root?: string): StoreConfig {
+  const file = configFilePath(root);
+  if (!fs.existsSync(file)) return resolveConfig(undefined);
+  return resolveConfig(JSON.parse(fs.readFileSync(file, 'utf8')));
+}
+
+/** Writes the host-only `config.json`, creating the `.e` directory if needed. */
+export function writeConfig(config: StoreConfig, root?: string): void {
+  const file = configFilePath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, serializeConfig(config));
+}
+
 /** Directory containing a single harness's Dockerfile. */
 export function harnessDir(name: string, root?: string): string {
   return path.join(harnessesBaseDir(root), name);

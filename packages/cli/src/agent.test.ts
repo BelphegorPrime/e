@@ -1,12 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {
   resolveAgent,
   renderDefaultAgent,
   parseAgent,
+  isKnownTarget,
   type Agent,
   type ResolveAgentDeps,
 } from './agent';
+import { agentDir } from './store';
 import type { Provider } from './harness/adapter';
 
 // resolveAgent is pure: it takes a spawn target plus injected readers (an
@@ -141,4 +146,25 @@ test('parseAgent: an unrecognised provider protocol throws, listing valid protoc
       ),
     /Invalid provider protocol "not-a-protocol"[\s\S]*anthropic-messages/,
   );
+});
+
+// isKnownTarget is glue over the real store, so it runs against a temp root.
+test('isKnownTarget: a known harness is a target; an unknown name is not', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));
+  try {
+    assert.equal(isKnownTarget('pi', root), true);
+    assert.equal(isKnownTarget('fix the bug', root), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('isKnownTarget: a persisted agent directory counts as a target', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));
+  try {
+    fs.mkdirSync(agentDir('smart-codex', root), { recursive: true });
+    assert.equal(isKnownTarget('smart-codex', root), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
