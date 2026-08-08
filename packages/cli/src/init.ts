@@ -12,6 +12,7 @@ import {
   requiredEnvKeys,
 } from './harness/index';
 import { renderDefaultAgent } from './agent';
+import { parseDotenv } from './harness/adapter';
 import { SHIPPED_MCP_SERVERS } from './mcp/index';
 import { SHIPPED_SKILLS } from './skill/index';
 import {
@@ -62,7 +63,18 @@ export function registerInitCommand(program: Command): void {
       let defaultHarness = readConfig(root).defaultHarness;
       let envValues: Record<string, string> = {};
       if (interactive) {
-        const answers = await promptInit(Object.keys(HARNESSES), defaultHarness);
+        // Only prompt for keys not already set in `.e/.env`; a re-init never
+        // re-asks for one the user has filled in (and which `applyEnvValues`
+        // would refuse to clobber anyway).
+        const envFile = envFilePath(root);
+        const existingEnv = fs.existsSync(envFile)
+          ? fs.readFileSync(envFile, 'utf8')
+          : undefined;
+        const answers = await promptInit(
+          Object.keys(HARNESSES),
+          defaultHarness,
+          keysToPrompt(requiredEnvKeys(), existingEnv),
+        );
         defaultHarness = answers.defaultHarness;
         envValues = answers.envValues;
       }
@@ -96,12 +108,14 @@ export function registerInitCommand(program: Command): void {
 
 /**
  * Runs the interactive `e init` flow: asks for the favorite harness (defaulting
- * to `current`, preselected) and for each required API key. Owns the readline
- * lifecycle so the callers stay effect-free.
+ * to `current`, preselected) and for each API key in `apiKeys` (already-set keys
+ * are filtered out by the caller). Owns the readline lifecycle so the callers
+ * stay effect-free.
  */
 async function promptInit(
   harnessNames: string[],
   current: string,
+  apiKeys: string[],
 ): Promise<{
   defaultHarness: string;
   envValues: Record<string, string>;
@@ -112,7 +126,7 @@ async function promptInit(
   });
   try {
     const defaultHarness = await promptFavoriteHarness(rl, harnessNames, current);
-    const envValues = await promptApiKeys(rl, requiredEnvKeys());
+    const envValues = await promptApiKeys(rl, apiKeys);
     return { defaultHarness, envValues };
   } finally {
     rl.close();
@@ -171,6 +185,21 @@ export function parseHarnessChoice(
     if (idx >= 0 && idx < names.length) return names[idx];
   }
   return undefined;
+}
+
+/**
+ * The API keys `e init` should still prompt for, purely: the `required` keys
+ * minus any already set to a non-blank value in the existing `.env` content.
+ * A missing file (`undefined`) or a key present but blank (`KEY=`) still
+ * prompts; a filled key is skipped so a re-init never re-asks for it.
+ */
+export function keysToPrompt(
+  required: string[],
+  existingEnv: string | undefined,
+): string[] {
+  if (existingEnv === undefined) return required;
+  const set = parseDotenv(existingEnv);
+  return required.filter((key) => (set[key] ?? '').trim() === '');
 }
 
 /**

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHarnessChoice, applyEnvValues } from './init';
+import { parseHarnessChoice, applyEnvValues, keysToPrompt } from './init';
 
 // parseHarnessChoice is pure: it maps a prompt answer to a harness name, taking
 // the fallback for a blank answer and undefined for anything unrecognized.
@@ -52,4 +52,28 @@ test('applyEnvValues: comments and unrelated lines are preserved', () => {
   const input = '# a comment\n\nANTHROPIC_API_KEY=\n# --- pi ---\n';
   const out = applyEnvValues(input, { ANTHROPIC_API_KEY: 'sk-abc' });
   assert.equal(out, '# a comment\n\nANTHROPIC_API_KEY=sk-abc\n# --- pi ---\n');
+});
+
+// keysToPrompt is pure: it drops keys already filled in the existing `.env`.
+const KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
+
+test('keysToPrompt: no existing .env prompts for every required key', () => {
+  assert.deepEqual(keysToPrompt(KEYS, undefined), KEYS);
+});
+
+test('keysToPrompt: a filled key is skipped', () => {
+  assert.deepEqual(keysToPrompt(KEYS, 'ANTHROPIC_API_KEY=sk-abc\nOPENAI_API_KEY=\n'), [
+    'OPENAI_API_KEY',
+  ]);
+});
+
+test('keysToPrompt: a blank (KEY=) or whitespace-only key still prompts', () => {
+  assert.deepEqual(keysToPrompt(KEYS, 'ANTHROPIC_API_KEY=\nOPENAI_API_KEY=   \n'), KEYS);
+});
+
+test('keysToPrompt: all keys filled leaves nothing to prompt', () => {
+  assert.deepEqual(
+    keysToPrompt(KEYS, 'ANTHROPIC_API_KEY=sk-abc\nOPENAI_API_KEY=sk-def\n'),
+    [],
+  );
 });
