@@ -14,15 +14,19 @@
  * (`/v1/responses`) are distinct, and a harness may speak one without the other.
  * See `docs/research/harness-cli-facts.md`.
  */
-export const PROTOCOLS = [
+export type Protocol =
+  | 'anthropic-messages'
+  | 'openai-chat'
+  | 'openai-responses'
+  | 'google';
+
+/** Every protocol string `e` recognises, for validating persisted agents. */
+export const PROTOCOLS: readonly Protocol[] = [
   'anthropic-messages',
   'openai-chat',
   'openai-responses',
   'google',
 ] as const;
-
-/** A model wire protocol; one of {@link PROTOCOLS}. */
-export type Protocol = (typeof PROTOCOLS)[number];
 
 /**
  * The model endpoint an Agent talks to, declared inline in the Agent. The API

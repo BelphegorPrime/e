@@ -117,7 +117,7 @@ const harness: Harness = {
   imageTag: 'e-harness-demo',
   dockerfile: { label: 'demo', npmPackage: 'demo' },
   requiredEnv: [],
-  protocols: ['anthropic-messages'],
+  protocols: [],
   buildCommand: (prompt: string) => ['demo', '-p', prompt],
 };
 
