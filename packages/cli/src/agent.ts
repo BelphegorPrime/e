@@ -1,13 +1,14 @@
 import fs from 'fs';
 import { HARNESSES } from './harness/index';
+import { PROTOCOLS, type Provider, type Protocol } from './harness/adapter';
 import { agentFilePath, agentsBaseDir } from './store';
 
 /**
- * An **Agent**: a named pairing of a Harness with a Tier (and, in later slices,
- * a Provider). It is the selectable unit a Run executes. In this slice an Agent
- * carries only a harness reference and a tier — no custom provider and no
- * derived image; a default agent runs its harness's base image exactly as
- * before. See ADR-0004.
+ * An **Agent**: a named pairing of a Harness with a Tier and, optionally, an
+ * inline {@link Provider}. It is the selectable unit a Run executes. An Agent
+ * without a provider runs its harness's base image against the ambient env
+ * exactly as before; an Agent with a provider has that provider rendered into
+ * the harness's native config form by the harness adapter. See ADR-0004/0006.
  */
 export interface Agent {
   /** Registry key and branch segment, e.g. "smart-codex". */
@@ -16,6 +17,8 @@ export interface Agent {
   harness: string;
   /** Capability/cost class, e.g. "default", "smart", "cheap". */
   tier: string;
+  /** Inline model endpoint; absent for a default agent (behaves as before). */
+  provider?: Provider;
 }
 
 /** Inputs to the pure agent resolution; the glue supplies the real values. */
@@ -70,17 +73,62 @@ export function renderDefaultAgent(harnessName: string): string {
 function readAgentFile(name: string, root?: string): Agent | undefined {
   const file = agentFilePath(name, root);
   if (!fs.existsSync(file)) return undefined;
-  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<Agent>;
+  return parseAgent(JSON.parse(fs.readFileSync(file, 'utf8')), file);
+}
+
+/**
+ * Validates a parsed `agent.json` object into an {@link Agent}, purely. The
+ * `name`/`harness`/`tier` strings are required; a `provider`, if present, is
+ * validated in shape (its protocol must be one `e` recognises — whether the
+ * harness *speaks* it is checked later, against the resolved harness). `where`
+ * names the source in error messages.
+ */
+export function parseAgent(raw: unknown, where: string): Agent {
+  const parsed = (raw ?? {}) as Partial<Agent>;
   if (
     typeof parsed.name !== 'string' ||
     typeof parsed.harness !== 'string' ||
     typeof parsed.tier !== 'string'
   ) {
     throw new Error(
-      `Invalid agent definition at ${file}: expected { name, harness, tier } strings.`,
+      `Invalid agent definition at ${where}: expected { name, harness, tier } strings.`,
     );
   }
-  return { name: parsed.name, harness: parsed.harness, tier: parsed.tier };
+  const agent: Agent = {
+    name: parsed.name,
+    harness: parsed.harness,
+    tier: parsed.tier,
+  };
+  if (parsed.provider !== undefined) {
+    agent.provider = parseProvider(parsed.provider, where);
+  }
+  return agent;
+}
+
+/** Validates a parsed `provider` block into a {@link Provider}, purely. */
+function parseProvider(raw: unknown, where: string): Provider {
+  const p = (raw ?? {}) as Partial<Provider>;
+  if (
+    typeof p.baseUrl !== 'string' ||
+    typeof p.model !== 'string' ||
+    typeof p.protocol !== 'string' ||
+    typeof p.apiKeyEnv !== 'string'
+  ) {
+    throw new Error(
+      `Invalid provider in agent definition at ${where}: expected { baseUrl, model, protocol, apiKeyEnv } strings.`,
+    );
+  }
+  if (!PROTOCOLS.includes(p.protocol as Protocol)) {
+    throw new Error(
+      `Invalid provider protocol "${p.protocol}" in agent definition at ${where}. Valid protocols: ${PROTOCOLS.join(', ')}.`,
+    );
+  }
+  return {
+    baseUrl: p.baseUrl,
+    model: p.model,
+    protocol: p.protocol as Protocol,
+    apiKeyEnv: p.apiKeyEnv,
+  };
 }
 
 /** Lists the persisted agent names under the store's `agents/` directory. */

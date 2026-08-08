@@ -6,11 +6,13 @@ import path from 'path';
 import {
   resolveAgent,
   renderDefaultAgent,
+  parseAgent,
   isKnownTarget,
   type Agent,
   type ResolveAgentDeps,
 } from './agent';
 import { agentDir } from './store';
+import type { Provider } from './harness/adapter';
 
 // resolveAgent is pure: it takes a spawn target plus injected readers (an
 // agent loader, the valid harness names, and the available agent names), so we
@@ -73,6 +75,77 @@ test('resolveAgent: a persisted agent whose name differs from its key throws', (
 test('renderDefaultAgent: valid JSON with name=harness and tier=default', () => {
   const parsed = JSON.parse(renderDefaultAgent('codex')) as Agent;
   assert.deepEqual(parsed, { name: 'codex', harness: 'codex', tier: 'default' });
+});
+
+test('renderDefaultAgent: a default agent carries no provider', () => {
+  const parsed = JSON.parse(renderDefaultAgent('codex')) as Agent;
+  assert.equal(parsed.provider, undefined);
+});
+
+test('parseAgent: a definition without a provider parses as-is', () => {
+  const agent = parseAgent(
+    { name: 'pi', harness: 'pi', tier: 'default' },
+    'test.json',
+  );
+  assert.deepEqual(agent, { name: 'pi', harness: 'pi', tier: 'default' });
+});
+
+test('parseAgent: a valid inline provider is parsed onto the agent', () => {
+  const provider: Provider = {
+    baseUrl: 'https://gateway.example.com',
+    model: 'claude-opus-5',
+    protocol: 'anthropic-messages',
+    apiKeyEnv: 'MY_GATEWAY_KEY',
+  };
+  const agent = parseAgent(
+    { name: 'smart-claude', harness: 'claudeCode', tier: 'smart', provider },
+    'test.json',
+  );
+  assert.deepEqual(agent.provider, provider);
+});
+
+test('parseAgent: missing required fields throw', () => {
+  assert.throws(
+    () => parseAgent({ name: 'x', harness: 'pi' }, 'test.json'),
+    /expected \{ name, harness, tier \} strings/,
+  );
+});
+
+test('parseAgent: a provider missing fields throws, naming the source', () => {
+  assert.throws(
+    () =>
+      parseAgent(
+        {
+          name: 'x',
+          harness: 'claudeCode',
+          tier: 'default',
+          provider: { baseUrl: 'https://x', model: 'm', protocol: 'anthropic-messages' },
+        },
+        'test.json',
+      ),
+    /Invalid provider[\s\S]*test\.json[\s\S]*apiKeyEnv/,
+  );
+});
+
+test('parseAgent: an unrecognised provider protocol throws, listing valid protocols', () => {
+  assert.throws(
+    () =>
+      parseAgent(
+        {
+          name: 'x',
+          harness: 'claudeCode',
+          tier: 'default',
+          provider: {
+            baseUrl: 'https://x',
+            model: 'm',
+            protocol: 'not-a-protocol',
+            apiKeyEnv: 'K',
+          },
+        },
+        'test.json',
+      ),
+    /Invalid provider protocol "not-a-protocol"[\s\S]*anthropic-messages/,
+  );
 });
 
 // isKnownTarget is glue over the real store, so it runs against a temp root.
