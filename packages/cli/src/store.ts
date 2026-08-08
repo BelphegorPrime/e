@@ -4,11 +4,12 @@ import path from 'path';
 
 /**
  * The **Store**: the `.e` directory holding e's on-disk state — the per-harness
- * Dockerfiles under `harnesses/`, the Agent definitions under `agents/`, and the
- * shared `.env` base environment. This module owns the store's layout (path
- * derivation keyed on a harness or agent *name*) and the root-finding walk that
- * locates it. It knows nothing about the Harness or Agent registries, so the
- * dependency runs one way: `harness`/`agent` → `store`.
+ * Dockerfiles under `harnesses/`, the Agent definitions under `agents/`, the
+ * container MCP server definitions under `mcp/`, and the shared `.env` base
+ * environment. This module owns the store's layout (path derivation keyed on a
+ * harness, agent, or MCP-server *name*) and the root-finding walk that locates
+ * it. It knows nothing about the Harness, Agent, or MCP registries, so the
+ * dependency runs one way: `harness`/`agent`/`mcp` → `store`.
  */
 
 /**
@@ -29,6 +30,21 @@ export function harnessesBaseDir(root?: string): string {
 /** Base directory that holds the Agent definitions, under `root`. */
 export function agentsBaseDir(root?: string): string {
   return path.join(eBaseDir(root), 'agents');
+}
+
+/** Base directory that holds the container MCP server definitions, under `root`. */
+export function mcpBaseDir(root?: string): string {
+  return path.join(eBaseDir(root), 'mcp');
+}
+
+/** Directory containing a single MCP server's definition (Dockerfile + mcp.json). */
+export function mcpDir(name: string, root?: string): string {
+  return path.join(mcpBaseDir(root), name);
+}
+
+/** Absolute path to an MCP server's `mcp.json` metadata file. */
+export function mcpConfigPath(name: string, root?: string): string {
+  return path.join(mcpDir(name, root), 'mcp.json');
 }
 
 /** Directory containing a single agent's definition. */

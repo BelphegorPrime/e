@@ -38,6 +38,20 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
     expected: ['run', '--rm', '--name', 'run-1', '-w', '/workspace', 'img'],
   },
   {
+    name: '--network follows -w, before env-files',
+    opts: { attach: true, name: 'run-1', workdir: '/workspace', network: 'run-1-net' },
+    expected: [
+      'run',
+      '--name',
+      'run-1',
+      '-w',
+      '/workspace',
+      '--network',
+      'run-1-net',
+      'img',
+    ],
+  },
+  {
     name: '--env-file entries keep their order',
     opts: { attach: true, envFile: ['/base.env', '/user.env'] },
     expected: [

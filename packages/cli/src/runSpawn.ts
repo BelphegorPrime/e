@@ -1,13 +1,42 @@
 import path from 'path';
 import os from 'os';
 import type { Git } from './git/index';
-import type { ContainerRunner, RunOptions } from './runtime/index';
+import type { ContainerRunner, RunOptions, SidecarSpec } from './runtime/index';
 import type { Harness } from './harness/index';
 import type { Agent } from './agent';
+import { sidecarNetworkName, sidecarContainerName } from './mcp/index';
 import { slugify } from './slugify';
 
 /** How many counter collisions to absorb before giving up (a runaway guard). */
 const MAX_COUNTER_ATTEMPTS = 50;
+
+/** Readiness polling defaults: up to 30 tries, 1s apart (~30s), overridable per run. */
+const DEFAULT_READINESS_ATTEMPTS = 30;
+const DEFAULT_READINESS_INTERVAL_MS = 1000;
+
+/** How readiness polling is paced: how many probe attempts, and the wait between them. */
+export interface ReadinessPolicy {
+  attempts: number;
+  intervalMs: number;
+}
+
+/**
+ * A sidecar to bring up for this Run, as the spawn edge knows it — before the
+ * per-run name exists. `runSpawn` derives the unique container name and the
+ * private network from the run name and turns each plan into a {@link SidecarSpec}.
+ */
+export interface SidecarPlan {
+  /** The MCP server's short name = network alias = URL host the agent reaches. */
+  alias: string;
+  /** The sidecar's image tag (built from `.e/mcp/<name>/Dockerfile`). */
+  image: string;
+  /** TCP port the server listens on. */
+  port: number;
+  /** Optional in-container readiness command; readiness also requires it to exit 0. */
+  healthcheck?: string[];
+  /** Env files delivering the sidecar's own credentials (never the agent's). */
+  envFile?: string[];
+}
 
 /**
  * Highest run counter `N` among `branches` matching `<prefix>-N`, or 0 if none.
@@ -39,6 +68,15 @@ export interface RunSpawnDeps {
    * on that base (ADR-0004). Throws on failure.
    */
   ensureImage: () => string;
+  /**
+   * Ensures every requested sidecar's image is present, building from
+   * `.e/mcp/<name>/` as needed. Like {@link ensureImage} it runs before the
+   * worktree so a sidecar build failure leaves no orphan scaffolding (ADR-0005).
+   * Absent when the run requests no sidecars. Throws on failure.
+   */
+  ensureSidecarImages?: () => void;
+  /** Sleep between readiness probes; injected so tests poll without real waits. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface RunSpawnParams {
@@ -64,6 +102,12 @@ export interface RunSpawnParams {
   runOptions: RunOptions;
   /** Base directory the run's worktree is created under. */
   worktreesDir?: string;
+  /** Container MCP sidecars to bring up for this run (ADR-0005); empty for a plain run. */
+  sidecars?: SidecarPlan[];
+  /** Extra argv wiring the sidecars into the harness (e.g. Claude's `--mcp-config`). */
+  mcpArgs?: string[];
+  /** Readiness polling overrides (mainly for tests). */
+  readiness?: ReadinessPolicy;
 }
 
 export interface RunSpawnResult {
@@ -77,8 +121,41 @@ export interface RunSpawnResult {
   pushed?: boolean;
   /** A non-fatal push warning: the branch is kept locally despite this. */
   pushWarning?: string;
+  /** Non-fatal sidecar warnings (e.g. a sidecar that crashed mid-run). */
+  sidecarWarnings?: string[];
   /** A human-readable reason for a pre-run failure (e.g. not a git repo). */
   error?: string;
+}
+
+/** True if a sidecar is ready now: its TCP port is open and any healthcheck exits 0. */
+function sidecarReady(runtime: ContainerRunner, spec: SidecarSpec): boolean {
+  if (!runtime.probeTcp(spec.network, spec.alias, spec.port)) return false;
+  if (spec.healthcheck && !runtime.probeHealthcheck(spec.name, spec.healthcheck)) {
+    return false;
+  }
+  return true;
+}
+
+/** Polls a sidecar for readiness up to `attempts` times, sleeping between tries. */
+async function awaitSidecarReady(
+  runtime: ContainerRunner,
+  spec: SidecarSpec,
+  opts: ReadinessPolicy & { sleep: (ms: number) => Promise<void> },
+): Promise<boolean> {
+  for (let attempt = 0; attempt < opts.attempts; attempt++) {
+    if (sidecarReady(runtime, spec)) return true;
+    if (attempt < opts.attempts - 1) await opts.sleep(opts.intervalMs);
+  }
+  return false;
+}
+
+/** Runs a best-effort teardown step, swallowing any failure so it can't mask the run's result. */
+function bestEffort(action: () => void): void {
+  try {
+    action();
+  } catch {
+    // Teardown failures are non-fatal by design (ADR-0005).
+  }
 }
 
 /**
@@ -96,8 +173,14 @@ export async function runSpawn(
   deps: RunSpawnDeps,
   params: RunSpawnParams,
 ): Promise<RunSpawnResult> {
-  const { git, runtime, ensureImage } = deps;
+  const { git, runtime, ensureImage, ensureSidecarImages } = deps;
   const { harness, agent, prompt } = params;
+  const sidecarPlans = params.sidecars ?? [];
+  const mcpArgs = params.mcpArgs ?? [];
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const readinessAttempts = params.readiness?.attempts ?? DEFAULT_READINESS_ATTEMPTS;
+  const readinessIntervalMs =
+    params.readiness?.intervalMs ?? DEFAULT_READINESS_INTERVAL_MS;
 
   if (!git.isRepo()) {
     return {
@@ -121,10 +204,12 @@ export async function runSpawn(
     };
   }
 
-  // Build the image before cutting any scaffolding, so a build failure never
-  // leaves an orphan worktree behind. The returned tag is what this run
-  // executes — the harness base, or a derived agent image built on it.
+  // Build the primary and every sidecar image before cutting any scaffolding, so
+  // a build failure never leaves an orphan worktree behind (ADR-0005). The
+  // returned tag is what this run executes — the harness base, or a derived agent
+  // image built on it.
   const imageTag = ensureImage();
+  ensureSidecarImages?.();
 
   // Pin the base to the commit HEAD points at now, so a later push-eligibility
   // check compares against the run's actual starting point even if the host's
@@ -156,29 +241,100 @@ export async function runSpawn(
     }
   }
 
-  let exitCode: number;
-  try {
-    const runOptions: RunOptions = {
-      ...params.runOptions,
-      name: runName,
-      volume: [`${worktreePath}:/workspace`],
-      workdir: '/workspace',
-    };
-    exitCode = await runtime.run(
-      imageTag,
-      runOptions,
-      harness.buildCommand(prompt, params.model),
-    );
+  // Turn each sidecar plan into a concrete spec now that the run name (and thus a
+  // unique container name and the private network) exists.
+  const network = sidecarNetworkName(runName);
+  const specs: SidecarSpec[] = sidecarPlans.map((plan) => ({
+    name: sidecarContainerName(runName, plan.alias),
+    alias: plan.alias,
+    image: plan.image,
+    network,
+    port: plan.port,
+    healthcheck: plan.healthcheck,
+    envFile: plan.envFile,
+  }));
 
-    // Capture whatever the agent left uncommitted; a clean tree keeps the
-    // agent's own commits untouched.
-    if (git.isDirty(worktreePath)) {
-      git.commitAll(worktreePath, `e: capture run output for ${branch}`);
+  let exitCode = 1;
+  let ran = false;
+  let readinessError: string | undefined;
+  const sidecarWarnings: string[] = [];
+  const startedContainers: string[] = [];
+  let networkCreated = false;
+  try {
+    // Bring up the group: private network → sidecars → readiness. A sidecar that
+    // never reaches readiness aborts the run before the agent starts (fail-fast);
+    // teardown still runs in the finally.
+    if (specs.length > 0) {
+      runtime.createNetwork(network);
+      networkCreated = true;
+      for (const spec of specs) {
+        runtime.startSidecar(spec);
+        startedContainers.push(spec.name);
+      }
+      for (const spec of specs) {
+        const ready = await awaitSidecarReady(runtime, spec, {
+          attempts: readinessAttempts,
+          intervalMs: readinessIntervalMs,
+          sleep,
+        });
+        if (!ready) {
+          readinessError =
+            `MCP sidecar "${spec.alias}" did not become ready in time; ` +
+            `aborting before the agent started. Check its image and mcp.json.`;
+          break;
+        }
+      }
+    }
+
+    if (!readinessError) {
+      const runOptions: RunOptions = {
+        ...params.runOptions,
+        name: runName,
+        volume: [`${worktreePath}:/workspace`],
+        workdir: '/workspace',
+        // The agent joins the run's private network only when it has sidecars to
+        // reach; a plain run stays on the default bridge, unchanged.
+        network: specs.length > 0 ? network : undefined,
+      };
+      exitCode = await runtime.run(imageTag, runOptions, [
+        ...harness.buildCommand(prompt, params.model),
+        ...mcpArgs,
+      ]);
+      ran = true;
+
+      // A sidecar that crashed mid-run is non-fatal (like a failed push): the
+      // agent may hold uncommitted work, so surface a warning, never kill it.
+      for (const spec of specs) {
+        if (!runtime.isRunning(spec.name)) {
+          sidecarWarnings.push(
+            `MCP sidecar "${spec.alias}" exited during the run (its tools may have stopped working).`,
+          );
+        }
+      }
+
+      // Capture whatever the agent left uncommitted; a clean tree keeps the
+      // agent's own commits untouched.
+      if (git.isDirty(worktreePath)) {
+        git.commitAll(worktreePath, `e: capture run output for ${branch}`);
+      }
     }
   } finally {
-    // The worktree is disposable scaffolding; the branch is the durable
-    // artifact. Always drop the worktree, always keep the branch.
+    // Tear the group down as a group (ADR-0005): agent (already gone by --rm on
+    // exit) → sidecars → network → worktree. Sidecar/network removal is
+    // best-effort so a teardown failure never masks the run's result; the
+    // worktree is disposable scaffolding while the branch is the durable artifact.
+    for (const name of startedContainers) {
+      bestEffort(() => runtime.removeContainer(name));
+    }
+    if (networkCreated) bestEffort(() => runtime.removeNetwork(network));
     git.removeWorktree(worktreePath);
+  }
+
+  const warnings = sidecarWarnings.length > 0 ? sidecarWarnings : undefined;
+
+  // A readiness miss aborts the run before the agent started: no commit, no push.
+  if (readinessError) {
+    return { ran: false, exitCode: 1, branch, error: readinessError, sidecarWarnings: warnings };
   }
 
   // Publish only a successful run that actually produced commits, so aborted
@@ -195,5 +351,5 @@ export async function runSpawn(
     }
   }
 
-  return { ran: true, exitCode, branch, pushed, pushWarning };
+  return { ran, exitCode, branch, pushed, pushWarning, sidecarWarnings: warnings };
 }

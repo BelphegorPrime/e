@@ -1,0 +1,39 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { HARNESSES } from './index';
+import type { McpEndpoint } from '../mcp/index';
+
+const claude = HARNESSES.claudeCode;
+
+test('claude renderMcpArgs emits inline --mcp-config with an http server per endpoint', () => {
+  const endpoints: McpEndpoint[] = [
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+  ];
+  const args = claude.renderMcpArgs!(endpoints);
+  assert.equal(args[0], '--mcp-config');
+  assert.deepEqual(JSON.parse(args[1]), {
+    mcpServers: {
+      everything: { type: 'http', url: 'http://everything:3001/mcp' },
+    },
+  });
+});
+
+test('claude renderMcpArgs wires multiple endpoints under one mcpServers object', () => {
+  const args = claude.renderMcpArgs!([
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+    { name: 'filesystem', url: 'http://filesystem:8000/mcp' },
+  ]);
+  const parsed = JSON.parse(args[1]);
+  assert.deepEqual(Object.keys(parsed.mcpServers), ['everything', 'filesystem']);
+});
+
+test('claude renderMcpArgs returns no args when there are no endpoints', () => {
+  assert.deepEqual(claude.renderMcpArgs!([]), []);
+});
+
+test('only Claude wires MCP inline today; the others have no renderMcpArgs', () => {
+  assert.equal(typeof HARNESSES.claudeCode.renderMcpArgs, 'function');
+  assert.equal(HARNESSES.codex.renderMcpArgs, undefined);
+  assert.equal(HARNESSES.opencode.renderMcpArgs, undefined);
+  assert.equal(HARNESSES.pi.renderMcpArgs, undefined);
+});

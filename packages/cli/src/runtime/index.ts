@@ -15,14 +15,71 @@ export interface RunOptions {
    * override earlier ones for the same key; `-e` vars override all of them.
    */
   envFile?: string[];
+  /**
+   * Private network to attach the container to (`--network`). The primary agent
+   * joins its Run's network so it can reach sidecars by their alias; a bare run
+   * (no sidecars) leaves this unset and uses the default bridge as before.
+   */
+  network?: string;
+}
+
+/**
+ * A **Sidecar** to bring up alongside the primary agent (ADR-0005): a
+ * container-transport MCP server on the Run's private network. The `name` is
+ * unique per run (so concurrent runs never collide); the `alias` is the stable
+ * short name the agent reaches it by (`http://<alias>:<port>/mcp`).
+ */
+export interface SidecarSpec {
+  /** Unique per-run container name, e.g. `<runName>-mcp-everything`. */
+  name: string;
+  /** Stable network alias the agent uses in the endpoint URL, e.g. `everything`. */
+  alias: string;
+  /** The sidecar's image tag (built from `.e/mcp/<name>/Dockerfile`). */
+  image: string;
+  /** Private network the sidecar joins. */
+  network: string;
+  /** TCP port the sidecar listens on — probed for readiness, reached by the agent. */
+  port: number;
+  /** Optional in-container readiness command; readiness also requires it to exit 0. */
+  healthcheck?: string[];
+  /** Env files delivering the sidecar's own credentials (never the agent's). */
+  envFile?: string[];
 }
 
 /**
  * The run surface the orchestrator depends on. Kept minimal so a fake can
- * stand in for a real runtime in tests.
+ * stand in for a real runtime in tests. ADR-0005 grows it from "run one
+ * container" to "bring up a group, wait on the primary, tear all down": the
+ * network/sidecar/probe primitives below compose a Run's group, while `run`
+ * still executes the primary agent in the foreground.
  */
 export interface ContainerRunner {
+  /** Runs the primary agent container in the foreground; resolves with its exit code. */
   run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number>;
+
+  /** Create a private container network. Throws on failure. */
+  createNetwork(name: string): void;
+  /**
+   * Remove a network. Best-effort: never throws — it runs in teardown, where a
+   * failure must not mask the Run's result.
+   */
+  removeNetwork(name: string): void;
+
+  /** Start a sidecar detached on its network (with its alias). Throws if it fails to start. */
+  startSidecar(spec: SidecarSpec): void;
+  /** Stop and remove a container by name. Best-effort: never throws (teardown). */
+  removeContainer(name: string): void;
+
+  /**
+   * True if a TCP connection to `port` on `host` succeeds, probed from a sibling
+   * container on `network` — the sidecar publishes no host port, so readiness is
+   * checked over the same private-network DNS the agent will use.
+   */
+  probeTcp(network: string, host: string, port: number): boolean;
+  /** Run `command` inside `container` (`exec`); true iff it exits 0. */
+  probeHealthcheck(container: string, command: string[]): boolean;
+  /** True if the named container is still running — used to detect a mid-run crash. */
+  isRunning(name: string): boolean;
 }
 
 /**
@@ -93,6 +150,7 @@ export class ContainerRuntime implements ContainerRunner {
     if (opts.rm) args.push('--rm');
     if (opts.name) args.push('--name', opts.name);
     if (opts.workdir) args.push('-w', opts.workdir);
+    if (opts.network) args.push('--network', opts.network);
     for (const f of opts.envFile ?? []) args.push('--env-file', f);
 
     for (const v of opts.volume ?? []) args.push('-v', v);
@@ -131,5 +189,118 @@ export class ContainerRuntime implements ContainerRunner {
         resolve(signal ? 1 : (code ?? 0));
       });
     });
+  }
+
+  /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */
+  createNetwork(name: string): void {
+    const result = spawnSync(this.command, ['network', 'create', name], {
+      stdio: 'ignore',
+      shell: false,
+    });
+    if (result.error) {
+      throw new Error(
+        `Failed to start ${this.command}: ${result.error.message}`,
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `Failed to create network "${name}" (exit code ${result.status ?? 1}).`,
+      );
+    }
+  }
+
+  /** Remove a network. Best-effort: swallows every failure so teardown never masks the run result. */
+  removeNetwork(name: string): void {
+    spawnSync(this.command, ['network', 'rm', name], {
+      stdio: 'ignore',
+      shell: false,
+    });
+  }
+
+  /**
+   * Start a sidecar detached on its private network, reachable by its alias. The
+   * image's own CMD runs the MCP server; only credentials are passed (by
+   * env-file). Throws if the container fails to start.
+   */
+  startSidecar(spec: SidecarSpec): void {
+    const args = [
+      'run',
+      '-d',
+      '--name',
+      spec.name,
+      '--network',
+      spec.network,
+      '--network-alias',
+      spec.alias,
+    ];
+    for (const f of spec.envFile ?? []) args.push('--env-file', f);
+    args.push(spec.image);
+
+    console.log(`> ${this.command} ${args.join(' ')}`);
+    const result = spawnSync(this.command, args, {
+      stdio: ['ignore', 'ignore', 'inherit'],
+      shell: false,
+    });
+    if (result.error) {
+      throw new Error(
+        `Failed to start ${this.command}: ${result.error.message}`,
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `Failed to start sidecar "${spec.name}" (exit code ${result.status ?? 1}).`,
+      );
+    }
+  }
+
+  /** Force-remove a container by name (even if running). Best-effort: never throws (teardown). */
+  removeContainer(name: string): void {
+    spawnSync(this.command, ['rm', '-f', name], {
+      stdio: 'ignore',
+      shell: false,
+    });
+  }
+
+  /**
+   * Probe a TCP port over the private network from a throwaway sibling container,
+   * mirroring the DNS-by-alias path the agent will use. BusyBox `nc HOST PORT`
+   * (fed an empty stdin, 2s connect timeout) exits 0 on a successful connect. The
+   * `busybox` image is a tiny public image the runtime auto-pulls on first use.
+   */
+  probeTcp(network: string, host: string, port: number): boolean {
+    const result = spawnSync(
+      this.command,
+      [
+        'run',
+        '--rm',
+        '--network',
+        network,
+        'busybox',
+        'sh',
+        '-c',
+        `nc -w 2 ${host} ${port} < /dev/null`,
+      ],
+      { stdio: 'ignore', shell: false },
+    );
+    return result.status === 0;
+  }
+
+  /** Run a readiness command inside the sidecar (`exec`); true iff it exits 0. */
+  probeHealthcheck(container: string, command: string[]): boolean {
+    const result = spawnSync(this.command, ['exec', container, ...command], {
+      stdio: 'ignore',
+      shell: false,
+    });
+    return result.status === 0;
+  }
+
+  /** True if the named container is still running (`inspect` reports `Running: true`). */
+  isRunning(name: string): boolean {
+    const result = spawnSync(
+      this.command,
+      ['inspect', '-f', '{{.State.Running}}', name],
+      { encoding: 'utf8', shell: false },
+    );
+    return result.status === 0 && result.stdout.trim() === 'true';
   }
 }

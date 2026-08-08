@@ -18,10 +18,19 @@ import {
   type ProviderDelivery,
 } from './harness/deriveImage';
 import { resolveProviderModel, HttpModelsLister } from './model/resolve';
+import {
+  readMcpServer,
+  listMcpServerNames,
+  mcpEndpoint,
+  sidecarImageTag,
+  type McpServer,
+} from './mcp/index';
+import type { SidecarPlan } from './runSpawn';
 import { writeIfAbsent } from './scaffold';
 import {
   harnessDir,
   agentDir,
+  mcpDir,
   isInitialized,
   findRoot,
   envFilePath,
@@ -76,6 +85,8 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   envFile?: string;
   /** `--tier <tier>`: select the (harness, tier) agent rather than by name. */
   tier?: string;
+  /** `--mcp <name...>`: container MCP servers to compose as sidecars for this run. */
+  mcp?: string[];
 }
 
 /**
@@ -87,6 +98,51 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
 function loadStoreEnv(baseEnvFile: string | undefined): Record<string, string> {
   if (baseEnvFile === undefined || !fs.existsSync(baseEnvFile)) return {};
   return parseDotenv(fs.readFileSync(baseEnvFile, 'utf8'));
+}
+
+/**
+ * Resolves a requested `--mcp <name>` to its persisted definition, throwing a
+ * clear error (listing the available servers) when it isn't there. A malformed
+ * `mcp.json` surfaces as the parse error from {@link readMcpServer}.
+ */
+function resolveMcpServer(name: string, root: string | undefined): McpServer {
+  const server = readMcpServer(name, root);
+  if (server) return server;
+  const available = listMcpServerNames(root);
+  const list = available.length ? available.join(', ') : '(none)';
+  throw new Error(
+    `Unknown MCP server "${name}". Available: ${list}. ` +
+      `Add one under .e/mcp/<name>/ (Dockerfile + mcp.json) or run \`e init\`.`,
+  );
+}
+
+/**
+ * Renders a sidecar's required credentials into a throwaway `--env-file` (mode
+ * 0600, outside any worktree), resolved by name from `.e/.env` — the credentials
+ * reach the sidecar, never the agent. A missing key is a hard, fail-fast error
+ * naming the fix. Returns undefined when the server needs no credentials.
+ */
+function renderSidecarEnvFile(
+  server: McpServer,
+  storeEnv: Record<string, string>,
+  registry: string[],
+): string[] | undefined {
+  if (server.requiredEnv.length === 0) return undefined;
+  const lines = server.requiredEnv.map((name) => {
+    const value = storeEnv[name];
+    if (value === undefined || value === '') {
+      throw new Error(
+        `MCP server "${server.name}" needs "${name}" set in .e/.env. ` +
+          `Add "${name}=<value>" there — it is injected into the sidecar at runtime, never baked into an image.`,
+      );
+    }
+    return `${name}=${value}`;
+  });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-'));
+  registry.push(dir);
+  const file = path.join(dir, `${server.name}.env`);
+  fs.writeFileSync(file, lines.join('\n') + '\n', { mode: 0o600 });
+  return [file];
 }
 
 export function registerSpawnCommand(program: Command): void {
@@ -107,6 +163,10 @@ export function registerSpawnCommand(program: Command): void {
     .option(
       '--tier <tier>',
       'select the agent for a harness by tier (e.g. smart, fast, cheap, review)',
+    )
+    .option(
+      '--mcp <name...>',
+      'container MCP server(s) to run as sidecars for this run (repeatable)',
     )
     .option('--rebuild', 'force a rebuild of the harness image', false)
     .option(
@@ -183,10 +243,52 @@ export function registerSpawnCommand(program: Command): void {
         }
 
         // The shared `.e/.env` is the sole source of a provider's API key
-        // (ADR-0006) — read once, used both to fetch the model list and to
-        // resolve the runtime env-file key by name.
+        // (ADR-0006) and of any MCP sidecar credentials — read once, used to
+        // fetch the model list, resolve the runtime env-file key by name, and
+        // render each sidecar's own credential env-file.
         const baseEnvFile = root !== undefined ? envFilePath(root) : undefined;
-        const storeEnv = agent.provider ? loadStoreEnv(baseEnvFile) : {};
+        const mcpNames = opts.mcp ?? [];
+        const needStoreEnv = Boolean(agent.provider) || mcpNames.length > 0;
+        const storeEnv = needStoreEnv ? loadStoreEnv(baseEnvFile) : {};
+
+        // Resolve the requested MCP servers and wire them to the harness before
+        // any build or worktree, so an unknown server, a bad mcp.json, a harness
+        // that cannot take MCP inline, or a missing sidecar credential all fail
+        // fast and cheap (next to the provider-protocol check above).
+        let sidecars: SidecarPlan[] = [];
+        let mcpArgs: string[] = [];
+        const sidecarEnvDirs: string[] = [];
+        const cleanupSidecarEnv = (): void => {
+          for (const dir of sidecarEnvDirs) {
+            fs.rmSync(dir, { recursive: true, force: true });
+          }
+          sidecarEnvDirs.length = 0;
+        };
+        if (mcpNames.length > 0) {
+          try {
+            if (!harness.renderMcpArgs) {
+              throw new Error(
+                `Harness "${harness.name}" cannot wire MCP servers via a flag yet; ` +
+                  `only Claude Code takes MCP config inline today.`,
+              );
+            }
+            const servers = mcpNames.map((name) => resolveMcpServer(name, root));
+            sidecars = servers.map((server) => ({
+              alias: server.name,
+              image: sidecarImageTag(server.name),
+              port: server.port,
+              healthcheck: server.healthcheck,
+              // A sidecar's credentials go to the sidecar, never the agent: render
+              // its required env into a throwaway file (dropped once the run ends).
+              envFile: renderSidecarEnvFile(server, storeEnv, sidecarEnvDirs),
+            }));
+            mcpArgs = harness.renderMcpArgs(servers.map(mcpEndpoint));
+          } catch (err) {
+            cleanupSidecarEnv();
+            console.error((err as Error).message);
+            process.exit(1);
+          }
+        }
 
         // Plan how the provider (if any) reaches the run: resolve its model
         // (a concrete id as-is; `auto` against the endpoint's `/v1/models` for
@@ -271,6 +373,19 @@ export function registerSpawnCommand(program: Command): void {
           return tag;
         };
 
+        // Builds every requested sidecar's image from `.e/mcp/<name>/`, mirroring
+        // ensureImage: runSpawn calls it before the worktree, so a sidecar build
+        // failure never leaves orphan scaffolding (ADR-0005). `resolveMcpServer`
+        // already confirmed each definition exists.
+        const ensureSidecarImages = (): void => {
+          for (const server of sidecars) {
+            const tag = server.image;
+            if (opts.rebuild || !runtime.imageExists(tag)) {
+              runtime.build(tag, mcpDir(server.alias, root));
+            }
+          }
+        };
+
         // Load the shared `.e/.env` as the base environment (if present),
         // then the user's --env-file on top, so it overrides the base.
         const envFiles = orderEnvFiles(
@@ -323,7 +438,7 @@ export function registerSpawnCommand(program: Command): void {
         let result: RunSpawnResult;
         try {
           result = await runSpawn(
-            { git: new HostGit(), runtime, ensureImage },
+            { git: new HostGit(), runtime, ensureImage, ensureSidecarImages },
             {
               agent,
               harness,
@@ -331,16 +446,20 @@ export function registerSpawnCommand(program: Command): void {
               model: delivery?.runtimeModel,
               name: opts.name,
               runOptions,
+              sidecars,
+              mcpArgs,
             },
           );
         } catch (err) {
           cleanupProviderEnv();
+          cleanupSidecarEnv();
           console.error((err as Error).message);
           process.exit(1);
         } finally {
-          // The rendered provider env-file holds a resolved secret; drop it as
-          // soon as the run returns (the container already has its copy).
+          // The rendered env-files hold resolved secrets; drop them as soon as
+          // the run returns (each container already has its copy).
           cleanupProviderEnv();
+          cleanupSidecarEnv();
         }
 
         if (result.error) {
@@ -348,6 +467,9 @@ export function registerSpawnCommand(program: Command): void {
           process.exit(result.exitCode);
         }
 
+        for (const warning of result.sidecarWarnings ?? []) {
+          console.warn(`Warning: ${warning}`);
+        }
         if (result.pushWarning) {
           console.warn(`Warning: ${result.pushWarning}`);
         }

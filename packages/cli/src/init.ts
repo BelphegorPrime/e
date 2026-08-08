@@ -12,6 +12,7 @@ import {
   requiredEnvKeys,
 } from './harness/index';
 import { renderDefaultAgent } from './agent';
+import { SHIPPED_MCP_SERVERS } from './mcp/index';
 import {
   dockerfilePath,
   harnessDir,
@@ -19,6 +20,7 @@ import {
   envFilePath,
   agentDir,
   agentFilePath,
+  mcpDir,
   writeConfig,
   readConfig,
 } from './store';
@@ -68,12 +70,17 @@ export function registerInitCommand(program: Command): void {
         writeDefaultAgent(harness, root);
       }
 
+      writeMcpServers(root);
+
       writeEnvFile(root, envValues);
       writeConfig({ defaultHarness }, root);
       console.log(`favorite harness: ${defaultHarness}`);
 
       console.log(
         `\nInitialized ${Object.keys(HARNESSES).length} harnesses in ${harnessesBaseDir(root)}.`,
+      );
+      console.log(
+        `Container MCP servers ready: ${Object.keys(SHIPPED_MCP_SERVERS).join(', ')} (compose with \`--mcp <name>\`).`,
       );
       console.log(
         'Run `e spawn "<prompt>"` to run your favorite harness, or `e spawn <harness> "<prompt>"` to pick one.',
@@ -197,6 +204,21 @@ function writeDefaultAgent(harness: Harness, root: string | undefined): void {
     agentFilePath(harness.name, root),
     renderDefaultAgent(harness.name),
   );
+}
+
+/**
+ * Writes the shipped container MCP servers under `.e/mcp/<name>/` (Dockerfile +
+ * mcp.json), never overwriting a hand-edited file. These are ready to compose as
+ * sidecars with `e spawn <claude-agent> --mcp <name> "…"` (ADR-0005).
+ */
+function writeMcpServers(root: string | undefined): void {
+  for (const [name, render] of Object.entries(SHIPPED_MCP_SERVERS)) {
+    const dir = mcpDir(name, root);
+    const files = render();
+    for (const [fileName, content] of Object.entries(files)) {
+      writeIfAbsent(dir, path.join(dir, fileName), content);
+    }
+  }
 }
 
 /**

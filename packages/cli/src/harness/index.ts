@@ -1,6 +1,7 @@
 import type { DockerfileParams } from './renderDockerfile';
 import type { EnvHarnessSection } from './renderEnvTemplate';
 import type { Protocol, HarnessAdapter } from './adapter';
+import type { McpEndpoint } from '../mcp/index';
 import { claudeCodeAdapter, codexAdapter } from './adapter';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
@@ -32,6 +33,14 @@ export interface Harness {
    * that carry the model via env or a baked config ignore it.
    */
   buildCommand(prompt: string, model?: string): string[];
+  /**
+   * Wires container MCP sidecar endpoints into this harness, returning the extra
+   * argv to append to {@link buildCommand}. Present only for harnesses that take
+   * MCP config inline via a flag (Claude Code's `--mcp-config`); absent for
+   * harnesses that need a rendered config file or support no MCP — the spawn edge
+   * capability-gates on its presence. Grounding: `docs/research/harness-cli-facts.md`.
+   */
+  renderMcpArgs?(endpoints: McpEndpoint[]): string[];
 }
 
 /** Available coding harnesses, keyed by name. */
@@ -68,6 +77,16 @@ export const HARNESSES: Record<string, Harness> = {
       prompt,
       '--dangerously-skip-permissions',
     ],
+    // Claude takes MCP config inline: `--mcp-config '<json>'` with a streamable
+    // HTTP server def per sidecar (type "http"). No file, no restart.
+    renderMcpArgs: (endpoints: McpEndpoint[]) => {
+      if (endpoints.length === 0) return [];
+      const mcpServers: Record<string, { type: 'http'; url: string }> = {};
+      for (const endpoint of endpoints) {
+        mcpServers[endpoint.name] = { type: 'http', url: endpoint.url };
+      }
+      return ['--mcp-config', JSON.stringify({ mcpServers })];
+    },
   },
   codex: {
     name: 'codex',
