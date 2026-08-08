@@ -32,11 +32,13 @@ export interface RunSpawnDeps {
   git: Git;
   runtime: ContainerRunner;
   /**
-   * Builds the harness image if it isn't already present. Called before any
-   * worktree is created so a build failure never leaves orphan scaffolding.
-   * Throws on failure.
+   * Ensures the image this run executes is present, building it if needed, and
+   * returns its tag. Called before any worktree is created so a build failure
+   * never leaves orphan scaffolding. For a plain harness this is the harness
+   * base image; for a file-configured agent it is the derived agent image built
+   * on that base (ADR-0004). Throws on failure.
    */
-  ensureImage: () => void;
+  ensureImage: () => string;
 }
 
 export interface RunSpawnParams {
@@ -114,8 +116,9 @@ export async function runSpawn(
   }
 
   // Build the image before cutting any scaffolding, so a build failure never
-  // leaves an orphan worktree behind.
-  ensureImage();
+  // leaves an orphan worktree behind. The returned tag is what this run
+  // executes — the harness base, or a derived agent image built on it.
+  const imageTag = ensureImage();
 
   // Pin the base to the commit HEAD points at now, so a later push-eligibility
   // check compares against the run's actual starting point even if the host's
@@ -156,7 +159,7 @@ export async function runSpawn(
       workdir: '/workspace',
     };
     exitCode = await runtime.run(
-      harness.imageTag,
+      imageTag,
       runOptions,
       harness.buildCommand(prompt),
     );

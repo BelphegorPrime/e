@@ -131,7 +131,12 @@ function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
   const deps: RunSpawnDeps = {
     git,
     runtime,
-    ensureImage: overrides.ensureImage ?? (() => { ensureImageCalls++; }),
+    ensureImage:
+      overrides.ensureImage ??
+      (() => {
+        ensureImageCalls++;
+        return harness.imageTag;
+      }),
   };
   return { deps, git: git as FakeGit, runtime: runtime as FakeRuntime, ensureImageCalls: () => ensureImageCalls };
 }
@@ -192,8 +197,18 @@ test('the run branch uses the agent name, while the image stays the harness imag
   const slug = slugify('Fix the flaky test');
   assert.equal(result.branch, `e/smart-demo/${slug}-1`);
   assert.equal(git.listedPrefixes[0], `e/smart-demo/${slug}`);
-  // The image is keyed on the harness, not the agent (no derived image yet).
+  // With the default ensureImage, the run uses the harness base image.
   assert.equal(runtime.image, 'e-harness-demo');
+});
+
+test('runs the image tag ensureImage returns (e.g. a derived agent image)', async () => {
+  const { deps, runtime } = makeDeps({
+    // A file-configured agent's ensureImage builds a derived image and returns
+    // its tag; runSpawn must run that, not the harness base.
+    ensureImage: () => 'e-agent-smart-codex',
+  });
+  await runSpawn(deps, makeParams());
+  assert.equal(runtime.image, 'e-agent-smart-codex');
 });
 
 test('does not modify the working tree in place: worktree lives under worktreesDir', async () => {

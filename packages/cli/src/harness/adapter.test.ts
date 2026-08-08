@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   claudeCodeAdapter,
+  codexAdapter,
+  renderCodexConfig,
   validateProviderProtocol,
   renderProviderEnvFile,
   parseDotenv,
@@ -115,4 +117,71 @@ test('parseDotenv: parses KEY=VALUE, skips comments and blanks, keeps value verb
   assert.equal(env.SPACED_KEY, ' value-with = signs');
   assert.equal(env.EMPTY, '');
   assert.ok(!('NO_EQUALS_LINE' in env));
+});
+
+const codexProvider: Provider = {
+  baseUrl: 'https://gateway.example.com/v1',
+  model: 'gpt-5-codex',
+  protocol: 'openai-responses',
+  apiKeyEnv: 'MY_GATEWAY_KEY',
+};
+
+test('renderCodexConfig: renders a Responses provider block selecting a custom endpoint', () => {
+  const toml = renderCodexConfig(codexProvider);
+  // The custom provider is selected at the top level...
+  assert.match(toml, /^model = "gpt-5-codex"$/m);
+  assert.match(toml, /^model_provider = "e"$/m);
+  // ...and defined as a Responses provider pointing at the custom base URL.
+  assert.match(toml, /^\[model_providers\.e\]$/m);
+  assert.match(toml, /^base_url = "https:\/\/gateway\.example\.com\/v1"$/m);
+  assert.match(toml, /^wire_api = "responses"$/m);
+});
+
+test('renderCodexConfig: references the API key by env var name, never a value', () => {
+  const toml = renderCodexConfig(codexProvider);
+  // Codex reads the key from the env var named by `env_key` at runtime; the
+  // rendered file (baked into the image) must carry the name, never a secret.
+  assert.match(toml, /^env_key = "MY_GATEWAY_KEY"$/m);
+});
+
+test('renderCodexConfig: refuses to bake an `auto` model (resolved at spawn, not baked)', () => {
+  assert.throws(
+    () => renderCodexConfig({ ...codexProvider, model: 'auto' }),
+    /auto/,
+  );
+});
+
+test('renderCodexConfig: escapes TOML-significant characters in interpolated values', () => {
+  const toml = renderCodexConfig({
+    ...codexProvider,
+    baseUrl: 'https://host/"weird"\\path',
+  });
+  // The rendered base_url stays a valid TOML basic string: quotes and
+  // backslashes are escaped rather than closing the literal.
+  assert.match(toml, /^base_url = "https:\/\/host\/\\"weird\\"\\\\path"$/m);
+});
+
+test('codexAdapter: is a file-delivered adapter that renders config.toml', () => {
+  assert.equal(codexAdapter.kind, 'file');
+  const file = codexAdapter.renderProviderFile(codexProvider);
+  assert.equal(file.fileName, 'config.toml');
+  assert.equal(file.content, renderCodexConfig(codexProvider));
+});
+
+test('codexAdapter: bakes config under a relocated config dir outside /workspace', () => {
+  assert.equal(codexAdapter.configDirEnv, 'CODEX_HOME');
+  assert.ok(codexAdapter.configDir.startsWith('/'));
+  assert.ok(!codexAdapter.configDir.startsWith('/workspace'));
+});
+
+test('codexAdapter: the only runtime env is the API key, delivered by name', () => {
+  const entries = codexAdapter.renderRuntimeEnv(codexProvider);
+  assert.deepEqual(entries, [
+    { name: 'MY_GATEWAY_KEY', fromEnv: 'MY_GATEWAY_KEY' },
+  ]);
+});
+
+test('codexAdapter: the runtime env never carries the secret value, only its name', () => {
+  const entries = codexAdapter.renderRuntimeEnv(codexProvider);
+  assert.ok(entries.every((e) => 'fromEnv' in e && !('value' in e)));
 });
