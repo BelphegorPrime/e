@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { maxRunCounter } from './runSpawn';
+import { maxRunCounter } from './naming';
 
 const prefix = 'e/claudeCode/fix-parser';
 

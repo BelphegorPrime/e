@@ -4,7 +4,7 @@ import type { Git } from './git/index';
 import type { ContainerRunner, RunOptions, SidecarSpec } from './runtime/index';
 import type { Harness } from './harness/index';
 import type { Agent } from './agent';
-import { sidecarNetworkName, sidecarContainerName } from './mcp/index';
+import { runName, runBranchPrefix, maxRunCounter, type RunName } from './naming';
 import { slugify } from './slugify';
 
 /** How many counter collisions to absorb before giving up (a runaway guard). */
@@ -36,24 +36,6 @@ export interface SidecarPlan {
   healthcheck?: string[];
   /** Env files delivering the sidecar's own credentials (never the agent's). */
   envFile?: string[];
-}
-
-/**
- * Highest run counter `N` among `branches` matching `<prefix>-N`, or 0 if none.
- * Accepts both local (`e/<harness>/<slug>-2`) and remote-tracking
- * (`origin/e/<harness>/<slug>-2`) shortnames, so the counter never reuses a
- * number already taken on origin. The next run is `max + 1`.
- */
-export function maxRunCounter(branches: string[], prefix: string): number {
-  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // Match `<prefix>-<N>` at the end, allowing a leading `<remote>/` segment.
-  const pattern = new RegExp(`(?:^|/)${escaped}-(\\d+)$`);
-  let max = 0;
-  for (const branch of branches) {
-    const match = pattern.exec(branch);
-    if (match) max = Math.max(max, Number(match[1]));
-  }
-  return max;
 }
 
 /** Collaborators the orchestrator drives. Injected so tests can fake them. */
@@ -222,7 +204,7 @@ export async function runSpawn(
   // HEAD moves while the agent works.
   const base = git.headSha();
   const slug = params.name ?? slugify(prompt);
-  const prefix = `e/${agent.name}/${slug}`;
+  const prefix = runBranchPrefix(agent.name, slug);
   const worktreesDir =
     params.worktreesDir ?? path.join(os.tmpdir(), 'e-worktrees');
 
@@ -230,15 +212,13 @@ export async function runSpawn(
   // the branch/path already exists (a concurrent spawn claimed it between our
   // enumeration and creation). Any other failure is surfaced immediately.
   let counter = maxRunCounter(git.listRunBranches(prefix), prefix) + 1;
-  let branch: string;
-  let runName: string;
+  let run: RunName;
   let worktreePath: string;
   for (let attempt = 0; ; attempt++) {
-    branch = `${prefix}-${counter}`;
-    runName = branch.replace(/\//g, '-');
-    worktreePath = path.join(worktreesDir, runName);
+    run = runName(agent.name, slug, counter);
+    worktreePath = path.join(worktreesDir, run.name);
     try {
-      git.addWorktree({ path: worktreePath, branch, base });
+      git.addWorktree({ path: worktreePath, branch: run.branch, base });
       break;
     } catch (err) {
       const isCollision = /already exists/i.test((err as Error).message);
@@ -246,12 +226,13 @@ export async function runSpawn(
       counter++;
     }
   }
+  const branch = run.branch;
 
   // Turn each sidecar plan into a concrete spec now that the run name (and thus a
   // unique container name and the private network) exists.
-  const network = sidecarNetworkName(runName);
+  const network = run.network;
   const specs: SidecarSpec[] = sidecarPlans.map((plan) => ({
-    name: sidecarContainerName(runName, plan.alias),
+    name: run.sidecarContainer(plan.alias),
     alias: plan.alias,
     image: plan.image,
     network,
@@ -295,7 +276,7 @@ export async function runSpawn(
     if (!readinessError) {
       const runOptions: RunOptions = {
         ...params.runOptions,
-        name: runName,
+        name: run.name,
         // The worktree is always mounted at /workspace; a file harness's config
         // overlay (if any) is appended as extra read-only mounts outside it.
         volume: [`${worktreePath}:/workspace`, ...(params.configMounts ?? [])],

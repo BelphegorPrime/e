@@ -2,9 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseMcpServer,
-  sidecarImageTag,
-  sidecarNetworkName,
-  sidecarContainerName,
   mcpEndpoint,
   planMcpSelection,
   renderEverythingFiles,
@@ -114,18 +111,6 @@ test('parseMcpServer rejects a non-string-array requiredEnv or healthcheck', () 
         'mcp.json',
       ),
     /healthcheck/,
-  );
-});
-
-test('sidecarImageTag namespaces under e-mcp-', () => {
-  assert.equal(sidecarImageTag('everything'), 'e-mcp-everything');
-});
-
-test('sidecar network and container names are derived from the run name', () => {
-  assert.equal(sidecarNetworkName('e-demo-fix-1'), 'e-demo-fix-1-net');
-  assert.equal(
-    sidecarContainerName('e-demo-fix-1', 'everything'),
-    'e-demo-fix-1-mcp-everything',
   );
 });
 

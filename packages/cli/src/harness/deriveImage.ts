@@ -16,6 +16,7 @@ import type {
   RenderedConfigFile,
 } from './adapter';
 import type { ResolvedModel } from '../model/resolve';
+import { imageTag } from '../naming';
 
 /** The baked provider config block of a derived Dockerfile (a file harness). */
 export interface DockerfileProviderBlock {
@@ -87,7 +88,7 @@ export function renderDerivedDockerfile(p: DerivedDockerfileParams): string {
  * harness image it derives from.
  */
 export function derivedImageTag(agentName: string): string {
-  return `e-agent-${agentName}`;
+  return imageTag('agent', agentName);
 }
 
 /** A file-configured harness's provider config, baked into the derived image. */

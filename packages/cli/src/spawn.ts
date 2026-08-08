@@ -32,11 +32,11 @@ import {
   readMcpServer,
   listMcpServerNames,
   planMcpSelection,
-  sidecarImageTag,
   type McpServer,
 } from './mcp/index';
 import type { SidecarPlan } from './runSpawn';
 import { writeIfAbsent } from './scaffold';
+import { imageTag } from './naming';
 import {
   harnessDir,
   agentDir,
@@ -307,7 +307,7 @@ export function registerSpawnCommand(program: Command): void {
             const plan = planMcpSelection(servers);
             sidecars = plan.containerServers.map((server) => ({
               alias: server.name,
-              image: sidecarImageTag(server.name),
+              image: imageTag('mcp', server.name),
               port: server.port,
               healthcheck: server.healthcheck,
               // A sidecar's credentials go to the sidecar, never the agent.

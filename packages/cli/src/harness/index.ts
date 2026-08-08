@@ -3,6 +3,7 @@ import type { EnvHarnessSection } from './renderEnvTemplate';
 import type { Protocol, HarnessAdapter, FileHarnessAdapter } from './adapter';
 import type { McpEndpoint } from '../mcp/index';
 import { claudeCodeAdapter, codexAdapter, piAdapter, PI_PROVIDER_ID } from './adapter';
+import { imageTag as eImageTag } from '../naming';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
 export interface Harness {
@@ -62,7 +63,7 @@ const AGENTS_SKILLS_DIR = '/root/.agents/skills';
 export const HARNESSES: Record<string, Harness> = {
   pi: {
     name: 'pi',
-    imageTag: 'e-harness-pi',
+    imageTag: eImageTag('harness', 'pi'),
     dockerfile: {
       label: 'Pi Coding Agent CLI harness.',
       npmPackage: '@earendil-works/pi-coding-agent',
@@ -88,7 +89,7 @@ export const HARNESSES: Record<string, Harness> = {
   },
   claudeCode: {
     name: 'claudeCode',
-    imageTag: 'e-harness-claudecode',
+    imageTag: eImageTag('harness', 'claudeCode'),
     dockerfile: {
       label: 'Claude Code CLI harness.',
       npmPackage: '@anthropic-ai/claude-code',
@@ -124,7 +125,7 @@ export const HARNESSES: Record<string, Harness> = {
   },
   codex: {
     name: 'codex',
-    imageTag: 'e-harness-codex',
+    imageTag: eImageTag('harness', 'codex'),
     dockerfile: {
       label: 'OpenAI Codex CLI harness.',
       npmPackage: '@openai/codex',
@@ -143,7 +144,7 @@ export const HARNESSES: Record<string, Harness> = {
   },
   opencode: {
     name: 'opencode',
-    imageTag: 'e-harness-opencode',
+    imageTag: eImageTag('harness', 'opencode'),
     dockerfile: {
       label: 'opencode CLI harness.',
       npmPackage: 'opencode-ai',

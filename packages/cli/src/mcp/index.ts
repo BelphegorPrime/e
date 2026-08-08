@@ -156,32 +156,6 @@ export function listMcpServerNames(root?: string): string[] {
     .map((entry) => entry.name);
 }
 
-/**
- * The image tag for an MCP server's sidecar. Namespaced `e-mcp-*`, distinct from
- * the `e-harness-*` and `e-agent-*` tags so a sidecar image never collides with a
- * harness or agent image.
- */
-export function sidecarImageTag(name: string): string {
-  return `e-mcp-${name}`;
-}
-
-/**
- * The private per-run network name. Derived from the run name (already unique per
- * run — see `runSpawn`), so two concurrent runs never share a network.
- */
-export function sidecarNetworkName(runName: string): string {
-  return `${runName}-net`;
-}
-
-/**
- * The sidecar's container name — unique per run so concurrent runs of the same
- * MCP server never collide. The agent still reaches the server at its short
- * `name` via a network alias (see the spawn edge), so the URL host stays stable.
- */
-export function sidecarContainerName(runName: string, mcpName: string): string {
-  return `${runName}-mcp-${mcpName}`;
-}
-
 /** The endpoint an agent connects an MCP client to: the server's name and its URL. */
 export interface McpEndpoint {
   /** The server's short name (config key / network alias). */
