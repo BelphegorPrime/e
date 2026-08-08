@@ -8,11 +8,14 @@ import {
   type Harness,
   envHarnessSections,
 } from './harness/index';
+import { renderDefaultAgent } from './agent';
 import {
   dockerfilePath,
   harnessDir,
   harnessesBaseDir,
   envFilePath,
+  agentDir,
+  agentFilePath,
 } from './store';
 
 interface InitCommandOptions {
@@ -34,6 +37,7 @@ export function registerInitCommand(program: Command): void {
 
       for (const harness of Object.values(HARNESSES)) {
         writeDockerfile(harness, root);
+        writeDefaultAgent(harness, root);
       }
 
       writeEnvFile(root);
@@ -46,14 +50,11 @@ export function registerInitCommand(program: Command): void {
 }
 
 /**
- * Writes a harness's Dockerfile. An existing file is never overwritten; if the
- * rendered content differs, the change is reported as a line diff so the user
- * can reconcile it themselves.
+ * Writes `content` to `file` (creating `dir`), but never overwrites an existing
+ * file: if it matches it's reported up-to-date, and if it differs the change is
+ * shown as a line diff so the user can reconcile a hand-edited file themselves.
  */
-function writeDockerfile(harness: Harness, root: string | undefined): void {
-  const dir = harnessDir(harness.name, root);
-  const file = dockerfilePath(harness.name, root);
-  const content = renderDockerfile(harness.dockerfile);
+function writeIfAbsent(dir: string, file: string, content: string): void {
   fs.mkdirSync(dir, { recursive: true });
 
   if (!fs.existsSync(file)) {
@@ -72,6 +73,24 @@ function writeDockerfile(harness: Harness, root: string | undefined): void {
   for (const line of diffLines(existing, content)) {
     console.log(`  ${line}`);
   }
+}
+
+/** Writes a harness's Dockerfile (never overwriting a hand-edited one). */
+function writeDockerfile(harness: Harness, root: string | undefined): void {
+  writeIfAbsent(
+    harnessDir(harness.name, root),
+    dockerfilePath(harness.name, root),
+    renderDockerfile(harness.dockerfile),
+  );
+}
+
+/** Writes a harness's default agent definition (never overwriting a hand-edited one). */
+function writeDefaultAgent(harness: Harness, root: string | undefined): void {
+  writeIfAbsent(
+    agentDir(harness.name, root),
+    agentFilePath(harness.name, root),
+    renderDefaultAgent(harness.name),
+  );
 }
 
 /**

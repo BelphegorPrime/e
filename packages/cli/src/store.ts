@@ -4,10 +4,11 @@ import path from 'path';
 
 /**
  * The **Store**: the `.e` directory holding e's on-disk state — the per-harness
- * Dockerfiles under `harnesses/` and the shared `.env` base environment. This
- * module owns the store's layout (path derivation keyed on a harness *name*)
- * and the root-finding walk that locates it. It knows nothing about the Harness
- * registry, so the dependency runs one way: `harness` → `store`.
+ * Dockerfiles under `harnesses/`, the Agent definitions under `agents/`, and the
+ * shared `.env` base environment. This module owns the store's layout (path
+ * derivation keyed on a harness or agent *name*) and the root-finding walk that
+ * locates it. It knows nothing about the Harness or Agent registries, so the
+ * dependency runs one way: `harness`/`agent` → `store`.
  */
 
 /**
@@ -23,6 +24,21 @@ export function eBaseDir(root: string = os.homedir()): string {
 /** Base directory that holds the harness Dockerfiles, under `root`. */
 export function harnessesBaseDir(root?: string): string {
   return path.join(eBaseDir(root), 'harnesses');
+}
+
+/** Base directory that holds the Agent definitions, under `root`. */
+export function agentsBaseDir(root?: string): string {
+  return path.join(eBaseDir(root), 'agents');
+}
+
+/** Directory containing a single agent's definition. */
+export function agentDir(name: string, root?: string): string {
+  return path.join(agentsBaseDir(root), name);
+}
+
+/** Absolute path to an agent's definition file. */
+export function agentFilePath(name: string, root?: string): string {
+  return path.join(agentDir(name, root), 'agent.json');
 }
 
 /**

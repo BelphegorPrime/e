@@ -4,6 +4,7 @@ import path from 'path';
 import type { Git, WorktreeSpec } from './git/index';
 import type { ContainerRunner, RunOptions } from './runtime/index';
 import type { Harness } from './harness/index';
+import type { Agent } from './agent';
 import { runSpawn, type RunSpawnDeps, type RunSpawnParams } from './runSpawn';
 import { slugify } from './slugify';
 
@@ -119,6 +120,9 @@ const harness: Harness = {
   buildCommand: (prompt: string) => ['demo', '-p', prompt],
 };
 
+/** The default agent for the demo harness (name mirrors the harness). */
+const agent: Agent = { name: 'demo', harness: 'demo', tier: 'default' };
+
 function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
   let ensureImageCalls = 0;
   const git = overrides.git ?? new FakeGit();
@@ -133,6 +137,7 @@ function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
 
 function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
   return {
+    agent,
     harness,
     prompt: 'Fix the flaky test',
     runOptions: { attach: true, rm: true },
@@ -176,6 +181,18 @@ test('creates a worktree from HEAD on branch e/<harness>/<slug>-1 and runs the h
   assert.equal(result.ran, true);
   assert.equal(result.exitCode, 0);
   assert.equal(result.branch, `e/demo/${slug}-1`);
+});
+
+test('the run branch uses the agent name, while the image stays the harness image', async () => {
+  const { deps, git, runtime } = makeDeps();
+  const smart: Agent = { name: 'smart-demo', harness: 'demo', tier: 'smart' };
+  const result = await runSpawn(deps, makeParams({ agent: smart }));
+
+  const slug = slugify('Fix the flaky test');
+  assert.equal(result.branch, `e/smart-demo/${slug}-1`);
+  assert.equal(git.listedPrefixes[0], `e/smart-demo/${slug}`);
+  // The image is keyed on the harness, not the agent (no derived image yet).
+  assert.equal(runtime.image, 'e-harness-demo');
 });
 
 test('does not modify the working tree in place: worktree lives under worktreesDir', async () => {

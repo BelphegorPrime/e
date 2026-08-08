@@ -5,6 +5,7 @@ import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
 import { orderEnvFiles, decideImageAction } from './spawnPlan';
 import { resolveHarness, HARNESSES } from './harness/index';
+import { findAgent } from './agent';
 import { harnessDir, isInitialized, findRoot, envFilePath } from './store';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
@@ -60,8 +61,8 @@ export function registerSpawnCommand(program: Command): void {
     .command('spawn')
     .description('Build and run a coding harness in a container')
     .argument(
-      '[harness]',
-      `coding harness to run (${Object.keys(HARNESSES).join(', ')})`,
+      '[target]',
+      `agent or harness to run (harnesses: ${Object.keys(HARNESSES).join(', ')})`,
     )
     .argument('[prompt...]', 'instruction passed to the harness')
     .option(
@@ -100,12 +101,12 @@ export function registerSpawnCommand(program: Command): void {
     )
     .action(
       async (
-        harnessName: string | undefined,
+        target: string | undefined,
         prompt: string[],
         opts: SpawnCommandOptions,
       ) => {
-        if (harnessName === undefined) {
-          console.error('error: missing required argument \'harness\'\n');
+        if (target === undefined) {
+          console.error('error: missing required argument \'target\'\n');
           console.error('Available harnesses:');
           for (const name of Object.keys(HARNESSES)) {
             console.error(`  ${name}`);
@@ -113,14 +114,23 @@ export function registerSpawnCommand(program: Command): void {
           process.exit(1);
         }
 
-        const harness = (() => {
+        const root = findRoot(opts.dir);
+
+        // Resolve the spawn target to an Agent (a persisted agent by that name,
+        // or a bare harness name → its default agent), then the Harness the
+        // agent runs — the image and invocation stay keyed on the harness.
+        const agent = (() => {
           try {
-            return resolveHarness(harnessName);
+            return findAgent(target, root);
           } catch (err) {
             console.error((err as Error).message);
             process.exit(1);
           }
         })();
+
+        // findAgent has already validated that the agent's harness is a known
+        // harness, so this resolution cannot fail.
+        const harness = resolveHarness(agent.harness);
 
         let runtime: ContainerRuntime;
         try {
@@ -129,8 +139,6 @@ export function registerSpawnCommand(program: Command): void {
           console.error((err as Error).message);
           process.exit(1);
         }
-
-        const root = findRoot(opts.dir);
 
         // Builds the harness image on demand. The orchestrator calls this
         // after confirming a git repo but before creating the worktree, so a
@@ -181,6 +189,7 @@ export function registerSpawnCommand(program: Command): void {
           result = await runSpawn(
             { git: new HostGit(), runtime, ensureImage },
             {
+              agent,
               harness,
               prompt: prompt.join(' '),
               name: opts.name,
