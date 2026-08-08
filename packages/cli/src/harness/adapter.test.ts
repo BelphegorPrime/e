@@ -111,8 +111,8 @@ test('parseDotenv: parses KEY=VALUE, skips comments and blanks, keeps value verb
     ].join('\n'),
   );
   assert.equal(env.ANTHROPIC_API_KEY, 'sk-abc');
-  // Key is trimmed; value keeps everything after the first '=' verbatim.
-  assert.equal(env.SPACED_KEY, ' value-with = signs ');
+  // The line is trimmed, then the value keeps everything after the first '='.
+  assert.equal(env.SPACED_KEY, ' value-with = signs');
   assert.equal(env.EMPTY, '');
   assert.ok(!('NO_EQUALS_LINE' in env));
 });

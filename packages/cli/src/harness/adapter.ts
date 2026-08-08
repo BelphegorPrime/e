@@ -8,8 +8,9 @@
  */
 
 /**
- * A model wire protocol — the concrete HTTP API an endpoint speaks. "OpenAI" is
- * not monolithic: `openai-chat` (`/v1/chat/completions`) and `openai-responses`
+ * Every model wire protocol `e` recognises — the single source of truth. A
+ * protocol is the concrete HTTP API an endpoint speaks. "OpenAI" is not
+ * monolithic: `openai-chat` (`/v1/chat/completions`) and `openai-responses`
  * (`/v1/responses`) are distinct, and a harness may speak one without the other.
  * See `docs/research/harness-cli-facts.md`.
  */
@@ -25,7 +26,7 @@ export const PROTOCOLS: readonly Protocol[] = [
   'openai-chat',
   'openai-responses',
   'google',
-];
+] as const;
 
 /**
  * The model endpoint an Agent talks to, declared inline in the Agent. The API
