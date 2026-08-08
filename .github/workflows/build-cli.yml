@@ -29,12 +29,12 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npm run test --workspace @monorepo/cli
+        run: npm run test --workspace @e/cli
 
       # Compiles TypeScript (build:ts) then cross-compiles standalone binaries
       # for all 6 targets into packages/cli/command/ via @yao-pkg/pkg (build:bin).
       - name: Build binaries
-        run: npm run build --workspace @monorepo/cli
+        run: npm run build --workspace @e/cli
 
       # Repackage each raw pkg binary into a per-target archive whose inner
       # file is named `e` (or `e.exe`), so extraction yields the `e` command

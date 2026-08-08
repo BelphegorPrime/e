@@ -12,7 +12,7 @@ From the repo root:
 
 ```bash
 npm install
-npm run build:ts --workspace @monorepo/cli   # compiles to packages/cli/dist
+npm run build:ts --workspace @e/cli   # compiles to packages/cli/dist
 ```
 
 Run the compiled CLI directly. A convenient alias for a shell session (from the
@@ -31,7 +31,7 @@ Three levels, cheapest first.
 ### 1. Unit tests
 
 ```bash
-npm test --workspace @monorepo/cli
+npm test --workspace @e/cli
 ```
 
 Builds and runs the full `node --test` suite (adapters, delivery planning,
