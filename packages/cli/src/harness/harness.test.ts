@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HARNESSES } from './index';
+import { HARNESSES, mcpDeliveryForm, fileAdapterFor } from './index';
 import type { McpEndpoint } from '../mcp/index';
 
 const claude = HARNESSES.claudeCode;
@@ -62,4 +62,19 @@ test('only Claude wires MCP inline today; the others have no renderMcpArgs', () 
   assert.equal(HARNESSES.codex.renderMcpArgs, undefined);
   assert.equal(HARNESSES.opencode.renderMcpArgs, undefined);
   assert.equal(HARNESSES.pi.renderMcpArgs, undefined);
+});
+
+test('mcpDeliveryForm declares each harness capability: flag (Claude), file (Codex), none (pi)', () => {
+  assert.equal(mcpDeliveryForm(HARNESSES.claudeCode), 'flag');
+  assert.equal(mcpDeliveryForm(HARNESSES.codex), 'file');
+  // pi has no MCP client, so --mcp is gated off.
+  assert.equal(mcpDeliveryForm(HARNESSES.pi), 'none');
+  // opencode has no MCP delivery wired yet, so it is gated off too.
+  assert.equal(mcpDeliveryForm(HARNESSES.opencode), 'none');
+});
+
+test('fileAdapterFor narrows to the file adapter only for a file harness', () => {
+  assert.equal(fileAdapterFor(HARNESSES.codex)?.kind, 'file');
+  assert.equal(fileAdapterFor(HARNESSES.claudeCode), undefined);
+  assert.equal(fileAdapterFor(HARNESSES.pi), undefined);
 });

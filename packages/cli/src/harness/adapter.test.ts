@@ -4,6 +4,7 @@ import {
   claudeCodeAdapter,
   codexAdapter,
   renderCodexConfig,
+  renderCodexMcpServers,
   validateProviderProtocol,
   renderProviderEnvFile,
   parseDotenv,
@@ -186,4 +187,66 @@ test('codexAdapter: the only runtime env is the API key, delivered by name', () 
 test('codexAdapter: the runtime env never carries the secret value, only its name', () => {
   const entries = codexAdapter.renderRuntimeEnv(codexProvider);
   assert.ok(entries.every((e) => 'fromEnv' in e && !('value' in e)));
+});
+
+test('renderCodexMcpServers: renders a streamable-HTTP block per server (url, no type key)', () => {
+  const toml = renderCodexMcpServers([
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+    { name: 'filesystem', url: 'http://filesystem:8000/mcp' },
+  ]);
+  assert.match(toml, /^\[mcp_servers\.everything\]$/m);
+  assert.match(toml, /^url = "http:\/\/everything:3001\/mcp"$/m);
+  assert.match(toml, /^\[mcp_servers\.filesystem\]$/m);
+  assert.match(toml, /^url = "http:\/\/filesystem:8000\/mcp"$/m);
+  // Streamable HTTP is denoted by the presence of `url`; no transport/type key.
+  assert.doesNotMatch(toml, /transport|type =/);
+});
+
+test('renderCodexMcpServers: an empty selection renders nothing', () => {
+  assert.equal(renderCodexMcpServers([]), '');
+});
+
+test('renderCodexMcpServers: renders remote headers verbatim as http_headers', () => {
+  const toml = renderCodexMcpServers([
+    {
+      name: 'hosted',
+      url: 'https://mcp.example.com/mcp',
+      headers: { Authorization: 'Bearer TOKEN' },
+    },
+  ]);
+  assert.match(toml, /^http_headers = \{ "Authorization" = "Bearer TOKEN" \}$/m);
+});
+
+test('codexAdapter: renderMcpServers delegates to renderCodexMcpServers', () => {
+  const endpoints = [{ name: 'everything', url: 'http://everything:3001/mcp' }];
+  assert.equal(
+    codexAdapter.renderMcpServers(endpoints),
+    renderCodexMcpServers(endpoints),
+  );
+});
+
+test('codexAdapter.renderConfigOverlay: merges the MCP block onto the baked base config', () => {
+  const base = renderCodexConfig(codexProvider);
+  const overlay = codexAdapter.renderConfigOverlay(base, [
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+  ]);
+  assert.equal(overlay.fileName, 'config.toml');
+  // The baked provider block is preserved...
+  assert.match(overlay.content, /^model_provider = "e"$/m);
+  assert.match(overlay.content, /^base_url = /m);
+  // ...and the MCP server block is appended.
+  assert.match(overlay.content, /^\[mcp_servers\.everything\]$/m);
+  assert.match(overlay.content, /^url = "http:\/\/everything:3001\/mcp"$/m);
+  // A blank line separates the two sections (valid TOML, readable).
+  assert.match(overlay.content, /wire_api = "responses"\n\n\[mcp_servers\.everything\]/);
+});
+
+test('codexAdapter.renderConfigOverlay: a default agent (no base) yields an MCP-only config', () => {
+  const overlay = codexAdapter.renderConfigOverlay('', [
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+  ]);
+  assert.doesNotMatch(overlay.content, /model_provider/);
+  assert.match(overlay.content, /^\[mcp_servers\.everything\]$/m);
+  // No leading blank lines when there is no base config.
+  assert.match(overlay.content, /^\[mcp_servers\.everything\]/);
 });

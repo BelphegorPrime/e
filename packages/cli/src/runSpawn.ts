@@ -106,6 +106,12 @@ export interface RunSpawnParams {
   sidecars?: SidecarPlan[];
   /** Extra argv wiring the sidecars into the harness (e.g. Claude's `--mcp-config`). */
   mcpArgs?: string[];
+  /**
+   * Extra read-only mounts for the agent container (`host:container:ro` specs),
+   * appended to the worktree volume — used to deliver a file harness's runtime
+   * config overlay (e.g. Codex's merged `config.toml`) outside `/workspace`.
+   */
+  configMounts?: string[];
   /** Readiness polling overrides (mainly for tests). */
   readiness?: ReadinessPolicy;
 }
@@ -290,7 +296,9 @@ export async function runSpawn(
       const runOptions: RunOptions = {
         ...params.runOptions,
         name: runName,
-        volume: [`${worktreePath}:/workspace`],
+        // The worktree is always mounted at /workspace; a file harness's config
+        // overlay (if any) is appended as extra read-only mounts outside it.
+        volume: [`${worktreePath}:/workspace`, ...(params.configMounts ?? [])],
         workdir: '/workspace',
         // The agent joins the run's private network only when it has sidecars to
         // reach; a plain run stays on the default bridge, unchanged.

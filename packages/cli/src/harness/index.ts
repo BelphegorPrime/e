@@ -1,6 +1,6 @@
 import type { DockerfileParams } from './renderDockerfile';
 import type { EnvHarnessSection } from './renderEnvTemplate';
-import type { Protocol, HarnessAdapter } from './adapter';
+import type { Protocol, HarnessAdapter, FileHarnessAdapter } from './adapter';
 import type { McpEndpoint } from '../mcp/index';
 import { claudeCodeAdapter, codexAdapter } from './adapter';
 
@@ -135,6 +135,31 @@ export function resolveHarness(name: string): Harness {
     );
   }
   return harness;
+}
+
+/**
+ * How a harness accepts MCP server config, its declared MCP capability (ADR-0006):
+ *  - `flag` — inline on the command line (Claude Code's `--mcp-config`).
+ *  - `file` — rendered into its native config file, delivered as a runtime
+ *    overlay via its file adapter (Codex's `config.toml` / `CODEX_HOME`).
+ *  - `none` — no MCP client at all (pi), or no MCP delivery wired yet; `--mcp` is
+ *    rejected with a clear error at spawn.
+ */
+export type McpDeliveryForm = 'flag' | 'file' | 'none';
+
+/** The MCP delivery form a harness declares (see {@link McpDeliveryForm}). */
+export function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
+  if (harness.renderMcpArgs) return 'flag';
+  if (harness.adapter?.kind === 'file') return 'file';
+  return 'none';
+}
+
+/**
+ * The harness's file config adapter when it has one, else undefined — narrows the
+ * {@link HarnessAdapter} union so callers avoid an `as FileHarnessAdapter` cast.
+ */
+export function fileAdapterFor(harness: Harness): FileHarnessAdapter | undefined {
+  return harness.adapter?.kind === 'file' ? harness.adapter : undefined;
 }
 
 /**

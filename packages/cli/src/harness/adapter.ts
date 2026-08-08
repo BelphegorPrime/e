@@ -8,6 +8,8 @@
  * agent image (ADR-0004), with only the API key delivered at runtime.
  */
 
+import type { McpEndpoint } from '../mcp/index';
+
 /**
  * Every model wire protocol `e` recognises — the single source of truth. A
  * protocol is the concrete HTTP API an endpoint speaks. "OpenAI" is not
@@ -104,6 +106,8 @@ export interface FileHarnessAdapter {
   configDirEnv: string;
   /** Absolute in-container config dir the file is baked into; outside `/workspace`. */
   configDir: string;
+  /** The config file name this harness reads under {@link configDir} (e.g. `config.toml`). */
+  configFileName: string;
   /** Renders the Provider into this harness's native config file. */
   renderProviderFile(provider: Provider): RenderedConfigFile;
   /**
@@ -112,6 +116,21 @@ export interface FileHarnessAdapter {
    * key-by-name mechanism (Codex `env_key`).
    */
   renderRuntimeEnv(provider: Provider): ContainerEnv[];
+  /**
+   * Renders the selected MCP servers into this harness's native config as a
+   * runtime-overlay fragment (ADR-0006 layer 3), to be merged onto the baked
+   * base config and delivered outside `/workspace` via {@link configDir}.
+   * Container sidecars use streamable HTTP (a `url`); returns an empty string
+   * when nothing is selected.
+   */
+  renderMcpServers(endpoints: McpEndpoint[]): string;
+  /**
+   * Merges the selected MCP servers onto the baked `baseConfig` (the exact config
+   * the derived image baked, reused not re-derived; empty for a default agent
+   * with no provider), returning the complete runtime-overlay config file to
+   * deliver at {@link configDir}. Pure — the spawn edge writes and mounts it.
+   */
+  renderConfigOverlay(baseConfig: string, endpoints: McpEndpoint[]): RenderedConfigFile;
 }
 
 /**
@@ -185,6 +204,43 @@ export function renderCodexConfig(provider: Provider): string {
 }
 
 /**
+ * Renders the selected MCP endpoints into Codex `[mcp_servers.<name>]` TOML
+ * blocks. A `url` denotes a streamable-HTTP server (Codex's only HTTP transport;
+ * no `transport`/`type` key and no experimental flag are needed — verified
+ * against `config.schema.json`'s `RawMcpServerConfig`) — used for container
+ * sidecars reached at `http://<alias>:<port>/mcp`. Any endpoint `headers` are
+ * rendered as Codex `http_headers` verbatim; Codex does not expand `${VAR}`, so a
+ * secret-bearing remote header is a Codex-native concern (its `env_http_headers`
+ * / `bearer_token_env_var`, which reference an env var by name) and out of this
+ * slice's container scope. Grounding: `docs/research/harness-cli-facts.md`.
+ */
+export function renderCodexMcpServers(endpoints: McpEndpoint[]): string {
+  const blocks = endpoints.map((endpoint) => {
+    const lines = [
+      `[mcp_servers.${tomlBareKey(endpoint.name)}]`,
+      `url = ${tomlBasicString(endpoint.url)}`,
+    ];
+    if (endpoint.headers && Object.keys(endpoint.headers).length > 0) {
+      const pairs = Object.entries(endpoint.headers).map(
+        ([key, value]) => `${tomlBasicString(key)} = ${tomlBasicString(value)}`,
+      );
+      lines.push(`http_headers = { ${pairs.join(', ')} }`);
+    }
+    return lines.join('\n');
+  });
+  return blocks.length > 0 ? blocks.join('\n\n') + '\n' : '';
+}
+
+/**
+ * Renders a TOML bare key when the name is a bare-key-safe identifier, else a
+ * quoted key. MCP server names are directory names, so they are normally bare;
+ * this keeps a name with dots or dashes valid as a table key.
+ */
+function tomlBareKey(name: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(name) ? name : tomlBasicString(name);
+}
+
+/**
  * Codex's adapter. Codex is configured through `config.toml` under its config
  * dir (relocatable via `CODEX_HOME`), so the provider is rendered into a file
  * baked into the derived agent image; only the API key is delivered at runtime,
@@ -194,11 +250,20 @@ export const codexAdapter: FileHarnessAdapter = {
   kind: 'file',
   configDirEnv: 'CODEX_HOME',
   configDir: '/root/.codex',
+  configFileName: 'config.toml',
   renderProviderFile(provider: Provider): RenderedConfigFile {
     return { fileName: 'config.toml', content: renderCodexConfig(provider) };
   },
   renderRuntimeEnv(provider: Provider): ContainerEnv[] {
     return [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }];
+  },
+  renderMcpServers(endpoints: McpEndpoint[]): string {
+    return renderCodexMcpServers(endpoints);
+  },
+  renderConfigOverlay(baseConfig: string, endpoints: McpEndpoint[]): RenderedConfigFile {
+    const block = renderCodexMcpServers(endpoints);
+    const content = (baseConfig ? baseConfig.trimEnd() + '\n\n' : '') + block;
+    return { fileName: this.configFileName, content };
   },
 };
 

@@ -6,13 +6,14 @@ import { ContainerRuntime, type RunOptions } from './runtime/index';
 import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
 import { orderEnvFiles, decideImageAction, resolveSpawnTarget } from './spawnPlan';
-import { resolveHarness, HARNESSES } from './harness/index';
+import { resolveHarness, HARNESSES, mcpDeliveryForm, fileAdapterFor } from './harness/index';
 import { findAgent, isKnownTarget, selectAgentByTier, listAgents } from './agent';
 import {
   validateProviderProtocol,
   renderProviderEnvFile,
   parseDotenv,
 } from './harness/adapter';
+import type { McpEndpoint } from './mcp/index';
 import {
   planProviderDelivery,
   type ProviderDelivery,
@@ -263,6 +264,10 @@ export function registerSpawnCommand(program: Command): void {
         // client (creds → agent, for `${VAR}` expansion), with no sidecar.
         let sidecars: SidecarPlan[] = [];
         let mcpArgs: string[] = [];
+        // For a file-delivered harness (Codex): the harness's file adapter and the
+        // selected endpoints, merged onto the baked base config and mounted below.
+        const fileAdapter = fileAdapterFor(harness);
+        let mcpFileEndpoints: McpEndpoint[] | undefined;
         const remoteAuthEnvFiles: string[] = [];
         const mcpEnvDirs: string[] = [];
         const cleanupMcpEnv = (): void => {
@@ -273,10 +278,10 @@ export function registerSpawnCommand(program: Command): void {
         };
         if (mcpNames.length > 0) {
           try {
-            if (!harness.renderMcpArgs) {
+            if (mcpDeliveryForm(harness) === 'none') {
               throw new Error(
-                `Harness "${harness.name}" cannot wire MCP servers via a flag yet; ` +
-                  `only Claude Code takes MCP config inline today.`,
+                `Harness "${harness.name}" has no MCP client, so it cannot use --mcp. ` +
+                  `Use a harness that supports MCP (e.g. claudeCode or codex).`,
               );
             }
             const servers = mcpNames.map((name) => resolveMcpServer(name, root));
@@ -295,7 +300,14 @@ export function registerSpawnCommand(program: Command): void {
               const file = renderMcpEnvFile(server, storeEnv, mcpEnvDirs, 'agent');
               if (file) remoteAuthEnvFiles.push(...file);
             }
-            mcpArgs = harness.renderMcpArgs(plan.endpoints);
+            // Delivery form per harness (ADR-0006): Claude takes MCP inline on the
+            // command line; a file harness (Codex) takes a config-file overlay
+            // (merged + mounted below, once the baked base config is known).
+            if (harness.renderMcpArgs) {
+              mcpArgs = harness.renderMcpArgs(plan.endpoints);
+            } else {
+              mcpFileEndpoints = plan.endpoints;
+            }
           } catch (err) {
             cleanupMcpEnv();
             console.error((err as Error).message);
@@ -329,6 +341,37 @@ export function registerSpawnCommand(program: Command): void {
               { agentName: agent.name, baseImage: harness.imageTag },
             );
           } catch (err) {
+            console.error((err as Error).message);
+            process.exit(1);
+          }
+        }
+
+        // Codex (file-delivered MCP): merge the selected servers onto the baked
+        // base config and deliver it as a runtime overlay — a single read-only
+        // file mounted over the config dir (outside /workspace), with CODEX_HOME
+        // pointed at that dir so both a provider agent and a default agent read
+        // it. The base is the exact config the derived image baked (reused, never
+        // re-derived), or empty for a default agent.
+        const configMounts: string[] = [];
+        const agentEnv: string[] = [...(opts.env ?? [])];
+        if (mcpFileEndpoints !== undefined && fileAdapter) {
+          try {
+            const baseConfig =
+              delivery?.derived?.files.find(
+                (f) => f.fileName === fileAdapter.configFileName,
+              )?.content ?? '';
+            const overlay = fileAdapter.renderConfigOverlay(baseConfig, mcpFileEndpoints);
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-cfg-'));
+            mcpEnvDirs.push(dir);
+            const hostFile = path.join(dir, overlay.fileName);
+            fs.writeFileSync(hostFile, overlay.content, { mode: 0o600 });
+            configMounts.push(
+              `${hostFile}:${fileAdapter.configDir}/${overlay.fileName}:ro`,
+            );
+            // Read config from the mounted dir regardless of a baked default.
+            agentEnv.push(`${fileAdapter.configDirEnv}=${fileAdapter.configDir}`);
+          } catch (err) {
+            cleanupMcpEnv();
             console.error((err as Error).message);
             process.exit(1);
           }
@@ -448,7 +491,7 @@ export function registerSpawnCommand(program: Command): void {
           attach: opts.attach,
           rm: opts.rm,
           port: opts.port,
-          env: opts.env,
+          env: agentEnv,
           envFile: envFiles,
         };
 
@@ -465,6 +508,7 @@ export function registerSpawnCommand(program: Command): void {
               runOptions,
               sidecars,
               mcpArgs,
+              configMounts,
             },
           );
         } catch (err) {
