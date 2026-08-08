@@ -45,5 +45,5 @@ To start a run.
 _Avoid_: launch, create, exec
 
 **Store**:
-The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/`, the MCP server definitions under `mcp/`, the Skills under `skills/`, and the shared `.env` — located by walking up from the working directory (or `--dir`), falling back to home.
+The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/`, the MCP server definitions under `mcp/`, the Skills under `skills/`, the host-only orchestration settings in `config.json` (e.g. the favorite/default harness — never injected into containers, unlike `.env`), and the shared `.env` — located by walking up from the working directory (or `--dir`), falling back to home.
 _Avoid_: workspace (here "workspace" means the npm workspace under `packages/`; the container's mounted checkout is the run's worktree)
