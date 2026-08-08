@@ -21,7 +21,7 @@ import { resolveProviderModel, HttpModelsLister } from './model/resolve';
 import {
   readMcpServer,
   listMcpServerNames,
-  mcpEndpoint,
+  planMcpSelection,
   sidecarImageTag,
   type McpServer,
 } from './mcp/index';
@@ -85,7 +85,7 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   envFile?: string;
   /** `--tier <tier>`: select the (harness, tier) agent rather than by name. */
   tier?: string;
-  /** `--mcp <name...>`: container MCP servers to compose as sidecars for this run. */
+  /** `--mcp <name...>`: MCP servers to wire for this run (container sidecars and/or remote URLs). */
   mcp?: string[];
 }
 
@@ -112,20 +112,23 @@ function resolveMcpServer(name: string, root: string | undefined): McpServer {
   const list = available.length ? available.join(', ') : '(none)';
   throw new Error(
     `Unknown MCP server "${name}". Available: ${list}. ` +
-      `Add one under .e/mcp/<name>/ (Dockerfile + mcp.json) or run \`e init\`.`,
+      `Add one under .e/mcp/<name>/ (an mcp.json, plus a Dockerfile for a container server) or run \`e init\`.`,
   );
 }
 
 /**
- * Renders a sidecar's required credentials into a throwaway `--env-file` (mode
- * 0600, outside any worktree), resolved by name from `.e/.env` — the credentials
- * reach the sidecar, never the agent. A missing key is a hard, fail-fast error
- * naming the fix. Returns undefined when the server needs no credentials.
+ * Renders an MCP server's required credentials into a throwaway `--env-file`
+ * (mode 0600, outside any worktree), resolved by name from `.e/.env`. A missing
+ * key is a hard, fail-fast error naming the fix. Returns undefined when the
+ * server needs no credentials. `destination` names where the file is delivered —
+ * a container server's creds go to its *sidecar*; a remote server's go to the
+ * *agent*, whose MCP client expands `${VAR}` in the URL/headers.
  */
-function renderSidecarEnvFile(
+function renderMcpEnvFile(
   server: McpServer,
   storeEnv: Record<string, string>,
   registry: string[],
+  destination: 'sidecar' | 'agent',
 ): string[] | undefined {
   if (server.requiredEnv.length === 0) return undefined;
   const lines = server.requiredEnv.map((name) => {
@@ -133,7 +136,7 @@ function renderSidecarEnvFile(
     if (value === undefined || value === '') {
       throw new Error(
         `MCP server "${server.name}" needs "${name}" set in .e/.env. ` +
-          `Add "${name}=<value>" there — it is injected into the sidecar at runtime, never baked into an image.`,
+          `Add "${name}=<value>" there — it is injected into the ${destination} at runtime, never baked into an image.`,
       );
     }
     return `${name}=${value}`;
@@ -166,7 +169,7 @@ export function registerSpawnCommand(program: Command): void {
     )
     .option(
       '--mcp <name...>',
-      'container MCP server(s) to run as sidecars for this run (repeatable)',
+      'MCP server(s) to wire for this run — container (sidecar) or remote (hosted URL); repeatable',
     )
     .option('--rebuild', 'force a rebuild of the harness image', false)
     .option(
@@ -253,16 +256,20 @@ export function registerSpawnCommand(program: Command): void {
 
         // Resolve the requested MCP servers and wire them to the harness before
         // any build or worktree, so an unknown server, a bad mcp.json, a harness
-        // that cannot take MCP inline, or a missing sidecar credential all fail
-        // fast and cheap (next to the provider-protocol check above).
+        // that cannot take MCP inline, or a missing credential all fail fast and
+        // cheap (next to the provider-protocol check above). The manifest's
+        // `transport` decides the mechanism: a container server becomes a sidecar
+        // (creds → sidecar); a remote server is wired straight to the agent's MCP
+        // client (creds → agent, for `${VAR}` expansion), with no sidecar.
         let sidecars: SidecarPlan[] = [];
         let mcpArgs: string[] = [];
-        const sidecarEnvDirs: string[] = [];
-        const cleanupSidecarEnv = (): void => {
-          for (const dir of sidecarEnvDirs) {
+        const remoteAuthEnvFiles: string[] = [];
+        const mcpEnvDirs: string[] = [];
+        const cleanupMcpEnv = (): void => {
+          for (const dir of mcpEnvDirs) {
             fs.rmSync(dir, { recursive: true, force: true });
           }
-          sidecarEnvDirs.length = 0;
+          mcpEnvDirs.length = 0;
         };
         if (mcpNames.length > 0) {
           try {
@@ -273,18 +280,24 @@ export function registerSpawnCommand(program: Command): void {
               );
             }
             const servers = mcpNames.map((name) => resolveMcpServer(name, root));
-            sidecars = servers.map((server) => ({
+            const plan = planMcpSelection(servers);
+            sidecars = plan.containerServers.map((server) => ({
               alias: server.name,
               image: sidecarImageTag(server.name),
               port: server.port,
               healthcheck: server.healthcheck,
-              // A sidecar's credentials go to the sidecar, never the agent: render
-              // its required env into a throwaway file (dropped once the run ends).
-              envFile: renderSidecarEnvFile(server, storeEnv, sidecarEnvDirs),
+              // A sidecar's credentials go to the sidecar, never the agent.
+              envFile: renderMcpEnvFile(server, storeEnv, mcpEnvDirs, 'sidecar'),
             }));
-            mcpArgs = harness.renderMcpArgs(servers.map(mcpEndpoint));
+            for (const server of plan.remoteServers) {
+              // A remote server's credentials go to the agent, whose MCP client
+              // expands `${VAR}` in the URL/headers — no sidecar, no network entry.
+              const file = renderMcpEnvFile(server, storeEnv, mcpEnvDirs, 'agent');
+              if (file) remoteAuthEnvFiles.push(...file);
+            }
+            mcpArgs = harness.renderMcpArgs(plan.endpoints);
           } catch (err) {
-            cleanupSidecarEnv();
+            cleanupMcpEnv();
             console.error((err as Error).message);
             process.exit(1);
           }
@@ -395,6 +408,10 @@ export function registerSpawnCommand(program: Command): void {
           opts.envFile,
         );
 
+        // A remote MCP server's credentials are delivered to the agent so its MCP
+        // client can expand `${VAR}` in the server's URL/headers at runtime.
+        envFiles.push(...remoteAuthEnvFiles);
+
         // If the agent declares a provider, deliver its runtime env via a
         // throwaway env-file (outside the worktree), layered last so it takes
         // effect. The delivery plan decided what that env is — the whole
@@ -452,14 +469,14 @@ export function registerSpawnCommand(program: Command): void {
           );
         } catch (err) {
           cleanupProviderEnv();
-          cleanupSidecarEnv();
+          cleanupMcpEnv();
           console.error((err as Error).message);
           process.exit(1);
         } finally {
           // The rendered env-files hold resolved secrets; drop them as soon as
           // the run returns (each container already has its copy).
           cleanupProviderEnv();
-          cleanupSidecarEnv();
+          cleanupMcpEnv();
         }
 
         if (result.error) {

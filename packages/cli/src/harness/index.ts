@@ -78,12 +78,17 @@ export const HARNESSES: Record<string, Harness> = {
       '--dangerously-skip-permissions',
     ],
     // Claude takes MCP config inline: `--mcp-config '<json>'` with a streamable
-    // HTTP server def per sidecar (type "http"). No file, no restart.
+    // HTTP server def per server (type "http"). No file, no restart. A remote
+    // server may carry auth headers whose `${VAR}` values Claude expands from the
+    // container env at runtime, so the secret is never written onto argv.
     renderMcpArgs: (endpoints: McpEndpoint[]) => {
       if (endpoints.length === 0) return [];
-      const mcpServers: Record<string, { type: 'http'; url: string }> = {};
+      type HttpServer = { type: 'http'; url: string; headers?: Record<string, string> };
+      const mcpServers: Record<string, HttpServer> = {};
       for (const endpoint of endpoints) {
-        mcpServers[endpoint.name] = { type: 'http', url: endpoint.url };
+        const server: HttpServer = { type: 'http', url: endpoint.url };
+        if (endpoint.headers) server.headers = endpoint.headers;
+        mcpServers[endpoint.name] = server;
       }
       return ['--mcp-config', JSON.stringify({ mcpServers })];
     },

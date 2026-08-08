@@ -31,6 +31,32 @@ test('claude renderMcpArgs returns no args when there are no endpoints', () => {
   assert.deepEqual(claude.renderMcpArgs!([]), []);
 });
 
+test('claude renderMcpArgs passes remote auth headers through verbatim (for ${VAR} expansion)', () => {
+  const args = claude.renderMcpArgs!([
+    {
+      name: 'hosted',
+      url: 'https://mcp.example.com/mcp',
+      headers: { Authorization: 'Bearer ${TOKEN}' },
+    },
+  ]);
+  assert.deepEqual(JSON.parse(args[1]), {
+    mcpServers: {
+      hosted: {
+        type: 'http',
+        url: 'https://mcp.example.com/mcp',
+        headers: { Authorization: 'Bearer ${TOKEN}' },
+      },
+    },
+  });
+});
+
+test('claude renderMcpArgs omits headers when an endpoint has none', () => {
+  const args = claude.renderMcpArgs!([
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+  ]);
+  assert.equal('headers' in JSON.parse(args[1]).mcpServers.everything, false);
+});
+
 test('only Claude wires MCP inline today; the others have no renderMcpArgs', () => {
   assert.equal(typeof HARNESSES.claudeCode.renderMcpArgs, 'function');
   assert.equal(HARNESSES.codex.renderMcpArgs, undefined);
