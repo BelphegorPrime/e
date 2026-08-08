@@ -229,30 +229,33 @@ test('codexAdapter: renderMcpServers delegates to renderCodexMcpServers', () => 
   );
 });
 
-test('codexAdapter.renderConfigOverlay: merges the MCP block onto the baked base config', () => {
+test('codexAdapter.planConfigOverlay: merges the MCP block onto the baked base config', () => {
   const base = renderCodexConfig(codexProvider);
-  const overlay = codexAdapter.renderConfigOverlay!(base, [
+  const overlay = codexAdapter.planConfigOverlay!(base, [
     { name: 'everything', url: 'http://everything:3001/mcp' },
   ]);
-  assert.equal(overlay.fileName, 'config.toml');
+  assert.equal(overlay.file.fileName, 'config.toml');
+  // The adapter owns where the file mounts and how the config dir is relocated.
+  assert.equal(overlay.mountTo, '/root/.codex/config.toml');
+  assert.deepEqual(overlay.env, ['CODEX_HOME=/root/.codex']);
   // The baked provider block is preserved...
-  assert.match(overlay.content, /^model_provider = "e"$/m);
-  assert.match(overlay.content, /^base_url = /m);
+  assert.match(overlay.file.content, /^model_provider = "e"$/m);
+  assert.match(overlay.file.content, /^base_url = /m);
   // ...and the MCP server block is appended.
-  assert.match(overlay.content, /^\[mcp_servers\.everything\]$/m);
-  assert.match(overlay.content, /^url = "http:\/\/everything:3001\/mcp"$/m);
+  assert.match(overlay.file.content, /^\[mcp_servers\.everything\]$/m);
+  assert.match(overlay.file.content, /^url = "http:\/\/everything:3001\/mcp"$/m);
   // A blank line separates the two sections (valid TOML, readable).
-  assert.match(overlay.content, /wire_api = "responses"\n\n\[mcp_servers\.everything\]/);
+  assert.match(overlay.file.content, /wire_api = "responses"\n\n\[mcp_servers\.everything\]/);
 });
 
-test('codexAdapter.renderConfigOverlay: a default agent (no base) yields an MCP-only config', () => {
-  const overlay = codexAdapter.renderConfigOverlay!('', [
+test('codexAdapter.planConfigOverlay: a default agent (no base) yields an MCP-only config', () => {
+  const overlay = codexAdapter.planConfigOverlay!('', [
     { name: 'everything', url: 'http://everything:3001/mcp' },
   ]);
-  assert.doesNotMatch(overlay.content, /model_provider/);
-  assert.match(overlay.content, /^\[mcp_servers\.everything\]$/m);
+  assert.doesNotMatch(overlay.file.content, /model_provider/);
+  assert.match(overlay.file.content, /^\[mcp_servers\.everything\]$/m);
   // No leading blank lines when there is no base config.
-  assert.match(overlay.content, /^\[mcp_servers\.everything\]/);
+  assert.match(overlay.file.content, /^\[mcp_servers\.everything\]/);
 });
 
 const piProvider: Provider = {
@@ -319,6 +322,6 @@ test('piAdapter: the only runtime env is the API key, delivered by name', () => 
 });
 
 test('piAdapter: ships no MCP delivery (pi has no MCP client)', () => {
-  assert.equal(piAdapter.renderConfigOverlay, undefined);
+  assert.equal(piAdapter.planConfigOverlay, undefined);
   assert.equal(piAdapter.renderMcpServers, undefined);
 });

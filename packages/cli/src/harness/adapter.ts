@@ -80,6 +80,23 @@ export interface RenderedConfigFile {
 }
 
 /**
+ * A file harness's complete MCP config-overlay delivery (ADR-0006 layer 3),
+ * structured so the spawn edge never has to know *where* the harness reads its
+ * config. The adapter owns its config dir, file name, and relocation env var; it
+ * hands back the merged file to materialize, the container path to mount it at,
+ * and the env that points the CLI at the mounted dir. The edge fills in the host
+ * path (after writing the file) and formats the mount.
+ */
+export interface ConfigOverlayDelivery {
+  /** The merged config file to materialize; its `fileName` is the harness's config file. */
+  file: RenderedConfigFile;
+  /** Absolute container path to mount {@link file} at (`configDir/configFileName`); outside `/workspace`. */
+  mountTo: string;
+  /** Env (as `NAME=value` argv entries) relocating the harness's config dir to the mount. */
+  env: string[];
+}
+
+/**
  * An **env-based** config adapter (Claude Code): a {@link Provider} becomes a
  * set of container env vars, delivered at runtime via `--env-file`.
  */
@@ -135,14 +152,17 @@ export interface FileHarnessAdapter {
    */
   renderMcpServers?(endpoints: McpEndpoint[]): string;
   /**
-   * Merges the selected MCP servers onto the baked `baseConfig` (the exact config
-   * the derived image baked, reused not re-derived; empty for a default agent
-   * with no provider), returning the complete runtime-overlay config file to
-   * deliver at {@link configDir}. Pure — the spawn edge writes and mounts it.
-   * **Optional** — its presence is the harness's declared file-MCP capability;
-   * absent for pi (no MCP client). See {@link mcpDeliveryForm}.
+   * Plans the complete MCP config-overlay delivery: merges the selected servers
+   * onto the baked `baseConfig` (the exact config the derived image baked, reused
+   * not re-derived; empty for a default agent with no provider) and returns the
+   * merged file, the container path to mount it at, and the config-dir relocation
+   * env — everything the spawn edge needs without touching this adapter's
+   * {@link configDir}/{@link configFileName}/{@link configDirEnv} fields. Pure —
+   * the edge writes the file, formats the mount, and appends the env. **Optional**
+   * — its presence is the harness's declared file-MCP capability; absent for pi
+   * (no MCP client). See {@link mcpDeliveryForm}.
    */
-  renderConfigOverlay?(baseConfig: string, endpoints: McpEndpoint[]): RenderedConfigFile;
+  planConfigOverlay?(baseConfig: string, endpoints: McpEndpoint[]): ConfigOverlayDelivery;
 }
 
 /**
@@ -275,10 +295,14 @@ export const codexAdapter: FileHarnessAdapter = {
   renderMcpServers(endpoints: McpEndpoint[]): string {
     return renderCodexMcpServers(endpoints);
   },
-  renderConfigOverlay(baseConfig: string, endpoints: McpEndpoint[]): RenderedConfigFile {
+  planConfigOverlay(baseConfig: string, endpoints: McpEndpoint[]): ConfigOverlayDelivery {
     const block = renderCodexMcpServers(endpoints);
     const content = (baseConfig ? baseConfig.trimEnd() + '\n\n' : '') + block;
-    return { fileName: this.configFileName, content };
+    return {
+      file: { fileName: this.configFileName, content },
+      mountTo: `${this.configDir}/${this.configFileName}`,
+      env: [`${this.configDirEnv}=${this.configDir}`],
+    };
   },
 };
 
@@ -337,7 +361,7 @@ export function renderPiModelsJson(provider: Provider): string {
  * (relocatable via `PI_CODING_AGENT_DIR`), so the provider is rendered into a
  * file baked into the derived agent image; only the API key is delivered at
  * runtime, by name. pi ships **no MCP client** (`docs/usage.md` Design
- * Principles), so it carries no `renderMcpServers`/`renderConfigOverlay` — the
+ * Principles), so it carries no `renderMcpServers`/`planConfigOverlay` — the
  * spawn edge capability-gates `--mcp pi` off (see {@link mcpDeliveryForm}). pi
  * requires the model declared in the file, so `modelInFile` is `true`.
  */

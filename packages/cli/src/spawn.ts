@@ -408,24 +408,23 @@ export function registerSpawnCommand(program: Command): void {
         // re-derived), or empty for a default agent.
         const configMounts: Mount[] = [];
         const agentEnv: string[] = [...(opts.env ?? [])];
-        if (mcpFileEndpoints !== undefined && fileAdapter?.renderConfigOverlay) {
+        if (mcpFileEndpoints !== undefined && fileAdapter?.planConfigOverlay) {
           try {
-            const baseConfig =
-              delivery?.bakedConfig?.file.fileName === fileAdapter.configFileName
-                ? delivery.bakedConfig.file.content
-                : '';
-            const overlay = fileAdapter.renderConfigOverlay(baseConfig, mcpFileEndpoints);
+            // The overlay's base is the exact config the derived image baked
+            // (same adapter, same file) — empty for a default agent. The adapter
+            // returns the merged file, the container path to mount it at, and the
+            // config-dir relocation env; the edge only writes and wires them.
+            const overlay = fileAdapter.planConfigOverlay(
+              delivery?.bakedConfig?.file.content ?? '',
+              mcpFileEndpoints,
+            );
             const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-cfg-'));
             tempDirs.push(dir);
-            const hostFile = path.join(dir, overlay.fileName);
-            fs.writeFileSync(hostFile, overlay.content, { mode: 0o600 });
-            configMounts.push({
-              host: hostFile,
-              container: `${fileAdapter.configDir}/${overlay.fileName}`,
-              ro: true,
-            });
+            const hostFile = path.join(dir, overlay.file.fileName);
+            fs.writeFileSync(hostFile, overlay.file.content, { mode: 0o600 });
+            configMounts.push({ host: hostFile, container: overlay.mountTo, ro: true });
             // Read config from the mounted dir regardless of a baked default.
-            agentEnv.push(`${fileAdapter.configDirEnv}=${fileAdapter.configDir}`);
+            agentEnv.push(...overlay.env);
           } catch (err) {
             cleanupTempDirs();
             console.error((err as Error).message);

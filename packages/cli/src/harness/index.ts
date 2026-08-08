@@ -186,7 +186,7 @@ export function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
   if (harness.renderMcpArgs) return 'flag';
   // A file adapter delivers MCP only if it renders an overlay; pi is a file
   // harness for its provider but ships no MCP client, so it stays `none`.
-  if (harness.adapter?.kind === 'file' && harness.adapter.renderConfigOverlay) {
+  if (harness.adapter?.kind === 'file' && harness.adapter.planConfigOverlay) {
     return 'file';
   }
   return 'none';
