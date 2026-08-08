@@ -14,7 +14,13 @@ import {
   parseDotenv,
 } from './harness/adapter';
 import {
+  planProviderDelivery,
+  type ProviderDelivery,
+} from './harness/deriveImage';
+import { writeIfAbsent } from './scaffold';
+import {
   harnessDir,
+  agentDir,
   isInitialized,
   findRoot,
   envFilePath,
@@ -166,6 +172,29 @@ export function registerSpawnCommand(program: Command): void {
           process.exit(1);
         }
 
+        // Plan how the provider (if any) reaches the run: runtime env for an
+        // env harness, or a derived-image build for a file harness. Pure and
+        // cheap, so it runs early — an unusable provider (no adapter, or an
+        // `auto` model a file harness can't bake yet) fails here, before any
+        // runtime detection, image build, or worktree.
+        let delivery: ProviderDelivery | undefined;
+        if (agent.provider) {
+          try {
+            if (!harness.adapter) {
+              throw new Error(
+                `Harness "${harness.name}" has no config adapter, so it cannot deliver a provider yet.`,
+              );
+            }
+            delivery = planProviderDelivery(harness.adapter, agent.provider, {
+              agentName: agent.name,
+              baseImage: harness.imageTag,
+            });
+          } catch (err) {
+            console.error((err as Error).message);
+            process.exit(1);
+          }
+        }
+
         let runtime: ContainerRuntime;
         try {
           runtime = resolveRuntime(opts.runtime);
@@ -174,10 +203,12 @@ export function registerSpawnCommand(program: Command): void {
           process.exit(1);
         }
 
-        // Builds the harness image on demand. The orchestrator calls this
-        // after confirming a git repo but before creating the worktree, so a
-        // thrown failure never leaves orphan scaffolding.
-        const ensureImage = (): void => {
+        // Builds the image this run executes and returns its tag. The
+        // orchestrator calls this after confirming a git repo but before
+        // creating the worktree, so a thrown failure never leaves orphan
+        // scaffolding. A file-configured provider (Codex) runs a derived agent
+        // image baked on the harness base; everything else runs the base image.
+        const ensureImage = (): string => {
           // Preserve the short-circuit: with --rebuild the decision is always
           // `build`, so skip the (otherwise wasted) image-inspect probe.
           const imageExists =
@@ -197,6 +228,23 @@ export function registerSpawnCommand(program: Command): void {
           if (action === 'build') {
             runtime.build(harness.imageTag, harnessDir(harness.name, root));
           }
+
+          if (!delivery?.derived) return harness.imageTag;
+
+          // Render the derived agent's files under `.e/agents/<name>/` — never
+          // clobbering a hand edit, a divergence is shown as a diff (ADR-0004),
+          // and the config lives outside `/workspace`. Then build the thin
+          // layer-2 image on the (now-present) base; the key is not baked, it is
+          // delivered at runtime by name (see the provider env-file below).
+          const dir = agentDir(agent.name, root);
+          for (const file of delivery.derived.files) {
+            writeIfAbsent(dir, path.join(dir, file.fileName), file.content);
+          }
+          const tag = delivery.derived.imageTag;
+          if (opts.rebuild || !runtime.imageExists(tag)) {
+            runtime.build(tag, dir);
+          }
+          return tag;
         };
 
         // Load the shared `.e/.env` as the base environment (if present),
@@ -210,11 +258,12 @@ export function registerSpawnCommand(program: Command): void {
           opts.envFile,
         );
 
-        // If the agent declares a provider, render it into a throwaway env-file
-        // (outside the worktree) via the harness adapter, and layer it last so
-        // the provider's endpoint/model/key take effect. The API key is resolved
-        // by name from `.e/.env` only (ADR-0006), never inlined on argv; the file
-        // is removed once the run returns.
+        // If the agent declares a provider, deliver its runtime env via a
+        // throwaway env-file (outside the worktree), layered last so it takes
+        // effect. The delivery plan decided what that env is — the whole
+        // provider for an env harness, only the API key for a file harness. The
+        // key is resolved by name from `.e/.env` (ADR-0006), never inlined on
+        // argv; the file is removed once the run returns.
         let providerEnvDir: string | undefined;
         const cleanupProviderEnv = (): void => {
           if (providerEnvDir) {
@@ -222,16 +271,11 @@ export function registerSpawnCommand(program: Command): void {
             providerEnvDir = undefined;
           }
         };
-        if (agent.provider) {
+        if (delivery) {
           try {
-            if (!harness.adapter) {
-              throw new Error(
-                `Harness "${harness.name}" has no config adapter, so it cannot deliver a provider yet.`,
-              );
-            }
             const storeEnv = loadStoreEnv(baseEnvFile);
             const content = renderProviderEnvFile(
-              harness.adapter.renderProviderEnv(agent.provider),
+              delivery.runtimeEnv,
               (name) => storeEnv[name],
             );
             providerEnvDir = fs.mkdtempSync(

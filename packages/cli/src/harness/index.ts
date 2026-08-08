@@ -1,7 +1,7 @@
 import type { DockerfileParams } from './renderDockerfile';
 import type { EnvHarnessSection } from './renderEnvTemplate';
 import type { Protocol, HarnessAdapter } from './adapter';
-import { claudeCodeAdapter } from './adapter';
+import { claudeCodeAdapter, codexAdapter } from './adapter';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
 export interface Harness {
@@ -74,6 +74,9 @@ export const HARNESSES: Record<string, Harness> = {
     requiredEnv: ['OPENAI_API_KEY'],
     // Codex speaks only OpenAI Responses (`/v1/chat/completions` was removed).
     protocols: ['openai-responses'],
+    // Codex is file-configured (`config.toml`): its adapter renders the provider
+    // block into a derived agent image (ADR-0004/0006).
+    adapter: codexAdapter,
     buildCommand: (prompt: string) => ['codex', 'exec', prompt],
   },
   opencode: {
