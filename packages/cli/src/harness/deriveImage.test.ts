@@ -65,44 +65,76 @@ const fileProvider: Provider = {
 };
 
 test('planProviderDelivery: an env harness delivers all env and derives no image', () => {
-  const plan = planProviderDelivery(claudeCodeAdapter, envProvider, {
-    agentName: 'smart-claude',
-    baseImage: 'e-harness-claudecode',
-  });
+  const plan = planProviderDelivery(
+    claudeCodeAdapter,
+    envProvider,
+    { model: 'claude-opus-5', fromAuto: false },
+    { agentName: 'smart-claude', baseImage: 'e-harness-claudecode' },
+  );
   assert.equal(plan.derived, undefined);
-  // The whole provider (endpoint, model, key) is delivered at runtime.
-  assert.deepEqual(plan.runtimeEnv, claudeCodeAdapter.renderProviderEnv(envProvider));
+  assert.equal(plan.runtimeModel, undefined);
+  // The whole provider (endpoint, resolved model, key) is delivered at runtime.
+  assert.deepEqual(
+    plan.runtimeEnv,
+    claudeCodeAdapter.renderProviderEnv({ ...envProvider, model: 'claude-opus-5' }),
+  );
 });
 
-test('planProviderDelivery: a file harness plans a derived image with config + Dockerfile', () => {
-  const plan = planProviderDelivery(codexAdapter, fileProvider, {
-    agentName: 'smart-codex',
-    baseImage: 'e-harness-codex',
-  });
+test('planProviderDelivery: an env harness carries the auto-resolved model in env', () => {
+  const plan = planProviderDelivery(
+    claudeCodeAdapter,
+    { ...envProvider, model: 'auto' },
+    { model: 'claude-opus-5', fromAuto: true },
+    { agentName: 'smart-claude', baseImage: 'e-harness-claudecode' },
+  );
+  // Even from auto, the model rides ANTHROPIC_MODEL at runtime, not the command.
+  assert.equal(plan.runtimeModel, undefined);
+  assert.ok(
+    plan.runtimeEnv.some(
+      (e) => e.name === 'ANTHROPIC_MODEL' && 'value' in e && e.value === 'claude-opus-5',
+    ),
+  );
+});
+
+test('planProviderDelivery: a file harness bakes a concrete model, no runtime model', () => {
+  const plan = planProviderDelivery(
+    codexAdapter,
+    { ...fileProvider, model: 'gpt-5-codex' },
+    { model: 'gpt-5-codex', fromAuto: false },
+    { agentName: 'smart-codex', baseImage: 'e-harness-codex' },
+  );
   assert.ok(plan.derived);
   assert.equal(plan.derived.imageTag, 'e-agent-smart-codex');
+  assert.equal(plan.runtimeModel, undefined);
 
   const names = plan.derived.files.map((f) => f.fileName);
   assert.deepEqual(names, ['config.toml', 'Dockerfile']);
 
-  // The rendered Dockerfile is FROM the base and copies the rendered config.
+  const config = plan.derived.files.find((f) => f.fileName === 'config.toml');
+  assert.ok(config);
+  assert.match(config.content, /^model = "gpt-5-codex"$/m);
+
   const dockerfile = plan.derived.files.find((f) => f.fileName === 'Dockerfile');
   assert.ok(dockerfile);
   assert.match(dockerfile.content, /^FROM e-harness-codex$/m);
   assert.match(dockerfile.content, /^COPY config\.toml /m);
 
-  // Only the API key is delivered at runtime; the endpoint/model are baked.
+  // Only the API key is delivered at runtime for a file harness.
   assert.deepEqual(plan.runtimeEnv, codexAdapter.renderRuntimeEnv(fileProvider));
 });
 
-test('planProviderDelivery: a file harness rejects an `auto` model before any build', () => {
-  assert.throws(
-    () =>
-      planProviderDelivery(
-        codexAdapter,
-        { ...fileProvider, model: 'auto' },
-        { agentName: 'smart-codex', baseImage: 'e-harness-codex' },
-      ),
-    /auto/,
+test('planProviderDelivery: a file harness keeps an auto model out of the config, delivers it on the command', () => {
+  const plan = planProviderDelivery(
+    codexAdapter,
+    { ...fileProvider, model: 'auto' },
+    { model: 'gpt-5-codex', fromAuto: true },
+    { agentName: 'smart-codex', baseImage: 'e-harness-codex' },
   );
+  assert.ok(plan.derived);
+  const config = plan.derived.files.find((f) => f.fileName === 'config.toml');
+  assert.ok(config);
+  // The resolved model is NOT baked...
+  assert.doesNotMatch(config.content, /^model = /m);
+  // ...it is delivered on the run command instead.
+  assert.equal(plan.runtimeModel, 'gpt-5-codex');
 });

@@ -8,6 +8,7 @@ import {
   renderDefaultAgent,
   parseAgent,
   isKnownTarget,
+  selectAgentByTier,
   type Agent,
   type ResolveAgentDeps,
 } from './agent';
@@ -167,4 +168,40 @@ test('isKnownTarget: a persisted agent directory counts as a target', () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+const agents: Agent[] = [
+  { name: 'codex', harness: 'codex', tier: 'default' },
+  { name: 'smart-codex', harness: 'codex', tier: 'smart' },
+  { name: 'cheap-codex', harness: 'codex', tier: 'cheap' },
+  { name: 'smart-claude', harness: 'claudeCode', tier: 'smart' },
+];
+
+test('selectAgentByTier: returns the single agent matching (harness, tier)', () => {
+  const agent = selectAgentByTier('codex', 'smart', agents);
+  assert.equal(agent.name, 'smart-codex');
+});
+
+test('selectAgentByTier: no match errors, listing the harness candidates and their tiers', () => {
+  assert.throws(
+    () => selectAgentByTier('codex', 'review', agents),
+    /No agent for harness "codex" at tier "review"[\s\S]*smart-codex \(tier: smart\)/,
+  );
+});
+
+test('selectAgentByTier: an ambiguous tier errors, listing the conflicting agents', () => {
+  const dupes: Agent[] = [
+    { name: 'a', harness: 'codex', tier: 'smart' },
+    { name: 'b', harness: 'codex', tier: 'smart' },
+  ];
+  assert.throws(
+    () => selectAgentByTier('codex', 'smart', dupes),
+    /Ambiguous tier "smart"[\s\S]*a, b/,
+  );
+});
+
+test('selectAgentByTier: matching is scoped to the named harness', () => {
+  // `smart` exists for claudeCode too, but selecting under codex must not see it.
+  const agent = selectAgentByTier('claudeCode', 'smart', agents);
+  assert.equal(agent.name, 'smart-claude');
 });

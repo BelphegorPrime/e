@@ -144,11 +144,13 @@ test('renderCodexConfig: references the API key by env var name, never a value',
   assert.match(toml, /^env_key = "MY_GATEWAY_KEY"$/m);
 });
 
-test('renderCodexConfig: refuses to bake an `auto` model (resolved at spawn, not baked)', () => {
-  assert.throws(
-    () => renderCodexConfig({ ...codexProvider, model: 'auto' }),
-    /auto/,
-  );
+test('renderCodexConfig: omits the model line for `auto` (delivered at runtime, not baked)', () => {
+  const toml = renderCodexConfig({ ...codexProvider, model: 'auto' });
+  // No top-level `model =` (it arrives via `codex exec -m` at spawn)...
+  assert.doesNotMatch(toml, /^model = /m);
+  // ...but the provider block is still baked so the endpoint is selected.
+  assert.match(toml, /^model_provider = "e"$/m);
+  assert.match(toml, /^base_url = /m);
 });
 
 test('renderCodexConfig: escapes TOML-significant characters in interpolated values', () => {
