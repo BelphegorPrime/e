@@ -105,6 +105,33 @@ test('parseAgent: a valid inline provider is parsed onto the agent', () => {
   assert.deepEqual(agent.provider, provider);
 });
 
+test('parseAgent: a string[] of default skills is parsed onto the agent', () => {
+  const agent = parseAgent(
+    { name: 'skilled', harness: 'claudeCode', tier: 'default', skills: ['a', 'b'] },
+    'test.json',
+  );
+  assert.deepEqual(agent.skills, ['a', 'b']);
+});
+
+test('parseAgent: an empty skills array is treated as no baked skills', () => {
+  const agent = parseAgent(
+    { name: 'x', harness: 'pi', tier: 'default', skills: [] },
+    'test.json',
+  );
+  assert.equal(agent.skills, undefined);
+});
+
+test('parseAgent: a non-string-array skills field throws', () => {
+  assert.throws(
+    () =>
+      parseAgent(
+        { name: 'x', harness: 'pi', tier: 'default', skills: 'a' },
+        'test.json',
+      ),
+    /"skills" must be an array of strings/,
+  );
+});
+
 test('parseAgent: missing required fields throw', () => {
   assert.throws(
     () => parseAgent({ name: 'x', harness: 'pi' }, 'test.json'),

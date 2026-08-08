@@ -19,6 +19,12 @@ export interface Agent {
   tier: string;
   /** Inline model endpoint; absent for a default agent (behaves as before). */
   provider?: Provider;
+  /**
+   * Default Skills baked into this agent's image (ADR-0006 layer 2). Each names a
+   * skill under the Store's `skills/`; a Run may add more per-run with `--skill`.
+   * Absent or empty for an agent with no baked skills.
+   */
+  skills?: string[];
 }
 
 /** Inputs to the pure agent resolution; the glue supplies the real values. */
@@ -101,6 +107,17 @@ export function parseAgent(raw: unknown, where: string): Agent {
   };
   if (parsed.provider !== undefined) {
     agent.provider = parseProvider(parsed.provider, where);
+  }
+  if (parsed.skills !== undefined) {
+    if (
+      !Array.isArray(parsed.skills) ||
+      !parsed.skills.every((s) => typeof s === 'string')
+    ) {
+      throw new Error(
+        `Invalid agent definition at ${where}: "skills" must be an array of strings.`,
+      );
+    }
+    if (parsed.skills.length > 0) agent.skills = parsed.skills;
   }
   return agent;
 }

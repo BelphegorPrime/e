@@ -13,6 +13,7 @@ import {
 } from './harness/index';
 import { renderDefaultAgent } from './agent';
 import { SHIPPED_MCP_SERVERS } from './mcp/index';
+import { SHIPPED_SKILLS } from './skill/index';
 import {
   dockerfilePath,
   harnessDir,
@@ -21,6 +22,7 @@ import {
   agentDir,
   agentFilePath,
   mcpDir,
+  skillDir,
   writeConfig,
   readConfig,
 } from './store';
@@ -71,6 +73,7 @@ export function registerInitCommand(program: Command): void {
       }
 
       writeMcpServers(root);
+      writeSkills(root);
 
       writeEnvFile(root, envValues);
       writeConfig({ defaultHarness }, root);
@@ -81,6 +84,9 @@ export function registerInitCommand(program: Command): void {
       );
       console.log(
         `Container MCP servers ready: ${Object.keys(SHIPPED_MCP_SERVERS).join(', ')} (compose with \`--mcp <name>\`).`,
+      );
+      console.log(
+        `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent).`,
       );
       console.log(
         'Run `e spawn "<prompt>"` to run your favorite harness, or `e spawn <harness> "<prompt>"` to pick one.',
@@ -217,6 +223,22 @@ function writeMcpServers(root: string | undefined): void {
     const files = render();
     for (const [fileName, content] of Object.entries(files)) {
       writeIfAbsent(dir, path.join(dir, fileName), content);
+    }
+  }
+}
+
+/**
+ * Writes the shipped Skills under `.e/skills/<name>/` (a `SKILL.md` plus any
+ * resources), never overwriting a hand-edited file. These can be baked into an
+ * agent (agent.json `skills`) or added per-run with `e spawn … --skill <name>`.
+ */
+function writeSkills(root: string | undefined): void {
+  for (const [name, render] of Object.entries(SHIPPED_SKILLS)) {
+    const dir = skillDir(name, root);
+    const files = render();
+    for (const [relPath, content] of Object.entries(files)) {
+      const file = path.join(dir, relPath);
+      writeIfAbsent(path.dirname(file), file, content);
     }
   }
 }

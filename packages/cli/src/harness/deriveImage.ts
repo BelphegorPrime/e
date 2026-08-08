@@ -1,13 +1,13 @@
 /**
  * Rendering and planning for a **derived agent image** — ADR-0004 layer 2. A
- * file-configured harness (Codex) bakes its provider config into a thin image
- * built `FROM` the shared harness base, so the base's CLI/toolchain layers are
- * reused and only the cheap config layer is rebuilt when an agent's static
- * config changes.
+ * derived image is a thin layer built `FROM` the shared harness base that bakes
+ * an agent's static configuration: a file-configured harness's provider config
+ * (Codex) and/or an agent's default Skills. The base's CLI/toolchain layers are
+ * reused, so only the cheap config layer rebuilds when an agent's config changes.
  *
- * This module is pure: it renders the derived Dockerfile, the image tag, and the
- * whole provider-delivery plan. The spawn edge performs the effects (writing the
- * files, invoking the runtime build), just as it does for harness Dockerfiles.
+ * This module is pure: it renders the derived Dockerfile, the image tag, the
+ * provider-delivery plan, and the composed derived-image plan. The spawn edge
+ * performs the effects (writing files, copying skill trees, invoking the build).
  */
 import type {
   ContainerEnv,
@@ -17,10 +17,8 @@ import type {
 } from './adapter';
 import type { ResolvedModel } from '../model/resolve';
 
-/** Inputs for rendering a derived agent Dockerfile. */
-export interface DerivedDockerfileParams {
-  /** The harness base image tag this derives from, e.g. `e-harness-codex`. */
-  baseImage: string;
+/** The baked provider config block of a derived Dockerfile (a file harness). */
+export interface DockerfileProviderBlock {
   /** The rendered config file's name, present in the build context. */
   configFileName: string;
   /** Absolute in-container config dir the file is copied into; outside `/workspace`. */
@@ -29,25 +27,58 @@ export interface DerivedDockerfileParams {
   configDirEnv: string;
 }
 
+/** The baked default-skills block of a derived Dockerfile. */
+export interface DockerfileSkillsBlock {
+  /** Absolute in-container skills dir the trees are copied into; outside `/workspace`. */
+  skillsDir: string;
+  /** Skill names copied from `skills/<name>/` in the build context. */
+  names: string[];
+}
+
+/** Inputs for rendering a derived agent Dockerfile — either or both blocks may be present. */
+export interface DerivedDockerfileParams {
+  /** The harness base image tag this derives from, e.g. `e-harness-codex`. */
+  baseImage: string;
+  /** The baked provider config, for a file-configured harness. */
+  provider?: DockerfileProviderBlock;
+  /** The baked default skills, for an agent that declares them. */
+  skills?: DockerfileSkillsBlock;
+}
+
 /**
- * Renders a derived agent Dockerfile: `FROM` the harness base, relocate the
- * harness's config dir via its env var, and `COPY` the rendered config file into
- * it. The config lands outside `/workspace`, so `e`-generated config never
- * pollutes the Run's branch (ADR-0006). The API key is *not* baked — the config
- * file references it by name and it is injected at runtime.
+ * Renders a derived agent Dockerfile: `FROM` the harness base, then — as declared
+ * — a provider block (relocate the config dir via its env var and `COPY` the
+ * rendered config file into it) and/or a skills block (`COPY` each skill tree into
+ * the harness's skills dir). Every `COPY` target lands outside `/workspace`, so
+ * `e`-generated config and skills never pollute the Run's branch (ADR-0006). The
+ * API key is *not* baked — the config file references it by name.
  */
 export function renderDerivedDockerfile(p: DerivedDockerfileParams): string {
-  return (
-    [
-      `FROM ${p.baseImage}`,
+  const lines: string[] = [`FROM ${p.baseImage}`];
+
+  if (p.provider) {
+    lines.push(
       ``,
       `# Baked agent config (ADR-0004 layer 2): the provider block rendered by`,
       `# the harness adapter, read from a config dir outside /workspace so it`,
       `# never lands in a run's branch.`,
-      `ENV ${p.configDirEnv}=${p.configDir}`,
-      `COPY ${p.configFileName} ${p.configDir}/${p.configFileName}`,
-    ].join('\n') + '\n'
-  );
+      `ENV ${p.provider.configDirEnv}=${p.provider.configDir}`,
+      `COPY ${p.provider.configFileName} ${p.provider.configDir}/${p.provider.configFileName}`,
+    );
+  }
+
+  if (p.skills && p.skills.names.length > 0) {
+    lines.push(
+      ``,
+      `# Baked default skills (ADR-0006): each skill tree copied into the harness's`,
+      `# skills dir outside /workspace so it never lands in a run's branch.`,
+    );
+    for (const name of p.skills.names) {
+      lines.push(`COPY skills/${name}/ ${p.skills.skillsDir}/${name}/`);
+    }
+  }
+
+  return lines.join('\n') + '\n';
 }
 
 /**
@@ -59,33 +90,35 @@ export function derivedImageTag(agentName: string): string {
   return `e-agent-${agentName}`;
 }
 
-/** The derived agent image a file-configured provider is delivered through. */
-export interface DerivedImagePlan {
-  /** Tag of the derived image, built on and running instead of the harness base. */
-  imageTag: string;
-  /**
-   * Files to render under `.e/agents/<name>/` — the harness's config file plus
-   * the derived Dockerfile — never clobbering a hand edit. The agent dir is the
-   * build context, so the Dockerfile's `COPY` finds the config file beside it.
-   */
-  files: RenderedConfigFile[];
+/** A file-configured harness's provider config, baked into the derived image. */
+export interface BakedProviderConfig {
+  /** The rendered config file (e.g. Codex `config.toml`). */
+  file: RenderedConfigFile;
+  /** Absolute in-container config dir the file is baked into; outside `/workspace`. */
+  configDir: string;
+  /** Name of the env var relocating the config dir, e.g. `CODEX_HOME`. */
+  configDirEnv: string;
 }
 
-/** How a Provider is delivered to a Run: runtime env, plus a derived image for a file harness. */
+/** How a Provider is delivered to a Run. */
 export interface ProviderDelivery {
   /**
    * Env delivered at runtime via `--env-file`: the API key by name for every
    * harness, plus — for an env-configured harness — the endpoint and resolved model.
    */
   runtimeEnv: ContainerEnv[];
-  /** Present only for a file-configured harness: the derived image to build and run. */
-  derived?: DerivedImagePlan;
   /**
    * A model to deliver on the run command (e.g. `codex exec -m <id>`), set only
    * when the model was `auto`-resolved for a file harness — its config file omits
    * the model so the resolved id arrives at runtime, not baked (ADR-0007).
    */
   runtimeModel?: string;
+  /**
+   * Present only for a file-configured harness: the provider config to bake into
+   * the derived agent image (composed with any default skills by
+   * {@link planAgentImage}).
+   */
+  bakedConfig?: BakedProviderConfig;
 }
 
 /**
@@ -94,23 +127,17 @@ export interface ProviderDelivery {
  * already {@link ResolvedModel resolved} at spawn:
  *
  * - **env** harness (Claude Code): the whole provider (with the resolved model)
- *   becomes runtime env; no image is derived and the harness base runs directly.
- * - **file** harness (Codex): the provider is rendered into a config file and a
- *   derived Dockerfile baked on the harness base. A concrete model is baked into
- *   the config; an `auto`-resolved model is omitted from the config and delivered
- *   on the run command instead (`runtimeModel`). Only the API key is delivered as
- *   runtime env (by name; never baked).
- *
- * The spawn edge executes the plan (writes {@link DerivedImagePlan.files}, builds
- * the image, layers the runtime env-file, appends `runtimeModel` to the command);
- * this function does no I/O, so the selection and rendered artifacts are testable
- * without a runtime.
+ *   becomes runtime env; nothing is baked from the provider.
+ * - **file** harness (Codex): the provider is rendered into a config file to bake
+ *   into the derived image ({@link ProviderDelivery.bakedConfig}). A concrete
+ *   model is baked into the config; an `auto`-resolved model is omitted and
+ *   delivered on the run command instead (`runtimeModel`). Only the API key is
+ *   delivered as runtime env (by name; never baked).
  */
 export function planProviderDelivery(
   adapter: HarnessAdapter,
   provider: Provider,
   resolved: ResolvedModel,
-  opts: { agentName: string; baseImage: string },
 ): ProviderDelivery {
   if (adapter.kind === 'env') {
     // Env harnesses carry the model at runtime already; use the resolved id.
@@ -123,22 +150,71 @@ export function planProviderDelivery(
   const configProvider: Provider = resolved.fromAuto
     ? provider
     : { ...provider, model: resolved.model };
-  const config = adapter.renderProviderFile(configProvider);
-  const dockerfile: RenderedConfigFile = {
-    fileName: 'Dockerfile',
-    content: renderDerivedDockerfile({
-      baseImage: opts.baseImage,
-      configFileName: config.fileName,
-      configDir: adapter.configDir,
-      configDirEnv: adapter.configDirEnv,
-    }),
-  };
   return {
     runtimeEnv: adapter.renderRuntimeEnv(provider),
-    derived: {
-      imageTag: derivedImageTag(opts.agentName),
-      files: [config, dockerfile],
-    },
     runtimeModel: resolved.fromAuto ? resolved.model : undefined,
+    bakedConfig: {
+      file: adapter.renderProviderFile(configProvider),
+      configDir: adapter.configDir,
+      configDirEnv: adapter.configDirEnv,
+    },
   };
+}
+
+/** The derived agent image, composing baked provider config and/or default skills. */
+export interface DerivedImagePlan {
+  /** Tag of the derived image, built on and running instead of the harness base. */
+  imageTag: string;
+  /**
+   * Rendered files to write under `.e/agents/<name>/` — the provider config file
+   * (if any) plus the derived Dockerfile — never clobbering a hand edit. The
+   * agent dir seeds the build context so the Dockerfile's `COPY` finds them.
+   */
+  files: RenderedConfigFile[];
+  /**
+   * Baked skill names. Their trees are copied from the Store's `skills/<name>/`
+   * into the build context at `skills/<name>/` by the spawn edge (they are file
+   * trees, not rendered strings, so they are not in {@link files}).
+   */
+  skillNames: string[];
+}
+
+/**
+ * Composes an agent's derived image, purely — the single place baked provider
+ * config and baked default skills are combined into one thin layer-2 image
+ * `FROM` the harness base. Returns `undefined` when there is nothing to bake (no
+ * provider config and no skills), so the run uses the harness base directly.
+ */
+export function planAgentImage(params: {
+  baseImage: string;
+  agentName: string;
+  bakedConfig?: BakedProviderConfig;
+  skills?: { skillsDir: string; names: string[] };
+}): DerivedImagePlan | undefined {
+  const skillNames = params.skills?.names ?? [];
+  if (!params.bakedConfig && skillNames.length === 0) return undefined;
+
+  const files: RenderedConfigFile[] = [];
+  const provider: DockerfileProviderBlock | undefined = params.bakedConfig
+    ? {
+        configFileName: params.bakedConfig.file.fileName,
+        configDir: params.bakedConfig.configDir,
+        configDirEnv: params.bakedConfig.configDirEnv,
+      }
+    : undefined;
+  if (params.bakedConfig) files.push(params.bakedConfig.file);
+
+  files.push({
+    fileName: 'Dockerfile',
+    content: renderDerivedDockerfile({
+      baseImage: params.baseImage,
+      provider,
+      skills:
+        skillNames.length > 0
+          ? { skillsDir: params.skills!.skillsDir, names: skillNames }
+          : undefined,
+    }),
+  });
+
+  return { imageTag: derivedImageTag(params.agentName), files, skillNames };
 }

@@ -6,7 +6,13 @@ import { ContainerRuntime, type RunOptions } from './runtime/index';
 import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
 import { orderEnvFiles, decideImageAction, resolveSpawnTarget } from './spawnPlan';
-import { resolveHarness, HARNESSES, mcpDeliveryForm, fileAdapterFor } from './harness/index';
+import {
+  resolveHarness,
+  HARNESSES,
+  mcpDeliveryForm,
+  fileAdapterFor,
+  skillsSupported,
+} from './harness/index';
 import { findAgent, isKnownTarget, selectAgentByTier, listAgents } from './agent';
 import {
   validateProviderProtocol,
@@ -14,9 +20,12 @@ import {
   parseDotenv,
 } from './harness/adapter';
 import type { McpEndpoint } from './mcp/index';
+import { resolveSkill, parseSkillList, skillMountSpec } from './skill/index';
 import {
   planProviderDelivery,
+  planAgentImage,
   type ProviderDelivery,
+  type DerivedImagePlan,
 } from './harness/deriveImage';
 import { resolveProviderModel, HttpModelsLister } from './model/resolve';
 import {
@@ -32,6 +41,7 @@ import {
   harnessDir,
   agentDir,
   mcpDir,
+  skillDir,
   isInitialized,
   findRoot,
   envFilePath,
@@ -88,6 +98,8 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   tier?: string;
   /** `--mcp <name...>`: MCP servers to wire for this run (container sidecars and/or remote URLs). */
   mcp?: string[];
+  /** `--skill <name...>`: Skills to add for this run (comma-separated or repeated). */
+  skill?: string[];
 }
 
 /**
@@ -171,6 +183,10 @@ export function registerSpawnCommand(program: Command): void {
     .option(
       '--mcp <name...>',
       'MCP server(s) to wire for this run — container (sidecar) or remote (hosted URL); repeatable',
+    )
+    .option(
+      '--skill <name...>',
+      'Skill(s) to add for this run, from .e/skills (comma-separated or repeated)',
     )
     .option('--rebuild', 'force a rebuild of the harness image', false)
     .option(
@@ -269,12 +285,15 @@ export function registerSpawnCommand(program: Command): void {
         const fileAdapter = fileAdapterFor(harness);
         let mcpFileEndpoints: McpEndpoint[] | undefined;
         const remoteAuthEnvFiles: string[] = [];
-        const mcpEnvDirs: string[] = [];
-        const cleanupMcpEnv = (): void => {
-          for (const dir of mcpEnvDirs) {
+        // Throwaway host dirs created for this run (MCP credential env-files, the
+        // Codex config overlay, the derived-image build context) — all removed
+        // once the run returns.
+        const tempDirs: string[] = [];
+        const cleanupTempDirs = (): void => {
+          for (const dir of tempDirs) {
             fs.rmSync(dir, { recursive: true, force: true });
           }
-          mcpEnvDirs.length = 0;
+          tempDirs.length = 0;
         };
         if (mcpNames.length > 0) {
           try {
@@ -292,12 +311,12 @@ export function registerSpawnCommand(program: Command): void {
               port: server.port,
               healthcheck: server.healthcheck,
               // A sidecar's credentials go to the sidecar, never the agent.
-              envFile: renderMcpEnvFile(server, storeEnv, mcpEnvDirs, 'sidecar'),
+              envFile: renderMcpEnvFile(server, storeEnv, tempDirs, 'sidecar'),
             }));
             for (const server of plan.remoteServers) {
               // A remote server's credentials go to the agent, whose MCP client
               // expands `${VAR}` in the URL/headers — no sidecar, no network entry.
-              const file = renderMcpEnvFile(server, storeEnv, mcpEnvDirs, 'agent');
+              const file = renderMcpEnvFile(server, storeEnv, tempDirs, 'agent');
               if (file) remoteAuthEnvFiles.push(...file);
             }
             // Delivery form per harness (ADR-0006): Claude takes MCP inline on the
@@ -309,7 +328,43 @@ export function registerSpawnCommand(program: Command): void {
               mcpFileEndpoints = plan.endpoints;
             }
           } catch (err) {
-            cleanupMcpEnv();
+            cleanupTempDirs();
+            console.error((err as Error).message);
+            process.exit(1);
+          }
+        }
+
+        // Resolve Skills before any build or worktree (fail-fast). An agent's
+        // declared default skills (agent.skills) are baked into its image; --skill
+        // adds skills for this run only. Both go to the harness's skills dir
+        // outside /workspace (never the run branch); a harness that declares no
+        // skills dir is gated off. `--skill` accepts comma-separated or repeated.
+        const perRunSkills = parseSkillList(opts.skill ?? []);
+        const bakedSkills = agent.skills ?? [];
+        const skillMounts: string[] = [];
+        if (perRunSkills.length > 0 || bakedSkills.length > 0) {
+          try {
+            if (!skillsSupported(harness) || !harness.skillsDir) {
+              const kinds = [
+                bakedSkills.length > 0 ? 'baked' : undefined,
+                perRunSkills.length > 0 ? '--skill' : undefined,
+              ].filter(Boolean);
+              throw new Error(
+                `Harness "${harness.name}" does not support Skills, so it cannot receive ` +
+                  `${kinds.join(' or ')} skills.`,
+              );
+            }
+            // Validate every skill exists (dir + SKILL.md) before building anything.
+            for (const name of new Set([...bakedSkills, ...perRunSkills])) {
+              resolveSkill(name, root);
+            }
+            // Per-run skills are delivered as read-only mounts at the harness's
+            // skills dir — outside /workspace, so `git status` never sees them.
+            for (const name of perRunSkills) {
+              skillMounts.push(skillMountSpec(skillDir(name, root), harness.skillsDir, name));
+            }
+          } catch (err) {
+            cleanupTempDirs();
             console.error((err as Error).message);
             process.exit(1);
           }
@@ -338,7 +393,6 @@ export function registerSpawnCommand(program: Command): void {
               harness.adapter,
               agent.provider,
               resolvedModel,
-              { agentName: agent.name, baseImage: harness.imageTag },
             );
           } catch (err) {
             console.error((err as Error).message);
@@ -357,12 +411,12 @@ export function registerSpawnCommand(program: Command): void {
         if (mcpFileEndpoints !== undefined && fileAdapter) {
           try {
             const baseConfig =
-              delivery?.derived?.files.find(
-                (f) => f.fileName === fileAdapter.configFileName,
-              )?.content ?? '';
+              delivery?.bakedConfig?.file.fileName === fileAdapter.configFileName
+                ? delivery.bakedConfig.file.content
+                : '';
             const overlay = fileAdapter.renderConfigOverlay(baseConfig, mcpFileEndpoints);
             const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-cfg-'));
-            mcpEnvDirs.push(dir);
+            tempDirs.push(dir);
             const hostFile = path.join(dir, overlay.fileName);
             fs.writeFileSync(hostFile, overlay.content, { mode: 0o600 });
             configMounts.push(
@@ -371,11 +425,24 @@ export function registerSpawnCommand(program: Command): void {
             // Read config from the mounted dir regardless of a baked default.
             agentEnv.push(`${fileAdapter.configDirEnv}=${fileAdapter.configDir}`);
           } catch (err) {
-            cleanupMcpEnv();
+            cleanupTempDirs();
             console.error((err as Error).message);
             process.exit(1);
           }
         }
+
+        // Compose the derived agent image (ADR-0004 layer 2): the baked provider
+        // config (file harness) and/or the agent's default skills. Undefined when
+        // there is nothing to bake — then the run uses the harness base directly.
+        const agentImagePlan: DerivedImagePlan | undefined = planAgentImage({
+          baseImage: harness.imageTag,
+          agentName: agent.name,
+          bakedConfig: delivery?.bakedConfig,
+          skills:
+            bakedSkills.length > 0 && harness.skillsDir
+              ? { skillsDir: harness.skillsDir, names: bakedSkills }
+              : undefined,
+        });
 
         let runtime: ContainerRuntime;
         try {
@@ -388,8 +455,8 @@ export function registerSpawnCommand(program: Command): void {
         // Builds the image this run executes and returns its tag. The
         // orchestrator calls this after confirming a git repo but before
         // creating the worktree, so a thrown failure never leaves orphan
-        // scaffolding. A file-configured provider (Codex) runs a derived agent
-        // image baked on the harness base; everything else runs the base image.
+        // scaffolding. A derived agent image (baked provider config and/or
+        // default skills) runs on the harness base; everything else runs the base.
         const ensureImage = (): string => {
           // Preserve the short-circuit: with --rebuild the decision is always
           // `build`, so skip the (otherwise wasted) image-inspect probe.
@@ -411,20 +478,34 @@ export function registerSpawnCommand(program: Command): void {
             runtime.build(harness.imageTag, harnessDir(harness.name, root));
           }
 
-          if (!delivery?.derived) return harness.imageTag;
+          if (!agentImagePlan) return harness.imageTag;
 
           // Render the derived agent's files under `.e/agents/<name>/` — never
           // clobbering a hand edit, a divergence is shown as a diff (ADR-0004),
-          // and the config lives outside `/workspace`. Then build the thin
-          // layer-2 image on the (now-present) base; the key is not baked, it is
-          // delivered at runtime by name (see the provider env-file below).
+          // and the config lives outside `/workspace`.
           const dir = agentDir(agent.name, root);
-          for (const file of delivery.derived.files) {
+          for (const file of agentImagePlan.files) {
             writeIfAbsent(dir, path.join(dir, file.fileName), file.content);
           }
-          const tag = delivery.derived.imageTag;
+          const tag = agentImagePlan.imageTag;
           if (opts.rebuild || !runtime.imageExists(tag)) {
-            runtime.build(tag, dir);
+            if (agentImagePlan.skillNames.length === 0) {
+              // No baked skills: the agent dir is the whole build context.
+              runtime.build(tag, dir);
+            } else {
+              // Baked skills are file trees, not rendered strings, so assemble a
+              // temp build context: the rendered agent files plus each skill tree
+              // copied to `skills/<name>/` (where the Dockerfile's COPY expects it).
+              const ctx = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-ctx-'));
+              tempDirs.push(ctx);
+              fs.cpSync(dir, ctx, { recursive: true });
+              for (const name of agentImagePlan.skillNames) {
+                fs.cpSync(skillDir(name, root), path.join(ctx, 'skills', name), {
+                  recursive: true,
+                });
+              }
+              runtime.build(tag, ctx);
+            }
           }
           return tag;
         };
@@ -508,19 +589,21 @@ export function registerSpawnCommand(program: Command): void {
               runOptions,
               sidecars,
               mcpArgs,
-              configMounts,
+              // The Codex MCP config overlay and the per-run skill mounts are both
+              // read-only mounts outside /workspace, delivered together.
+              configMounts: [...configMounts, ...skillMounts],
             },
           );
         } catch (err) {
           cleanupProviderEnv();
-          cleanupMcpEnv();
+          cleanupTempDirs();
           console.error((err as Error).message);
           process.exit(1);
         } finally {
           // The rendered env-files hold resolved secrets; drop them as soon as
           // the run returns (each container already has its copy).
           cleanupProviderEnv();
-          cleanupMcpEnv();
+          cleanupTempDirs();
         }
 
         if (result.error) {

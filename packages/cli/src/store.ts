@@ -5,11 +5,12 @@ import path from 'path';
 /**
  * The **Store**: the `.e` directory holding e's on-disk state — the per-harness
  * Dockerfiles under `harnesses/`, the Agent definitions under `agents/`, the
- * container MCP server definitions under `mcp/`, and the shared `.env` base
- * environment. This module owns the store's layout (path derivation keyed on a
- * harness, agent, or MCP-server *name*) and the root-finding walk that locates
- * it. It knows nothing about the Harness, Agent, or MCP registries, so the
- * dependency runs one way: `harness`/`agent`/`mcp` → `store`.
+ * container MCP server definitions under `mcp/`, the Skills under `skills/`, and
+ * the shared `.env` base environment. This module owns the store's layout (path
+ * derivation keyed on a harness, agent, MCP-server, or skill *name*) and the
+ * root-finding walk that locates it. It knows nothing about the Harness, Agent,
+ * MCP, or Skill registries, so the dependency runs one way:
+ * `harness`/`agent`/`mcp`/`skill` → `store`.
  */
 
 /**
@@ -35,6 +36,21 @@ export function agentsBaseDir(root?: string): string {
 /** Base directory that holds the container MCP server definitions, under `root`. */
 export function mcpBaseDir(root?: string): string {
   return path.join(eBaseDir(root), 'mcp');
+}
+
+/** Base directory that holds the Skill definitions, under `root`. */
+export function skillsBaseDir(root?: string): string {
+  return path.join(eBaseDir(root), 'skills');
+}
+
+/** Directory containing a single Skill's files (`SKILL.md` + optional resources). */
+export function skillDir(name: string, root?: string): string {
+  return path.join(skillsBaseDir(root), name);
+}
+
+/** Absolute path to a Skill's `SKILL.md` manifest — the file that makes a dir a skill. */
+export function skillManifestPath(name: string, root?: string): string {
+  return path.join(skillDir(name, root), 'SKILL.md');
 }
 
 /** Directory containing a single MCP server's definition (Dockerfile + mcp.json). */

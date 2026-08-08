@@ -41,7 +41,22 @@ export interface Harness {
    * capability-gates on its presence. Grounding: `docs/research/harness-cli-facts.md`.
    */
   renderMcpArgs?(endpoints: McpEndpoint[]): string[];
+  /**
+   * Absolute in-container directory this harness reads Agent Skills from, outside
+   * `/workspace` so skills never land in a run's branch (e.g. Claude
+   * `/root/.claude/skills`, the shared `/root/.agents/skills` for the others).
+   * Its presence is the harness's declared skill capability; absent → `--skill`
+   * and baked skills are rejected. Grounding: `docs/research/harness-cli-facts.md`.
+   */
+  skillsDir?: string;
 }
+
+/**
+ * The shared in-container Agent-Skills directory read by Codex, opencode, and pi
+ * (`~/.agents/skills`, running as root). Claude Code reads its own
+ * `~/.claude/skills` instead. Grounding: `docs/research/harness-cli-facts.md`.
+ */
+const AGENTS_SKILLS_DIR = '/root/.agents/skills';
 
 /** Available coding harnesses, keyed by name. */
 export const HARNESSES: Record<string, Harness> = {
@@ -58,6 +73,8 @@ export const HARNESSES: Record<string, Harness> = {
     // `openai-chat`). Its env-based adapter comes with the pi delivery slice.
     protocols: ['anthropic-messages', 'openai-chat', 'openai-responses', 'google'],
     buildCommand: (prompt: string) => ['pi', '-p', prompt],
+    // pi reads Agent Skills from the shared `~/.agents/skills`.
+    skillsDir: AGENTS_SKILLS_DIR,
   },
   claudeCode: {
     name: 'claudeCode',
@@ -92,6 +109,8 @@ export const HARNESSES: Record<string, Harness> = {
       }
       return ['--mcp-config', JSON.stringify({ mcpServers })];
     },
+    // Claude Code reads Agent Skills from `~/.claude/skills` (not `.agents/`).
+    skillsDir: '/root/.claude/skills',
   },
   codex: {
     name: 'codex',
@@ -109,6 +128,8 @@ export const HARNESSES: Record<string, Harness> = {
     adapter: codexAdapter,
     buildCommand: (prompt: string, model?: string) =>
       model ? ['codex', 'exec', '-m', model, prompt] : ['codex', 'exec', prompt],
+    // Codex reads Agent Skills from the shared `~/.agents/skills`.
+    skillsDir: AGENTS_SKILLS_DIR,
   },
   opencode: {
     name: 'opencode',
@@ -121,6 +142,8 @@ export const HARNESSES: Record<string, Harness> = {
     // opencode (Vercel AI SDK) speaks all four via its provider plugins.
     protocols: ['anthropic-messages', 'openai-chat', 'openai-responses', 'google'],
     buildCommand: (prompt: string) => ['opencode', 'run', prompt],
+    // opencode reads Agent Skills from the shared `~/.agents/skills`.
+    skillsDir: AGENTS_SKILLS_DIR,
   },
 };
 
@@ -160,6 +183,15 @@ export function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
  */
 export function fileAdapterFor(harness: Harness): FileHarnessAdapter | undefined {
   return harness.adapter?.kind === 'file' ? harness.adapter : undefined;
+}
+
+/**
+ * Whether this harness supports Agent Skills — its declared skill capability. A
+ * harness with no {@link Harness.skillsDir} cannot place skills, so `--skill` and
+ * baked skills are rejected against it (capability gating).
+ */
+export function skillsSupported(harness: Harness): boolean {
+  return harness.skillsDir !== undefined;
 }
 
 /**

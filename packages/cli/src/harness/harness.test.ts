@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HARNESSES, mcpDeliveryForm, fileAdapterFor } from './index';
+import { HARNESSES, mcpDeliveryForm, fileAdapterFor, skillsSupported } from './index';
 import type { McpEndpoint } from '../mcp/index';
 
 const claude = HARNESSES.claudeCode;
@@ -77,4 +77,23 @@ test('fileAdapterFor narrows to the file adapter only for a file harness', () =>
   assert.equal(fileAdapterFor(HARNESSES.codex)?.kind, 'file');
   assert.equal(fileAdapterFor(HARNESSES.claudeCode), undefined);
   assert.equal(fileAdapterFor(HARNESSES.pi), undefined);
+});
+
+test('each harness places skills at a path outside /workspace; Claude differs from the shared dir', () => {
+  // Claude reads its own skills dir; the others share ~/.agents/skills.
+  assert.equal(HARNESSES.claudeCode.skillsDir, '/root/.claude/skills');
+  assert.equal(HARNESSES.codex.skillsDir, '/root/.agents/skills');
+  assert.equal(HARNESSES.opencode.skillsDir, '/root/.agents/skills');
+  assert.equal(HARNESSES.pi.skillsDir, '/root/.agents/skills');
+  for (const h of Object.values(HARNESSES)) {
+    assert.ok(h.skillsDir && !h.skillsDir.startsWith('/workspace'));
+  }
+});
+
+test('skillsSupported reflects a declared skillsDir (all real harnesses support skills)', () => {
+  for (const h of Object.values(HARNESSES)) {
+    assert.equal(skillsSupported(h), true);
+  }
+  // A harness with no skillsDir is gated off (defensive; no such harness ships).
+  assert.equal(skillsSupported({ ...HARNESSES.pi, skillsDir: undefined }), false);
 });
