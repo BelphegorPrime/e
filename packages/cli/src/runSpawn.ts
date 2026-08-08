@@ -3,6 +3,7 @@ import os from 'os';
 import type { Git } from './git/index';
 import type { ContainerRunner, RunOptions } from './runtime/index';
 import type { Harness } from './harness/index';
+import type { Agent } from './agent';
 import { slugify } from './slugify';
 
 /** How many counter collisions to absorb before giving up (a runaway guard). */
@@ -39,6 +40,9 @@ export interface RunSpawnDeps {
 }
 
 export interface RunSpawnParams {
+  /** The resolved Agent this run executes; its name is the run's branch segment. */
+  agent: Agent;
+  /** The Harness the agent runs (its image and invocation). */
   harness: Harness;
   /** The prompt, already joined into a single string. */
   prompt: string;
@@ -76,7 +80,7 @@ export interface RunSpawnResult {
  * (keeping the branch), and push a successful run's branch to origin. All git
  * stays in this host process, so push credentials never enter the container.
  *
- * The branch is `e/<harness>/<slug>-N`, where `N` is the next counter after
+ * The branch is `e/<agent>/<slug>-N`, where `N` is the next counter after
  * the existing run branches for this slug; a create collision (a concurrent
  * spawn took the number first) bumps `N` and retries.
  */
@@ -85,7 +89,7 @@ export async function runSpawn(
   params: RunSpawnParams,
 ): Promise<RunSpawnResult> {
   const { git, runtime, ensureImage } = deps;
-  const { harness, prompt } = params;
+  const { harness, agent, prompt } = params;
 
   if (!git.isRepo()) {
     return {
@@ -118,7 +122,7 @@ export async function runSpawn(
   // HEAD moves while the agent works.
   const base = git.headSha();
   const slug = params.name ?? slugify(prompt);
-  const prefix = `e/${harness.name}/${slug}`;
+  const prefix = `e/${agent.name}/${slug}`;
   const worktreesDir =
     params.worktreesDir ?? path.join(os.tmpdir(), 'e-worktrees');
 
