@@ -7,7 +7,7 @@ import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
 import { orderEnvFiles, decideImageAction, resolveSpawnTarget } from './spawnPlan';
 import { resolveHarness, HARNESSES } from './harness/index';
-import { findAgent, isKnownTarget } from './agent';
+import { findAgent, isKnownTarget, selectAgentByTier, listAgents } from './agent';
 import {
   validateProviderProtocol,
   renderProviderEnvFile,
@@ -17,6 +17,7 @@ import {
   planProviderDelivery,
   type ProviderDelivery,
 } from './harness/deriveImage';
+import { resolveProviderModel, HttpModelsLister } from './model/resolve';
 import { writeIfAbsent } from './scaffold';
 import {
   harnessDir,
@@ -73,6 +74,8 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   dir?: string;
   /** Raw `--env-file <path>` value from the CLI (a single path). */
   envFile?: string;
+  /** `--tier <tier>`: select the (harness, tier) agent rather than by name. */
+  tier?: string;
 }
 
 /**
@@ -101,6 +104,10 @@ export function registerSpawnCommand(program: Command): void {
     )
     .option('--name <name>', 'name for the run (overrides the prompt-derived slug)')
     .option('--env-file <path>', 'load environment variables from a file')
+    .option(
+      '--tier <tier>',
+      'select the agent for a harness by tier (e.g. smart, fast, cheap, review)',
+    )
     .option('--rebuild', 'force a rebuild of the harness image', false)
     .option(
       '--dir <path>',
@@ -136,31 +143,34 @@ export function registerSpawnCommand(program: Command): void {
         opts: SpawnCommandOptions,
       ) => {
         const root = findRoot(opts.dir);
+        const defaultHarness = readConfig(root).defaultHarness;
 
-        // Decide what the positional args mean: a known agent/harness is the
-        // target (unchanged behavior); otherwise there is no named target and
-        // the args are the prompt, run on the favorite harness's default agent.
+        // Decide what the positional args mean and resolve the Agent to run.
+        // With `--tier`, the target (or the favorite) names a *harness* and the
+        // tier selects its agent; without it, the target is an agent/harness
+        // name resolved directly (a bare harness → its default agent).
         const resolved = resolveSpawnTarget({
           target,
           prompt,
-          defaultHarness: readConfig(root).defaultHarness,
-          isKnownTarget: (name) => isKnownTarget(name, root),
+          defaultHarness,
+          isKnownTarget: opts.tier
+            ? (name) => Object.keys(HARNESSES).includes(name)
+            : (name) => isKnownTarget(name, root),
         });
 
-        // Resolve the spawn target to an Agent (a persisted agent by that name,
-        // or a bare harness name → its default agent), then the Harness the
-        // agent runs — the image and invocation stay keyed on the harness.
         const agent = (() => {
           try {
-            return findAgent(resolved.agentTarget, root);
+            return opts.tier
+              ? selectAgentByTier(resolved.agentTarget, opts.tier, listAgents(root))
+              : findAgent(resolved.agentTarget, root);
           } catch (err) {
             console.error((err as Error).message);
             process.exit(1);
           }
         })();
 
-        // findAgent has already validated that the agent's harness is a known
-        // harness, so this resolution cannot fail.
+        // findAgent / selectAgentByTier have validated the agent's harness, so
+        // this resolution cannot fail.
         const harness = resolveHarness(agent.harness);
 
         // Reject a provider protocol the harness does not speak before building
@@ -172,11 +182,18 @@ export function registerSpawnCommand(program: Command): void {
           process.exit(1);
         }
 
-        // Plan how the provider (if any) reaches the run: runtime env for an
-        // env harness, or a derived-image build for a file harness. Pure and
-        // cheap, so it runs early — an unusable provider (no adapter, or an
-        // `auto` model a file harness can't bake yet) fails here, before any
-        // runtime detection, image build, or worktree.
+        // The shared `.e/.env` is the sole source of a provider's API key
+        // (ADR-0006) — read once, used both to fetch the model list and to
+        // resolve the runtime env-file key by name.
+        const baseEnvFile = root !== undefined ? envFilePath(root) : undefined;
+        const storeEnv = agent.provider ? loadStoreEnv(baseEnvFile) : {};
+
+        // Plan how the provider (if any) reaches the run: resolve its model
+        // (a concrete id as-is; `auto` against the endpoint's `/v1/models` for
+        // the agent's tier — ADR-0007), then decide the delivery form (runtime
+        // env for an env harness, a derived-image build for a file harness).
+        // Runs before runtime detection or any build so a bad provider, an
+        // unreachable endpoint, or a missing adapter fails fast and cheap.
         let delivery: ProviderDelivery | undefined;
         if (agent.provider) {
           try {
@@ -185,10 +202,17 @@ export function registerSpawnCommand(program: Command): void {
                 `Harness "${harness.name}" has no config adapter, so it cannot deliver a provider yet.`,
               );
             }
-            delivery = planProviderDelivery(harness.adapter, agent.provider, {
-              agentName: agent.name,
-              baseImage: harness.imageTag,
-            });
+            const resolvedModel = await resolveProviderModel(
+              agent.provider,
+              agent.tier,
+              new HttpModelsLister((name) => storeEnv[name]),
+            );
+            delivery = planProviderDelivery(
+              harness.adapter,
+              agent.provider,
+              resolvedModel,
+              { agentName: agent.name, baseImage: harness.imageTag },
+            );
           } catch (err) {
             console.error((err as Error).message);
             process.exit(1);
@@ -249,8 +273,6 @@ export function registerSpawnCommand(program: Command): void {
 
         // Load the shared `.e/.env` as the base environment (if present),
         // then the user's --env-file on top, so it overrides the base.
-        const baseEnvFile =
-          root !== undefined ? envFilePath(root) : undefined;
         const envFiles = orderEnvFiles(
           baseEnvFile !== undefined && fs.existsSync(baseEnvFile)
             ? baseEnvFile
@@ -262,8 +284,8 @@ export function registerSpawnCommand(program: Command): void {
         // throwaway env-file (outside the worktree), layered last so it takes
         // effect. The delivery plan decided what that env is — the whole
         // provider for an env harness, only the API key for a file harness. The
-        // key is resolved by name from `.e/.env` (ADR-0006), never inlined on
-        // argv; the file is removed once the run returns.
+        // key is resolved by name from the already-loaded `.e/.env` (ADR-0006),
+        // never inlined on argv; the file is removed once the run returns.
         let providerEnvDir: string | undefined;
         const cleanupProviderEnv = (): void => {
           if (providerEnvDir) {
@@ -273,7 +295,6 @@ export function registerSpawnCommand(program: Command): void {
         };
         if (delivery) {
           try {
-            const storeEnv = loadStoreEnv(baseEnvFile);
             const content = renderProviderEnvFile(
               delivery.runtimeEnv,
               (name) => storeEnv[name],
@@ -307,6 +328,7 @@ export function registerSpawnCommand(program: Command): void {
               agent,
               harness,
               prompt: resolved.prompt.join(' '),
+              model: delivery?.runtimeModel,
               name: opts.name,
               runOptions,
             },

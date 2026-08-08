@@ -25,8 +25,13 @@ export interface Harness {
    * a default agent (no provider) never needs one.
    */
   adapter?: HarnessAdapter;
-  /** Builds the container argv that invokes the harness with the given prompt. */
-  buildCommand(prompt: string): string[];
+  /**
+   * Builds the container argv that invokes the harness with the given prompt.
+   * `model` is an optional runtime-resolved model to pass on the command line
+   * (used by harnesses that take the model as a flag, e.g. Codex `-m`); harnesses
+   * that carry the model via env or a baked config ignore it.
+   */
+  buildCommand(prompt: string, model?: string): string[];
 }
 
 /** Available coding harnesses, keyed by name. */
@@ -75,9 +80,11 @@ export const HARNESSES: Record<string, Harness> = {
     // Codex speaks only OpenAI Responses (`/v1/chat/completions` was removed).
     protocols: ['openai-responses'],
     // Codex is file-configured (`config.toml`): its adapter renders the provider
-    // block into a derived agent image (ADR-0004/0006).
+    // block into a derived agent image (ADR-0004/0006). An auto-resolved model
+    // arrives at runtime as `-m <id>` (a baked concrete model needs no flag).
     adapter: codexAdapter,
-    buildCommand: (prompt: string) => ['codex', 'exec', prompt],
+    buildCommand: (prompt: string, model?: string) =>
+      model ? ['codex', 'exec', '-m', model, prompt] : ['codex', 'exec', prompt],
   },
   opencode: {
     name: 'opencode',

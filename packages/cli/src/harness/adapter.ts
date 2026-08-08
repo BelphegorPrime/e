@@ -38,12 +38,18 @@ export const PROTOCOLS: readonly Protocol[] = [
 export interface Provider {
   /** Base URL of the endpoint, e.g. `https://gateway.example.com`. */
   baseUrl: string;
-  /** Concrete model id (or `auto`, resolved later — see #12). */
+  /** Concrete model id, or `auto` — resolved at spawn against `/v1/models` (ADR-0007). */
   model: string;
   /** The wire protocol the endpoint speaks; must be one the harness speaks. */
   protocol: Protocol;
   /** Name of the env var (in `.e/.env`) holding the API key — never the value. */
   apiKeyEnv: string;
+  /**
+   * Fallback model id used when `model` is `auto` but resolution finds no
+   * preferred model or the endpoint is unreachable (ADR-0007). Optional; without
+   * it an unresolvable `auto` is a hard error.
+   */
+  defaultModel?: string;
 }
 
 /**
@@ -152,32 +158,30 @@ function tomlBasicString(value: string): string {
  * environment at runtime, so no secret is written here. Grounding:
  * `docs/research/harness-cli-facts.md`.
  *
- * The model must be a concrete id: `auto` is resolved at spawn and delivered at
- * runtime (ADR-0004/0006, tracked by #12), never baked into the image — so an
- * `auto` model is rejected here rather than written as a literal.
+ * A concrete model is baked as the top-level `model` (ADR-0004). An `auto` model
+ * is **omitted** from the file — it is resolved at spawn and delivered at runtime
+ * (`codex exec -m <id>`, ADR-0007), so the derived image is not rebuilt when the
+ * resolved model changes.
  */
 export function renderCodexConfig(provider: Provider): string {
-  if (provider.model === 'auto') {
-    throw new Error(
-      `Codex cannot bake an "auto" model into a derived agent image; set a concrete model id ` +
-        `(automatic per-tier model resolution is tracked separately).`,
-    );
-  }
   // A fixed provider id: `e` owns the whole file, so there is only ever one
   // custom provider and no id collision to worry about.
   const id = 'e';
-  return (
-    [
-      `model = ${tomlBasicString(provider.model)}`,
-      `model_provider = ${tomlBasicString(id)}`,
-      ``,
-      `[model_providers.${id}]`,
-      `name = ${tomlBasicString(id)}`,
-      `base_url = ${tomlBasicString(provider.baseUrl)}`,
-      `env_key = ${tomlBasicString(provider.apiKeyEnv)}`,
-      `wire_api = "responses"`,
-    ].join('\n') + '\n'
+  const lines: string[] = [];
+  // `auto` carries no concrete id to bake; it arrives at runtime via `-m`.
+  if (provider.model !== 'auto') {
+    lines.push(`model = ${tomlBasicString(provider.model)}`);
+  }
+  lines.push(
+    `model_provider = ${tomlBasicString(id)}`,
+    ``,
+    `[model_providers.${id}]`,
+    `name = ${tomlBasicString(id)}`,
+    `base_url = ${tomlBasicString(provider.baseUrl)}`,
+    `env_key = ${tomlBasicString(provider.apiKeyEnv)}`,
+    `wire_api = "responses"`,
   );
+  return lines.join('\n') + '\n';
 }
 
 /**

@@ -15,6 +15,7 @@ import type {
   Provider,
   RenderedConfigFile,
 } from './adapter';
+import type { ResolvedModel } from '../model/resolve';
 
 /** Inputs for rendering a derived agent Dockerfile. */
 export interface DerivedDockerfileParams {
@@ -74,36 +75,55 @@ export interface DerivedImagePlan {
 export interface ProviderDelivery {
   /**
    * Env delivered at runtime via `--env-file`: the API key by name for every
-   * harness, plus — for an env-configured harness — the endpoint and model.
+   * harness, plus — for an env-configured harness — the endpoint and resolved model.
    */
   runtimeEnv: ContainerEnv[];
   /** Present only for a file-configured harness: the derived image to build and run. */
   derived?: DerivedImagePlan;
+  /**
+   * A model to deliver on the run command (e.g. `codex exec -m <id>`), set only
+   * when the model was `auto`-resolved for a file harness — its config file omits
+   * the model so the resolved id arrives at runtime, not baked (ADR-0007).
+   */
+  runtimeModel?: string;
 }
 
 /**
  * Plans how an agent's {@link Provider} reaches its Run, purely — the single
- * place the delivery form is decided from the adapter's kind:
+ * place the delivery form is decided from the adapter's kind, given the model
+ * already {@link ResolvedModel resolved} at spawn:
  *
- * - **env** harness (Claude Code): the whole provider becomes runtime env; no
- *   image is derived and the harness base runs directly.
+ * - **env** harness (Claude Code): the whole provider (with the resolved model)
+ *   becomes runtime env; no image is derived and the harness base runs directly.
  * - **file** harness (Codex): the provider is rendered into a config file and a
- *   derived Dockerfile baked on the harness base, and only the API key is
- *   delivered at runtime (by name; never baked).
+ *   derived Dockerfile baked on the harness base. A concrete model is baked into
+ *   the config; an `auto`-resolved model is omitted from the config and delivered
+ *   on the run command instead (`runtimeModel`). Only the API key is delivered as
+ *   runtime env (by name; never baked).
  *
- * The spawn edge executes the plan (writes {@link DerivedImagePlan.files},
- * builds the image, layers the runtime env-file); this function does no I/O, so
- * the selection and the rendered artifacts are testable without a runtime.
+ * The spawn edge executes the plan (writes {@link DerivedImagePlan.files}, builds
+ * the image, layers the runtime env-file, appends `runtimeModel` to the command);
+ * this function does no I/O, so the selection and rendered artifacts are testable
+ * without a runtime.
  */
 export function planProviderDelivery(
   adapter: HarnessAdapter,
   provider: Provider,
+  resolved: ResolvedModel,
   opts: { agentName: string; baseImage: string },
 ): ProviderDelivery {
   if (adapter.kind === 'env') {
-    return { runtimeEnv: adapter.renderProviderEnv(provider) };
+    // Env harnesses carry the model at runtime already; use the resolved id.
+    return { runtimeEnv: adapter.renderProviderEnv({ ...provider, model: resolved.model }) };
   }
-  const config = adapter.renderProviderFile(provider);
+
+  // File harness: bake a concrete model into the config, but keep an
+  // auto-resolved one out of it (the provider still carries `auto`, which
+  // renderProviderFile omits) and deliver it on the command line instead.
+  const configProvider: Provider = resolved.fromAuto
+    ? provider
+    : { ...provider, model: resolved.model };
+  const config = adapter.renderProviderFile(configProvider);
   const dockerfile: RenderedConfigFile = {
     fileName: 'Dockerfile',
     content: renderDerivedDockerfile({
@@ -119,5 +139,6 @@ export function planProviderDelivery(
       imageTag: derivedImageTag(opts.agentName),
       files: [config, dockerfile],
     },
+    runtimeModel: resolved.fromAuto ? resolved.model : undefined,
   };
 }

@@ -123,12 +123,19 @@ function parseProvider(raw: unknown, where: string): Provider {
       `Invalid provider protocol "${p.protocol}" in agent definition at ${where}. Valid protocols: ${PROTOCOLS.join(', ')}.`,
     );
   }
-  return {
+  if (p.defaultModel !== undefined && typeof p.defaultModel !== 'string') {
+    throw new Error(
+      `Invalid provider defaultModel in agent definition at ${where}: expected a string.`,
+    );
+  }
+  const provider: Provider = {
     baseUrl: p.baseUrl,
     model: p.model,
     protocol: p.protocol as Protocol,
     apiKeyEnv: p.apiKeyEnv,
   };
+  if (p.defaultModel !== undefined) provider.defaultModel = p.defaultModel;
+  return provider;
 }
 
 /** Lists the persisted agent names under the store's `agents/` directory. */
@@ -139,6 +146,43 @@ function listAgentNames(root?: string): string[] {
     .readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
+}
+
+/** Reads and parses every persisted agent under the store's `agents/` directory. */
+export function listAgents(root?: string): Agent[] {
+  return listAgentNames(root)
+    .map((name) => readAgentFile(name, root))
+    .filter((agent): agent is Agent => agent !== undefined);
+}
+
+/**
+ * Selects the single Agent matching `(harnessName, tier)`, purely (ADR-0007).
+ * Zero or more than one match is an error that lists the candidates — the
+ * selection must be unambiguous, never "pick the first".
+ */
+export function selectAgentByTier(
+  harnessName: string,
+  tier: string,
+  agents: Agent[],
+): Agent {
+  const forHarness = agents.filter((a) => a.harness === harnessName);
+  const matches = forHarness.filter((a) => a.tier === tier);
+
+  if (matches.length === 1) return matches[0];
+
+  if (matches.length === 0) {
+    const candidates =
+      forHarness.map((a) => `${a.name} (tier: ${a.tier})`).join(', ') || '(none)';
+    throw new Error(
+      `No agent for harness "${harnessName}" at tier "${tier}". ` +
+        `Agents for this harness: ${candidates}.`,
+    );
+  }
+
+  throw new Error(
+    `Ambiguous tier "${tier}" for harness "${harnessName}": it matches ${matches.length} agents ` +
+      `(${matches.map((a) => a.name).join(', ')}). Rename or remove the duplicates so the tier is unique.`,
+  );
 }
 
 /**

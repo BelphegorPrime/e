@@ -211,6 +211,24 @@ test('runs the image tag ensureImage returns (e.g. a derived agent image)', asyn
   assert.equal(runtime.image, 'e-agent-smart-codex');
 });
 
+test('threads a runtime-resolved model into the harness command', async () => {
+  const { deps, runtime } = makeDeps();
+  // A harness that takes the model as a command flag (like Codex `-m`).
+  const codexish: Harness = {
+    ...harness,
+    buildCommand: (prompt, model) =>
+      model ? ['codex', 'exec', '-m', model, prompt] : ['codex', 'exec', prompt],
+  };
+  await runSpawn(deps, makeParams({ harness: codexish, model: 'gpt-5-codex' }));
+  assert.deepEqual(runtime.command, [
+    'codex',
+    'exec',
+    '-m',
+    'gpt-5-codex',
+    'Fix the flaky test',
+  ]);
+});
+
 test('does not modify the working tree in place: worktree lives under worktreesDir', async () => {
   const { deps, git } = makeDeps();
   await runSpawn(deps, makeParams({ worktreesDir: '/tmp/wt' }));

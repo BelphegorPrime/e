@@ -48,6 +48,12 @@ export interface RunSpawnParams {
   harness: Harness;
   /** The prompt, already joined into a single string. */
   prompt: string;
+  /**
+   * A runtime-resolved model to pass on the harness command line (e.g. Codex
+   * `-m <id>`), set when the agent's model was `auto`-resolved for a
+   * command-configured harness. Absent for baked or env-delivered models.
+   */
+  model?: string;
   /** `--name` override; when set it is used as the slug verbatim. */
   name?: string;
   /**
@@ -161,7 +167,7 @@ export async function runSpawn(
     exitCode = await runtime.run(
       imageTag,
       runOptions,
-      harness.buildCommand(prompt),
+      harness.buildCommand(prompt, params.model),
     );
 
     // Capture whatever the agent left uncommitted; a clean tree keeps the
