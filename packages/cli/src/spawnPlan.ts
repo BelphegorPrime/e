@@ -51,3 +51,50 @@ export function decideImageAction({
   if (!needBuild) return 'skip';
   return initialized ? 'build' : 'not-initialized';
 }
+
+/** Inputs to the pure spawn-target resolution; the glue supplies the real values. */
+export interface SpawnTargetInput {
+  /** First positional arg, or `undefined` when `e spawn` was given none. */
+  target: string | undefined;
+  /** Remaining positional args (the prompt words after `target`). */
+  prompt: string[];
+  /** The favorite harness from `config.json`, used when no target is named. */
+  defaultHarness: string;
+  /** Predicate: does `name` name a persisted agent or a known harness? */
+  isKnownTarget: (name: string) => boolean;
+}
+
+/** What a spawn's positional args resolve to. */
+export interface SpawnTarget {
+  /** The name to resolve to an Agent — a known agent/harness, or the favorite. */
+  agentTarget: string;
+  /** The prompt words, joined by the caller. */
+  prompt: string[];
+}
+
+/**
+ * Decides, purely, what a spawn's positional args mean:
+ *
+ * - No `target` at all → run the favorite harness's default agent, empty prompt.
+ * - `target` names a known agent/harness → that is the target; the rest is the
+ *   prompt (unchanged `e spawn <agent|harness> <prompt>` behavior).
+ * - `target` names nothing known → every positional is the prompt, run on the
+ *   favorite harness's default agent (`e spawn "<prompt>"`).
+ *
+ * The returned `agentTarget` is fed through the existing agent resolution, which
+ * validates it and surfaces a clear error if even the favorite is unknown.
+ */
+export function resolveSpawnTarget({
+  target,
+  prompt,
+  defaultHarness,
+  isKnownTarget,
+}: SpawnTargetInput): SpawnTarget {
+  if (target === undefined) {
+    return { agentTarget: defaultHarness, prompt: [] };
+  }
+  if (isKnownTarget(target)) {
+    return { agentTarget: target, prompt };
+  }
+  return { agentTarget: defaultHarness, prompt: [target, ...prompt] };
+}

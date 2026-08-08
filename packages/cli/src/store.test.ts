@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveRoot } from './store';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import {
+  resolveRoot,
+  resolveConfig,
+  serializeConfig,
+  readConfig,
+  writeConfig,
+  configFilePath,
+  DEFAULT_HARNESS,
+} from './store';
 
 // resolveRoot is pure: it takes cwd, homedir, and a `hasStore` predicate, so we
 // exercise the resolution order with synthetic paths and a fake predicate — no
@@ -60,4 +71,54 @@ test('resolveRoot: cwd itself is checked before its ancestors', () => {
     hasStore: (dir) => dir === '/a/b/c',
   });
   assert.equal(root, '/a/b/c');
+});
+
+// resolveConfig is pure: the glue hands it already-parsed JSON (or undefined for
+// a missing file), and it fills defaults for anything absent or malformed.
+
+test('resolveConfig: a missing config yields the built-in defaults', () => {
+  assert.deepEqual(resolveConfig(undefined), { defaultHarness: DEFAULT_HARNESS });
+});
+
+test('resolveConfig: an explicit defaultHarness is kept', () => {
+  assert.deepEqual(resolveConfig({ defaultHarness: 'codex' }), {
+    defaultHarness: 'codex',
+  });
+});
+
+test('resolveConfig: a blank or non-string defaultHarness falls back to the default', () => {
+  assert.equal(resolveConfig({ defaultHarness: '' }).defaultHarness, DEFAULT_HARNESS);
+  assert.equal(
+    resolveConfig({ defaultHarness: 42 as unknown as string }).defaultHarness,
+    DEFAULT_HARNESS,
+  );
+  assert.equal(resolveConfig({}).defaultHarness, DEFAULT_HARNESS);
+});
+
+test('serializeConfig: pretty JSON with a trailing newline', () => {
+  assert.equal(
+    serializeConfig({ defaultHarness: 'pi' }),
+    '{\n  "defaultHarness": "pi"\n}\n',
+  );
+});
+
+test('config round-trip: writeConfig then readConfig returns the written value', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
+  try {
+    writeConfig({ defaultHarness: 'codex' }, root);
+    assert.equal(fs.existsSync(configFilePath(root)), true);
+    assert.deepEqual(readConfig(root), { defaultHarness: 'codex' });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readConfig: a missing config.json returns the defaults, no file written', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
+  try {
+    assert.deepEqual(readConfig(root), { defaultHarness: DEFAULT_HARNESS });
+    assert.equal(fs.existsSync(configFilePath(root)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
