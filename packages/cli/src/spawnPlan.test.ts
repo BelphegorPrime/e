@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { orderEnvFiles, decideImageAction } from './spawnPlan';
+import { orderEnvFiles, decideImageAction, resolveSpawnTarget } from './spawnPlan';
 
 test('orderEnvFiles: no files when neither is present', () => {
   assert.deepEqual(orderEnvFiles(undefined, undefined), []);
@@ -49,3 +49,57 @@ for (const { rebuild, imageExists, initialized, expected } of cases) {
     );
   });
 }
+
+// resolveSpawnTarget is pure: it takes the positional args, the favorite
+// harness, and a `isKnownTarget` predicate, and decides target-vs-prompt.
+const known = (names: string[]) => (name: string) => names.includes(name);
+
+test('resolveSpawnTarget: no target runs the favorite with an empty prompt', () => {
+  assert.deepEqual(
+    resolveSpawnTarget({
+      target: undefined,
+      prompt: [],
+      defaultHarness: 'pi',
+      isKnownTarget: known(['pi', 'codex']),
+    }),
+    { agentTarget: 'pi', prompt: [] },
+  );
+});
+
+test('resolveSpawnTarget: a known target keeps existing behavior (target + prompt)', () => {
+  assert.deepEqual(
+    resolveSpawnTarget({
+      target: 'codex',
+      prompt: ['fix', 'the', 'bug'],
+      defaultHarness: 'pi',
+      isKnownTarget: known(['pi', 'codex']),
+    }),
+    { agentTarget: 'codex', prompt: ['fix', 'the', 'bug'] },
+  );
+});
+
+test('resolveSpawnTarget: an unknown first arg is part of the prompt, run on the favorite', () => {
+  // `e spawn "fix the bug"` — the quoted prompt lands in `target`.
+  assert.deepEqual(
+    resolveSpawnTarget({
+      target: 'fix the bug',
+      prompt: [],
+      defaultHarness: 'pi',
+      isKnownTarget: known(['pi', 'codex']),
+    }),
+    { agentTarget: 'pi', prompt: ['fix the bug'] },
+  );
+});
+
+test('resolveSpawnTarget: an unquoted unknown prompt keeps all its words in order', () => {
+  // `e spawn fix the bug` — commander splits into target + prompt words.
+  assert.deepEqual(
+    resolveSpawnTarget({
+      target: 'fix',
+      prompt: ['the', 'bug'],
+      defaultHarness: 'pi',
+      isKnownTarget: known(['pi', 'codex']),
+    }),
+    { agentTarget: 'pi', prompt: ['fix', 'the', 'bug'] },
+  );
+});

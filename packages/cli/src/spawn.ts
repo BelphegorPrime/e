@@ -3,10 +3,16 @@ import type { Command } from 'commander';
 import { ContainerRuntime, type RunOptions } from './runtime/index';
 import { HostGit } from './git/host';
 import { runSpawn, type RunSpawnResult } from './runSpawn';
-import { orderEnvFiles, decideImageAction } from './spawnPlan';
+import { orderEnvFiles, decideImageAction, resolveSpawnTarget } from './spawnPlan';
 import { resolveHarness, HARNESSES } from './harness/index';
-import { findAgent } from './agent';
-import { harnessDir, isInitialized, findRoot, envFilePath } from './store';
+import { findAgent, isKnownTarget } from './agent';
+import {
+  harnessDir,
+  isInitialized,
+  findRoot,
+  envFilePath,
+  readConfig,
+} from './store';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
 const RUNTIMES: Record<string, string> = {
@@ -105,23 +111,24 @@ export function registerSpawnCommand(program: Command): void {
         prompt: string[],
         opts: SpawnCommandOptions,
       ) => {
-        if (target === undefined) {
-          console.error('error: missing required argument \'target\'\n');
-          console.error('Available harnesses:');
-          for (const name of Object.keys(HARNESSES)) {
-            console.error(`  ${name}`);
-          }
-          process.exit(1);
-        }
-
         const root = findRoot(opts.dir);
+
+        // Decide what the positional args mean: a known agent/harness is the
+        // target (unchanged behavior); otherwise there is no named target and
+        // the args are the prompt, run on the favorite harness's default agent.
+        const resolved = resolveSpawnTarget({
+          target,
+          prompt,
+          defaultHarness: readConfig(root).defaultHarness,
+          isKnownTarget: (name) => isKnownTarget(name, root),
+        });
 
         // Resolve the spawn target to an Agent (a persisted agent by that name,
         // or a bare harness name → its default agent), then the Harness the
         // agent runs — the image and invocation stay keyed on the harness.
         const agent = (() => {
           try {
-            return findAgent(target, root);
+            return findAgent(resolved.agentTarget, root);
           } catch (err) {
             console.error((err as Error).message);
             process.exit(1);
@@ -191,7 +198,7 @@ export function registerSpawnCommand(program: Command): void {
             {
               agent,
               harness,
-              prompt: prompt.join(' '),
+              prompt: resolved.prompt.join(' '),
               name: opts.name,
               runOptions,
             },

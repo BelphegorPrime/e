@@ -105,3 +105,12 @@ export function findAgent(name: string, root?: string): Agent {
     agents: listAgentNames(root),
   });
 }
+
+/**
+ * True if `name` names a persisted agent or a known harness — used to tell a
+ * spawn *target* from a bare *prompt*. This is a lightweight existence check;
+ * {@link findAgent} still performs the full validation once a target is chosen.
+ */
+export function isKnownTarget(name: string, root?: string): boolean {
+  return Object.keys(HARNESSES).includes(name) || listAgentNames(root).includes(name);
+}

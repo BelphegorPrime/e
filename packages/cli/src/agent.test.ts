@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveAgent, renderDefaultAgent, type Agent, type ResolveAgentDeps } from './agent';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import {
+  resolveAgent,
+  renderDefaultAgent,
+  isKnownTarget,
+  type Agent,
+  type ResolveAgentDeps,
+} from './agent';
+import { agentDir } from './store';
 
 // resolveAgent is pure: it takes a spawn target plus injected readers (an
 // agent loader, the valid harness names, and the available agent names), so we
@@ -63,4 +73,25 @@ test('resolveAgent: a persisted agent whose name differs from its key throws', (
 test('renderDefaultAgent: valid JSON with name=harness and tier=default', () => {
   const parsed = JSON.parse(renderDefaultAgent('codex')) as Agent;
   assert.deepEqual(parsed, { name: 'codex', harness: 'codex', tier: 'default' });
+});
+
+// isKnownTarget is glue over the real store, so it runs against a temp root.
+test('isKnownTarget: a known harness is a target; an unknown name is not', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));
+  try {
+    assert.equal(isKnownTarget('pi', root), true);
+    assert.equal(isKnownTarget('fix the bug', root), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('isKnownTarget: a persisted agent directory counts as a target', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));
+  try {
+    fs.mkdirSync(agentDir('smart-codex', root), { recursive: true });
+    assert.equal(isKnownTarget('smart-codex', root), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
