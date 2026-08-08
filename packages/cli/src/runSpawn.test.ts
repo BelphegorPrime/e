@@ -189,23 +189,15 @@ const harness: Harness = {
 const agent: Agent = { name: 'demo', harness: 'demo', tier: 'default' };
 
 function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
-  let ensureImageCalls = 0;
   const git = overrides.git ?? new FakeGit();
   const runtime = (overrides.runtime ?? new FakeRuntime()) as FakeRuntime;
   const deps: RunSpawnDeps = {
     git,
     runtime,
-    ensureImage:
-      overrides.ensureImage ??
-      (() => {
-        ensureImageCalls++;
-        return harness.imageTag;
-      }),
-    ensureSidecarImages: overrides.ensureSidecarImages,
     // Instant, recorded sleep so readiness polling never actually waits.
     sleep: overrides.sleep ?? makeSleep(runtime),
   };
-  return { deps, git: git as FakeGit, runtime, ensureImageCalls: () => ensureImageCalls };
+  return { deps, git: git as FakeGit, runtime };
 }
 
 function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
@@ -213,6 +205,7 @@ function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
     agent,
     harness,
     prompt: 'Fix the flaky test',
+    imageTag: 'e-harness-demo',
     runOptions: { attach: true, rm: true },
     worktreesDir: '/tmp/e-worktrees',
     ...overrides,
@@ -223,29 +216,14 @@ function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
 const sidecar: SidecarPlan = { alias: 'everything', image: 'e-mcp-everything', port: 3001 };
 const fastReadiness = { attempts: 3, intervalMs: 1 };
 
-test('errors and does not touch the runtime when not in a git repo', async () => {
-  const { deps, git, runtime, ensureImageCalls } = makeDeps({
-    git: new FakeGit({ repo: false }),
-  });
-  const result = await runSpawn(deps, makeParams());
-
-  assert.equal(result.ran, false);
-  assert.equal(result.exitCode, 1);
-  assert.match(result.error ?? '', /git repository/i);
-  assert.equal(runtime.ran, false);
-  assert.equal(ensureImageCalls(), 0);
-  assert.ok(!git.calls.includes('addWorktree'));
-});
-
 test('creates a worktree from HEAD on branch e/<harness>/<slug>-1 and runs the harness', async () => {
-  const { deps, git, runtime, ensureImageCalls } = makeDeps();
+  const { deps, git, runtime } = makeDeps();
   const result = await runSpawn(deps, makeParams());
 
   const slug = slugify('Fix the flaky test');
   assert.equal(git.worktrees.length, 1);
   assert.equal(git.worktrees[0].branch, `e/demo/${slug}-1`);
   assert.equal(git.worktrees[0].base, 'basesha');
-  assert.equal(ensureImageCalls(), 1);
 
   assert.equal(runtime.ran, true);
   assert.equal(runtime.image, 'e-harness-demo');
@@ -268,17 +246,13 @@ test('the run branch uses the agent name, while the image stays the harness imag
   const slug = slugify('Fix the flaky test');
   assert.equal(result.branch, `e/smart-demo/${slug}-1`);
   assert.equal(git.listedPrefixes[0], `e/smart-demo/${slug}`);
-  // With the default ensureImage, the run uses the harness base image.
+  // The run executes the imageTag it was given (the harness base here).
   assert.equal(runtime.image, 'e-harness-demo');
 });
 
-test('runs the image tag ensureImage returns (e.g. a derived agent image)', async () => {
-  const { deps, runtime } = makeDeps({
-    // A file-configured agent's ensureImage builds a derived image and returns
-    // its tag; runSpawn must run that, not the harness base.
-    ensureImage: () => 'e-agent-smart-codex',
-  });
-  await runSpawn(deps, makeParams());
+test('runs the imageTag it is given (e.g. a derived agent image)', async () => {
+  const { deps, runtime } = makeDeps();
+  await runSpawn(deps, makeParams({ imageTag: 'e-agent-smart-codex' }));
   assert.equal(runtime.image, 'e-agent-smart-codex');
 });
 
@@ -331,21 +305,6 @@ test('removes the worktree even when the agent exits non-zero, and preserves the
   assert.equal(result.exitCode, 2);
   assert.deepEqual(git.removed, [git.worktrees[0].path]);
   assert.equal(git.commits.length, 0);
-});
-
-test('refuses a detached run and does not touch the runtime', async () => {
-  const { deps, git, runtime, ensureImageCalls } = makeDeps();
-  const result = await runSpawn(
-    deps,
-    makeParams({ runOptions: { attach: false, rm: true } }),
-  );
-
-  assert.equal(result.ran, false);
-  assert.equal(result.exitCode, 1);
-  assert.match(result.error ?? '', /--no-attach/);
-  assert.equal(runtime.ran, false);
-  assert.equal(ensureImageCalls(), 0);
-  assert.ok(!git.calls.includes('addWorktree'));
 });
 
 test('--name overrides the slug and flows into the branch', async () => {
@@ -503,21 +462,6 @@ test('appends the harness MCP args to the container command', async () => {
     '--mcp-config',
     '{"mcpServers":{}}',
   ]);
-});
-
-test('builds sidecar images before the worktree (fail-fast leaves no orphan scaffolding)', async () => {
-  const { deps, git, runtime } = makeDeps({
-    ensureSidecarImages: () => {
-      throw new Error('sidecar image build failed');
-    },
-  });
-  await assert.rejects(
-    runSpawn(deps, makeParams({ sidecars: [sidecar], readiness: fastReadiness })),
-    /sidecar image build failed/,
-  );
-  assert.ok(!git.calls.includes('addWorktree'));
-  assert.equal(runtime.ran, false);
-  assert.equal(runtime.networks.length, 0);
 });
 
 test('waits across retries: probe fails twice then succeeds, agent then runs', async () => {

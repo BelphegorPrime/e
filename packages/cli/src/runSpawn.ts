@@ -42,21 +42,6 @@ export interface SidecarPlan {
 export interface RunSpawnDeps {
   git: Git;
   runtime: ContainerRunner;
-  /**
-   * Ensures the image this run executes is present, building it if needed, and
-   * returns its tag. Called before any worktree is created so a build failure
-   * never leaves orphan scaffolding. For a plain harness this is the harness
-   * base image; for a file-configured agent it is the derived agent image built
-   * on that base (ADR-0004). Throws on failure.
-   */
-  ensureImage: () => string;
-  /**
-   * Ensures every requested sidecar's image is present, building from
-   * `.e/mcp/<name>/` as needed. Like {@link ensureImage} it runs before the
-   * worktree so a sidecar build failure leaves no orphan scaffolding (ADR-0005).
-   * Absent when the run requests no sidecars. Throws on failure.
-   */
-  ensureSidecarImages?: () => void;
   /** Sleep between readiness probes; injected so tests poll without real waits. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -68,6 +53,11 @@ export interface RunSpawnParams {
   harness: Harness;
   /** The prompt, already joined into a single string. */
   prompt: string;
+  /**
+   * The image this run executes, already built by the executor before the run
+   * (ADR-0005/0008): the harness base, or a derived agent image built on it.
+   */
+  imageTag: string;
   /**
    * A runtime-resolved model to pass on the harness command line (e.g. Codex
    * `-m <id>`), set when the agent's model was `auto`-resolved for a
@@ -161,8 +151,8 @@ export async function runSpawn(
   deps: RunSpawnDeps,
   params: RunSpawnParams,
 ): Promise<RunSpawnResult> {
-  const { git, runtime, ensureImage, ensureSidecarImages } = deps;
-  const { harness, agent, prompt } = params;
+  const { git, runtime } = deps;
+  const { harness, agent, prompt, imageTag } = params;
   const sidecarPlans = params.sidecars ?? [];
   const mcpArgs = params.mcpArgs ?? [];
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -170,34 +160,10 @@ export async function runSpawn(
   const readinessIntervalMs =
     params.readiness?.intervalMs ?? DEFAULT_READINESS_INTERVAL_MS;
 
-  if (!git.isRepo()) {
-    return {
-      ran: false,
-      exitCode: 1,
-      error:
-        'e spawn must be run inside a git repository — every run needs an isolated worktree.',
-    };
-  }
-
-  // A run's worktree is removed as soon as the container returns. Detached
-  // (`--no-attach`) makes the runtime return the instant the container is
-  // launched, which would tear the worktree down under a still-running agent,
-  // so a run must execute in the foreground.
-  if (params.runOptions.attach === false) {
-    return {
-      ran: false,
-      exitCode: 1,
-      error:
-        'Detached runs (--no-attach) are not supported with per-run worktrees; run in the foreground (the default).',
-    };
-  }
-
-  // Build the primary and every sidecar image before cutting any scaffolding, so
-  // a build failure never leaves an orphan worktree behind (ADR-0005). The
-  // returned tag is what this run executes — the harness base, or a derived agent
-  // image built on it.
-  const imageTag = ensureImage();
-  ensureSidecarImages?.();
+  // The executor has already run the preflight guards (a git repo, foreground)
+  // and built the primary and sidecar images before calling us (ADR-0008), so a
+  // build failure never leaves an orphan worktree behind (ADR-0005). We own the
+  // worktree lifecycle from here.
 
   // Pin the base to the commit HEAD points at now, so a later push-eligibility
   // check compares against the run's actual starting point even if the host's

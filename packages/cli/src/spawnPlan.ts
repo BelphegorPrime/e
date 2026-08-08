@@ -3,7 +3,33 @@
  * edge that performs the I/O (filesystem, runtime) and effects (`process.exit`,
  * `console`); the branching logic that decides *what* to do lives here so it can
  * be tested directly, without building an image or running a container.
+ *
+ * The edge gathers {@link SpawnFacts} (all I/O), then: {@link validateSpawn}
+ * (pure, fail-fast) → resolve the model (the one remaining I/O) → {@link
+ * planSpawn} (pure) → execute the returned {@link SpawnPlan}. Everything that
+ * decides *what* the run is — including rendering every credential env-file and
+ * throwing on a missing secret — happens purely here; the edge only performs the
+ * effects the plan names (ADR-0008).
  */
+
+import type { Agent } from './agent';
+import type { Harness } from './harness/index';
+import { mcpDeliveryForm, skillsSupported, fileAdapterFor } from './harness/index';
+import { validateProviderProtocol, renderProviderEnvFile } from './harness/adapter';
+import type { ConfigOverlayDelivery } from './harness/adapter';
+import {
+  planProviderDelivery,
+  planAgentImage,
+  type ProviderDelivery,
+  type DerivedImagePlan,
+} from './harness/deriveImage';
+import { planMcpSelection, type McpServer } from './mcp/index';
+import type { ResolvedModel } from './model/resolve';
+import type { Mount } from './runtime/index';
+import type { SidecarPlan } from './runSpawn';
+import { imageTag } from './naming';
+import { skillMountSpec } from './skill/index';
+import { skillDir } from './store';
 
 /**
  * The env files a run loads, in precedence order. `--env-file` entries loaded
@@ -97,4 +123,238 @@ export function resolveSpawnTarget({
     return { agentTarget: target, prompt };
   }
   return { agentTarget: defaultHarness, prompt: [target, ...prompt] };
+}
+
+/**
+ * Everything a spawn's decisions need, gathered by the edge from disk (and the
+ * CLI args) so that {@link validateSpawn} and {@link planSpawn} can be pure. The
+ * resolved model is *not* here — it needs a network call, so the edge resolves it
+ * between validate and plan and passes it to {@link planSpawn} separately.
+ */
+export interface SpawnFacts {
+  /** The store root, or undefined when no `.e` store was found. */
+  root: string | undefined;
+  /** The resolved Agent to run. */
+  agent: Agent;
+  /** The Harness the agent runs. */
+  harness: Harness;
+  /** Parsed `.e/.env` (secrets resolved by name from here; never baked). */
+  storeEnv: Record<string, string>;
+  /** The requested `--mcp` servers, already resolved from disk (existence checked). */
+  mcpServers: McpServer[];
+  /** Per-run `--skill` names (existence checked on disk during gather). */
+  perRunSkills: string[];
+  /** The agent's baked default skills (`agent.skills`). */
+  bakedSkills: string[];
+  /** The prompt, joined into a single string. */
+  prompt: string;
+  /** `--rebuild`. */
+  rebuild: boolean;
+  /** `--name` run-name override. */
+  name?: string;
+  /** `-e` env entries. */
+  env: string[];
+  /** `-p` port publishes. */
+  port?: string[];
+  /** `--attach` (foreground). */
+  attach?: boolean;
+  /** `--rm`. */
+  rm?: boolean;
+  /** The shared `.e/.env` path when it exists on disk, for env-file layering. */
+  baseEnvFile?: string;
+  /** The user's `--env-file` path, layered over the base. */
+  userEnvFile?: string;
+  /** The raw `--dir` value, only for the "run `e init` --dir <x>" hint. */
+  dirOpt?: string;
+}
+
+/**
+ * The pure, fail-fast validation that must pass before the (expensive) model
+ * resolution and any build. Throws with a clear message on the first problem:
+ *  - a provider protocol the harness does not speak;
+ *  - a provider on a harness with no config adapter;
+ *  - `--mcp` against a harness with no MCP client;
+ *  - baked or `--skill` skills against a harness that supports none.
+ * Server/skill *existence* is checked by the edge during gather (it needs disk).
+ */
+export function validateSpawn(facts: SpawnFacts): void {
+  const { agent, harness } = facts;
+
+  validateProviderProtocol(agent.provider, harness);
+
+  if (agent.provider && !harness.adapter) {
+    throw new Error(
+      `Harness "${harness.name}" has no config adapter, so it cannot deliver a provider yet.`,
+    );
+  }
+
+  if (facts.mcpServers.length > 0 && mcpDeliveryForm(harness) === 'none') {
+    throw new Error(
+      `Harness "${harness.name}" has no MCP client, so it cannot use --mcp. ` +
+        `Use a harness that supports MCP (e.g. claudeCode or codex).`,
+    );
+  }
+
+  if (facts.bakedSkills.length > 0 || facts.perRunSkills.length > 0) {
+    if (!skillsSupported(harness) || !harness.skillsDir) {
+      const kinds = [
+        facts.bakedSkills.length > 0 ? 'baked' : undefined,
+        facts.perRunSkills.length > 0 ? '--skill' : undefined,
+      ].filter(Boolean);
+      throw new Error(
+        `Harness "${harness.name}" does not support Skills, so it cannot receive ` +
+          `${kinds.join(' or ')} skills.`,
+      );
+    }
+  }
+}
+
+/**
+ * Renders an MCP server's required credentials into `.env` file content (one
+ * `NAME=value` line each), resolving each by name from `storeEnv`. A missing key
+ * is a hard, fail-fast error naming the fix (running with an empty credential
+ * would fail opaquely deep inside the harness). Returns undefined for a
+ * credential-free server. Pure — the edge writes the content to a scratch file.
+ */
+export function renderMcpCredentials(
+  server: McpServer,
+  storeEnv: Record<string, string>,
+  destination: 'sidecar' | 'agent',
+): string | undefined {
+  if (server.requiredEnv.length === 0) return undefined;
+  const lines = server.requiredEnv.map((name) => {
+    const value = storeEnv[name];
+    if (value === undefined || value === '') {
+      throw new Error(
+        `MCP server "${server.name}" needs "${name}" set in .e/.env. ` +
+          `Add "${name}=<value>" there — it is injected into the ${destination} at runtime, never baked into an image.`,
+      );
+    }
+    return `${name}=${value}`;
+  });
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * The complete plan for a spawn, as data — every effect the edge will perform,
+ * decided purely. Credential and config *content* is rendered here (resolving
+ * secrets by name, throwing on a missing one); the edge materializes that content
+ * into scratch files and wires the resulting paths (ADR-0008).
+ */
+export interface SpawnPlan {
+  /** Provider delivery (runtime env + optional baked config + runtime model), if any. */
+  delivery?: ProviderDelivery;
+  /** Rendered provider runtime env-file content (appended to the run's env-files). */
+  providerEnvContent?: string;
+  /** Container MCP sidecars to bring up (without their credential env-file, wired at execute). */
+  sidecars: SidecarPlan[];
+  /** Rendered credential env-file content per sidecar alias (for sidecars that need it). */
+  sidecarCredentials: Record<string, string>;
+  /** Rendered credential env-file content delivered to the agent (remote MCP servers). */
+  remoteCredentials: string[];
+  /** Extra argv wiring flag-delivered MCP into the harness (Claude's `--mcp-config`). */
+  mcpArgs: string[];
+  /** File-delivered MCP config overlay (Codex): the merged file, its mount, and env. */
+  configOverlay?: ConfigOverlayDelivery;
+  /** The derived agent image to build, or undefined to run the harness base directly. */
+  agentImagePlan?: DerivedImagePlan;
+  /** Read-only per-run skill mounts (outside `/workspace`). */
+  skillMounts: Mount[];
+  /** The agent container's `-e` env (user `-e` plus any config-dir relocation env). */
+  agentEnv: string[];
+  /** A runtime-resolved model to pass on the harness command line, when applicable. */
+  runtimeModel?: string;
+}
+
+/**
+ * Composes the whole {@link SpawnPlan} purely, given the gathered {@link
+ * SpawnFacts} and the already-resolved model (undefined for a default agent). All
+ * the branching that used to live inline in the spawn action — provider delivery,
+ * MCP sidecar vs. remote vs. flag vs. file, the config overlay, the derived image,
+ * skill mounts, and every credential env-file — is decided here, so the whole
+ * thing is testable without a runtime, a container, or the network. Throws on a
+ * missing credential (via {@link renderMcpCredentials}/{@link renderProviderEnvFile}).
+ */
+export function planSpawn(facts: SpawnFacts, resolvedModel?: ResolvedModel): SpawnPlan {
+  const { agent, harness, storeEnv, root } = facts;
+
+  // Provider delivery (env harness → runtime env; file harness → baked config).
+  let delivery: ProviderDelivery | undefined;
+  let providerEnvContent: string | undefined;
+  if (agent.provider && harness.adapter && resolvedModel) {
+    delivery = planProviderDelivery(harness.adapter, agent.provider, resolvedModel);
+    providerEnvContent = renderProviderEnvFile(
+      delivery.runtimeEnv,
+      (name) => storeEnv[name],
+    );
+  }
+
+  // MCP: split by transport, render credentials, decide the delivery form.
+  const sidecars: SidecarPlan[] = [];
+  const sidecarCredentials: Record<string, string> = {};
+  const remoteCredentials: string[] = [];
+  let mcpArgs: string[] = [];
+  let configOverlay: ConfigOverlayDelivery | undefined;
+  if (facts.mcpServers.length > 0) {
+    const selection = planMcpSelection(facts.mcpServers);
+    for (const server of selection.containerServers) {
+      sidecars.push({
+        alias: server.name,
+        image: imageTag('mcp', server.name),
+        port: server.port,
+        healthcheck: server.healthcheck,
+      });
+      const creds = renderMcpCredentials(server, storeEnv, 'sidecar');
+      if (creds) sidecarCredentials[server.name] = creds;
+    }
+    for (const server of selection.remoteServers) {
+      const creds = renderMcpCredentials(server, storeEnv, 'agent');
+      if (creds) remoteCredentials.push(creds);
+    }
+    // Claude takes MCP inline via a flag; a file harness (Codex) takes an overlay.
+    if (harness.renderMcpArgs) {
+      mcpArgs = harness.renderMcpArgs(selection.endpoints);
+    } else {
+      const fileAdapter = fileAdapterFor(harness);
+      if (fileAdapter?.planConfigOverlay) {
+        configOverlay = fileAdapter.planConfigOverlay(
+          delivery?.bakedConfig?.file.content ?? '',
+          selection.endpoints,
+        );
+      }
+    }
+  }
+
+  // Per-run skill mounts (baked skills are handled by the derived image below).
+  const skillMounts: Mount[] = [];
+  if (facts.perRunSkills.length > 0 && harness.skillsDir) {
+    for (const name of facts.perRunSkills) {
+      skillMounts.push(skillMountSpec(skillDir(name, root), harness.skillsDir, name));
+    }
+  }
+
+  // The derived agent image (baked provider config and/or baked default skills).
+  const agentImagePlan = planAgentImage({
+    baseImage: harness.imageTag,
+    agentName: agent.name,
+    bakedConfig: delivery?.bakedConfig,
+    skills:
+      facts.bakedSkills.length > 0 && harness.skillsDir
+        ? { skillsDir: harness.skillsDir, names: facts.bakedSkills }
+        : undefined,
+  });
+
+  return {
+    delivery,
+    providerEnvContent,
+    sidecars,
+    sidecarCredentials,
+    remoteCredentials,
+    mcpArgs,
+    configOverlay,
+    agentImagePlan,
+    skillMounts,
+    agentEnv: [...facts.env, ...(configOverlay?.env ?? [])],
+    runtimeModel: delivery?.runtimeModel,
+  };
 }
