@@ -101,6 +101,7 @@ export class HostGit implements Git {
       const detail = result.stderr?.trim() || result.stdout?.trim() || '';
       throw new Error(`git failed (${description}): ${detail}`);
     }
+    console.log(description);
     return result.stdout;
   }
 }

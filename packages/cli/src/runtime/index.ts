@@ -26,7 +26,7 @@ export interface RunOptions {
   env?: string[];
   rm?: boolean;
   /** Bind mounts. */
-  volume?: Mount[];
+  volumes?: Mount[];
   /** Working directory inside the container (-w). */
   workdir?: string;
   /**
@@ -246,7 +246,7 @@ export class ContainerRuntime implements ContainerRunner {
     if (opts.network) args.push('--network', opts.network);
     for (const f of opts.envFile ?? []) args.push('--env-file', f);
 
-    for (const v of opts.volume ?? []) args.push('-v', formatMount(v));
+    for (const v of opts.volumes ?? []) args.push('-v', formatMount(v));
     for (const p of opts.port ?? []) args.push('-p', p);
     for (const e of opts.env ?? []) args.push('-e', e);
 

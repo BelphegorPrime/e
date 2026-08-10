@@ -82,7 +82,7 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
     name: 'volumes, ports, env vars follow env-files, each repeated in order',
     opts: {
       attach: true,
-      volume: [
+      volumes: [
         { host: '/wt', container: '/workspace' },
         { host: '/cache', container: '/cache' },
       ],
@@ -122,7 +122,7 @@ test('buildRunArgs: full ordering — flags, env-files, v/p/e, image, then comma
       name: 'run-1',
       workdir: '/workspace',
       envFile: ['/base.env', '/user.env'],
-      volume: [{ host: '/wt', container: '/workspace' }],
+      volumes: [{ host: '/wt', container: '/workspace' }],
       port: ['8080:80'],
       env: ['K=v'],
     },
@@ -178,7 +178,7 @@ test('formatMount: ro appends :ro', () => {
 
 test('buildRunArgs: a read-only mount renders host:container:ro', () => {
   assert.deepEqual(
-    argsFor({ attach: true, volume: [{ host: '/s', container: '/skills/x', ro: true }] }),
+    argsFor({ attach: true, volumes: [{ host: '/s', container: '/skills/x', ro: true }] }),
     ['run', '-v', '/s:/skills/x:ro', 'img'],
   );
 });

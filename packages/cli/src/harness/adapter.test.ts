@@ -14,6 +14,9 @@ import {
   parseDotenv,
   type Provider,
 } from './adapter';
+import { SpawnFacts } from '../spawnPlan';
+import { Harness } from '.';
+import { Agent } from '../agent';
 
 const provider: Provider = {
   baseUrl: 'https://gateway.example.com',
@@ -21,6 +24,33 @@ const provider: Provider = {
   protocol: 'anthropic-messages',
   apiKeyEnv: 'MY_GATEWAY_KEY',
 };
+
+const harness: Harness = {
+  name: 'demo',
+  imageTag: 'e-harness-demo',
+  dockerfile: { label: 'demo', npmPackage: 'demo' },
+  requiredEnv: [],
+  protocols: [],
+  buildCommand: (prompt: string) => ['demo', '-p', prompt],
+};
+const agent: Agent = { name: 'demo', harness: 'demo', tier: 'default' };
+
+function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
+  return {
+    root: '/root',
+    agent,
+    harness,
+    storeEnv: {},
+    mcpServers: [],
+    perRunSkills: [],
+    bakedSkills: [],
+    prompt: 'do it',
+    rebuild: false,
+    env: [],
+    attach: true,
+    ...overrides,
+  };
+}
 
 test('validateProviderProtocol: a matching protocol passes', () => {
   assert.doesNotThrow(() =>
@@ -138,7 +168,7 @@ const codexProvider: Provider = {
 };
 
 test('renderCodexConfig: renders a Responses provider block selecting a custom endpoint', () => {
-  const toml = renderCodexConfig(codexProvider);
+  const toml = renderCodexConfig(facts(), codexProvider);
   // The custom provider is selected at the top level...
   assert.match(toml, /^model = "gpt-5-codex"$/m);
   assert.match(toml, /^model_provider = "e"$/m);
@@ -149,14 +179,14 @@ test('renderCodexConfig: renders a Responses provider block selecting a custom e
 });
 
 test('renderCodexConfig: references the API key by env var name, never a value', () => {
-  const toml = renderCodexConfig(codexProvider);
+  const toml = renderCodexConfig(facts(), codexProvider);
   // Codex reads the key from the env var named by `env_key` at runtime; the
   // rendered file (baked into the image) must carry the name, never a secret.
   assert.match(toml, /^env_key = "MY_GATEWAY_KEY"$/m);
 });
 
 test('renderCodexConfig: omits the model line for `auto` (delivered at runtime, not baked)', () => {
-  const toml = renderCodexConfig({ ...codexProvider, model: 'auto' });
+  const toml = renderCodexConfig(facts(), { ...codexProvider, model: 'auto' });
   // No top-level `model =` (it arrives via `codex exec -m` at spawn)...
   assert.doesNotMatch(toml, /^model = /m);
   // ...but the provider block is still baked so the endpoint is selected.
@@ -165,7 +195,7 @@ test('renderCodexConfig: omits the model line for `auto` (delivered at runtime, 
 });
 
 test('renderCodexConfig: escapes TOML-significant characters in interpolated values', () => {
-  const toml = renderCodexConfig({
+  const toml = renderCodexConfig(facts(), {
     ...codexProvider,
     baseUrl: 'https://host/"weird"\\path',
   });
@@ -176,9 +206,9 @@ test('renderCodexConfig: escapes TOML-significant characters in interpolated val
 
 test('codexAdapter: is a file-delivered adapter that renders config.toml', () => {
   assert.equal(codexAdapter.kind, 'file');
-  const file = codexAdapter.renderProviderFile(codexProvider);
+  const file = codexAdapter.renderProviderFile(facts(), codexProvider);
   assert.equal(file.fileName, 'config.toml');
-  assert.equal(file.content, renderCodexConfig(codexProvider));
+  assert.equal(file.content, renderCodexConfig(facts(), codexProvider));
 });
 
 test('codexAdapter: bakes config under a relocated config dir outside /workspace', () => {
@@ -236,7 +266,7 @@ test('codexAdapter: renderMcpServers delegates to renderCodexMcpServers', () => 
 });
 
 test('codexAdapter.planConfigOverlay: merges the MCP block onto the baked base config', () => {
-  const base = renderCodexConfig(codexProvider);
+  const base = renderCodexConfig(facts(), codexProvider);
   const overlay = codexAdapter.planConfigOverlay!(base, [
     { name: 'everything', url: 'http://everything:3001/mcp' },
   ]);
@@ -279,7 +309,7 @@ test('piApi: maps e wire protocols to pi api names (two differ)', () => {
 });
 
 test('renderPiModelsJson: renders a single custom provider selecting the endpoint and model', () => {
-  const cfg = JSON.parse(renderPiModelsJson(piProvider));
+  const cfg = JSON.parse(renderPiModelsJson(facts(), piProvider));
   const p = cfg.providers[PI_PROVIDER_ID];
   assert.equal(p.baseUrl, 'https://gateway.example.com/v1');
   assert.equal(p.api, 'anthropic-messages');
@@ -288,7 +318,7 @@ test('renderPiModelsJson: renders a single custom provider selecting the endpoin
 });
 
 test('renderPiModelsJson: references the API key by env var name via ${VAR}, never a value', () => {
-  const cfg = JSON.parse(renderPiModelsJson(piProvider));
+  const cfg = JSON.parse(renderPiModelsJson(facts(), piProvider));
   // pi interpolates ${VAR} from the process env at request time; the baked file
   // must carry the name, never a secret.
   assert.equal(cfg.providers[PI_PROVIDER_ID].apiKey, '${MY_GATEWAY_KEY}');
@@ -296,16 +326,16 @@ test('renderPiModelsJson: references the API key by env var name via ${VAR}, nev
 
 test('renderPiModelsJson: maps openai-chat to pi openai-completions', () => {
   const cfg = JSON.parse(
-    renderPiModelsJson({ ...piProvider, protocol: 'openai-chat' }),
+    renderPiModelsJson(facts(), { ...piProvider, protocol: 'openai-chat' }),
   );
   assert.equal(cfg.providers[PI_PROVIDER_ID].api, 'openai-completions');
 });
 
 test('piAdapter: is a file-delivered adapter that renders models.json', () => {
   assert.equal(piAdapter.kind, 'file');
-  const file = piAdapter.renderProviderFile(piProvider);
+  const file = piAdapter.renderProviderFile(facts(), piProvider);
   assert.equal(file.fileName, 'models.json');
-  assert.equal(file.content, renderPiModelsJson(piProvider));
+  assert.equal(file.content, renderPiModelsJson(facts(), piProvider));
 });
 
 test('piAdapter: bakes config under a relocated config dir outside /workspace', () => {

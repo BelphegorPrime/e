@@ -17,6 +17,7 @@ import type {
 } from './adapter';
 import type { ResolvedModel } from '../model/resolve';
 import { imageTag } from '../naming';
+import { SpawnFacts } from '../spawnPlan';
 
 /** The baked provider config block of a derived Dockerfile (a file harness). */
 export interface DockerfileProviderBlock {
@@ -139,6 +140,7 @@ export interface ProviderDelivery {
  *   is delivered as runtime env (by name; never baked).
  */
 export function planProviderDelivery(
+  facts: SpawnFacts,
   adapter: HarnessAdapter,
   provider: Provider,
   resolved: ResolvedModel,
@@ -161,7 +163,7 @@ export function planProviderDelivery(
     runtimeEnv: adapter.renderRuntimeEnv(provider),
     runtimeModel: passModelOnCommand ? resolved.model : undefined,
     bakedConfig: {
-      file: adapter.renderProviderFile(configProvider),
+      file: adapter.renderProviderFile(facts, configProvider),
       configDir: adapter.configDir,
       configDirEnv: adapter.configDirEnv,
     },

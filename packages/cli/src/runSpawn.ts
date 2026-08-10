@@ -67,7 +67,7 @@ export interface RunSpawnParams {
   /** `--name` override; when set it is used as the slug verbatim. */
   name?: string;
   /**
-   * The user's container run flags (env, ports, attach, rm). `volume` and
+   * The user's container run flags (env, ports, attach, rm). `volumes` and
    * `workdir` are overwritten by the orchestrator to point at the run's
    * worktree, so anything set for them here is ignored.
    */
@@ -80,7 +80,7 @@ export interface RunSpawnParams {
   mcpArgs?: string[];
   /**
    * Extra read-only mounts for the agent container, appended to the worktree
-   * volume — used to deliver a file harness's runtime config overlay (e.g.
+   * volumes — used to deliver a file harness's runtime config overlay (e.g.
    * Codex's merged `config.toml`) and per-run skills outside `/workspace`.
    */
   configMounts?: Mount[];
@@ -245,7 +245,7 @@ export async function runSpawn(
         name: run.name,
         // The worktree is always mounted at /workspace; a file harness's config
         // overlay (if any) is appended as extra read-only mounts outside it.
-        volume: [
+        volumes: [
           { host: worktreePath, container: '/workspace' },
           ...(params.configMounts ?? []),
         ],

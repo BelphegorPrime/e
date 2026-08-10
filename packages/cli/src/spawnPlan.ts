@@ -280,7 +280,7 @@ export function planSpawn(facts: SpawnFacts, resolvedModel?: ResolvedModel): Spa
   let delivery: ProviderDelivery | undefined;
   let providerEnvContent: string | undefined;
   if (agent.provider && harness.adapter && resolvedModel) {
-    delivery = planProviderDelivery(harness.adapter, agent.provider, resolvedModel);
+    delivery = planProviderDelivery(facts, harness.adapter, agent.provider, resolvedModel);
     providerEnvContent = envRenderer.render(delivery.runtimeEnv, 'Provider API key');
   }
 

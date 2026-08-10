@@ -9,6 +9,7 @@
  */
 
 import type { McpEndpoint } from '../mcp/index';
+import { SpawnFacts } from '../spawnPlan';
 
 /**
  * Every model wire protocol `e` recognises — the single source of truth. A
@@ -40,6 +41,7 @@ export const PROTOCOLS: readonly Protocol[] = [
 export interface Provider {
   /** Base URL of the endpoint, e.g. `https://gateway.example.com`. */
   baseUrl: string;
+  baseUrlEnv?: string;
   /** Concrete model id, or `auto` — resolved at spawn against `/v1/models` (ADR-0007). */
   model: string;
   /** The wire protocol the endpoint speaks; must be one the harness speaks. */
@@ -135,7 +137,7 @@ export interface FileHarnessAdapter {
    */
   modelInFile: boolean;
   /** Renders the Provider into this harness's native config file. */
-  renderProviderFile(provider: Provider): RenderedConfigFile;
+  renderProviderFile(facts: SpawnFacts, provider: Provider): RenderedConfigFile;
   /**
    * The runtime env the derived image still needs — the API key, by name only
    * (never baked). The baked config file points at it via the harness's own
@@ -172,6 +174,9 @@ export interface FileHarnessAdapter {
  * ones baked into a derived agent image (Codex). See ADR-0006.
  */
 export type HarnessAdapter = EnvHarnessAdapter | FileHarnessAdapter;
+
+export const isEnvAdapter = (adapter: HarnessAdapter): adapter is EnvHarnessAdapter => adapter.kind === 'env';
+export const isFileAdapter = (adapter: HarnessAdapter): adapter is FileHarnessAdapter => adapter.kind === 'file';
 
 /**
  * Claude Code's adapter. Claude speaks only the Anthropic Messages API and is
@@ -214,7 +219,7 @@ function tomlBasicString(value: string): string {
  * (`codex exec -m <id>`, ADR-0007), so the derived image is not rebuilt when the
  * resolved model changes.
  */
-export function renderCodexConfig(provider: Provider): string {
+export function renderCodexConfig(facts: SpawnFacts, provider: Provider): string {
   // A fixed provider id: `e` owns the whole file, so there is only ever one
   // custom provider and no id collision to worry about.
   const id = 'e';
@@ -286,8 +291,8 @@ export const codexAdapter: FileHarnessAdapter = {
   // Codex delivers an auto-resolved model on the command line (`codex exec -m`),
   // so it keeps the config model-agnostic rather than baking the model.
   modelInFile: false,
-  renderProviderFile(provider: Provider): RenderedConfigFile {
-    return { fileName: 'config.toml', content: renderCodexConfig(provider) };
+  renderProviderFile(facts: SpawnFacts, provider: Provider): RenderedConfigFile {
+    return { fileName: 'config.toml', content: renderCodexConfig(facts,provider) };
   },
   renderRuntimeEnv(provider: Provider): ContainerEnv[] {
     return [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }];
@@ -342,13 +347,17 @@ export function piApi(protocol: Protocol): string {
  * planProviderDelivery} guarantees a concrete id even for `auto`. Grounding: pi
  * `docs/models.md`, `docs/providers.md`.
  */
-export function renderPiModelsJson(provider: Provider): string {
+export function renderPiModelsJson(facts: SpawnFacts, provider: Provider): string {
+  const store = facts.storeEnv;
+  const baseUrl = provider.baseUrlEnv ? store[provider.baseUrlEnv] : provider.baseUrl;
+  const apiKey = store[provider.apiKeyEnv] || ""
+
   const config = {
     providers: {
       [PI_PROVIDER_ID]: {
-        baseUrl: provider.baseUrl,
+        baseUrl: baseUrl,
         api: piApi(provider.protocol),
-        apiKey: `\${${provider.apiKeyEnv}}`,
+        apiKey: apiKey,
         models: [{ id: provider.model }],
       },
     },
@@ -371,8 +380,8 @@ export const piAdapter: FileHarnessAdapter = {
   configDir: '/root/.pi/agent',
   configFileName: 'models.json',
   modelInFile: true,
-  renderProviderFile(provider: Provider): RenderedConfigFile {
-    return { fileName: 'models.json', content: renderPiModelsJson(provider) };
+  renderProviderFile(facts: SpawnFacts, provider: Provider): RenderedConfigFile {
+    return { fileName: 'models.json', content: renderPiModelsJson(facts, provider) };
   },
   renderRuntimeEnv(provider: Provider): ContainerEnv[] {
     return [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }];

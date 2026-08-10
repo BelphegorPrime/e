@@ -7,12 +7,41 @@ import {
   planAgentImage,
 } from './deriveImage';
 import { claudeCodeAdapter, codexAdapter, piAdapter, type Provider } from './adapter';
+import { Harness } from '.';
+import { Agent } from '../agent';
+import { SpawnFacts } from '../spawnPlan';
 
 const providerBlock = {
   configFileName: 'config.toml',
   configDir: '/root/.codex',
   configDirEnv: 'CODEX_HOME',
 };
+const harness: Harness = {
+  name: 'demo',
+  imageTag: 'e-harness-demo',
+  dockerfile: { label: 'demo', npmPackage: 'demo' },
+  requiredEnv: [],
+  protocols: [],
+  buildCommand: (prompt: string) => ['demo', '-p', prompt],
+};
+const agent: Agent = { name: 'demo', harness: 'demo', tier: 'default' };
+
+function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
+  return {
+    root: '/root',
+    agent,
+    harness,
+    storeEnv: {},
+    mcpServers: [],
+    perRunSkills: [],
+    bakedSkills: [],
+    prompt: 'do it',
+    rebuild: false,
+    env: [],
+    attach: true,
+    ...overrides,
+  };
+}
 
 test('renderDerivedDockerfile: builds FROM the harness base image (layer-2 reuse)', () => {
   const dockerfile = renderDerivedDockerfile({
@@ -83,7 +112,7 @@ const fileProvider: Provider = {
 };
 
 test('planProviderDelivery: an env harness delivers all env and bakes nothing', () => {
-  const plan = planProviderDelivery(claudeCodeAdapter, envProvider, {
+  const plan = planProviderDelivery(facts(), claudeCodeAdapter, envProvider, {
     model: 'claude-opus-5',
     fromAuto: false,
   });
@@ -97,6 +126,7 @@ test('planProviderDelivery: an env harness delivers all env and bakes nothing', 
 
 test('planProviderDelivery: an env harness carries the auto-resolved model in env', () => {
   const plan = planProviderDelivery(
+    facts(),
     claudeCodeAdapter,
     { ...envProvider, model: 'auto' },
     { model: 'claude-opus-5', fromAuto: true },
@@ -111,6 +141,7 @@ test('planProviderDelivery: an env harness carries the auto-resolved model in en
 
 test('planProviderDelivery: a file harness bakes a concrete model into its config, no runtime model', () => {
   const plan = planProviderDelivery(
+    facts(),
     codexAdapter,
     { ...fileProvider, model: 'gpt-5-codex' },
     { model: 'gpt-5-codex', fromAuto: false },
@@ -127,6 +158,7 @@ test('planProviderDelivery: a file harness bakes a concrete model into its confi
 
 test('planProviderDelivery: a file harness keeps an auto model out of the config, delivers it on the command', () => {
   const plan = planProviderDelivery(
+    facts(),
     codexAdapter,
     { ...fileProvider, model: 'auto' },
     { model: 'gpt-5-codex', fromAuto: true },
@@ -144,7 +176,7 @@ const piProvider: Provider = {
 };
 
 test('planProviderDelivery: pi bakes the resolved auto model into models.json AND passes it on the command', () => {
-  const plan = planProviderDelivery(piAdapter, piProvider, {
+  const plan = planProviderDelivery(facts(), piAdapter, piProvider, {
     model: 'claude-opus-5',
     fromAuto: true,
   });
@@ -163,6 +195,7 @@ test('planProviderDelivery: pi bakes the resolved auto model into models.json AN
 
 test('planProviderDelivery: pi bakes a concrete model too and passes it for selection', () => {
   const plan = planProviderDelivery(
+    facts(),
     piAdapter,
     { ...piProvider, model: 'claude-opus-5' },
     { model: 'claude-opus-5', fromAuto: false },
@@ -180,7 +213,7 @@ test('planAgentImage: nothing to bake (no provider, no skills) derives no image'
 });
 
 test('planAgentImage: provider-only bakes config + Dockerfile, no skills (Codex today)', () => {
-  const delivery = planProviderDelivery(codexAdapter, fileProvider, {
+  const delivery = planProviderDelivery(facts(), codexAdapter, fileProvider, {
     model: 'gpt-5-codex',
     fromAuto: false,
   });
@@ -213,7 +246,7 @@ test('planAgentImage: skills-only bakes a Dockerfile that copies the skill trees
 });
 
 test('planAgentImage: provider + skills compose into one derived image', () => {
-  const delivery = planProviderDelivery(codexAdapter, fileProvider, {
+  const delivery = planProviderDelivery(facts(), codexAdapter, fileProvider, {
     model: 'gpt-5-codex',
     fromAuto: false,
   });
