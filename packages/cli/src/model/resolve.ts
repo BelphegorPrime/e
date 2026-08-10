@@ -116,7 +116,8 @@ export class HttpModelsLister implements ModelsLister {
       );
     }
 
-    const res = await fetch(modelsUrl(provider.baseUrl), { headers });
+    const baseUrl = (provider.baseUrlEnv ? this.resolveKey(provider.baseUrlEnv) : undefined) || provider.baseUrl;
+    const res = await fetch(modelsUrl(baseUrl), { headers });
     if (!res.ok) {
       throw new Error(`model list request failed with HTTP ${res.status}`);
     }

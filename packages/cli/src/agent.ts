@@ -147,6 +147,7 @@ function parseProvider(raw: unknown, where: string): Provider {
   }
   const provider: Provider = {
     baseUrl: p.baseUrl,
+    baseUrlEnv: p.baseUrlEnv,
     model: p.model,
     protocol: p.protocol as Protocol,
     apiKeyEnv: p.apiKeyEnv,
