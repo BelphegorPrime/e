@@ -56,13 +56,13 @@ test('modelsUrl: tolerates a trailing slash', () => {
 test('parseModelIds: extracts data[].id, ignoring malformed entries', () => {
   const ids = parseModelIds({
     data: [{ id: 'gpt-5' }, { id: 'gpt-5-mini' }, { notId: 'x' }, 'nope'],
-  });
+  }, { root: undefined });
   assert.deepEqual(ids, ['gpt-5', 'gpt-5-mini']);
 });
 
 test('parseModelIds: an unexpected shape yields no ids rather than throwing', () => {
-  assert.deepEqual(parseModelIds({}), []);
-  assert.deepEqual(parseModelIds(null), []);
+  assert.deepEqual(parseModelIds({}, { root: undefined }), []);
+  assert.deepEqual(parseModelIds(null, { root: undefined }), []);
 });
 
 test('resolveProviderModel: a concrete model is returned as-is, never listed', async () => {
