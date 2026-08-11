@@ -61,19 +61,22 @@ export function registerInitCommand(program: Command): void {
       // favorite instead of silently resetting it — mirrors how the `.env` and
       // Dockerfiles are never clobbered. A fresh store reads back the default.
       let defaultHarness = readConfig(root).defaultHarness;
-      let envValues: Record<string, string> = {};
+
+      const envFile = envFilePath(root);
+      const existingEnv = fs.existsSync(envFile)
+        ? fs.readFileSync(envFile, 'utf8')
+        : undefined;
+      let envValues: Record<string, string> = existingEnv ? parseDotenv(existingEnv) : {};
+
       if (interactive) {
         // Only prompt for keys not already set in `.e/.env`; a re-init never
         // re-asks for one the user has filled in (and which `applyEnvValues`
         // would refuse to clobber anyway).
-        const envFile = envFilePath(root);
-        const existingEnv = fs.existsSync(envFile)
-          ? fs.readFileSync(envFile, 'utf8')
-          : undefined;
+        
         const answers = await promptInit(
           Object.keys(HARNESSES),
           defaultHarness,
-          keysToPrompt(requiredEnvKeys(), existingEnv),
+          keysToPrompt(requiredEnvKeys(), envValues),
         );
         defaultHarness = answers.defaultHarness;
         envValues = answers.envValues;
@@ -81,7 +84,7 @@ export function registerInitCommand(program: Command): void {
 
       for (const harness of Object.values(HARNESSES)) {
         writeDockerfile(harness, root);
-        writeDefaultAgent(harness, root);
+        writeDefaultAgent(harness, root, envValues);
       }
 
       writeMcpServers(root);
@@ -115,7 +118,7 @@ export function registerInitCommand(program: Command): void {
 async function promptInit(
   harnessNames: string[],
   current: string,
-  apiKeys: string[],
+  envKeys: string[],
 ): Promise<{
   defaultHarness: string;
   envValues: Record<string, string>;
@@ -126,7 +129,7 @@ async function promptInit(
   });
   try {
     const defaultHarness = await promptFavoriteHarness(rl, harnessNames, current);
-    const envValues = await promptApiKeys(rl, apiKeys);
+    const envValues = await promptApiKeys(rl, envKeys);
     return { defaultHarness, envValues };
   } finally {
     rl.close();
@@ -195,11 +198,12 @@ export function parseHarnessChoice(
  */
 export function keysToPrompt(
   required: string[],
-  existingEnv: string | undefined,
+  existingEnv: Record<string, string> | undefined,
 ): string[] {
-  if (existingEnv === undefined) return required;
-  const set = parseDotenv(existingEnv);
-  return required.filter((key) => (set[key] ?? '').trim() === '');
+  if (existingEnv === undefined) {
+    return required;
+  }
+  return required.filter((key) => (existingEnv[key] ?? '').trim() === '');
 }
 
 /**
@@ -233,11 +237,11 @@ function writeDockerfile(harness: Harness, root: string | undefined): void {
 }
 
 /** Writes a harness's default agent definition (never overwriting a hand-edited one). */
-function writeDefaultAgent(harness: Harness, root: string | undefined): void {
+function writeDefaultAgent(harness: Harness, root: string | undefined, envValues: Record<string, string>): void {
   writeIfAbsent(
     agentDir(harness.name, root),
     agentFilePath(harness.name, root),
-    renderDefaultAgent(harness.name),
+    renderDefaultAgent(harness.name, envValues),
   );
 }
 

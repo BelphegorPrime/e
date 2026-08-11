@@ -80,7 +80,7 @@ export const HARNESSES: Record<string, Harness> = {
     // `models.json` (no base-url env var), so the provider is delivered via the
     // file adapter, baked into the derived agent image. Grounding:
     // `docs/research/harness-cli-facts.md`, pi `docs/models.md`.
-    protocols: ['anthropic-messages', 'openai-chat', 'openai-responses', 'google'],
+    protocols: ['anthropic-messages', 'openai-chat', 'openai-responses'],
     adapter: piAdapter,
     // pi selects a configured provider explicitly; the resolved model is passed
     // for selection when an agent declares a provider (a default agent runs
@@ -156,7 +156,7 @@ export const HARNESSES: Record<string, Harness> = {
     },
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
     // opencode (Vercel AI SDK) speaks all four via its provider plugins.
-    protocols: ['anthropic-messages', 'openai-chat', 'openai-responses', 'google'],
+    protocols: ['anthropic-messages', 'openai-chat', 'openai-responses'],
     buildCommand: (prompt: string) => ['opencode', 'run', prompt],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
@@ -296,9 +296,15 @@ export function envHarnessSections(): EnvHarnessSection[] {
  * `e init` collects into `.e/.env`, in first-seen order across the registry.
  */
 export function requiredEnvKeys(): string[] {
-  const seen = new Set<string>();
+  const optionalEnvKeys = ['OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL'];
+
+  const seen = new Set<string>(optionalEnvKeys);
+  
   for (const harness of Object.values(HARNESSES)) {
-    for (const key of harness.requiredEnv) seen.add(key);
+    for (const key of harness.requiredEnv) {
+      seen.add(key);
+    }
   }
+  
   return [...seen];
 }

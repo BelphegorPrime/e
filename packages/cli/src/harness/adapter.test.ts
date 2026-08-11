@@ -305,7 +305,6 @@ test('piApi: maps e wire protocols to pi api names (two differ)', () => {
   assert.equal(piApi('anthropic-messages'), 'anthropic-messages');
   assert.equal(piApi('openai-chat'), 'openai-completions');
   assert.equal(piApi('openai-responses'), 'openai-responses');
-  assert.equal(piApi('google'), 'google-generative-ai');
 });
 
 test('renderPiModelsJson: renders a single custom provider selecting the endpoint and model', () => {

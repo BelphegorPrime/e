@@ -19,17 +19,15 @@ import { SpawnFacts } from '../spawnPlan';
  * See `docs/research/harness-cli-facts.md`.
  */
 export type Protocol =
-  | 'anthropic-messages'
   | 'openai-chat'
-  | 'openai-responses'
-  | 'google';
+  | 'anthropic-messages'
+  | 'openai-responses';
 
 /** Every protocol string `e` recognises, for validating persisted agents. */
 export const PROTOCOLS: readonly Protocol[] = [
-  'anthropic-messages',
   'openai-chat',
   'openai-responses',
-  'google',
+  'anthropic-messages',
 ] as const;
 
 /**
@@ -320,8 +318,8 @@ export const PI_PROVIDER_ID = 'e';
 
 /**
  * Maps e's wire {@link Protocol} to pi's `api` field value. Two names differ from
- * e's: our `openai-chat` is pi's `openai-completions`, and our `google` is pi's
- * `google-generative-ai`. Grounding: pi `docs/models.md` "Supported APIs".
+ * e's: our `openai-chat` is pi's `openai-completions`
+ * Grounding: pi `docs/models.md` "Supported APIs".
  */
 export function piApi(protocol: Protocol): string {
   switch (protocol) {
@@ -331,8 +329,6 @@ export function piApi(protocol: Protocol): string {
       return 'openai-completions';
     case 'openai-responses':
       return 'openai-responses';
-    case 'google':
-      return 'google-generative-ai';
   }
 }
 

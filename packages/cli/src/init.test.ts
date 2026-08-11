@@ -62,18 +62,18 @@ test('keysToPrompt: no existing .env prompts for every required key', () => {
 });
 
 test('keysToPrompt: a filled key is skipped', () => {
-  assert.deepEqual(keysToPrompt(KEYS, 'ANTHROPIC_API_KEY=sk-abc\nOPENAI_API_KEY=\n'), [
+  assert.deepEqual(keysToPrompt(KEYS, {ANTHROPIC_API_KEY: "sk-abc", OPENAI_API_KEY: ""}), [
     'OPENAI_API_KEY',
   ]);
 });
 
 test('keysToPrompt: a blank (KEY=) or whitespace-only key still prompts', () => {
-  assert.deepEqual(keysToPrompt(KEYS, 'ANTHROPIC_API_KEY=\nOPENAI_API_KEY=   \n'), KEYS);
+  assert.deepEqual(keysToPrompt(KEYS, {ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "   "}), KEYS);
 });
 
 test('keysToPrompt: all keys filled leaves nothing to prompt', () => {
   assert.deepEqual(
-    keysToPrompt(KEYS, 'ANTHROPIC_API_KEY=sk-abc\nOPENAI_API_KEY=sk-def\n'),
+    keysToPrompt(KEYS, {ANTHROPIC_API_KEY: "sk-abc", OPENAI_API_KEY: "sk-def"}),
     [],
   );
 });

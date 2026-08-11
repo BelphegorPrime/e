@@ -71,14 +71,6 @@ test('chooseModel: an unknown tier with no defaultModel is a clear error', () =>
   );
 });
 
-test('chooseModel: a protocol with no curated list (google) errors clearly', () => {
-  // google is intentionally absent from the preference list (ADR-0007).
-  assert.throws(
-    () => chooseModel(['google.gemma-4-31b'], 'google', 'smart'),
-    /no.*preference list.*google|tier/i,
-  );
-});
-
 test('MODEL_PREFERENCES: the curated protocols each cover the four tiers', () => {
   const tiers = ['smart', 'fast', 'cheap', 'review'];
   const protocols = ['anthropic-messages', 'openai-responses', 'openai-chat'] as const;
@@ -92,6 +84,4 @@ test('MODEL_PREFERENCES: the curated protocols each cover the four tiers', () =>
       );
     }
   }
-  // google is deliberately not curated (Gemma-only gateway; no Gemini).
-  assert.equal(MODEL_PREFERENCES.google, undefined);
 });

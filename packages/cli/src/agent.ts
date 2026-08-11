@@ -70,8 +70,22 @@ export function resolveAgent(name: string, deps: ResolveAgentDeps): Agent {
 }
 
 /** The JSON content of a harness's default agent definition, used by `e init`. */
-export function renderDefaultAgent(harnessName: string): string {
-  const agent: Agent = { name: harnessName, harness: harnessName, tier: 'default' };
+export function renderDefaultAgent(harnessName: string, envValues: Record<string, string>): string {
+  const harness = HARNESSES[harnessName];
+  
+  const agent: Agent = { 
+    name: harnessName, 
+    harness: harnessName,
+    tier: 'cheap',
+    provider: {
+      baseUrl: envValues["OPENAI_BASE_URL"] || '<endpoint-url>',
+      baseUrlEnv: 'OPENAI_BASE_URL',
+      model: 'auto',
+      protocol: harness.protocols[0],
+      apiKeyEnv: 'OPENAI_API_KEY',
+    }
+  };
+
   return JSON.stringify(agent, null, 2) + '\n';
 }
 

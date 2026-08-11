@@ -74,12 +74,12 @@ test('resolveAgent: a persisted agent whose name differs from its key throws', (
 });
 
 test('renderDefaultAgent: valid JSON with name=harness and tier=default', () => {
-  const parsed = JSON.parse(renderDefaultAgent('codex')) as Agent;
+  const parsed = JSON.parse(renderDefaultAgent('codex', {})) as Agent;
   assert.deepEqual(parsed, { name: 'codex', harness: 'codex', tier: 'default' });
 });
 
 test('renderDefaultAgent: a default agent carries no provider', () => {
-  const parsed = JSON.parse(renderDefaultAgent('codex')) as Agent;
+  const parsed = JSON.parse(renderDefaultAgent('codex', {})) as Agent;
   assert.equal(parsed.provider, undefined);
 });
 

@@ -45,6 +45,7 @@ export function modelsUrl(baseUrl: string): string {
 export function parseModelIds(body: unknown): string[] {
   const data = (body as { data?: unknown } | null)?.data;
   if (!Array.isArray(data)) return [];
+  console.log("Parsed model IDs:", { data });
   return data
     .map((entry) =>
       entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string'
@@ -136,7 +137,5 @@ function authHeaders(
       return { Authorization: `Bearer ${key}` };
     case 'anthropic-messages':
       return { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
-    case 'google':
-      return undefined;
   }
 }
