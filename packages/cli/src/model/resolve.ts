@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import type { Protocol, Provider } from '../harness/adapter';
 import { chooseModel } from './preferences';
 
@@ -36,16 +37,25 @@ export function modelsUrl(baseUrl: string): string {
   return base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`;
 }
 
+type ModelDataEntry = {
+  id: string,
+  object: string,
+  created: number,
+  owned_by: string
+}
+
 /**
  * Extracts model ids from a model-list response, purely. Both OpenAI and
  * Anthropic return `{ data: [{ id }] }`; anything that doesn't fit that shape is
  * skipped rather than throwing, so a surprising body degrades to "no models"
  * (which callers treat as no match) instead of a crash.
  */
-export function parseModelIds(body: unknown): string[] {
-  const data = (body as { data?: unknown } | null)?.data;
+export function parseModelIds(body: unknown, props: { root: string | undefined }): string[] {
+  const data = (body as { data?: ModelDataEntry[] } | null)?.data;
   if (!Array.isArray(data)) return [];
-  console.log("Parsed model IDs:", { data });
+
+  fs.writeFileSync(`${props.root}/model-ids.json`, JSON.stringify(data));
+
   return data
     .map((entry) =>
       entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string'
@@ -99,7 +109,10 @@ export async function resolveProviderModel(
  * Only the protocols `e` has adapters for are wired; others throw.
  */
 export class HttpModelsLister implements ModelsLister {
-  constructor(private readonly resolveKey: (envName: string) => string | undefined) {}
+  constructor(
+    private readonly resolveKey: (envName: string) => string | undefined,
+    private root: string | undefined
+  ) {}
 
   async list(provider: Provider): Promise<string[]> {
     const key = this.resolveKey(provider.apiKeyEnv);
@@ -122,7 +135,7 @@ export class HttpModelsLister implements ModelsLister {
     if (!res.ok) {
       throw new Error(`model list request failed with HTTP ${res.status}`);
     }
-    return parseModelIds(await res.json());
+    return parseModelIds(await res.json(), { root: this.root });
   }
 }
 

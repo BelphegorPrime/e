@@ -246,7 +246,7 @@ export function registerSpawnCommand(program: Command): void {
             ? await resolveProviderModel(
                 facts.agent.provider,
                 facts.agent.tier,
-                new HttpModelsLister((name) => facts.storeEnv[name]),
+                new HttpModelsLister((name) => facts.storeEnv[name], findRoot(opts.dir)),
               )
             : undefined;
 
