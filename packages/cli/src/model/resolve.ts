@@ -52,14 +52,17 @@ type ModelDataEntry = {
  */
 export function parseModelIds(body: unknown, props: { root: string | undefined }): string[] {
   const data = (body as { data?: ModelDataEntry[] } | null)?.data;
-  if (!Array.isArray(data)) return [];
+
+  if (!Array.isArray(data)) {
+    return [];
+  }
 
   fs.writeFileSync(`${props.root}/model-ids.json`, JSON.stringify(data));
 
   return data
     .map((entry) =>
-      entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string'
-        ? (entry as { id: string }).id
+      entry && typeof entry === 'object' && typeof entry.id === 'string'
+        ? entry.id
         : undefined,
     )
     .filter((id): id is string => id !== undefined);
