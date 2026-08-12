@@ -1,5 +1,8 @@
 import type { Protocol } from '../harness/adapter';
 
+export const TIERS = ['default', 'smart', 'fast', 'cheap', 'review'] as const;
+export type Tier = (typeof TIERS)[number];
+
 /**
  * The curated per-protocol, per-tier model **preference list** behind `auto`
  * resolution (ADR-0007). For a given `(protocol, tier)`, the entries are tried in
@@ -15,8 +18,9 @@ import type { Protocol } from '../harness/adapter';
  * provider gets a clear "no preference list" error. It is a {@link Partial}
  * record for exactly that reason.
  */
-export const MODEL_PREFERENCES: Partial<Record<Protocol, Record<string, string[]>>> = {
+export const MODEL_PREFERENCES: Partial<Record<Protocol, Record<Tier, string[]>>> = {
   'anthropic-messages': {
+    default: [],
     smart: ['anthropic.claude-opus-5', 'anthropic.claude-sonnet-5'],
     fast: ['anthropic.claude-sonnet-5', 'anthropic.claude-haiku-4-5'],
     cheap: ['anthropic.claude-haiku-4-5', 'anthropic.claude-sonnet-5'],
@@ -25,12 +29,14 @@ export const MODEL_PREFERENCES: Partial<Record<Protocol, Record<string, string[]
   // gpt-5.6 variants map to a capability ladder: luna < terra < sol
   // (haiku/sonnet/opus equivalents). Same ranking for both OpenAI wire APIs.
   'openai-responses': {
+    default: [],
     smart: ['openai.gpt-5.6-sol', 'openai.gpt-5.5'],
     fast: ['openai.gpt-5.6-terra', 'openai.gpt-5.5'],
     cheap: ['openai.gpt-5.6-luna', 'openai.gpt-oss-20b'],
     review: ['openai.gpt-5.6-sol', 'openai.gpt-5.6-terra'],
   },
   'openai-chat': {
+    default: [],
     smart: ['openai.gpt-5.6-sol', 'openai.gpt-5.5'],
     fast: ['openai.gpt-5.6-terra', 'openai.gpt-5.5'],
     cheap: ['openai.gpt-5.6-luna', 'openai.gpt-oss-20b'],
@@ -53,7 +59,7 @@ export const MODEL_PREFERENCES: Partial<Record<Protocol, Record<string, string[]
 export function chooseModel(
   available: string[],
   protocol: Protocol,
-  tier: string,
+  tier: Tier,
   defaultModel?: string,
 ): string {
   const preferred = MODEL_PREFERENCES[protocol]?.[tier] ?? [];

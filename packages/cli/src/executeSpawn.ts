@@ -49,7 +49,7 @@ function buildImages(
   let tag = harness.imageTag;
   const agentImagePlan = plan.agentImagePlan;
   if (agentImagePlan) {
-    const dir = agentDir(facts.agent.name, root);
+    const dir = agentDir(facts.agent.name, root, facts.agent.tier);
     for (const file of agentImagePlan.files) {
       writeIfAbsent(dir, path.join(dir, file.fileName), file.content);
     }

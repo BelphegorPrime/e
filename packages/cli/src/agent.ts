@@ -2,6 +2,7 @@ import fs from 'fs';
 import { HARNESSES } from './harness/index';
 import { PROTOCOLS, type Provider, type Protocol } from './harness/adapter';
 import { agentFilePath, agentsBaseDir } from './store';
+import { Tier, TIERS } from './model/preferences';
 
 /**
  * An **Agent**: a named pairing of a Harness with a Tier and, optionally, an
@@ -16,7 +17,7 @@ export interface Agent {
   /** Name of the Harness this agent runs. */
   harness: string;
   /** Capability/cost class, e.g. "default", "smart", "cheap". */
-  tier: string;
+  tier: Tier;
   /** Inline model endpoint; absent for a default agent (behaves as before). */
   provider?: Provider;
   /**
@@ -70,13 +71,13 @@ export function resolveAgent(name: string, deps: ResolveAgentDeps): Agent {
 }
 
 /** The JSON content of a harness's default agent definition, used by `e init`. */
-export function renderDefaultAgent(harnessName: string, envValues: Record<string, string>): string {
+export function renderDefaultAgent(harnessName: string, tier: Tier, envValues: Record<string, string>): string {
   const harness = HARNESSES[harnessName];
   
   const agent: Agent = { 
     name: harnessName, 
     harness: harnessName,
-    tier: 'cheap',
+    tier: tier,
     provider: {
       baseUrl: envValues["OPENAI_BASE_URL"] || '<endpoint-url>',
       baseUrlEnv: 'OPENAI_BASE_URL',
@@ -90,8 +91,8 @@ export function renderDefaultAgent(harnessName: string, envValues: Record<string
 }
 
 /** Parses a persisted `agent.json`, or returns undefined if it isn't there. */
-function readAgentFile(name: string, root?: string): Agent | undefined {
-  const file = agentFilePath(name, root);
+function readAgentFile(name: string, root?: string, tier?: Tier): Agent | undefined {
+  const file = agentFilePath(name, root, tier);
   if (!fs.existsSync(file)) return undefined;
   return parseAgent(JSON.parse(fs.readFileSync(file, 'utf8')), file);
 }
@@ -173,7 +174,11 @@ function parseProvider(raw: unknown, where: string): Provider {
 /** Lists the persisted agent names under the store's `agents/` directory. */
 function listAgentNames(root?: string): string[] {
   const dir = agentsBaseDir(root);
-  if (!fs.existsSync(dir)) return [];
+  
+  if (!fs.existsSync(dir)) {
+    return [];
+  }
+  
   return fs
     .readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -182,9 +187,13 @@ function listAgentNames(root?: string): string[] {
 
 /** Reads and parses every persisted agent under the store's `agents/` directory. */
 export function listAgents(root?: string): Agent[] {
-  return listAgentNames(root)
-    .map((name) => readAgentFile(name, root))
-    .filter((agent): agent is Agent => agent !== undefined);
+  const agentNames = listAgentNames(root)
+  const agents = []
+  for (const tier of TIERS) {
+    const tierAgents = agentNames.map((name) => readAgentFile(name, root, tier)).filter((agent): agent is Agent => agent !== undefined);
+    agents.push(...tierAgents);
+  }
+  return agents;
 }
 
 /**
@@ -194,7 +203,7 @@ export function listAgents(root?: string): Agent[] {
  */
 export function selectAgentByTier(
   harnessName: string,
-  tier: string,
+  tier: Tier,
   agents: Agent[],
 ): Agent {
   const forHarness = agents.filter((a) => a.harness === harnessName);
@@ -222,9 +231,9 @@ export function selectAgentByTier(
  * `agent.json` reader, the harness registry, and the agent-name listing into
  * the pure {@link resolveAgent}.
  */
-export function findAgent(name: string, root?: string): Agent {
+export function findAgent(name: string, root?: string, tier?: Tier): Agent {
   return resolveAgent(name, {
-    readAgent: (n) => readAgentFile(n, root),
+    readAgent: (n) => readAgentFile(n, root, tier),
     harnesses: Object.keys(HARNESSES),
     agents: listAgentNames(root),
   });

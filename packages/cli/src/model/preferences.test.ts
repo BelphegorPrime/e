@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseModel, MODEL_PREFERENCES } from './preferences';
+import { chooseModel, MODEL_PREFERENCES, Tier } from './preferences';
 
 test('chooseModel: returns the first preferred id available for the (protocol, tier)', () => {
   const chosen = chooseModel(
@@ -72,7 +72,7 @@ test('chooseModel: an unknown tier with no defaultModel is a clear error', () =>
 });
 
 test('MODEL_PREFERENCES: the curated protocols each cover the four tiers', () => {
-  const tiers = ['smart', 'fast', 'cheap', 'review'];
+  const tiers: Tier[] = ['smart', 'fast', 'cheap', 'review'];
   const protocols = ['anthropic-messages', 'openai-responses', 'openai-chat'] as const;
   for (const protocol of protocols) {
     const rows = MODEL_PREFERENCES[protocol];

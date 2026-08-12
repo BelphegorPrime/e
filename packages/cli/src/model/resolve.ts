@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import type { Protocol, Provider } from '../harness/adapter';
-import { chooseModel } from './preferences';
+import { chooseModel, Tier } from './preferences';
 import { modelsFilePath } from '../store';
 
 /**
@@ -79,7 +79,7 @@ export function parseModelIds(body: unknown, props: { root: string | undefined }
  */
 export async function resolveProviderModel(
   provider: Provider,
-  tier: string,
+  tier: Tier,
   lister: ModelsLister,
 ): Promise<ResolvedModel> {
   if (provider.model !== 'auto') {
@@ -98,6 +98,8 @@ export async function resolveProviderModel(
         `(${(err as Error).message}), and no defaultModel is set on the provider.`,
     );
   }
+
+  console.log({provider})
 
   return {
     model: chooseModel(available, provider.protocol, tier, provider.defaultModel),

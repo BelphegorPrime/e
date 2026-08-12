@@ -27,6 +27,7 @@ import {
   writeConfig,
   readConfig,
 } from './store';
+import { TIERS } from './model/preferences';
 
 interface InitCommandOptions {
   dir?: string;
@@ -79,12 +80,14 @@ export function registerInitCommand(program: Command): void {
           keysToPrompt(requiredEnvKeys(), envValues),
         );
         defaultHarness = answers.defaultHarness;
-        envValues = answers.envValues;
+        envValues = { ...envValues, ...answers.envValues };
       }
 
       for (const harness of Object.values(HARNESSES)) {
+        console.log("");
+        console.log(`writing files for harness [${harness.name}]`);
         writeDockerfile(harness, root);
-        writeDefaultAgent(harness, root, envValues);
+        writeDefaultAgents(harness, root, envValues);
       }
 
       writeMcpServers(root);
@@ -237,12 +240,14 @@ function writeDockerfile(harness: Harness, root: string | undefined): void {
 }
 
 /** Writes a harness's default agent definition (never overwriting a hand-edited one). */
-function writeDefaultAgent(harness: Harness, root: string | undefined, envValues: Record<string, string>): void {
-  writeIfAbsent(
-    agentDir(harness.name, root),
-    agentFilePath(harness.name, root),
-    renderDefaultAgent(harness.name, envValues),
-  );
+function writeDefaultAgents(harness: Harness, root: string | undefined, envValues: Record<string, string>): void {
+  for (const tier of TIERS) {
+    writeIfAbsent(
+      agentDir(harness.name, root, tier),
+      agentFilePath(harness.name, root, tier),
+      renderDefaultAgent(harness.name, tier, envValues),
+    ); 
+  }
 }
 
 /**

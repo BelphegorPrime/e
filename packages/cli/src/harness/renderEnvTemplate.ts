@@ -31,7 +31,10 @@ const TEMPLATE = `{{#includeHeader}}
 # \`e spawn\` loads this file into every harness; --env-file and -e override it.
 # Fill in the values your harnesses need.
 
+ANTHROPIC_BASE_URL=
 ANTHROPIC_API_KEY=
+
+OPENAI_BASE_URL=
 OPENAI_API_KEY=
 
 {{/includeHeader}}

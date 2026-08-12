@@ -17,6 +17,7 @@ import { readMcpServer, listMcpServerNames, type McpServer } from './mcp/index';
 import { RunScratch } from './runScratch';
 import { executeSpawn } from './executeSpawn';
 import { findRoot, envFilePath, readConfig } from './store';
+import { Tier } from './model/preferences';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
 const RUNTIMES: Record<string, string> = {
@@ -65,7 +66,7 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   /** Raw `--env-file <path>` value from the CLI (a single path). */
   envFile?: string;
   /** `--tier <tier>`: select the (harness, tier) agent rather than by name. */
-  tier?: string;
+  tier?: Tier;
   /** `--mcp <name...>`: MCP servers to wire for this run (container sidecars and/or remote URLs). */
   mcp?: string[];
   /** `--skill <name...>`: Skills to add for this run (comma-separated or repeated). */
@@ -129,7 +130,7 @@ function gatherSpawnFacts(
   });
   const agent = opts.tier
     ? selectAgentByTier(resolved.agentTarget, opts.tier, listAgents(root))
-    : findAgent(resolved.agentTarget, root);
+    : findAgent(resolved.agentTarget, root, opts.tier);
   const harness = resolveHarness(agent.harness);
 
   const baseEnvPath = root !== undefined ? envFilePath(root) : undefined;

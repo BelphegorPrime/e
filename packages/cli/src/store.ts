@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { Tier } from './model/preferences';
 
 /**
  * The **Store**: the `.e` directory holding e's on-disk state — the per-harness
@@ -64,13 +65,13 @@ export function mcpConfigPath(name: string, root?: string): string {
 }
 
 /** Directory containing a single agent's definition. */
-export function agentDir(name: string, root?: string): string {
-  return path.join(agentsBaseDir(root), name);
+export function agentDir(name: string, root?: string, tier?: Tier): string {
+  return path.join(agentsBaseDir(root), name, tier || "default");
 }
 
 /** Absolute path to an agent's definition file. */
-export function agentFilePath(name: string, root?: string): string {
-  return path.join(agentDir(name, root), 'agent.json');
+export function agentFilePath(name: string, root?: string, tier?: Tier): string {
+  return path.join(agentDir(name, root, tier), 'agent.json');
 }
 
 /**
