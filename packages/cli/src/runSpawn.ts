@@ -284,8 +284,13 @@ export async function runSpawn(
     for (const name of startedContainers) {
       bestEffort(() => runtime.removeContainer(name));
     }
-    if (networkCreated) bestEffort(() => runtime.removeNetwork(network));
-    git.removeWorktree(worktreePath);
+    if (networkCreated) {
+      bestEffort(() => runtime.removeNetwork(network));
+    }
+
+    if (params.runOptions.rmWorktree === true) {
+      git.removeWorktree(worktreePath);
+    }
   }
 
   const warnings = sidecarWarnings.length > 0 ? sidecarWarnings : undefined;

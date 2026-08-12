@@ -80,7 +80,7 @@ export const HARNESSES: Record<string, Harness> = {
     // `models.json` (no base-url env var), so the provider is delivered via the
     // file adapter, baked into the derived agent image. Grounding:
     // `docs/research/harness-cli-facts.md`, pi `docs/models.md`.
-    protocols: ['anthropic-messages', 'openai-chat', 'openai-responses'],
+    protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],
     adapter: piAdapter,
     // pi selects a configured provider explicitly; the resolved model is passed
     // for selection when an agent declares a provider (a default agent runs
@@ -156,7 +156,7 @@ export const HARNESSES: Record<string, Harness> = {
     },
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
     // opencode (Vercel AI SDK) speaks all four via its provider plugins.
-    protocols: ['anthropic-messages', 'openai-chat', 'openai-responses'],
+    protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],
     buildCommand: (prompt: string) => ['opencode', 'run', prompt],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,

@@ -25,6 +25,7 @@ export interface RunOptions {
   port?: string[];
   env?: string[];
   rm?: boolean;
+  rmWorktree?: boolean;
   /** Bind mounts. */
   volumes?: Mount[];
   /** Working directory inside the container (-w). */
