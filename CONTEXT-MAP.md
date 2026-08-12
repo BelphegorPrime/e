@@ -8,6 +8,10 @@
 - **UI** (`packages/ui`) — front-end for the orchestrator. Stub today; no `CONTEXT.md` until its language firms up.
 - **Docker** (`packages/docker`) — container build scaffolding. Stub today; no `CONTEXT.md` yet.
 
+## Linting
+
+- [Code Quality](./docs/agents/linting.md) — ESLint and Prettier configuration for consistent code quality and formatting.
+
 ## Relationships
 
 - **UI → CLI**: the UI is intended to drive and observe CLI runs. The contract between them is undecided — see the UI ↔ backend design tree, not yet grilled.

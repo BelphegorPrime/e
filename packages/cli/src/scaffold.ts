@@ -14,7 +14,11 @@ import fs from 'fs';
  * file: if it matches it's reported up-to-date, and if it differs the change is
  * shown as a line diff so the user can reconcile a hand-edited file themselves.
  */
-export function writeIfAbsent(dir: string, file: string, content: string): void {
+export function writeIfAbsent(
+  dir: string,
+  file: string,
+  content: string
+): void {
   fs.mkdirSync(dir, { recursive: true });
 
   if (!fs.existsSync(file)) {
@@ -48,7 +52,7 @@ export function diffLines(existing: string, rendered: string): string[] {
 
   // lcs[i][j] = length of the LCS of a[i..] and b[j..].
   const lcs: number[][] = Array.from({ length: m + 1 }, () =>
-    new Array<number>(n + 1).fill(0),
+    new Array<number>(n + 1).fill(0)
   );
   for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {

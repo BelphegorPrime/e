@@ -26,7 +26,7 @@ const runtime = new ContainerRuntime('docker');
 function argsFor(
   opts: RunOptions,
   commandArgs: string[] = [],
-  image = 'img',
+  image = 'img'
 ): string[] {
   return runtime.buildRunArgs(image, opts, commandArgs);
 }
@@ -54,7 +54,12 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
   },
   {
     name: '--network follows -w, before env-files',
-    opts: { attach: true, name: 'run-1', workdir: '/workspace', network: 'run-1-net' },
+    opts: {
+      attach: true,
+      name: 'run-1',
+      workdir: '/workspace',
+      network: 'run-1-net',
+    },
     expected: [
       'run',
       '--name',
@@ -126,7 +131,7 @@ test('buildRunArgs: full ordering — flags, env-files, v/p/e, image, then comma
       port: ['8080:80'],
       env: ['K=v'],
     },
-    ['claude', '-p', 'hi'],
+    ['claude', '-p', 'hi']
   );
   assert.deepEqual(args, [
     'run',
@@ -166,20 +171,26 @@ test('buildRunArgs: command args trail the image', () => {
 // --- structured mounts ---
 
 test('formatMount: read-write omits :ro', () => {
-  assert.equal(formatMount({ host: '/wt', container: '/workspace' }), '/wt:/workspace');
+  assert.equal(
+    formatMount({ host: '/wt', container: '/workspace' }),
+    '/wt:/workspace'
+  );
 });
 
 test('formatMount: ro appends :ro', () => {
   assert.equal(
     formatMount({ host: '/s', container: '/root/.claude/skills/x', ro: true }),
-    '/s:/root/.claude/skills/x:ro',
+    '/s:/root/.claude/skills/x:ro'
   );
 });
 
 test('buildRunArgs: a read-only mount renders host:container:ro', () => {
   assert.deepEqual(
-    argsFor({ attach: true, volumes: [{ host: '/s', container: '/skills/x', ro: true }] }),
-    ['run', '-v', '/s:/skills/x:ro', 'img'],
+    argsFor({
+      attach: true,
+      volumes: [{ host: '/s', container: '/skills/x', ro: true }],
+    }),
+    ['run', '-v', '/s:/skills/x:ro', 'img']
   );
 });
 
@@ -190,11 +201,20 @@ test('versionArgs', () => {
 });
 
 test('imageInspectArgs', () => {
-  assert.deepEqual(imageInspectArgs('e-harness-codex'), ['image', 'inspect', 'e-harness-codex']);
+  assert.deepEqual(imageInspectArgs('e-harness-codex'), [
+    'image',
+    'inspect',
+    'e-harness-codex',
+  ]);
 });
 
 test('buildImageArgs: tag then context, default Dockerfile', () => {
-  assert.deepEqual(buildImageArgs('e-agent-x', '/ctx'), ['build', '-t', 'e-agent-x', '/ctx']);
+  assert.deepEqual(buildImageArgs('e-agent-x', '/ctx'), [
+    'build',
+    '-t',
+    'e-agent-x',
+    '/ctx',
+  ]);
 });
 
 test('buildImageArgs: explicit -f Dockerfile precedes the context', () => {
@@ -209,12 +229,24 @@ test('buildImageArgs: explicit -f Dockerfile precedes the context', () => {
 });
 
 test('networkCreateArgs / networkRemoveArgs', () => {
-  assert.deepEqual(networkCreateArgs('run-1-net'), ['network', 'create', 'run-1-net']);
-  assert.deepEqual(networkRemoveArgs('run-1-net'), ['network', 'rm', 'run-1-net']);
+  assert.deepEqual(networkCreateArgs('run-1-net'), [
+    'network',
+    'create',
+    'run-1-net',
+  ]);
+  assert.deepEqual(networkRemoveArgs('run-1-net'), [
+    'network',
+    'rm',
+    'run-1-net',
+  ]);
 });
 
 test('containerRemoveArgs force-removes by name', () => {
-  assert.deepEqual(containerRemoveArgs('run-1-mcp-everything'), ['rm', '-f', 'run-1-mcp-everything']);
+  assert.deepEqual(containerRemoveArgs('run-1-mcp-everything'), [
+    'rm',
+    '-f',
+    'run-1-mcp-everything',
+  ]);
 });
 
 test('sidecarRunArgs: detached, named, on its network with an alias', () => {

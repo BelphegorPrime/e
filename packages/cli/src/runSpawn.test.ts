@@ -42,7 +42,7 @@ class FakeGit implements Git {
       collideBranches?: string[];
       addWorktreeError?: string;
       pushFails?: string;
-    } = {},
+    } = {}
   ) {
     this.repo = opts.repo ?? true;
     this.dirty = opts.dirty ?? false;
@@ -121,11 +121,18 @@ class FakeRuntime implements ContainerRunner {
   /** Container names reported as NOT running afterwards (a mid-run crash). */
   crashed: Set<string> = new Set();
   /** When set, the named group op throws (to test fail-fast / best-effort teardown). */
-  throwOn?: { op: 'createNetwork' | 'removeNetwork' | 'removeContainer'; message: string };
+  throwOn?: {
+    op: 'createNetwork' | 'removeNetwork' | 'removeContainer';
+    message: string;
+  };
 
   constructor(private exitCode = 0) {}
 
-  async run(image: string, options: RunOptions, command: string[]): Promise<number> {
+  async run(
+    image: string,
+    options: RunOptions,
+    command: string[]
+  ): Promise<number> {
     this.calls.push('run');
     this.ran = true;
     this.image = image;
@@ -136,12 +143,14 @@ class FakeRuntime implements ContainerRunner {
 
   createNetwork(name: string): void {
     this.calls.push('createNetwork');
-    if (this.throwOn?.op === 'createNetwork') throw new Error(this.throwOn.message);
+    if (this.throwOn?.op === 'createNetwork')
+      throw new Error(this.throwOn.message);
     this.networks.push(name);
   }
   removeNetwork(name: string): void {
     this.calls.push('removeNetwork');
-    if (this.throwOn?.op === 'removeNetwork') throw new Error(this.throwOn.message);
+    if (this.throwOn?.op === 'removeNetwork')
+      throw new Error(this.throwOn.message);
     this.removedNetworks.push(name);
   }
   startSidecar(spec: SidecarSpec): void {
@@ -150,7 +159,8 @@ class FakeRuntime implements ContainerRunner {
   }
   removeContainer(name: string): void {
     this.calls.push('removeContainer');
-    if (this.throwOn?.op === 'removeContainer') throw new Error(this.throwOn.message);
+    if (this.throwOn?.op === 'removeContainer')
+      throw new Error(this.throwOn.message);
     this.removedContainers.push(name);
   }
   probeTcp(_network: string, host: string, _port: number): boolean {
@@ -206,14 +216,18 @@ function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
     harness,
     prompt: 'Fix the flaky test',
     imageTag: 'e-harness-demo',
-    runOptions: { attach: true, rm: true },
+    runOptions: { attach: true, rm: true, rmWorktree: true },
     worktreesDir: '/tmp/e-worktrees',
     ...overrides,
   };
 }
 
 /** A demo sidecar plan; a few fast readiness attempts keep the tests instant. */
-const sidecar: SidecarPlan = { alias: 'everything', image: 'e-mcp-everything', port: 3001 };
+const sidecar: SidecarPlan = {
+  alias: 'everything',
+  image: 'e-mcp-everything',
+  port: 3001,
+};
 const fastReadiness = { attempts: 3, intervalMs: 1 };
 
 test('creates a worktree from HEAD on branch e/<harness>/<slug>-1 and runs the harness', async () => {
@@ -262,7 +276,9 @@ test('threads a runtime-resolved model into the harness command', async () => {
   const codexish: Harness = {
     ...harness,
     buildCommand: (prompt, model) =>
-      model ? ['codex', 'exec', '-m', model, prompt] : ['codex', 'exec', prompt],
+      model
+        ? ['codex', 'exec', '-m', model, prompt]
+        : ['codex', 'exec', prompt],
   };
   await runSpawn(deps, makeParams({ harness: codexish, model: 'gpt-5-codex' }));
   assert.deepEqual(runtime.command, [
@@ -328,7 +344,7 @@ test('numbers the run from the next counter after existing branches', async () =
 
 test('counter considers remote-tracking branches', async () => {
   const slug = slugify('Fix the flaky test');
-  const { deps, git } = makeDeps({
+  const { deps } = makeDeps({
     git: new FakeGit({ existingBranches: [`origin/e/demo/${slug}-4`] }),
   });
   const result = await runSpawn(deps, makeParams());
@@ -346,7 +362,7 @@ test('bumps the counter and retries on an atomic-create collision', async () => 
   assert.equal(result.branch, `e/demo/${slug}-2`);
   assert.equal(git.worktrees.length, 1);
   assert.equal(git.worktrees[0].branch, `e/demo/${slug}-2`);
-  assert.equal(git.calls.filter((c) => c === 'addWorktree').length, 2);
+  assert.equal(git.calls.filter(c => c === 'addWorktree').length, 2);
 });
 
 test('rethrows a non-collision worktree failure immediately without retrying', async () => {
@@ -355,7 +371,7 @@ test('rethrows a non-collision worktree failure immediately without retrying', a
   });
   await assert.rejects(runSpawn(deps, makeParams()), /permission denied/);
   // Exactly one attempt — no counter-bump storm on a genuine error.
-  assert.equal(git.calls.filter((c) => c === 'addWorktree').length, 1);
+  assert.equal(git.calls.filter(c => c === 'addWorktree').length, 1);
 });
 
 test('pushes the branch to origin when the run exits 0 with commits', async () => {
@@ -413,7 +429,7 @@ test('brings up the group in order: network → sidecar → probe → agent → 
   const { deps, git, runtime } = makeDeps();
   await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
   );
 
   assert.deepEqual(runtime.calls, [
@@ -436,7 +452,7 @@ test('the agent joins the run network and the sidecar gets a unique name + alias
   const { deps, git, runtime } = makeDeps();
   await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
   );
   const runName = git.worktrees[0].branch.replace(/\//g, '-');
 
@@ -453,7 +469,7 @@ test('appends the harness MCP args to the container command', async () => {
   const mcpArgs = ['--mcp-config', '{"mcpServers":{}}'];
   await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], mcpArgs, readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar], mcpArgs, readiness: fastReadiness })
   );
   assert.deepEqual(runtime.command, [
     'demo',
@@ -469,7 +485,10 @@ test('waits across retries: probe fails twice then succeeds, agent then runs', a
   runtime.tcpScript = { everything: [false, false, true] };
   const result = await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], readiness: { attempts: 5, intervalMs: 10 } }),
+    makeParams({
+      sidecars: [sidecar],
+      readiness: { attempts: 5, intervalMs: 10 },
+    })
   );
 
   assert.equal(result.ran, true);
@@ -483,7 +502,7 @@ test('readiness miss aborts before the agent: no run, no commit, no push, group 
   runtime.tcpScript = { everything: [false] }; // never ready
   const result = await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
   );
 
   assert.equal(result.ran, false);
@@ -493,7 +512,9 @@ test('readiness miss aborts before the agent: no run, no commit, no push, group 
   assert.ok(!git.calls.includes('commitAll'));
   assert.ok(!git.calls.includes('push'));
   // The whole group is still torn down, including the worktree.
-  assert.deepEqual(runtime.removedContainers, [git.worktrees[0].branch.replace(/\//g, '-') + '-mcp-everything']);
+  assert.deepEqual(runtime.removedContainers, [
+    git.worktrees[0].branch.replace(/\//g, '-') + '-mcp-everything',
+  ]);
   assert.equal(runtime.removedNetworks.length, 1);
   assert.deepEqual(git.removed, [git.worktrees[0].path]);
 });
@@ -504,7 +525,7 @@ test('readiness requires the healthcheck too: port open but healthcheck failing 
   const withHealth: SidecarPlan = { ...sidecar, healthcheck: ['true'] };
   const result = await runSpawn(
     deps,
-    makeParams({ sidecars: [withHealth], readiness: fastReadiness }),
+    makeParams({ sidecars: [withHealth], readiness: fastReadiness })
   );
 
   assert.equal(result.ran, false);
@@ -516,8 +537,11 @@ test('createNetwork failure aborts fail-fast: no sidecar started, no agent, work
   const { deps, git, runtime } = makeDeps();
   runtime.throwOn = { op: 'createNetwork', message: 'network create denied' };
   await assert.rejects(
-    runSpawn(deps, makeParams({ sidecars: [sidecar], readiness: fastReadiness })),
-    /network create denied/,
+    runSpawn(
+      deps,
+      makeParams({ sidecars: [sidecar], readiness: fastReadiness })
+    ),
+    /network create denied/
   );
   assert.equal(runtime.startedSidecars.length, 0);
   assert.equal(runtime.ran, false);
@@ -532,7 +556,7 @@ test('a mid-run sidecar crash is non-fatal: warning surfaced, run still succeeds
 
   const result = await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
   );
 
   assert.equal(result.exitCode, 0);
@@ -546,7 +570,7 @@ test('a healthy sidecar produces no warning', async () => {
   const { deps, runtime } = makeDeps();
   const result = await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
   );
   assert.equal(runtime.calls.includes('isRunning'), true);
   assert.equal(result.sidecarWarnings, undefined);
@@ -556,7 +580,7 @@ test('tears the group down even when the agent exits non-zero', async () => {
   const { deps, git, runtime } = makeDeps({ runtime: new FakeRuntime(2) });
   const result = await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
   );
   assert.equal(result.exitCode, 2);
   assert.equal(runtime.removedContainers.length, 1);
@@ -569,7 +593,7 @@ test('best-effort teardown never masks the run result when removal throws', asyn
   runtime.throwOn = { op: 'removeContainer', message: 'rm boom' };
   const result = await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
   );
   // The run itself succeeded; the throwing teardown is swallowed.
   assert.equal(result.ran, true);
@@ -578,21 +602,24 @@ test('best-effort teardown never masks the run result when removal throws', asyn
 
 test('supports multiple sidecars: both started, both probed, both removed', async () => {
   const { deps, git, runtime } = makeDeps();
-  const fs: SidecarPlan = { alias: 'filesystem', image: 'e-mcp-filesystem', port: 8000 };
+  const fs: SidecarPlan = {
+    alias: 'filesystem',
+    image: 'e-mcp-filesystem',
+    port: 8000,
+  };
   await runSpawn(
     deps,
-    makeParams({ sidecars: [sidecar, fs], readiness: fastReadiness }),
+    makeParams({ sidecars: [sidecar, fs], readiness: fastReadiness })
   );
   assert.equal(runtime.startedSidecars.length, 2);
   assert.equal(runtime.removedContainers.length, 2);
   const runName = git.worktrees[0].branch.replace(/\//g, '-');
-  assert.deepEqual(runtime.startedSidecars.map((s) => s.alias), [
-    'everything',
-    'filesystem',
-  ]);
+  assert.deepEqual(
+    runtime.startedSidecars.map(s => s.alias),
+    ['everything', 'filesystem']
+  );
   assert.deepEqual(runtime.removedContainers, [
     `${runName}-mcp-everything`,
     `${runName}-mcp-filesystem`,
   ]);
 });
-

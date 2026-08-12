@@ -35,28 +35,31 @@ function fakeLister(ids: string[] | Error): ModelsLister {
 test('modelsUrl: appends /v1/models when the base has no version segment', () => {
   assert.equal(
     modelsUrl('https://gateway.example.com'),
-    'https://gateway.example.com/v1/models',
+    'https://gateway.example.com/v1/models'
   );
 });
 
 test('modelsUrl: appends /models when the base already ends in /v1', () => {
   assert.equal(
     modelsUrl('https://gateway.example.com/v1'),
-    'https://gateway.example.com/v1/models',
+    'https://gateway.example.com/v1/models'
   );
 });
 
 test('modelsUrl: tolerates a trailing slash', () => {
   assert.equal(
     modelsUrl('https://gateway.example.com/'),
-    'https://gateway.example.com/v1/models',
+    'https://gateway.example.com/v1/models'
   );
 });
 
 test('parseModelIds: extracts data[].id, ignoring malformed entries', () => {
-  const ids = parseModelIds({
-    data: [{ id: 'gpt-5' }, { id: 'gpt-5-mini' }, { notId: 'x' }, 'nope'],
-  }, { root: undefined });
+  const ids = parseModelIds(
+    {
+      data: [{ id: 'gpt-5' }, { id: 'gpt-5-mini' }, { notId: 'x' }, 'nope'],
+    },
+    { root: undefined }
+  );
   assert.deepEqual(ids, ['gpt-5', 'gpt-5-mini']);
 });
 
@@ -76,7 +79,7 @@ test('resolveProviderModel: a concrete model is returned as-is, never listed', a
   const resolved = await resolveProviderModel(
     { ...codex, model: 'gpt-5-codex' },
     'smart',
-    lister,
+    lister
   );
   assert.deepEqual(resolved, { model: 'gpt-5-codex', fromAuto: false });
   assert.equal(listed, false);
@@ -86,23 +89,33 @@ test('resolveProviderModel: auto resolves against the listed models for the tier
   const resolved = await resolveProviderModel(
     anthropic,
     'smart',
-    fakeLister(['anthropic.claude-sonnet-5', 'anthropic.claude-opus-5']),
+    fakeLister(['anthropic.claude-sonnet-5', 'anthropic.claude-opus-5'])
   );
-  assert.deepEqual(resolved, { model: 'anthropic.claude-opus-5', fromAuto: true });
+  assert.deepEqual(resolved, {
+    model: 'anthropic.claude-opus-5',
+    fromAuto: true,
+  });
 });
 
 test('resolveProviderModel: an unreachable endpoint falls back to defaultModel', async () => {
   const resolved = await resolveProviderModel(
     { ...anthropic, defaultModel: 'anthropic.claude-sonnet-5' },
     'smart',
-    fakeLister(new Error('ECONNREFUSED')),
+    fakeLister(new Error('ECONNREFUSED'))
   );
-  assert.deepEqual(resolved, { model: 'anthropic.claude-sonnet-5', fromAuto: true });
+  assert.deepEqual(resolved, {
+    model: 'anthropic.claude-sonnet-5',
+    fromAuto: true,
+  });
 });
 
 test('resolveProviderModel: an unreachable endpoint with no defaultModel is a clear error', async () => {
   await assert.rejects(
-    resolveProviderModel(anthropic, 'smart', fakeLister(new Error('ECONNREFUSED'))),
-    /unreachable|defaultModel/i,
+    resolveProviderModel(
+      anthropic,
+      'smart',
+      fakeLister(new Error('ECONNREFUSED'))
+    ),
+    /unreachable|defaultModel/i
   );
 });

@@ -5,7 +5,7 @@ The `e` command: builds and runs coding-agent harnesses inside containers, one i
 ## Language
 
 **Harness**:
-A coding-agent CLI (e.g. Claude Code, Codex, opencode, Pi) packaged to run inside a container built from its own Dockerfile. The *packaging* only — the model and configuration it runs with belong to an Agent.
+A coding-agent CLI (e.g. Claude Code, Codex, opencode, Pi) packaged to run inside a container built from its own Dockerfile. The _packaging_ only — the model and configuration it runs with belong to an Agent.
 _Avoid_: tool, model (a Harness is packaging; the configured capability is an Agent)
 
 **Agent**:
@@ -13,7 +13,7 @@ A named, reusable pairing of a Harness with a specific model configuration (prov
 _Avoid_: harness (its packaging), bot, assistant
 
 **Provider**:
-The model endpoint an Agent talks to, defined inline in the Agent (not a standalone Store entity): `baseUrl`, `model` (a concrete id or `auto`), `protocol` (the wire API — `openai-chat`, `openai-responses`, `anthropic-messages`, or `google`), and `apiKeyEnv` — the *name* of the env var holding the key (the value lives in `.e/.env`, never in an image). A Provider's protocol must be one of the set its Harness speaks.
+The model endpoint an Agent talks to, defined inline in the Agent (not a standalone Store entity): `baseUrl`, `model` (a concrete id or `auto`), `protocol` (the wire API — `openai-chat`, `openai-responses`, `anthropic-messages`, or `google`), and `apiKeyEnv` — the _name_ of the env var holding the key (the value lives in `.e/.env`, never in an image). A Provider's protocol must be one of the set its Harness speaks.
 _Avoid_: model, backend, endpoint (informal)
 
 **Sidecar**:
@@ -22,7 +22,7 @@ _Avoid_: service, plugin, addon
 
 **MCP server**:
 A capability the agent connects to over the Model Context Protocol, chosen per-Run. It has a transport: `container` (built from its own Dockerfile under the Store's `mcp/`, run as a Sidecar on the private per-run network) or `remote` (an already-hosted URL, no container). `e` ships some and users can add their own.
-_Avoid_: tool (an MCP server *exposes* tools; it is not itself a tool)
+_Avoid_: tool (an MCP server _exposes_ tools; it is not itself a tool)
 
 **Skill**:
 A packaged capability (a `SKILL.md` plus resources) an Agent can load, stored under the Store's `skills/`. Selected two ways: an Agent may bake a default set into its image, and a Run may add more at spawn time (`--skill`). Delivered by the per-harness adapter into the path its CLI reads, outside `/workspace`; only harnesses that support skills receive them.

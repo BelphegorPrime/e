@@ -7,7 +7,12 @@ import type {
   ConfigOverlayDelivery,
 } from './adapter';
 import type { McpEndpoint } from '../mcp/index';
-import { claudeCodeAdapter, codexAdapter, piAdapter, PI_PROVIDER_ID } from './adapter';
+import {
+  claudeCodeAdapter,
+  codexAdapter,
+  piAdapter,
+  PI_PROVIDER_ID,
+} from './adapter';
 import { imageTag as eImageTag } from '../naming';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
@@ -89,7 +94,15 @@ export const HARNESSES: Record<string, Harness> = {
     // `pi -p <prompt>` and uses pi's own built-in default).
     buildCommand: (prompt: string, model?: string) =>
       model
-        ? ['pi', '-p', escapePrompt(prompt), '--provider', PI_PROVIDER_ID, '--model', model]
+        ? [
+            'pi',
+            '-p',
+            escapePrompt(prompt),
+            '--provider',
+            PI_PROVIDER_ID,
+            '--model',
+            model,
+          ]
         : ['pi', '-p', escapePrompt(prompt)],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
@@ -118,7 +131,11 @@ export const HARNESSES: Record<string, Harness> = {
     // container env at runtime, so the secret is never written onto argv.
     renderMcpArgs: (endpoints: McpEndpoint[]) => {
       if (endpoints.length === 0) return [];
-      type HttpServer = { type: 'http'; url: string; headers?: Record<string, string> };
+      type HttpServer = {
+        type: 'http';
+        url: string;
+        headers?: Record<string, string>;
+      };
       const mcpServers: Record<string, HttpServer> = {};
       for (const endpoint of endpoints) {
         const server: HttpServer = { type: 'http', url: endpoint.url };
@@ -145,7 +162,9 @@ export const HARNESSES: Record<string, Harness> = {
     // arrives at runtime as `-m <id>` (a baked concrete model needs no flag).
     adapter: codexAdapter,
     buildCommand: (prompt: string, model?: string) =>
-      model ? ['codex', 'exec', '-m', model, escapePrompt(prompt)] : ['codex', 'exec', escapePrompt(prompt)],
+      model
+        ? ['codex', 'exec', '-m', model, escapePrompt(prompt)]
+        : ['codex', 'exec', escapePrompt(prompt)],
     // Codex reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
@@ -172,7 +191,7 @@ export function resolveHarness(name: string): Harness {
   const harness = HARNESSES[name];
   if (!harness) {
     throw new Error(
-      `Unknown harness "${name}". Valid values: ${Object.keys(HARNESSES).join(', ')}.`,
+      `Unknown harness "${name}". Valid values: ${Object.keys(HARNESSES).join(', ')}.`
     );
   }
   return harness;
@@ -266,7 +285,7 @@ export type McpDelivery =
 export function planMcpDelivery(
   harness: Harness,
   endpoints: McpEndpoint[],
-  baseConfig: string,
+  baseConfig: string
 ): McpDelivery {
   const form = mcpDeliveryForm(harness);
   switch (form) {
@@ -275,7 +294,10 @@ export function planMcpDelivery(
     case 'file':
       return {
         form,
-        overlay: fileAdapterFor(harness)!.planConfigOverlay!(baseConfig, endpoints),
+        overlay: fileAdapterFor(harness)!.planConfigOverlay!(
+          baseConfig,
+          endpoints
+        ),
       };
     case 'none':
       return { form };
@@ -287,7 +309,7 @@ export function planMcpDelivery(
  * per harness, carrying that harness's `requiredEnv` verbatim (no dedup).
  */
 export function envHarnessSections(): EnvHarnessSection[] {
-  return Object.values(HARNESSES).map((harness) => ({
+  return Object.values(HARNESSES).map(harness => ({
     name: harness.name,
     env: harness.requiredEnv,
   }));
@@ -301,12 +323,12 @@ export function requiredEnvKeys(): string[] {
   const optionalEnvKeys = ['OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL'];
 
   const seen = new Set<string>(optionalEnvKeys);
-  
+
   for (const harness of Object.values(HARNESSES)) {
     for (const key of harness.requiredEnv) {
       seen.add(key);
     }
   }
-  
+
   return [...seen];
 }

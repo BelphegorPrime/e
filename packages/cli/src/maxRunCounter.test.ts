@@ -12,15 +12,12 @@ test('returns 0 when no branch matches', () => {
 test('takes the max counter across matching local branches', () => {
   assert.equal(
     maxRunCounter([`${prefix}-1`, `${prefix}-3`, `${prefix}-2`], prefix),
-    3,
+    3
   );
 });
 
 test('considers remote-tracking refs', () => {
-  assert.equal(
-    maxRunCounter([`${prefix}-1`, `origin/${prefix}-4`], prefix),
-    4,
-  );
+  assert.equal(maxRunCounter([`${prefix}-1`, `origin/${prefix}-4`], prefix), 4);
 });
 
 test('ignores a longer slug that shares this prefix', () => {

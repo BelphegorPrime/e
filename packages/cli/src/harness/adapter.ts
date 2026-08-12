@@ -19,9 +19,7 @@ import { SpawnFacts } from '../spawnPlan';
  * See `docs/research/harness-cli-facts.md`.
  */
 export type Protocol =
-  | 'openai-chat'
-  | 'anthropic-messages'
-  | 'openai-responses';
+  'openai-chat' | 'anthropic-messages' | 'openai-responses';
 
 /** Every protocol string `e` recognises, for validating persisted agents. */
 export const PROTOCOLS: readonly Protocol[] = [
@@ -62,8 +60,7 @@ export interface Provider {
  * argv.
  */
 export type ContainerEnv =
-  | { name: string; value: string }
-  | { name: string; fromEnv: string };
+  { name: string; value: string } | { name: string; fromEnv: string };
 
 /**
  * A config file an adapter renders for a file-configured harness, to be baked
@@ -162,7 +159,10 @@ export interface FileHarnessAdapter {
    * — its presence is the harness's declared file-MCP capability; absent for pi
    * (no MCP client). See {@link planMcpDelivery}.
    */
-  planConfigOverlay?(baseConfig: string, endpoints: McpEndpoint[]): ConfigOverlayDelivery;
+  planConfigOverlay?(
+    baseConfig: string,
+    endpoints: McpEndpoint[]
+  ): ConfigOverlayDelivery;
 }
 
 /**
@@ -173,8 +173,12 @@ export interface FileHarnessAdapter {
  */
 export type HarnessAdapter = EnvHarnessAdapter | FileHarnessAdapter;
 
-export const isEnvAdapter = (adapter: HarnessAdapter): adapter is EnvHarnessAdapter => adapter.kind === 'env';
-export const isFileAdapter = (adapter: HarnessAdapter): adapter is FileHarnessAdapter => adapter.kind === 'file';
+export const isEnvAdapter = (
+  adapter: HarnessAdapter
+): adapter is EnvHarnessAdapter => adapter.kind === 'env';
+export const isFileAdapter = (
+  adapter: HarnessAdapter
+): adapter is FileHarnessAdapter => adapter.kind === 'file';
 
 /**
  * Claude Code's adapter. Claude speaks only the Anthropic Messages API and is
@@ -217,7 +221,10 @@ function tomlBasicString(value: string): string {
  * (`codex exec -m <id>`, ADR-0007), so the derived image is not rebuilt when the
  * resolved model changes.
  */
-export function renderCodexConfig(facts: SpawnFacts, provider: Provider): string {
+export function renderCodexConfig(
+  facts: SpawnFacts,
+  provider: Provider
+): string {
   // A fixed provider id: `e` owns the whole file, so there is only ever one
   // custom provider and no id collision to worry about.
   const id = 'e';
@@ -233,7 +240,7 @@ export function renderCodexConfig(facts: SpawnFacts, provider: Provider): string
     `name = ${tomlBasicString(id)}`,
     `base_url = ${tomlBasicString(provider.baseUrl)}`,
     `env_key = ${tomlBasicString(provider.apiKeyEnv)}`,
-    `wire_api = "responses"`,
+    `wire_api = "responses"`
   );
   return lines.join('\n') + '\n';
 }
@@ -250,14 +257,14 @@ export function renderCodexConfig(facts: SpawnFacts, provider: Provider): string
  * slice's container scope. Grounding: `docs/research/harness-cli-facts.md`.
  */
 export function renderCodexMcpServers(endpoints: McpEndpoint[]): string {
-  const blocks = endpoints.map((endpoint) => {
+  const blocks = endpoints.map(endpoint => {
     const lines = [
       `[mcp_servers.${tomlBareKey(endpoint.name)}]`,
       `url = ${tomlBasicString(endpoint.url)}`,
     ];
     if (endpoint.headers && Object.keys(endpoint.headers).length > 0) {
       const pairs = Object.entries(endpoint.headers).map(
-        ([key, value]) => `${tomlBasicString(key)} = ${tomlBasicString(value)}`,
+        ([key, value]) => `${tomlBasicString(key)} = ${tomlBasicString(value)}`
       );
       lines.push(`http_headers = { ${pairs.join(', ')} }`);
     }
@@ -289,8 +296,14 @@ export const codexAdapter: FileHarnessAdapter = {
   // Codex delivers an auto-resolved model on the command line (`codex exec -m`),
   // so it keeps the config model-agnostic rather than baking the model.
   modelInFile: false,
-  renderProviderFile(facts: SpawnFacts, provider: Provider): RenderedConfigFile {
-    return { fileName: 'config.toml', content: renderCodexConfig(facts,provider) };
+  renderProviderFile(
+    facts: SpawnFacts,
+    provider: Provider
+  ): RenderedConfigFile {
+    return {
+      fileName: 'config.toml',
+      content: renderCodexConfig(facts, provider),
+    };
   },
   renderRuntimeEnv(provider: Provider): ContainerEnv[] {
     return [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }];
@@ -298,7 +311,10 @@ export const codexAdapter: FileHarnessAdapter = {
   renderMcpServers(endpoints: McpEndpoint[]): string {
     return renderCodexMcpServers(endpoints);
   },
-  planConfigOverlay(baseConfig: string, endpoints: McpEndpoint[]): ConfigOverlayDelivery {
+  planConfigOverlay(
+    baseConfig: string,
+    endpoints: McpEndpoint[]
+  ): ConfigOverlayDelivery {
     const block = renderCodexMcpServers(endpoints);
     const content = (baseConfig ? baseConfig.trimEnd() + '\n\n' : '') + block;
     return {
@@ -343,10 +359,15 @@ export function piApi(protocol: Protocol): string {
  * planProviderDelivery} guarantees a concrete id even for `auto`. Grounding: pi
  * `docs/models.md`, `docs/providers.md`.
  */
-export function renderPiModelsJson(facts: SpawnFacts, provider: Provider): string {
+export function renderPiModelsJson(
+  facts: SpawnFacts,
+  provider: Provider
+): string {
   const store = facts.storeEnv;
-  const baseUrl = provider.baseUrlEnv ? store[provider.baseUrlEnv] : provider.baseUrl;
-  const apiKey = store[provider.apiKeyEnv] || ""
+  const baseUrl = provider.baseUrlEnv
+    ? store[provider.baseUrlEnv]
+    : provider.baseUrl;
+  const apiKey = store[provider.apiKeyEnv] || '';
 
   const config = {
     providers: {
@@ -376,8 +397,14 @@ export const piAdapter: FileHarnessAdapter = {
   configDir: '/root/.pi/agent',
   configFileName: 'models.json',
   modelInFile: true,
-  renderProviderFile(facts: SpawnFacts, provider: Provider): RenderedConfigFile {
-    return { fileName: 'models.json', content: renderPiModelsJson(facts, provider) };
+  renderProviderFile(
+    facts: SpawnFacts,
+    provider: Provider
+  ): RenderedConfigFile {
+    return {
+      fileName: 'models.json',
+      content: renderPiModelsJson(facts, provider),
+    };
   },
   renderRuntimeEnv(provider: Provider): ContainerEnv[] {
     return [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }];
@@ -396,14 +423,14 @@ interface HarnessProtocols {
  */
 export function validateProviderProtocol(
   provider: Provider | undefined,
-  harness: HarnessProtocols,
+  harness: HarnessProtocols
 ): void {
   if (!provider) return;
   if (!harness.protocols.includes(provider.protocol)) {
     throw new Error(
       `Harness "${harness.name}" does not speak protocol "${provider.protocol}"; ` +
         `it speaks: ${harness.protocols.join(', ')}. ` +
-        `Point this agent at a compatible endpoint or use a different harness.`,
+        `Point this agent at a compatible endpoint or use a different harness.`
     );
   }
 }
@@ -426,13 +453,13 @@ export class EnvFileRenderer {
    * credential would otherwise fail opaquely deep inside the harness.
    */
   render(entries: ContainerEnv[], subject: string): string {
-    const lines = entries.map((entry) => {
+    const lines = entries.map(entry => {
       if ('value' in entry) return `${entry.name}=${entry.value}`;
       const value = this.resolve(entry.fromEnv);
       if (value === undefined || value === '') {
         throw new Error(
           `${subject} env "${entry.fromEnv}" is not set in .e/.env. ` +
-            `Add "${entry.fromEnv}=<value>" there — its value is injected at runtime, never baked into an image.`,
+            `Add "${entry.fromEnv}=<value>" there — its value is injected at runtime, never baked into an image.`
         );
       }
       return `${entry.name}=${value}`;

@@ -39,16 +39,16 @@ export function registerInitCommand(program: Command): void {
   program
     .command('init')
     .description(
-      'Write the harness Dockerfiles so `spawn` can build their images',
+      'Write the harness Dockerfiles so `spawn` can build their images'
     )
     .option(
       '--dir <path>',
-      'root directory to write the harnesses into (default: home directory)',
+      'root directory to write the harnesses into (default: home directory)'
     )
     .option(
       '-y, --yes',
       'skip prompts and use defaults (non-interactive/CI)',
-      false,
+      false
     )
     .action(async (opts: InitCommandOptions) => {
       const root = opts.dir ? path.resolve(opts.dir) : undefined;
@@ -56,7 +56,9 @@ export function registerInitCommand(program: Command): void {
       // Prompt only when we can: an explicit --yes, or a non-TTY stdin/stdout
       // (a pipe or CI), falls back to defaults so the command never hangs.
       const interactive =
-        !opts.yes && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
+        !opts.yes &&
+        Boolean(process.stdin.isTTY) &&
+        Boolean(process.stdout.isTTY);
 
       // Seed from any existing config so a re-init preserves the configured
       // favorite instead of silently resetting it — mirrors how the `.env` and
@@ -67,24 +69,26 @@ export function registerInitCommand(program: Command): void {
       const existingEnv = fs.existsSync(envFile)
         ? fs.readFileSync(envFile, 'utf8')
         : undefined;
-      let envValues: Record<string, string> = existingEnv ? parseDotenv(existingEnv) : {};
+      let envValues: Record<string, string> = existingEnv
+        ? parseDotenv(existingEnv)
+        : {};
 
       if (interactive) {
         // Only prompt for keys not already set in `.e/.env`; a re-init never
         // re-asks for one the user has filled in (and which `applyEnvValues`
         // would refuse to clobber anyway).
-        
+
         const answers = await promptInit(
           Object.keys(HARNESSES),
           defaultHarness,
-          keysToPrompt(requiredEnvKeys(), envValues),
+          keysToPrompt(requiredEnvKeys(), envValues)
         );
         defaultHarness = answers.defaultHarness;
         envValues = { ...envValues, ...answers.envValues };
       }
 
       for (const harness of Object.values(HARNESSES)) {
-        console.log("");
+        console.log('');
         console.log(`writing files for harness [${harness.name}]`);
         writeDockerfile(harness, root);
         writeDefaultAgents(harness, root, envValues);
@@ -98,16 +102,16 @@ export function registerInitCommand(program: Command): void {
       console.log(`favorite harness: ${defaultHarness}`);
 
       console.log(
-        `\nInitialized ${Object.keys(HARNESSES).length} harnesses in ${harnessesBaseDir(root)}.`,
+        `\nInitialized ${Object.keys(HARNESSES).length} harnesses in ${harnessesBaseDir(root)}.`
       );
       console.log(
-        `Container MCP servers ready: ${Object.keys(SHIPPED_MCP_SERVERS).join(', ')} (compose with \`--mcp <name>\`).`,
+        `Container MCP servers ready: ${Object.keys(SHIPPED_MCP_SERVERS).join(', ')} (compose with \`--mcp <name>\`).`
       );
       console.log(
-        `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent).`,
+        `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent).`
       );
       console.log(
-        'Run `e spawn "<prompt>"` to run your favorite harness, or `e spawn <harness> "<prompt>"` to pick one.',
+        'Run `e spawn "<prompt>"` to run your favorite harness, or `e spawn <harness> "<prompt>"` to pick one.'
       );
     });
 }
@@ -121,7 +125,7 @@ export function registerInitCommand(program: Command): void {
 async function promptInit(
   harnessNames: string[],
   current: string,
-  envKeys: string[],
+  envKeys: string[]
 ): Promise<{
   defaultHarness: string;
   envValues: Record<string, string>;
@@ -131,7 +135,11 @@ async function promptInit(
     output: process.stdout,
   });
   try {
-    const defaultHarness = await promptFavoriteHarness(rl, harnessNames, current);
+    const defaultHarness = await promptFavoriteHarness(
+      rl,
+      harnessNames,
+      current
+    );
     const envValues = await promptApiKeys(rl, envKeys);
     return { defaultHarness, envValues };
   } finally {
@@ -143,7 +151,7 @@ async function promptInit(
 async function promptFavoriteHarness(
   rl: readline.Interface,
   names: string[],
-  current: string,
+  current: string
 ): Promise<string> {
   console.log('\nFavorite harness (used when `e spawn` names none):');
   names.forEach((name, i) => {
@@ -161,7 +169,7 @@ async function promptFavoriteHarness(
 /** Prompts for each API key; a blank answer leaves that key unset in `.env`. */
 async function promptApiKeys(
   rl: readline.Interface,
-  keys: string[],
+  keys: string[]
 ): Promise<Record<string, string>> {
   const values: Record<string, string> = {};
   if (keys.length === 0) return values;
@@ -181,7 +189,7 @@ async function promptApiKeys(
 export function parseHarnessChoice(
   input: string,
   names: string[],
-  fallback: string,
+  fallback: string
 ): string | undefined {
   const trimmed = input.trim();
   if (trimmed === '') return fallback;
@@ -201,12 +209,12 @@ export function parseHarnessChoice(
  */
 export function keysToPrompt(
   required: string[],
-  existingEnv: Record<string, string> | undefined,
+  existingEnv: Record<string, string> | undefined
 ): string[] {
   if (existingEnv === undefined) {
     return required;
   }
-  return required.filter((key) => (existingEnv[key] ?? '').trim() === '');
+  return required.filter(key => (existingEnv[key] ?? '').trim() === '');
 }
 
 /**
@@ -217,11 +225,11 @@ export function keysToPrompt(
  */
 export function applyEnvValues(
   content: string,
-  values: Record<string, string>,
+  values: Record<string, string>
 ): string {
   return content
     .split('\n')
-    .map((line) => {
+    .map(line => {
       const match = /^([A-Za-z_][A-Za-z0-9_]*)=$/.exec(line);
       if (!match) return line;
       const value = values[match[1]];
@@ -235,18 +243,22 @@ function writeDockerfile(harness: Harness, root: string | undefined): void {
   writeIfAbsent(
     harnessDir(harness.name, root),
     dockerfilePath(harness.name, root),
-    renderDockerfile(harness.dockerfile),
+    renderDockerfile(harness.dockerfile)
   );
 }
 
 /** Writes a harness's default agent definition (never overwriting a hand-edited one). */
-function writeDefaultAgents(harness: Harness, root: string | undefined, envValues: Record<string, string>): void {
+function writeDefaultAgents(
+  harness: Harness,
+  root: string | undefined,
+  envValues: Record<string, string>
+): void {
   for (const tier of TIERS) {
     writeIfAbsent(
       agentDir(harness.name, root, tier),
       agentFilePath(harness.name, root, tier),
-      renderDefaultAgent(harness.name, tier, envValues),
-    ); 
+      renderDefaultAgent(harness.name, tier, envValues)
+    );
   }
 }
 
@@ -290,20 +302,22 @@ function writeSkills(root: string | undefined): void {
  */
 function writeEnvFile(
   root: string | undefined,
-  values: Record<string, string> = {},
+  values: Record<string, string> = {}
 ): void {
   const file = envFilePath(root);
   fs.mkdirSync(path.dirname(file), { recursive: true });
 
   const sections = envHarnessSections();
-  const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : undefined;
+  const existing = fs.existsSync(file)
+    ? fs.readFileSync(file, 'utf8')
+    : undefined;
 
   let content: string;
   if (existing === undefined) {
     content = renderEnvTemplate({ harnesses: sections });
   } else {
     const missing = sections.filter(
-      (section) => !existing.includes(`# --- ${section.name} ---`),
+      section => !existing.includes(`# --- ${section.name} ---`)
     );
     if (missing.length === 0) {
       content = existing;

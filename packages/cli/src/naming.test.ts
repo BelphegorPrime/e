@@ -13,7 +13,10 @@ test('imageTag lowercases the name (container refs must be lowercase)', () => {
 });
 
 test('runBranchPrefix is e/<agent>/<slug>, without the counter', () => {
-  assert.equal(runBranchPrefix('claudeCode', 'fix-parser'), 'e/claudeCode/fix-parser');
+  assert.equal(
+    runBranchPrefix('claudeCode', 'fix-parser'),
+    'e/claudeCode/fix-parser'
+  );
 });
 
 test('runName derives the branch and the dashed run identity', () => {
@@ -25,5 +28,8 @@ test('runName derives the branch and the dashed run identity', () => {
 test('runName derives the private network and per-sidecar container name', () => {
   const run = runName('demo', 'fix', 1);
   assert.equal(run.network, 'e-demo-fix-1-net');
-  assert.equal(run.sidecarContainer('everything'), 'e-demo-fix-1-mcp-everything');
+  assert.equal(
+    run.sidecarContainer('everything'),
+    'e-demo-fix-1-mcp-everything'
+  );
 });

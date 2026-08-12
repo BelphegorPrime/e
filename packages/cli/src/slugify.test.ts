@@ -26,7 +26,7 @@ test('falls back to "run" when nothing usable remains', () => {
 test('drops stop-words', () => {
   assert.equal(
     slugify('Create a cool feature that improves usability'),
-    'create-cool-feature-improves-usability',
+    'create-cool-feature-improves-usability'
   );
 });
 
@@ -36,17 +36,20 @@ test('falls back to "run" when only stop-words remain', () => {
 
 test('truncates to a word boundary under ~40 chars', () => {
   const slug = slugify(
-    'refactor authentication middleware pipeline configuration loader',
+    'refactor authentication middleware pipeline configuration loader'
   );
-  assert.ok(slug.length <= 40, `expected <=40 chars, got ${slug.length}: ${slug}`);
+  assert.ok(
+    slug.length <= 40,
+    `expected <=40 chars, got ${slug.length}: ${slug}`
+  );
   // Truncation happens at a word boundary: no dangling hyphen, no partial word.
   assert.ok(!slug.endsWith('-'));
   assert.ok(!slug.startsWith('-'));
   assert.ok(
     'refactor-authentication-middleware-pipeline-configuration-loader'.startsWith(
-      slug,
+      slug
     ),
-    `slug "${slug}" should be a whole-word prefix`,
+    `slug "${slug}" should be a whole-word prefix`
   );
 });
 

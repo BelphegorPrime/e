@@ -49,12 +49,12 @@ export function resolveAgent(name: string, deps: ResolveAgentDeps): Agent {
   if (onDisk) {
     if (onDisk.name !== name) {
       throw new Error(
-        `Agent under "${name}" declares a different name "${onDisk.name}"; the directory name is the agent's identity.`,
+        `Agent under "${name}" declares a different name "${onDisk.name}"; the directory name is the agent's identity.`
       );
     }
     if (!deps.harnesses.includes(onDisk.harness)) {
       throw new Error(
-        `Agent "${name}" references unknown harness "${onDisk.harness}". Valid harnesses: ${deps.harnesses.join(', ')}.`,
+        `Agent "${name}" references unknown harness "${onDisk.harness}". Valid harnesses: ${deps.harnesses.join(', ')}.`
       );
     }
     return onDisk;
@@ -66,32 +66,40 @@ export function resolveAgent(name: string, deps: ResolveAgentDeps): Agent {
 
   const agentList = deps.agents.length ? deps.agents.join(', ') : '(none)';
   throw new Error(
-    `Unknown agent or harness "${name}". Available agents: ${agentList}. Harnesses: ${deps.harnesses.join(', ')}.`,
+    `Unknown agent or harness "${name}". Available agents: ${agentList}. Harnesses: ${deps.harnesses.join(', ')}.`
   );
 }
 
 /** The JSON content of a harness's default agent definition, used by `e init`. */
-export function renderDefaultAgent(harnessName: string, tier: Tier, envValues: Record<string, string>): string {
+export function renderDefaultAgent(
+  harnessName: string,
+  tier: Tier,
+  envValues: Record<string, string>
+): string {
   const harness = HARNESSES[harnessName];
-  
-  const agent: Agent = { 
-    name: harnessName, 
+
+  const agent: Agent = {
+    name: harnessName,
     harness: harnessName,
     tier: tier,
     provider: {
-      baseUrl: envValues["OPENAI_BASE_URL"] || '<endpoint-url>',
+      baseUrl: envValues['OPENAI_BASE_URL'] || '<endpoint-url>',
       baseUrlEnv: 'OPENAI_BASE_URL',
       model: 'auto',
       protocol: harness.protocols[0],
       apiKeyEnv: 'OPENAI_API_KEY',
-    }
+    },
   };
 
   return JSON.stringify(agent, null, 2) + '\n';
 }
 
 /** Parses a persisted `agent.json`, or returns undefined if it isn't there. */
-function readAgentFile(name: string, root?: string, tier?: Tier): Agent | undefined {
+function readAgentFile(
+  name: string,
+  root?: string,
+  tier?: Tier
+): Agent | undefined {
   const file = agentFilePath(name, root, tier);
   if (!fs.existsSync(file)) return undefined;
   return parseAgent(JSON.parse(fs.readFileSync(file, 'utf8')), file);
@@ -112,7 +120,7 @@ export function parseAgent(raw: unknown, where: string): Agent {
     typeof parsed.tier !== 'string'
   ) {
     throw new Error(
-      `Invalid agent definition at ${where}: expected { name, harness, tier } strings.`,
+      `Invalid agent definition at ${where}: expected { name, harness, tier } strings.`
     );
   }
   const agent: Agent = {
@@ -126,10 +134,10 @@ export function parseAgent(raw: unknown, where: string): Agent {
   if (parsed.skills !== undefined) {
     if (
       !Array.isArray(parsed.skills) ||
-      !parsed.skills.every((s) => typeof s === 'string')
+      !parsed.skills.every(s => typeof s === 'string')
     ) {
       throw new Error(
-        `Invalid agent definition at ${where}: "skills" must be an array of strings.`,
+        `Invalid agent definition at ${where}: "skills" must be an array of strings.`
       );
     }
     if (parsed.skills.length > 0) agent.skills = parsed.skills;
@@ -147,17 +155,17 @@ function parseProvider(raw: unknown, where: string): Provider {
     typeof p.apiKeyEnv !== 'string'
   ) {
     throw new Error(
-      `Invalid provider in agent definition at ${where}: expected { baseUrl, model, protocol, apiKeyEnv } strings.`,
+      `Invalid provider in agent definition at ${where}: expected { baseUrl, model, protocol, apiKeyEnv } strings.`
     );
   }
   if (!PROTOCOLS.includes(p.protocol as Protocol)) {
     throw new Error(
-      `Invalid provider protocol "${p.protocol}" in agent definition at ${where}. Valid protocols: ${PROTOCOLS.join(', ')}.`,
+      `Invalid provider protocol "${p.protocol}" in agent definition at ${where}. Valid protocols: ${PROTOCOLS.join(', ')}.`
     );
   }
   if (p.defaultModel !== undefined && typeof p.defaultModel !== 'string') {
     throw new Error(
-      `Invalid provider defaultModel in agent definition at ${where}: expected a string.`,
+      `Invalid provider defaultModel in agent definition at ${where}: expected a string.`
     );
   }
   const provider: Provider = {
@@ -174,23 +182,25 @@ function parseProvider(raw: unknown, where: string): Provider {
 /** Lists the persisted agent names under the store's `agents/` directory. */
 function listAgentNames(root?: string): string[] {
   const dir = agentsBaseDir(root);
-  
+
   if (!fs.existsSync(dir)) {
     return [];
   }
-  
+
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name);
 }
 
 /** Reads and parses every persisted agent under the store's `agents/` directory. */
 export function listAgents(root?: string): Agent[] {
-  const agentNames = listAgentNames(root)
-  const agents = []
+  const agentNames = listAgentNames(root);
+  const agents = [];
   for (const tier of TIERS) {
-    const tierAgents = agentNames.map((name) => readAgentFile(name, root, tier)).filter((agent): agent is Agent => agent !== undefined);
+    const tierAgents = agentNames
+      .map(name => readAgentFile(name, root, tier))
+      .filter((agent): agent is Agent => agent !== undefined);
     agents.push(...tierAgents);
   }
   return agents;
@@ -204,25 +214,25 @@ export function listAgents(root?: string): Agent[] {
 export function selectAgentByTier(
   harnessName: string,
   tier: Tier,
-  agents: Agent[],
+  agents: Agent[]
 ): Agent {
-  const forHarness = agents.filter((a) => a.harness === harnessName);
-  const matches = forHarness.filter((a) => a.tier === tier);
+  const forHarness = agents.filter(a => a.harness === harnessName);
+  const matches = forHarness.filter(a => a.tier === tier);
 
   if (matches.length === 1) return matches[0];
 
   if (matches.length === 0) {
     const candidates =
-      forHarness.map((a) => `${a.name} (tier: ${a.tier})`).join(', ') || '(none)';
+      forHarness.map(a => `${a.name} (tier: ${a.tier})`).join(', ') || '(none)';
     throw new Error(
       `No agent for harness "${harnessName}" at tier "${tier}". ` +
-        `Agents for this harness: ${candidates}.`,
+        `Agents for this harness: ${candidates}.`
     );
   }
 
   throw new Error(
     `Ambiguous tier "${tier}" for harness "${harnessName}": it matches ${matches.length} agents ` +
-      `(${matches.map((a) => a.name).join(', ')}). Rename or remove the duplicates so the tier is unique.`,
+      `(${matches.map(a => a.name).join(', ')}). Rename or remove the duplicates so the tier is unique.`
   );
 }
 
@@ -233,7 +243,7 @@ export function selectAgentByTier(
  */
 export function findAgent(name: string, root?: string, tier?: Tier): Agent {
   return resolveAgent(name, {
-    readAgent: (n) => readAgentFile(n, root, tier),
+    readAgent: n => readAgentFile(n, root, tier),
     harnesses: Object.keys(HARNESSES),
     agents: listAgentNames(root),
   });
@@ -245,5 +255,7 @@ export function findAgent(name: string, root?: string, tier?: Tier): Agent {
  * {@link findAgent} still performs the full validation once a target is chosen.
  */
 export function isKnownTarget(name: string, root?: string): boolean {
-  return Object.keys(HARNESSES).includes(name) || listAgentNames(root).includes(name);
+  return (
+    Object.keys(HARNESSES).includes(name) || listAgentNames(root).includes(name)
+  );
 }

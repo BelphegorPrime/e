@@ -66,11 +66,15 @@ export function mcpConfigPath(name: string, root?: string): string {
 
 /** Directory containing a single agent's definition. */
 export function agentDir(name: string, root?: string, tier?: Tier): string {
-  return path.join(agentsBaseDir(root), name, tier || "default");
+  return path.join(agentsBaseDir(root), name, tier || 'default');
 }
 
 /** Absolute path to an agent's definition file. */
-export function agentFilePath(name: string, root?: string, tier?: Tier): string {
+export function agentFilePath(
+  name: string,
+  root?: string,
+  tier?: Tier
+): string {
   return path.join(agentDir(name, root, tier), 'agent.json');
 }
 
@@ -113,7 +117,8 @@ export interface StoreConfig {
 export function resolveConfig(raw: unknown): StoreConfig {
   const parsed = (raw ?? {}) as Partial<StoreConfig>;
   const defaultHarness =
-    typeof parsed.defaultHarness === 'string' && parsed.defaultHarness.length > 0
+    typeof parsed.defaultHarness === 'string' &&
+    parsed.defaultHarness.length > 0
       ? parsed.defaultHarness
       : DEFAULT_HARNESS;
   return { defaultHarness };
@@ -219,6 +224,6 @@ export function findRoot(explicitDir?: string): string | undefined {
     explicitDir,
     cwd: process.cwd(),
     homedir: os.homedir(),
-    hasStore: (dir) => isDir(path.join(dir, '.e')),
+    hasStore: dir => isDir(path.join(dir, '.e')),
   });
 }

@@ -31,7 +31,7 @@ test('resolveAgent: a persisted agent is returned as-is', () => {
   const smart: Agent = { name: 'smart-codex', harness: 'codex', tier: 'smart' };
   const agent = resolveAgent(
     'smart-codex',
-    deps({ readAgent: (n) => (n === 'smart-codex' ? smart : undefined) }),
+    deps({ readAgent: n => (n === 'smart-codex' ? smart : undefined) })
   );
   assert.deepEqual(agent, smart);
 });
@@ -45,7 +45,7 @@ test('resolveAgent: a persisted agent wins over a same-named harness', () => {
   const custom: Agent = { name: 'pi', harness: 'pi', tier: 'smart' };
   const agent = resolveAgent(
     'pi',
-    deps({ readAgent: (n) => (n === 'pi' ? custom : undefined) }),
+    deps({ readAgent: n => (n === 'pi' ? custom : undefined) })
   );
   assert.equal(agent.tier, 'smart');
 });
@@ -53,7 +53,7 @@ test('resolveAgent: a persisted agent wins over a same-named harness', () => {
 test('resolveAgent: an unknown name throws, listing agents and harnesses', () => {
   assert.throws(
     () => resolveAgent('nope', deps({ agents: ['smart-codex'] })),
-    /Unknown agent or harness "nope"[\s\S]*smart-codex[\s\S]*claudeCode/,
+    /Unknown agent or harness "nope"[\s\S]*smart-codex[\s\S]*claudeCode/
   );
 });
 
@@ -61,7 +61,7 @@ test('resolveAgent: a persisted agent referencing an unknown harness throws', ()
   const broken: Agent = { name: 'x', harness: 'ghost', tier: 'default' };
   assert.throws(
     () => resolveAgent('x', deps({ readAgent: () => broken })),
-    /references unknown harness "ghost"/,
+    /references unknown harness "ghost"/
   );
 });
 
@@ -69,24 +69,47 @@ test('resolveAgent: a persisted agent whose name differs from its key throws', (
   const mislabelled: Agent = { name: 'other', harness: 'pi', tier: 'default' };
   assert.throws(
     () => resolveAgent('pi', deps({ readAgent: () => mislabelled })),
-    /declares a different name "other"/,
+    /declares a different name "other"/
   );
 });
 
 test('renderDefaultAgent: valid JSON with name=harness and tier=default', () => {
-  const parsed = JSON.parse(renderDefaultAgent('codex', "default", {})) as Agent;
-  assert.deepEqual(parsed, { name: 'codex', harness: 'codex', tier: 'default' });
+  const parsed = JSON.parse(
+    renderDefaultAgent('codex', 'default', {})
+  ) as Agent;
+  const provider = {
+    apiKeyEnv: 'OPENAI_API_KEY',
+    baseUrl: '<endpoint-url>',
+    baseUrlEnv: 'OPENAI_BASE_URL',
+    model: 'auto',
+    protocol: 'openai-responses',
+  };
+  assert.deepEqual(parsed, {
+    name: 'codex',
+    harness: 'codex',
+    tier: 'default',
+    provider: provider,
+  });
 });
 
 test('renderDefaultAgent: a default agent carries no provider', () => {
-  const parsed = JSON.parse(renderDefaultAgent('codex', "default", {})) as Agent;
-  assert.equal(parsed.provider, undefined);
+  const parsed = JSON.parse(
+    renderDefaultAgent('codex', 'default', {})
+  ) as Agent;
+  const provider = {
+    apiKeyEnv: 'OPENAI_API_KEY',
+    baseUrl: '<endpoint-url>',
+    baseUrlEnv: 'OPENAI_BASE_URL',
+    model: 'auto',
+    protocol: 'openai-responses',
+  };
+  assert.deepStrictEqual(parsed.provider, provider);
 });
 
 test('parseAgent: a definition without a provider parses as-is', () => {
   const agent = parseAgent(
     { name: 'pi', harness: 'pi', tier: 'default' },
-    'test.json',
+    'test.json'
   );
   assert.deepEqual(agent, { name: 'pi', harness: 'pi', tier: 'default' });
 });
@@ -94,21 +117,27 @@ test('parseAgent: a definition without a provider parses as-is', () => {
 test('parseAgent: a valid inline provider is parsed onto the agent', () => {
   const provider: Provider = {
     baseUrl: 'https://gateway.example.com',
+    baseUrlEnv: undefined,
     model: 'claude-opus-5',
     protocol: 'anthropic-messages',
     apiKeyEnv: 'MY_GATEWAY_KEY',
   };
   const agent = parseAgent(
     { name: 'smart-claude', harness: 'claudeCode', tier: 'smart', provider },
-    'test.json',
+    'test.json'
   );
   assert.deepEqual(agent.provider, provider);
 });
 
 test('parseAgent: a string[] of default skills is parsed onto the agent', () => {
   const agent = parseAgent(
-    { name: 'skilled', harness: 'claudeCode', tier: 'default', skills: ['a', 'b'] },
-    'test.json',
+    {
+      name: 'skilled',
+      harness: 'claudeCode',
+      tier: 'default',
+      skills: ['a', 'b'],
+    },
+    'test.json'
   );
   assert.deepEqual(agent.skills, ['a', 'b']);
 });
@@ -116,7 +145,7 @@ test('parseAgent: a string[] of default skills is parsed onto the agent', () => 
 test('parseAgent: an empty skills array is treated as no baked skills', () => {
   const agent = parseAgent(
     { name: 'x', harness: 'pi', tier: 'default', skills: [] },
-    'test.json',
+    'test.json'
   );
   assert.equal(agent.skills, undefined);
 });
@@ -126,16 +155,16 @@ test('parseAgent: a non-string-array skills field throws', () => {
     () =>
       parseAgent(
         { name: 'x', harness: 'pi', tier: 'default', skills: 'a' },
-        'test.json',
+        'test.json'
       ),
-    /"skills" must be an array of strings/,
+    /"skills" must be an array of strings/
   );
 });
 
 test('parseAgent: missing required fields throw', () => {
   assert.throws(
     () => parseAgent({ name: 'x', harness: 'pi' }, 'test.json'),
-    /expected \{ name, harness, tier \} strings/,
+    /expected \{ name, harness, tier \} strings/
   );
 });
 
@@ -147,11 +176,15 @@ test('parseAgent: a provider missing fields throws, naming the source', () => {
           name: 'x',
           harness: 'claudeCode',
           tier: 'default',
-          provider: { baseUrl: 'https://x', model: 'm', protocol: 'anthropic-messages' },
+          provider: {
+            baseUrl: 'https://x',
+            model: 'm',
+            protocol: 'anthropic-messages',
+          },
         },
-        'test.json',
+        'test.json'
       ),
-    /Invalid provider[\s\S]*test\.json[\s\S]*apiKeyEnv/,
+    /Invalid provider[\s\S]*test\.json[\s\S]*apiKeyEnv/
   );
 });
 
@@ -170,9 +203,9 @@ test('parseAgent: an unrecognised provider protocol throws, listing valid protoc
             apiKeyEnv: 'K',
           },
         },
-        'test.json',
+        'test.json'
       ),
-    /Invalid provider protocol "not-a-protocol"[\s\S]*anthropic-messages/,
+    /Invalid provider protocol "not-a-protocol"[\s\S]*anthropic-messages/
   );
 });
 
@@ -212,7 +245,7 @@ test('selectAgentByTier: returns the single agent matching (harness, tier)', () 
 test('selectAgentByTier: no match errors, listing the harness candidates and their tiers', () => {
   assert.throws(
     () => selectAgentByTier('codex', 'review', agents),
-    /No agent for harness "codex" at tier "review"[\s\S]*smart-codex \(tier: smart\)/,
+    /No agent for harness "codex" at tier "review"[\s\S]*smart-codex \(tier: smart\)/
   );
 });
 
@@ -223,7 +256,7 @@ test('selectAgentByTier: an ambiguous tier errors, listing the conflicting agent
   ];
   assert.throws(
     () => selectAgentByTier('codex', 'smart', dupes),
-    /Ambiguous tier "smart"[\s\S]*a, b/,
+    /Ambiguous tier "smart"[\s\S]*a, b/
   );
 });
 

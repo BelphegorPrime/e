@@ -31,7 +31,10 @@ test('resolveSkill returns the source dir for a skill with a SKILL.md', () => {
 
 test('resolveSkill errors listing available skills when the name is unknown', () => {
   const root = makeRoot(['helper']);
-  assert.throws(() => resolveSkill('missing', root), /Unknown skill "missing"[\s\S]*helper/);
+  assert.throws(
+    () => resolveSkill('missing', root),
+    /Unknown skill "missing"[\s\S]*helper/
+  );
 });
 
 test('resolveSkill errors when the directory exists but has no SKILL.md', () => {
@@ -66,7 +69,11 @@ test('parseSkillList flattens comma-separated and repeated values, trims, de-dup
 });
 
 test('skillMountSpec places a skill read-only at <skillsDir>/<name>, outside /workspace', () => {
-  const spec = skillMountSpec('/host/.e/skills/helper', '/root/.claude/skills', 'helper');
+  const spec = skillMountSpec(
+    '/host/.e/skills/helper',
+    '/root/.claude/skills',
+    'helper'
+  );
   assert.deepEqual(spec, {
     host: '/host/.e/skills/helper',
     container: '/root/.claude/skills/helper',

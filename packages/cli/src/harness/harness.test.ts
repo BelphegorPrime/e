@@ -24,7 +24,10 @@ test('claude renderMcpArgs wires multiple endpoints under one mcpServers object'
     { name: 'filesystem', url: 'http://filesystem:8000/mcp' },
   ]);
   const parsed = JSON.parse(args[1]);
-  assert.deepEqual(Object.keys(parsed.mcpServers), ['everything', 'filesystem']);
+  assert.deepEqual(Object.keys(parsed.mcpServers), [
+    'everything',
+    'filesystem',
+  ]);
 });
 
 test('claude renderMcpArgs returns no args when there are no endpoints', () => {
@@ -87,7 +90,8 @@ test('planMcpDelivery wires Claude inline as a flag (--mcp-config args)', () => 
     { name: 'everything', url: 'http://everything:3001/mcp' },
   ];
   const delivery = planMcpDelivery(HARNESSES.claudeCode, endpoints, '');
-  if (delivery.form !== 'flag') return assert.fail(`expected flag, got ${delivery.form}`);
+  if (delivery.form !== 'flag')
+    return assert.fail(`expected flag, got ${delivery.form}`);
   assert.equal(delivery.args[0], '--mcp-config');
   assert.deepEqual(JSON.parse(delivery.args[1]).mcpServers.everything, {
     type: 'http',
@@ -100,7 +104,8 @@ test('planMcpDelivery wires Codex as a file overlay merged onto the baked base c
     { name: 'everything', url: 'http://everything:3001/mcp' },
   ];
   const delivery = planMcpDelivery(HARNESSES.codex, endpoints, 'model = "x"\n');
-  if (delivery.form !== 'file') return assert.fail(`expected file, got ${delivery.form}`);
+  if (delivery.form !== 'file')
+    return assert.fail(`expected file, got ${delivery.form}`);
   // The overlay merges the MCP block onto the base config and mounts at Codex's dir.
   assert.match(delivery.overlay.file.content, /model = "x"/);
   assert.match(delivery.overlay.file.content, /\[mcp_servers\.everything\]/);
@@ -109,14 +114,16 @@ test('planMcpDelivery wires Codex as a file overlay merged onto the baked base c
 
 test('planMcpDelivery reports no delivery for a harness without an MCP client (pi/opencode)', () => {
   assert.deepEqual(planMcpDelivery(HARNESSES.pi, [], ''), { form: 'none' });
-  assert.deepEqual(planMcpDelivery(HARNESSES.opencode, [], ''), { form: 'none' });
+  assert.deepEqual(planMcpDelivery(HARNESSES.opencode, [], ''), {
+    form: 'none',
+  });
 });
 
 test('pi buildCommand selects the e provider and resolved model when one is delivered', () => {
   assert.deepEqual(HARNESSES.pi.buildCommand('do it', 'claude-opus-5'), [
     'pi',
     '-p',
-    'do it',
+    '"do it"',
     '--provider',
     'e',
     '--model',
@@ -125,7 +132,7 @@ test('pi buildCommand selects the e provider and resolved model when one is deli
 });
 
 test('pi buildCommand is plain when no provider/model is configured (default agent)', () => {
-  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', 'do it']);
+  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', '"do it"']);
 });
 
 test('each harness places skills at a path outside /workspace; Claude differs from the shared dir', () => {
@@ -147,6 +154,6 @@ test('harnessCapabilities.skills is the declared skillsDir (all real harnesses s
   // A harness with no skillsDir is gated off (defensive; no such harness ships).
   assert.equal(
     harnessCapabilities({ ...HARNESSES.pi, skillsDir: undefined }).skills,
-    undefined,
+    undefined
   );
 });

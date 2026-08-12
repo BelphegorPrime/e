@@ -1,8 +1,8 @@
 # Harness configuration is rendered by a per-harness adapter and delivered in three layers
 
-Custom providers, MCP wiring, and skills all reduce to one problem: each harness ingests configuration through its *own* mechanism (env vars, config files, CLI flags), while today `e` can deliver only env vars. So `e` owns a **uniform, structured input** — the provider, the selected MCP servers, the selected skills — and each Harness owns an **adapter** that translates it into that harness's native form.
+Custom providers, MCP wiring, and skills all reduce to one problem: each harness ingests configuration through its _own_ mechanism (env vars, config files, CLI flags), while today `e` can deliver only env vars. So `e` owns a **uniform, structured input** — the provider, the selected MCP servers, the selected skills — and each Harness owns an **adapter** that translates it into that harness's native form.
 
-The adapter always renders the effective config and picks the *delivery form* per harness: an inline CLI flag where the CLI supports it (e.g. Claude Code's `--mcp-config`), or a rendered file mounted at the path the CLI reads. Either way the rendered artifact lives **outside `/workspace`**, so `e`-generated config never lands in the Run's branch.
+The adapter always renders the effective config and picks the _delivery form_ per harness: an inline CLI flag where the CLI supports it (e.g. Claude Code's `--mcp-config`), or a rendered file mounted at the path the CLI reads. Either way the rendered artifact lives **outside `/workspace`**, so `e`-generated config never lands in the Run's branch.
 
 Delivery is layered onto the build model of ADR-0004:
 
@@ -12,8 +12,8 @@ Delivery is layered onto the build model of ADR-0004:
 
 Two cross-cutting rules:
 
-- **Credentials are never baked.** An image references only the env var *name*; the value lives in `.e/.env` (collected interactively by `e init`) and is injected at runtime. This extends the credential boundary of ADR-0002.
-- **Protocol is validated against a per-harness set.** A provider's `protocol` is a specific wire API — `openai-chat` (`/v1/chat/completions`), `openai-responses` (`/v1/responses`), `anthropic-messages`, or `google` — and each Harness declares the *set* it speaks (Claude Code: only `anthropic-messages`; Codex: only `openai-responses`; opencode and pi: several). `e` rejects a `provider.protocol` not in `harness.protocols` early. "OpenAI-compatible" is not monolithic: a Chat-Completions-only endpoint will not work with Codex, which speaks only Responses. An `auto` model is resolved from the provider's `/v1/models`, matched against `e`'s curated per-tier preference list, with an explicit fallback. Grounding: `docs/research/harness-cli-facts.md`.
+- **Credentials are never baked.** An image references only the env var _name_; the value lives in `.e/.env` (collected interactively by `e init`) and is injected at runtime. This extends the credential boundary of ADR-0002.
+- **Protocol is validated against a per-harness set.** A provider's `protocol` is a specific wire API — `openai-chat` (`/v1/chat/completions`), `openai-responses` (`/v1/responses`), `anthropic-messages`, or `google` — and each Harness declares the _set_ it speaks (Claude Code: only `anthropic-messages`; Codex: only `openai-responses`; opencode and pi: several). `e` rejects a `provider.protocol` not in `harness.protocols` early. "OpenAI-compatible" is not monolithic: a Chat-Completions-only endpoint will not work with Codex, which speaks only Responses. An `auto` model is resolved from the provider's `/v1/models`, matched against `e`'s curated per-tier preference list, with an explicit fallback. Grounding: `docs/research/harness-cli-facts.md`.
 
 ## Considered Options
 

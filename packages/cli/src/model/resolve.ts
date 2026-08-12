@@ -39,11 +39,11 @@ export function modelsUrl(baseUrl: string): string {
 }
 
 type ModelDataEntry = {
-  id: string,
-  object: string,
-  created: number,
-  owned_by: string
-}
+  id: string;
+  object: string;
+  created: number;
+  owned_by: string;
+};
 
 /**
  * Extracts model ids from a model-list response, purely. Both OpenAI and
@@ -51,7 +51,10 @@ type ModelDataEntry = {
  * skipped rather than throwing, so a surprising body degrades to "no models"
  * (which callers treat as no match) instead of a crash.
  */
-export function parseModelIds(body: unknown, props: { root: string | undefined }): string[] {
+export function parseModelIds(
+  body: unknown,
+  props: { root: string | undefined }
+): string[] {
   const data = (body as { data?: ModelDataEntry[] } | null)?.data;
 
   if (!Array.isArray(data)) {
@@ -61,10 +64,10 @@ export function parseModelIds(body: unknown, props: { root: string | undefined }
   fs.writeFileSync(modelsFilePath(props.root), JSON.stringify(data, null, 2));
 
   return data
-    .map((entry) =>
+    .map(entry =>
       entry && typeof entry === 'object' && typeof entry.id === 'string'
         ? entry.id
-        : undefined,
+        : undefined
     )
     .filter((id): id is string => id !== undefined);
 }
@@ -80,7 +83,7 @@ export function parseModelIds(body: unknown, props: { root: string | undefined }
 export async function resolveProviderModel(
   provider: Provider,
   tier: Tier,
-  lister: ModelsLister,
+  lister: ModelsLister
 ): Promise<ResolvedModel> {
   if (provider.model !== 'auto') {
     return { model: provider.model, fromAuto: false };
@@ -96,13 +99,21 @@ export async function resolveProviderModel(
     throw new Error(
       `Could not resolve an "auto" model: the model list at ${provider.baseUrl} was unreachable ` +
         `(${(err as Error).message}), and no defaultModel is set on the provider.`,
+      {
+        cause: err,
+      }
     );
   }
 
-  console.log({provider})
+  console.log({ provider });
 
   return {
-    model: chooseModel(available, provider.protocol, tier, provider.defaultModel),
+    model: chooseModel(
+      available,
+      provider.protocol,
+      tier,
+      provider.defaultModel
+    ),
     fromAuto: true,
   };
 }
@@ -124,7 +135,7 @@ export class HttpModelsLister implements ModelsLister {
     const key = this.resolveKey(provider.apiKeyEnv);
     if (!key) {
       throw new Error(
-        `Provider API key env "${provider.apiKeyEnv}" is not set in .e/.env, so the model list cannot be fetched.`,
+        `Provider API key env "${provider.apiKeyEnv}" is not set in .e/.env, so the model list cannot be fetched.`
       );
     }
 
@@ -132,15 +143,21 @@ export class HttpModelsLister implements ModelsLister {
     if (!headers) {
       throw new Error(
         `Automatic model resolution is not supported for protocol "${provider.protocol}" yet; ` +
-          `set a concrete model or a defaultModel.`,
+          `set a concrete model or a defaultModel.`
       );
     }
 
-    const baseUrl = (provider.baseUrlEnv ? this.resolveKey(provider.baseUrlEnv) : undefined) || provider.baseUrl;
+    const baseUrl =
+      (provider.baseUrlEnv
+        ? this.resolveKey(provider.baseUrlEnv)
+        : undefined) || provider.baseUrl;
+
     const res = await fetch(modelsUrl(baseUrl), { headers });
+
     if (!res.ok) {
       throw new Error(`model list request failed with HTTP ${res.status}`);
     }
+
     return parseModelIds(await res.json(), { root: this.root });
   }
 }
@@ -148,7 +165,7 @@ export class HttpModelsLister implements ModelsLister {
 /** Per-protocol auth headers for a model-list request, or undefined if unsupported. */
 function authHeaders(
   protocol: Protocol,
-  key: string,
+  key: string
 ): Record<string, string> | undefined {
   switch (protocol) {
     case 'openai-chat':

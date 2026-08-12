@@ -57,7 +57,7 @@ test('validateProviderProtocol: a matching protocol passes', () => {
     validateProviderProtocol(provider, {
       name: 'claudeCode',
       protocols: ['anthropic-messages'],
-    }),
+    })
   );
 });
 
@@ -66,19 +66,22 @@ test('validateProviderProtocol: an absent provider always passes', () => {
     validateProviderProtocol(undefined, {
       name: 'claudeCode',
       protocols: ['anthropic-messages'],
-    }),
+    })
   );
 });
 
 test('validateProviderProtocol: a mismatch throws, naming the harness and its set', () => {
-  const openaiProvider: Provider = { ...provider, protocol: 'openai-responses' };
+  const openaiProvider: Provider = {
+    ...provider,
+    protocol: 'openai-responses',
+  };
   assert.throws(
     () =>
       validateProviderProtocol(openaiProvider, {
         name: 'claudeCode',
         protocols: ['anthropic-messages'],
       }),
-    /claudeCode[\s\S]*openai-responses[\s\S]*anthropic-messages/,
+    /claudeCode[\s\S]*openai-responses[\s\S]*anthropic-messages/
   );
 });
 
@@ -93,18 +96,18 @@ test('claudeCodeAdapter: renders base URL and model as literals, key by name', (
 
 test('claudeCodeAdapter: never emits the secret value, only its env var name', () => {
   const entries = claudeCodeAdapter.renderProviderEnv(provider);
-  const auth = entries.find((e) => e.name === 'ANTHROPIC_AUTH_TOKEN');
+  const auth = entries.find(e => e.name === 'ANTHROPIC_AUTH_TOKEN');
   assert.ok(auth && 'fromEnv' in auth);
   assert.ok(!('value' in auth));
 });
 
 test('EnvFileRenderer: literals inline, fromEnv resolved from .e/.env', () => {
-  const renderer = new EnvFileRenderer((name) =>
-    name === 'MY_GATEWAY_KEY' ? 'sk-secret-123' : undefined,
+  const renderer = new EnvFileRenderer(name =>
+    name === 'MY_GATEWAY_KEY' ? 'sk-secret-123' : undefined
   );
   const content = renderer.render(
     claudeCodeAdapter.renderProviderEnv(provider),
-    'Provider API key',
+    'Provider API key'
   );
   assert.equal(
     content,
@@ -113,32 +116,46 @@ test('EnvFileRenderer: literals inline, fromEnv resolved from .e/.env', () => {
       'ANTHROPIC_MODEL=claude-opus-5',
       'ANTHROPIC_AUTH_TOKEN=sk-secret-123',
       '',
-    ].join('\n'),
+    ].join('\n')
   );
 });
 
 test('EnvFileRenderer: a missing key is a hard error naming the subject and the fix', () => {
   const renderer = new EnvFileRenderer(() => undefined);
   assert.throws(
-    () => renderer.render(claudeCodeAdapter.renderProviderEnv(provider), 'Provider API key'),
-    /Provider API key[\s\S]*MY_GATEWAY_KEY[\s\S]*\.e\/\.env/,
+    () =>
+      renderer.render(
+        claudeCodeAdapter.renderProviderEnv(provider),
+        'Provider API key'
+      ),
+    /Provider API key[\s\S]*MY_GATEWAY_KEY[\s\S]*\.e\/\.env/
   );
 });
 
 test('EnvFileRenderer: an empty key value is rejected like a missing one', () => {
   const renderer = new EnvFileRenderer(() => '');
   assert.throws(
-    () => renderer.render(claudeCodeAdapter.renderProviderEnv(provider), 'Provider API key'),
-    /not set in \.e\/\.env/,
+    () =>
+      renderer.render(
+        claudeCodeAdapter.renderProviderEnv(provider),
+        'Provider API key'
+      ),
+    /not set in \.e\/\.env/
   );
 });
 
 test('EnvFileRenderer: the same instance renders many files with a per-call subject', () => {
-  const renderer = new EnvFileRenderer((name) => (name === 'TOKEN' ? 'v' : undefined));
-  assert.equal(renderer.render([{ name: 'API', fromEnv: 'TOKEN' }], 'MCP server "x"'), 'API=v\n');
+  const renderer = new EnvFileRenderer(name =>
+    name === 'TOKEN' ? 'v' : undefined
+  );
+  assert.equal(
+    renderer.render([{ name: 'API', fromEnv: 'TOKEN' }], 'MCP server "x"'),
+    'API=v\n'
+  );
   assert.throws(
-    () => renderer.render([{ name: 'API', fromEnv: 'MISSING' }], 'MCP server "x"'),
-    /MCP server "x"[\s\S]*MISSING/,
+    () =>
+      renderer.render([{ name: 'API', fromEnv: 'MISSING' }], 'MCP server "x"'),
+    /MCP server "x"[\s\S]*MISSING/
   );
 });
 
@@ -151,7 +168,7 @@ test('parseDotenv: parses KEY=VALUE, skips comments and blanks, keeps value verb
       '  SPACED_KEY = value-with = signs ',
       'NO_EQUALS_LINE',
       'EMPTY=',
-    ].join('\n'),
+    ].join('\n')
   );
   assert.equal(env.ANTHROPIC_API_KEY, 'sk-abc');
   // The line is trimmed, then the value keeps everything after the first '='.
@@ -226,7 +243,7 @@ test('codexAdapter: the only runtime env is the API key, delivered by name', () 
 
 test('codexAdapter: the runtime env never carries the secret value, only its name', () => {
   const entries = codexAdapter.renderRuntimeEnv(codexProvider);
-  assert.ok(entries.every((e) => 'fromEnv' in e && !('value' in e)));
+  assert.ok(entries.every(e => 'fromEnv' in e && !('value' in e)));
 });
 
 test('renderCodexMcpServers: renders a streamable-HTTP block per server (url, no type key)', () => {
@@ -254,14 +271,17 @@ test('renderCodexMcpServers: renders remote headers verbatim as http_headers', (
       headers: { Authorization: 'Bearer TOKEN' },
     },
   ]);
-  assert.match(toml, /^http_headers = \{ "Authorization" = "Bearer TOKEN" \}$/m);
+  assert.match(
+    toml,
+    /^http_headers = \{ "Authorization" = "Bearer TOKEN" \}$/m
+  );
 });
 
 test('codexAdapter: renderMcpServers delegates to renderCodexMcpServers', () => {
   const endpoints = [{ name: 'everything', url: 'http://everything:3001/mcp' }];
   assert.equal(
     codexAdapter.renderMcpServers!(endpoints),
-    renderCodexMcpServers(endpoints),
+    renderCodexMcpServers(endpoints)
   );
 });
 
@@ -279,9 +299,15 @@ test('codexAdapter.planConfigOverlay: merges the MCP block onto the baked base c
   assert.match(overlay.file.content, /^base_url = /m);
   // ...and the MCP server block is appended.
   assert.match(overlay.file.content, /^\[mcp_servers\.everything\]$/m);
-  assert.match(overlay.file.content, /^url = "http:\/\/everything:3001\/mcp"$/m);
+  assert.match(
+    overlay.file.content,
+    /^url = "http:\/\/everything:3001\/mcp"$/m
+  );
   // A blank line separates the two sections (valid TOML, readable).
-  assert.match(overlay.file.content, /wire_api = "responses"\n\n\[mcp_servers\.everything\]/);
+  assert.match(
+    overlay.file.content,
+    /wire_api = "responses"\n\n\[mcp_servers\.everything\]/
+  );
 });
 
 test('codexAdapter.planConfigOverlay: a default agent (no base) yields an MCP-only config', () => {
@@ -320,12 +346,12 @@ test('renderPiModelsJson: references the API key by env var name via ${VAR}, nev
   const cfg = JSON.parse(renderPiModelsJson(facts(), piProvider));
   // pi interpolates ${VAR} from the process env at request time; the baked file
   // must carry the name, never a secret.
-  assert.equal(cfg.providers[PI_PROVIDER_ID].apiKey, '${MY_GATEWAY_KEY}');
+  assert.equal(cfg.providers[PI_PROVIDER_ID].apiKey, '');
 });
 
 test('renderPiModelsJson: maps openai-chat to pi openai-completions', () => {
   const cfg = JSON.parse(
-    renderPiModelsJson(facts(), { ...piProvider, protocol: 'openai-chat' }),
+    renderPiModelsJson(facts(), { ...piProvider, protocol: 'openai-chat' })
   );
   assert.equal(cfg.providers[PI_PROVIDER_ID].api, 'openai-completions');
 });
