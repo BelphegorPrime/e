@@ -40,7 +40,7 @@ harness registry, spawn planning, store, …).
 ### 2. Rendering checks (no container, no gateway)
 
 Exercise the pure rendering directly against the compiled modules — the fastest
-way to *see* what a harness will receive. Run from `packages/cli/`:
+way to _see_ what a harness will receive. Run from `packages/cli/`:
 
 ```bash
 # The pi models.json a provider renders (API key referenced by name, never baked):
@@ -73,7 +73,7 @@ e init
 ```
 
 **b. Put the provider's API key in `~/.e/.env`.** A custom provider references
-its key by the env-var *name* you choose (`apiKeyEnv` below); the value lives
+its key by the env-var _name_ you choose (`apiKeyEnv` below); the value lives
 only here and is injected at runtime, never baked into an image:
 
 ```bash
@@ -137,13 +137,14 @@ e spawn pi-gw --mcp everything "hi"
 
 ## Cheat sheet
 
-| Command | What it does |
-|---|---|
-| `e init` | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config |
-| `e spawn <agent-or-harness> "<prompt>"` | Run an agent/harness against a prompt |
-| `e spawn <harness> --tier <tier> "…"` | Select a harness's agent by tier |
-| `e spawn … --skill <name>` | Add a Skill for this run |
-| `e spawn … --mcp <name>` | Wire an MCP server (rejected for pi) |
-| `e spawn … --rebuild` | Force-rebuild the image (needed after changing a baked provider/model) |
-| `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e` |
+| Command                                        | What it does                                                           |
+| ---------------------------------------------- | ---------------------------------------------------------------------- |
+| `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config  |
+| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt                                  |
+| `e spawn <harness> --tier <tier> "…"`          | Select a harness's agent by tier                                       |
+| `e spawn … --skill <name>`                     | Add a Skill for this run                                               |
+| `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for pi)                                   |
+| `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model) |
+| `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                         |
+
 </content>

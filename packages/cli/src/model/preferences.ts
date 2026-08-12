@@ -18,7 +18,9 @@ export type Tier = (typeof TIERS)[number];
  * provider gets a clear "no preference list" error. It is a {@link Partial}
  * record for exactly that reason.
  */
-export const MODEL_PREFERENCES: Partial<Record<Protocol, Record<Tier, string[]>>> = {
+export const MODEL_PREFERENCES: Partial<
+  Record<Protocol, Record<Tier, string[]>>
+> = {
   'anthropic-messages': {
     default: [],
     smart: ['anthropic.claude-opus-5', 'anthropic.claude-sonnet-5'],
@@ -60,11 +62,11 @@ export function chooseModel(
   available: string[],
   protocol: Protocol,
   tier: Tier,
-  defaultModel?: string,
+  defaultModel?: string
 ): string {
   const preferred = MODEL_PREFERENCES[protocol]?.[tier] ?? [];
   for (const pref of preferred) {
-    const match = available.find((id) => matchesPreferred(id, pref));
+    const match = available.find(id => matchesPreferred(id, pref));
     if (match) return match;
   }
   if (defaultModel) return defaultModel;
@@ -72,13 +74,13 @@ export function chooseModel(
   if (preferred.length === 0) {
     throw new Error(
       `No model preference list for tier "${tier}" under protocol "${protocol}". ` +
-        `Use a curated tier (smart, fast, cheap, review), a concrete model, or set the provider's defaultModel.`,
+        `Use a curated tier (smart, fast, cheap, review), a concrete model, or set the provider's defaultModel.`
     );
   }
   throw new Error(
     `No preferred model for tier "${tier}" (${protocol}) is available at the endpoint. ` +
       `Tried: ${preferred.join(', ')}. Available: ${available.join(', ') || '(none)'}. ` +
-      `Set the provider's defaultModel or pick a concrete model.`,
+      `Set the provider's defaultModel or pick a concrete model.`
   );
 }
 

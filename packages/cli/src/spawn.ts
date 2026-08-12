@@ -9,7 +9,12 @@ import {
   type SpawnFacts,
 } from './spawnPlan';
 import { resolveHarness, HARNESSES } from './harness/index';
-import { findAgent, isKnownTarget, selectAgentByTier, listAgents } from './agent';
+import {
+  findAgent,
+  isKnownTarget,
+  selectAgentByTier,
+  listAgents,
+} from './agent';
 import { parseDotenv } from './harness/adapter';
 import { resolveSkill, parseSkillList } from './skill/index';
 import { resolveProviderModel, HttpModelsLister } from './model/resolve';
@@ -35,13 +40,13 @@ export function resolveRuntime(preferred?: string): ContainerRuntime {
     const command = RUNTIMES[preferred];
     if (!command) {
       throw new Error(
-        `Invalid runtime "${preferred}". Valid values: ${Object.keys(RUNTIMES).join(', ')}.`,
+        `Invalid runtime "${preferred}". Valid values: ${Object.keys(RUNTIMES).join(', ')}.`
       );
     }
     const runtime = new ContainerRuntime(command);
     if (!runtime.isAvailable()) {
       throw new Error(
-        `Requested runtime "${preferred}" is not installed or not on PATH.`,
+        `Requested runtime "${preferred}" is not installed or not on PATH.`
       );
     }
     return runtime;
@@ -55,7 +60,7 @@ export function resolveRuntime(preferred?: string): ContainerRuntime {
   }
 
   throw new Error(
-    `No container runtime found. Install docker or podman, or make sure it is on PATH.`,
+    `No container runtime found. Install docker or podman, or make sure it is on PATH.`
   );
 }
 
@@ -96,7 +101,7 @@ function resolveMcpServer(name: string, root: string | undefined): McpServer {
   const list = available.length ? available.join(', ') : '(none)';
   throw new Error(
     `Unknown MCP server "${name}". Available: ${list}. ` +
-      `Add one under .e/mcp/<name>/ (an mcp.json, plus a Dockerfile for a container server) or run \`e init\`.`,
+      `Add one under .e/mcp/<name>/ (an mcp.json, plus a Dockerfile for a container server) or run \`e init\`.`
   );
 }
 
@@ -112,7 +117,7 @@ function resolveMcpServer(name: string, root: string | undefined): McpServer {
 function gatherSpawnFacts(
   target: string | undefined,
   prompt: string[],
-  opts: SpawnCommandOptions,
+  opts: SpawnCommandOptions
 ): SpawnFacts {
   const root = findRoot(opts.dir);
   const defaultHarness = readConfig(root).defaultHarness;
@@ -125,8 +130,8 @@ function gatherSpawnFacts(
     prompt,
     defaultHarness,
     isKnownTarget: opts.tier
-      ? (name) => Object.keys(HARNESSES).includes(name)
-      : (name) => isKnownTarget(name, root),
+      ? name => Object.keys(HARNESSES).includes(name)
+      : name => isKnownTarget(name, root),
   });
   const agent = opts.tier
     ? selectAgentByTier(resolved.agentTarget, opts.tier, listAgents(root))
@@ -141,7 +146,7 @@ function gatherSpawnFacts(
   const storeEnv = needStoreEnv ? loadStoreEnv(baseEnvPath) : {};
 
   // Resolve requested MCP servers and skills from disk now (existence checked).
-  const mcpServers = mcpNames.map((name) => resolveMcpServer(name, root));
+  const mcpServers = mcpNames.map(name => resolveMcpServer(name, root));
   const perRunSkills = parseSkillList(opts.skill ?? []);
   const bakedSkills = agent.skills ?? [];
   for (const name of new Set([...bakedSkills, ...perRunSkills])) {
@@ -165,7 +170,9 @@ function gatherSpawnFacts(
     rm: opts.rm,
     // Layer the shared base only when it exists on disk (ADR-0006).
     baseEnvFile:
-      baseEnvPath !== undefined && fs.existsSync(baseEnvPath) ? baseEnvPath : undefined,
+      baseEnvPath !== undefined && fs.existsSync(baseEnvPath)
+        ? baseEnvPath
+        : undefined,
     userEnvFile: opts.envFile,
     dirOpt: opts.dir,
   };
@@ -177,66 +184,61 @@ export function registerSpawnCommand(program: Command): void {
     .description('Build and run a coding harness in a container')
     .argument(
       '[target]',
-      `agent or harness to run (harnesses: ${Object.keys(HARNESSES).join(', ')})`,
+      `agent or harness to run (harnesses: ${Object.keys(HARNESSES).join(', ')})`
     )
     .argument('[prompt...]', 'instruction passed to the harness')
     .option(
       '--runtime <runtime>',
-      'container runtime to use (docker or podman)',
+      'container runtime to use (docker or podman)'
     )
-    .option('--name <name>', 'name for the run (overrides the prompt-derived slug)')
+    .option(
+      '--name <name>',
+      'name for the run (overrides the prompt-derived slug)'
+    )
     .option('--env-file <path>', 'load environment variables from a file')
     .option(
       '--tier <tier>',
-      'select the agent for a harness by tier (e.g. smart, fast, cheap, review)',
+      'select the agent for a harness by tier (e.g. smart, fast, cheap, review)'
     )
     .option(
       '--mcp <name...>',
-      'MCP server(s) to wire for this run — container (sidecar) or remote (hosted URL); repeatable',
+      'MCP server(s) to wire for this run — container (sidecar) or remote (hosted URL); repeatable'
     )
     .option(
       '--skill <name...>',
-      'Skill(s) to add for this run, from .e/skills (comma-separated or repeated)',
+      'Skill(s) to add for this run, from .e/skills (comma-separated or repeated)'
     )
     .option('--rebuild', 'force a rebuild of the harness image', false)
     .option(
       '--dir <path>',
-      'root directory holding the harness Dockerfiles (default: home directory)',
+      'root directory holding the harness Dockerfiles (default: home directory)'
     )
-    .option(
-      '-a, --attach',
-      'run the container in the foreground',
-      true,
-    )
+    .option('-a, --attach', 'run the container in the foreground', true)
     .option(
       '--no-attach',
-      'run detached (unsupported with per-run worktrees; run in the foreground)',
+      'run detached (unsupported with per-run worktrees; run in the foreground)'
     )
-    .option(
-      '--rm',
-      'automatically remove the container when it exits',
-      true,
-    )
+    .option('--rm', 'automatically remove the container when it exits', true)
     .option('--no-rm', 'keep the container after it exits')
     .option(
       '--rm-worktree',
       'automatically remove the worktree when it exits',
-      true,
+      true
     )
     .option('--no-rm-worktree', 'keep the worktree after container exits')
     .option(
       '-p, --port <port...>',
-      'publish a container port, e.g. 8080:80 (repeatable)',
+      'publish a container port, e.g. 8080:80 (repeatable)'
     )
     .option(
       '-e, --env <env...>',
-      'set an environment variable, e.g. KEY=value (repeatable)',
+      'set an environment variable, e.g. KEY=value (repeatable)'
     )
     .action(
       async (
         target: string | undefined,
         prompt: string[],
-        opts: SpawnCommandOptions,
+        opts: SpawnCommandOptions
       ) => {
         // The whole spawn: gather facts (I/O) → validate (pure, fail-fast) →
         // resolve the model (the one remaining I/O) → plan (pure) → execute. One
@@ -253,7 +255,10 @@ export function registerSpawnCommand(program: Command): void {
             ? await resolveProviderModel(
                 facts.agent.provider,
                 facts.agent.tier,
-                new HttpModelsLister((name) => facts.storeEnv[name], findRoot(opts.dir)),
+                new HttpModelsLister(
+                  name => facts.storeEnv[name],
+                  findRoot(opts.dir)
+                )
               )
             : undefined;
 
@@ -290,6 +295,6 @@ export function registerSpawnCommand(program: Command): void {
           console.error((err as Error).message);
           process.exit(1);
         }
-      },
+      }
     );
 }

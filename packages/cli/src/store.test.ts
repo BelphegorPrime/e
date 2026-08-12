@@ -38,7 +38,7 @@ test('resolveRoot: walk-up finds the nearest ancestor with a store', () => {
     explicitDir: undefined,
     cwd: '/home/user/proj/packages/cli',
     homedir: '/home/user',
-    hasStore: (dir) => dir === withStore,
+    hasStore: dir => dir === withStore,
   });
   assert.equal(root, withStore);
 });
@@ -48,7 +48,7 @@ test('resolveRoot: falls back to home when no ancestor has a store', () => {
     explicitDir: undefined,
     cwd: '/home/user/proj/packages/cli',
     homedir: '/home/user',
-    hasStore: (dir) => dir === '/home/user',
+    hasStore: dir => dir === '/home/user',
   });
   assert.equal(root, '/home/user');
 });
@@ -68,7 +68,7 @@ test('resolveRoot: cwd itself is checked before its ancestors', () => {
     explicitDir: undefined,
     cwd: '/a/b/c',
     homedir: '/home/user',
-    hasStore: (dir) => dir === '/a/b/c',
+    hasStore: dir => dir === '/a/b/c',
   });
   assert.equal(root, '/a/b/c');
 });
@@ -77,7 +77,9 @@ test('resolveRoot: cwd itself is checked before its ancestors', () => {
 // a missing file), and it fills defaults for anything absent or malformed.
 
 test('resolveConfig: a missing config yields the built-in defaults', () => {
-  assert.deepEqual(resolveConfig(undefined), { defaultHarness: DEFAULT_HARNESS });
+  assert.deepEqual(resolveConfig(undefined), {
+    defaultHarness: DEFAULT_HARNESS,
+  });
 });
 
 test('resolveConfig: an explicit defaultHarness is kept', () => {
@@ -87,10 +89,13 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
 });
 
 test('resolveConfig: a blank or non-string defaultHarness falls back to the default', () => {
-  assert.equal(resolveConfig({ defaultHarness: '' }).defaultHarness, DEFAULT_HARNESS);
+  assert.equal(
+    resolveConfig({ defaultHarness: '' }).defaultHarness,
+    DEFAULT_HARNESS
+  );
   assert.equal(
     resolveConfig({ defaultHarness: 42 as unknown as string }).defaultHarness,
-    DEFAULT_HARNESS,
+    DEFAULT_HARNESS
   );
   assert.equal(resolveConfig({}).defaultHarness, DEFAULT_HARNESS);
 });
@@ -98,7 +103,7 @@ test('resolveConfig: a blank or non-string defaultHarness falls back to the defa
 test('serializeConfig: pretty JSON with a trailing newline', () => {
   assert.equal(
     serializeConfig({ defaultHarness: 'pi' }),
-    '{\n  "defaultHarness": "pi"\n}\n',
+    '{\n  "defaultHarness": "pi"\n}\n'
   );
 });
 

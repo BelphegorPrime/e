@@ -7,9 +7,31 @@ const MAX_SLUG_LENGTH = 40;
  * no recognition value to a branch name.
  */
 const STOP_WORDS = new Set([
-  'a', 'an', 'and', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'in', 'into',
-  'is', 'it', 'its', 'of', 'on', 'or', 'that', 'the', 'these', 'this', 'those',
-  'to', 'with',
+  'a',
+  'an',
+  'and',
+  'as',
+  'at',
+  'be',
+  'but',
+  'by',
+  'for',
+  'from',
+  'in',
+  'into',
+  'is',
+  'it',
+  'its',
+  'of',
+  'on',
+  'or',
+  'that',
+  'the',
+  'these',
+  'this',
+  'those',
+  'to',
+  'with',
 ]);
 
 /**
@@ -23,7 +45,7 @@ export function slugify(prompt: string): string {
   const words = prompt
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((word) => word.length > 0 && !STOP_WORDS.has(word));
+    .filter(word => word.length > 0 && !STOP_WORDS.has(word));
 
   if (words.length === 0) return 'run';
 

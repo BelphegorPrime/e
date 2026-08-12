@@ -1,5 +1,5 @@
 # Dependencies
-/node_modules
+node_modules
 /.pnp
 .pnp.js
 
@@ -41,5 +41,11 @@ yarn-error.log
 
 # Docker
 .docker/
+
+# ESLint cache
+.eslintcache
+
+# Prettier cache
+.prettier-cache
 
 .e

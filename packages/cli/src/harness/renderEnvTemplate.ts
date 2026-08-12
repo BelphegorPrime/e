@@ -50,13 +50,13 @@ const globalRequiredEnv = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 
 /** Renders the shared `.env` template from {@link TEMPLATE}. */
 export function renderEnvTemplate(p: EnvTemplateParams): string {
-  const harnesses = p.harnesses.map((h) => ({
+  const harnesses = p.harnesses.map(h => ({
     name: h.name,
-    env: h.env.filter((e) => !globalRequiredEnv.includes(e)),
+    env: h.env.filter(e => !globalRequiredEnv.includes(e)),
   }));
 
   return Mustache.render(TEMPLATE, {
     includeHeader: p.includeHeader ?? true,
-    harnesses: harnesses.filter((h) => h.env.length > 0),
+    harnesses: harnesses.filter(h => h.env.length > 0),
   });
 }

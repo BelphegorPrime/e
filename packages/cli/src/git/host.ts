@@ -29,12 +29,12 @@ export class HostGit implements Git {
         `refs/heads/${prefix}-*`,
         `refs/remotes/*/${prefix}-*`,
       ],
-      `list run branches for ${prefix}`,
+      `list run branches for ${prefix}`
     );
     return out
       .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
   }
 
   addWorktree(spec: WorktreeSpec): void {
@@ -42,30 +42,33 @@ export class HostGit implements Git {
     // refuses if `path` is non-empty — giving us atomic create for free.
     this.run(
       ['worktree', 'add', '-b', spec.branch, spec.path, spec.base],
-      `create worktree for ${spec.branch}`,
+      `create worktree for ${spec.branch}`
     );
   }
 
   isDirty(worktreePath: string): boolean {
     const out = this.capture(
       ['-C', worktreePath, 'status', '--porcelain'],
-      `check status of ${worktreePath}`,
+      `check status of ${worktreePath}`
     );
     return out.trim().length > 0;
   }
 
   commitAll(worktreePath: string, message: string): void {
-    this.run(['-C', worktreePath, 'add', '-A'], `stage changes in ${worktreePath}`);
+    this.run(
+      ['-C', worktreePath, 'add', '-A'],
+      `stage changes in ${worktreePath}`
+    );
     this.run(
       ['-C', worktreePath, 'commit', '-m', message],
-      `commit changes in ${worktreePath}`,
+      `commit changes in ${worktreePath}`
     );
   }
 
   hasCommitsBeyondBase(branch: string, base: string): boolean {
     const out = this.capture(
       ['rev-list', '--count', `${base}..${branch}`],
-      `count commits on ${branch} beyond ${base}`,
+      `count commits on ${branch} beyond ${base}`
     );
     return Number(out.trim()) > 0;
   }
@@ -80,7 +83,7 @@ export class HostGit implements Git {
     // is untouched.
     this.run(
       ['worktree', 'remove', '--force', worktreePath],
-      `remove worktree ${worktreePath}`,
+      `remove worktree ${worktreePath}`
     );
   }
 
@@ -94,7 +97,7 @@ export class HostGit implements Git {
     const result = spawnSync('git', args, { encoding: 'utf8', shell: false });
     if (result.error) {
       throw new Error(
-        `Failed to start git (${description}): ${result.error.message}`,
+        `Failed to start git (${description}): ${result.error.message}`
       );
     }
     if (result.status !== 0) {

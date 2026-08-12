@@ -40,7 +40,7 @@ import { skillDir } from './store';
  */
 export function orderEnvFiles(
   baseEnvPath: string | undefined,
-  userEnvFile: string | undefined,
+  userEnvFile: string | undefined
 ): string[] {
   const files: string[] = [];
   if (baseEnvPath !== undefined) files.push(baseEnvPath);
@@ -185,14 +185,14 @@ export function validateSpawn(facts: SpawnFacts): void {
 
   if (agent.provider && caps.provider === 'none') {
     throw new Error(
-      `Harness "${harness.name}" has no config adapter, so it cannot deliver a provider yet.`,
+      `Harness "${harness.name}" has no config adapter, so it cannot deliver a provider yet.`
     );
   }
 
   if (facts.mcpServers.length > 0 && caps.mcp === 'none') {
     throw new Error(
       `Harness "${harness.name}" has no MCP client, so it cannot use --mcp. ` +
-        `Use a harness that supports MCP (e.g. claudeCode or codex).`,
+        `Use a harness that supports MCP (e.g. claudeCode or codex).`
     );
   }
 
@@ -206,7 +206,7 @@ export function validateSpawn(facts: SpawnFacts): void {
     ].filter(Boolean);
     throw new Error(
       `Harness "${harness.name}" does not support Skills, so it cannot receive ` +
-        `${kinds.join(' or ')} skills.`,
+        `${kinds.join(' or ')} skills.`
     );
   }
 }
@@ -220,10 +220,10 @@ export function validateSpawn(facts: SpawnFacts): void {
  */
 export function renderMcpCredentials(
   server: McpServer,
-  renderer: EnvFileRenderer,
+  renderer: EnvFileRenderer
 ): string | undefined {
   if (server.requiredEnv.length === 0) return undefined;
-  const entries: ContainerEnv[] = server.requiredEnv.map((name) => ({
+  const entries: ContainerEnv[] = server.requiredEnv.map(name => ({
     name,
     fromEnv: name,
   }));
@@ -270,18 +270,29 @@ export interface SpawnPlan {
  * thing is testable without a runtime, a container, or the network. Throws on a
  * missing credential (via {@link renderMcpCredentials}/{@link EnvFileRenderer}).
  */
-export function planSpawn(facts: SpawnFacts, resolvedModel?: ResolvedModel): SpawnPlan {
+export function planSpawn(
+  facts: SpawnFacts,
+  resolvedModel?: ResolvedModel
+): SpawnPlan {
   const { agent, harness, storeEnv, root } = facts;
   // One renderer, bound to the store's secrets, for every credential env-file this
   // spawn writes — the provider's and each MCP server's (ADR-0008).
-  const envRenderer = new EnvFileRenderer((name) => storeEnv[name]);
+  const envRenderer = new EnvFileRenderer(name => storeEnv[name]);
 
   // Provider delivery (env harness → runtime env; file harness → baked config).
   let delivery: ProviderDelivery | undefined;
   let providerEnvContent: string | undefined;
   if (agent.provider && harness.adapter && resolvedModel) {
-    delivery = planProviderDelivery(facts, harness.adapter, agent.provider, resolvedModel);
-    providerEnvContent = envRenderer.render(delivery.runtimeEnv, 'Provider API key');
+    delivery = planProviderDelivery(
+      facts,
+      harness.adapter,
+      agent.provider,
+      resolvedModel
+    );
+    providerEnvContent = envRenderer.render(
+      delivery.runtimeEnv,
+      'Provider API key'
+    );
   }
 
   // MCP: split by transport, render credentials, decide the delivery form.
@@ -311,7 +322,7 @@ export function planSpawn(facts: SpawnFacts, resolvedModel?: ResolvedModel): Spa
     const mcp = planMcpDelivery(
       harness,
       selection.endpoints,
-      delivery?.bakedConfig?.file.content ?? '',
+      delivery?.bakedConfig?.file.content ?? ''
     );
     if (mcp.form === 'flag') {
       mcpArgs = mcp.args;
@@ -324,7 +335,9 @@ export function planSpawn(facts: SpawnFacts, resolvedModel?: ResolvedModel): Spa
   const skillMounts: Mount[] = [];
   if (facts.perRunSkills.length > 0 && harness.skillsDir) {
     for (const name of facts.perRunSkills) {
-      skillMounts.push(skillMountSpec(skillDir(name, root), harness.skillsDir, name));
+      skillMounts.push(
+        skillMountSpec(skillDir(name, root), harness.skillsDir, name)
+      );
     }
   }
 

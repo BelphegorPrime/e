@@ -31,7 +31,7 @@ function buildImages(
   facts: SpawnFacts,
   plan: SpawnPlan,
   runtime: ContainerRuntime,
-  scratch: RunScratch,
+  scratch: RunScratch
 ): string {
   const { harness, root, rebuild } = facts;
   // Preserve the short-circuit: with --rebuild the decision is always `build`,
@@ -41,10 +41,11 @@ function buildImages(
   const action = decideImageAction({ rebuild, imageExists, initialized });
   if (action === 'not-initialized') {
     throw new Error(
-      `Harness "${harness.name}" is not initialized. Run \`e init\`${facts.dirOpt ? ` --dir ${facts.dirOpt}` : ''} first.`,
+      `Harness "${harness.name}" is not initialized. Run \`e init\`${facts.dirOpt ? ` --dir ${facts.dirOpt}` : ''} first.`
     );
   }
-  if (action === 'build') runtime.build(harness.imageTag, harnessDir(harness.name, root));
+  if (action === 'build')
+    runtime.build(harness.imageTag, harnessDir(harness.name, root));
 
   let tag = harness.imageTag;
   const agentImagePlan = plan.agentImagePlan;
@@ -90,7 +91,7 @@ function buildImages(
 export async function executeSpawn(
   facts: SpawnFacts,
   plan: SpawnPlan,
-  deps: ExecuteSpawnDeps,
+  deps: ExecuteSpawnDeps
 ): Promise<RunSpawnResult> {
   const { git, runtime, scratch } = deps;
 
@@ -127,9 +128,11 @@ export async function executeSpawn(
   }
 
   // A sidecar that needs credentials gets its own env-file (never the agent's).
-  const sidecars: SidecarPlan[] = plan.sidecars.map((sc) => {
+  const sidecars: SidecarPlan[] = plan.sidecars.map(sc => {
     const creds = plan.sidecarCredentials[sc.alias];
-    return creds ? { ...sc, envFile: [scratch.file(`${sc.alias}.env`, creds)] } : sc;
+    return creds
+      ? { ...sc, envFile: [scratch.file(`${sc.alias}.env`, creds)] }
+      : sc;
   });
 
   // The Codex config overlay and the per-run skill mounts are both read-only
@@ -138,9 +141,13 @@ export async function executeSpawn(
   if (plan.configOverlay) {
     const hostFile = scratch.file(
       plan.configOverlay.file.fileName,
-      plan.configOverlay.file.content,
+      plan.configOverlay.file.content
     );
-    configMounts.push({ host: hostFile, container: plan.configOverlay.mountTo, ro: true });
+    configMounts.push({
+      host: hostFile,
+      container: plan.configOverlay.mountTo,
+      ro: true,
+    });
   }
   configMounts.push(...plan.skillMounts);
 
@@ -163,6 +170,6 @@ export async function executeSpawn(
       sidecars,
       mcpArgs: plan.mcpArgs,
       configMounts,
-    },
+    }
   );
 }

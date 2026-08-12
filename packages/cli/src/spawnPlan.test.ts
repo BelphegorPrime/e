@@ -49,7 +49,9 @@ test('orderEnvFiles: no files when neither is present', () => {
 });
 
 test('orderEnvFiles: base only', () => {
-  assert.deepEqual(orderEnvFiles('/root/.e/.env', undefined), ['/root/.e/.env']);
+  assert.deepEqual(orderEnvFiles('/root/.e/.env', undefined), [
+    '/root/.e/.env',
+  ]);
 });
 
 test('orderEnvFiles: user file only', () => {
@@ -73,13 +75,28 @@ const cases: Array<{
   initialized: boolean;
   expected: 'skip' | 'build' | 'not-initialized';
 }> = [
-  { rebuild: false, imageExists: false, initialized: false, expected: 'not-initialized' },
+  {
+    rebuild: false,
+    imageExists: false,
+    initialized: false,
+    expected: 'not-initialized',
+  },
   { rebuild: false, imageExists: false, initialized: true, expected: 'build' },
   { rebuild: false, imageExists: true, initialized: false, expected: 'skip' },
   { rebuild: false, imageExists: true, initialized: true, expected: 'skip' },
-  { rebuild: true, imageExists: false, initialized: false, expected: 'not-initialized' },
+  {
+    rebuild: true,
+    imageExists: false,
+    initialized: false,
+    expected: 'not-initialized',
+  },
   { rebuild: true, imageExists: false, initialized: true, expected: 'build' },
-  { rebuild: true, imageExists: true, initialized: false, expected: 'not-initialized' },
+  {
+    rebuild: true,
+    imageExists: true,
+    initialized: false,
+    expected: 'not-initialized',
+  },
   { rebuild: true, imageExists: true, initialized: true, expected: 'build' },
 ];
 
@@ -87,7 +104,7 @@ for (const { rebuild, imageExists, initialized, expected } of cases) {
   test(`decideImageAction: rebuild=${rebuild} imageExists=${imageExists} initialized=${initialized} -> ${expected}`, () => {
     assert.equal(
       decideImageAction({ rebuild, imageExists, initialized }),
-      expected,
+      expected
     );
   });
 }
@@ -104,7 +121,7 @@ test('resolveSpawnTarget: no target runs the favorite with an empty prompt', () 
       defaultHarness: 'pi',
       isKnownTarget: known(['pi', 'codex']),
     }),
-    { agentTarget: 'pi', prompt: [] },
+    { agentTarget: 'pi', prompt: [] }
   );
 });
 
@@ -116,7 +133,7 @@ test('resolveSpawnTarget: a known target keeps existing behavior (target + promp
       defaultHarness: 'pi',
       isKnownTarget: known(['pi', 'codex']),
     }),
-    { agentTarget: 'codex', prompt: ['fix', 'the', 'bug'] },
+    { agentTarget: 'codex', prompt: ['fix', 'the', 'bug'] }
   );
 });
 
@@ -129,7 +146,7 @@ test('resolveSpawnTarget: an unknown first arg is part of the prompt, run on the
       defaultHarness: 'pi',
       isKnownTarget: known(['pi', 'codex']),
     }),
-    { agentTarget: 'pi', prompt: ['fix the bug'] },
+    { agentTarget: 'pi', prompt: ['fix the bug'] }
   );
 });
 
@@ -142,7 +159,7 @@ test('resolveSpawnTarget: an unquoted unknown prompt keeps all its words in orde
       defaultHarness: 'pi',
       isKnownTarget: known(['pi', 'codex']),
     }),
-    { agentTarget: 'pi', prompt: ['fix', 'the', 'bug'] },
+    { agentTarget: 'pi', prompt: ['fix', 'the', 'bug'] }
   );
 });
 
@@ -266,7 +283,7 @@ test('planSpawn: a file-MCP harness (codex) renders a config overlay, no mcpArgs
 
 test('planSpawn: a sidecar credential is rendered from storeEnv', () => {
   const plan = planSpawn(
-    facts({ mcpServers: [secretMcp], storeEnv: { SECRET_TOKEN: 'tok' } }),
+    facts({ mcpServers: [secretMcp], storeEnv: { SECRET_TOKEN: 'tok' } })
   );
   assert.equal(plan.sidecarCredentials.secret, 'SECRET_TOKEN=tok\n');
 });
@@ -274,12 +291,15 @@ test('planSpawn: a sidecar credential is rendered from storeEnv', () => {
 test('planSpawn: a missing sidecar credential is a hard error', () => {
   assert.throws(
     () => planSpawn(facts({ mcpServers: [secretMcp], storeEnv: {} })),
-    /MCP server "secret"[\s\S]*SECRET_TOKEN[\s\S]*not set in \.e\/\.env/,
+    /MCP server "secret"[\s\S]*SECRET_TOKEN[\s\S]*not set in \.e\/\.env/
   );
 });
 
 test('planSpawn: baked skills go to the derived image; per-run skills become mounts', () => {
-  const f = facts({ bakedSkills: ['baked-skill'], perRunSkills: ['run-skill'] });
+  const f = facts({
+    bakedSkills: ['baked-skill'],
+    perRunSkills: ['run-skill'],
+  });
   const plan = planSpawn(f);
   assert.deepEqual(plan.agentImagePlan?.skillNames, ['baked-skill']);
   assert.equal(plan.skillMounts.length, 1);

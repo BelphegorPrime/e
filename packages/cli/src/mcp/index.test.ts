@@ -15,7 +15,7 @@ test('parseMcpServer accepts a minimal container server', () => {
   const server = parseMcpServer(
     { transport: 'container', port: 3001 },
     'everything',
-    'mcp.json',
+    'mcp.json'
   ) as ContainerMcpServer;
   assert.equal(server.name, 'everything');
   assert.equal(server.transport, 'container');
@@ -33,7 +33,7 @@ test('parseMcpServer keeps requiredEnv and an optional healthcheck', () => {
       healthcheck: ['node', '-e', 'process.exit(0)'],
     },
     'gh',
-    'mcp.json',
+    'mcp.json'
   ) as ContainerMcpServer;
   assert.deepEqual(server.requiredEnv, ['GITHUB_TOKEN']);
   assert.deepEqual(server.healthcheck, ['node', '-e', 'process.exit(0)']);
@@ -42,18 +42,19 @@ test('parseMcpServer keeps requiredEnv and an optional healthcheck', () => {
 test('parseMcpServer rejects a missing or non-numeric port', () => {
   assert.throws(
     () => parseMcpServer({ transport: 'container' }, 'x', 'mcp.json'),
-    /port/,
+    /port/
   );
   assert.throws(
-    () => parseMcpServer({ transport: 'container', port: 'nope' }, 'x', 'mcp.json'),
-    /port/,
+    () =>
+      parseMcpServer({ transport: 'container', port: 'nope' }, 'x', 'mcp.json'),
+    /port/
   );
 });
 
 test('parseMcpServer rejects an unknown transport', () => {
   assert.throws(
     () => parseMcpServer({ transport: 'stdio', port: 3001 }, 'x', 'mcp.json'),
-    /transport must be "container" or "remote"/,
+    /transport must be "container" or "remote"/
   );
 });
 
@@ -66,18 +67,21 @@ test('parseMcpServer accepts a remote server with url + optional headers', () =>
       requiredEnv: ['EXAMPLE_TOKEN'],
     },
     'example',
-    'mcp.json',
+    'mcp.json'
   ) as RemoteMcpServer;
   assert.equal(server.transport, 'remote');
   assert.equal(server.url, 'https://mcp.example.com/mcp');
-  assert.deepEqual(server.headers, { Authorization: 'Bearer ${EXAMPLE_TOKEN}' });
+  assert.deepEqual(server.headers, {
+    Authorization: 'Bearer ${EXAMPLE_TOKEN}',
+  });
   assert.deepEqual(server.requiredEnv, ['EXAMPLE_TOKEN']);
 });
 
 test('parseMcpServer rejects a remote server without a url', () => {
   assert.throws(
-    () => parseMcpServer({ transport: 'remote', requiredEnv: [] }, 'x', 'mcp.json'),
-    /non-empty "url"/,
+    () =>
+      parseMcpServer({ transport: 'remote', requiredEnv: [] }, 'x', 'mcp.json'),
+    /non-empty "url"/
   );
 });
 
@@ -87,9 +91,9 @@ test('parseMcpServer rejects remote headers that are not string values', () => {
       parseMcpServer(
         { transport: 'remote', url: 'https://x/mcp', headers: { A: 1 } },
         'x',
-        'mcp.json',
+        'mcp.json'
       ),
-    /headers/,
+    /headers/
   );
 });
 
@@ -99,18 +103,18 @@ test('parseMcpServer rejects a non-string-array requiredEnv or healthcheck', () 
       parseMcpServer(
         { transport: 'container', port: 1, requiredEnv: 'GITHUB_TOKEN' },
         'x',
-        'mcp.json',
+        'mcp.json'
       ),
-    /requiredEnv/,
+    /requiredEnv/
   );
   assert.throws(
     () =>
       parseMcpServer(
         { transport: 'container', port: 1, healthcheck: 'true' },
         'x',
-        'mcp.json',
+        'mcp.json'
       ),
-    /healthcheck/,
+    /healthcheck/
   );
 });
 
@@ -158,10 +162,19 @@ test('planMcpSelection splits transports (mixed) and keeps every endpoint in ord
   const plan = planMcpSelection([remote, container]);
 
   // Only the container server becomes a sidecar; the remote one does not.
-  assert.deepEqual(plan.containerServers.map((s) => s.name), ['everything']);
-  assert.deepEqual(plan.remoteServers.map((s) => s.name), ['hosted']);
+  assert.deepEqual(
+    plan.containerServers.map(s => s.name),
+    ['everything']
+  );
+  assert.deepEqual(
+    plan.remoteServers.map(s => s.name),
+    ['hosted']
+  );
   // Both are wired as endpoints, in selection order.
-  assert.deepEqual(plan.endpoints.map((e) => e.name), ['hosted', 'everything']);
+  assert.deepEqual(
+    plan.endpoints.map(e => e.name),
+    ['hosted', 'everything']
+  );
   assert.equal(plan.endpoints[0].url, 'https://mcp.example.com/mcp');
   assert.equal(plan.endpoints[1].url, 'http://everything:3001/mcp');
 });
@@ -171,7 +184,7 @@ test('shipped everything server is credential-free streamable HTTP on 3001', () 
   const parsed = parseMcpServer(
     JSON.parse(files['mcp.json']),
     'everything',
-    'mcp.json',
+    'mcp.json'
   ) as ContainerMcpServer;
   assert.equal(parsed.port, 3001);
   assert.deepEqual(parsed.requiredEnv, []);
@@ -180,7 +193,11 @@ test('shipped everything server is credential-free streamable HTTP on 3001', () 
 
 test('shipped filesystem server bridges stdio to streamable HTTP', () => {
   const files = renderFilesystemFiles();
-  const parsed = parseMcpServer(JSON.parse(files['mcp.json']), 'filesystem', 'mcp.json');
+  const parsed = parseMcpServer(
+    JSON.parse(files['mcp.json']),
+    'filesystem',
+    'mcp.json'
+  );
   assert.equal(parsed.transport, 'container');
   assert.match(files['Dockerfile'], /supergateway/);
 });

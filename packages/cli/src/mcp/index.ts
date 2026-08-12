@@ -69,20 +69,28 @@ export type McpServer = ContainerMcpServer | RemoteMcpServer;
  * is the directory name (the server's identity), so it is supplied by the caller,
  * not read from the file. `where` names the source in error messages.
  */
-export function parseMcpServer(raw: unknown, name: string, where: string): McpServer {
+export function parseMcpServer(
+  raw: unknown,
+  name: string,
+  where: string
+): McpServer {
   const p = (raw ?? {}) as Record<string, unknown>;
 
   const requiredEnv = p.requiredEnv ?? [];
   if (!isStringArray(requiredEnv)) {
     throw new Error(
-      `Invalid MCP server "${name}" at ${where}: "requiredEnv" must be an array of strings.`,
+      `Invalid MCP server "${name}" at ${where}: "requiredEnv" must be an array of strings.`
     );
   }
 
   if (p.transport === 'container') {
-    if (typeof p.port !== 'number' || !Number.isInteger(p.port) || p.port <= 0) {
+    if (
+      typeof p.port !== 'number' ||
+      !Number.isInteger(p.port) ||
+      p.port <= 0
+    ) {
       throw new Error(
-        `Invalid MCP server "${name}" at ${where}: "port" must be a positive integer.`,
+        `Invalid MCP server "${name}" at ${where}: "port" must be a positive integer.`
       );
     }
     const server: ContainerMcpServer = {
@@ -94,7 +102,7 @@ export function parseMcpServer(raw: unknown, name: string, where: string): McpSe
     if (p.healthcheck !== undefined) {
       if (!isStringArray(p.healthcheck) || p.healthcheck.length === 0) {
         throw new Error(
-          `Invalid MCP server "${name}" at ${where}: "healthcheck" must be a non-empty array of strings.`,
+          `Invalid MCP server "${name}" at ${where}: "healthcheck" must be a non-empty array of strings.`
         );
       }
       server.healthcheck = p.healthcheck;
@@ -105,14 +113,19 @@ export function parseMcpServer(raw: unknown, name: string, where: string): McpSe
   if (p.transport === 'remote') {
     if (typeof p.url !== 'string' || p.url === '') {
       throw new Error(
-        `Invalid MCP server "${name}" at ${where}: a remote server needs a non-empty "url".`,
+        `Invalid MCP server "${name}" at ${where}: a remote server needs a non-empty "url".`
       );
     }
-    const server: RemoteMcpServer = { name, transport: 'remote', url: p.url, requiredEnv };
+    const server: RemoteMcpServer = {
+      name,
+      transport: 'remote',
+      url: p.url,
+      requiredEnv,
+    };
     if (p.headers !== undefined) {
       if (!isStringRecord(p.headers)) {
         throw new Error(
-          `Invalid MCP server "${name}" at ${where}: "headers" must be an object of string values.`,
+          `Invalid MCP server "${name}" at ${where}: "headers" must be an object of string values.`
         );
       }
       server.headers = p.headers;
@@ -122,12 +135,12 @@ export function parseMcpServer(raw: unknown, name: string, where: string): McpSe
 
   throw new Error(
     `Invalid MCP server "${name}" at ${where}: transport must be "container" or "remote" ` +
-      `(got ${JSON.stringify(p.transport)}).`,
+      `(got ${JSON.stringify(p.transport)}).`
   );
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+  return Array.isArray(value) && value.every(v => typeof v === 'string');
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -135,12 +148,15 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     typeof value === 'object' &&
     value !== null &&
     !Array.isArray(value) &&
-    Object.values(value).every((v) => typeof v === 'string')
+    Object.values(value).every(v => typeof v === 'string')
   );
 }
 
 /** Reads and parses a persisted MCP server by name, or undefined if it isn't there. */
-export function readMcpServer(name: string, root?: string): McpServer | undefined {
+export function readMcpServer(
+  name: string,
+  root?: string
+): McpServer | undefined {
   const file = mcpConfigPath(name, root);
   if (!fs.existsSync(file)) return undefined;
   return parseMcpServer(JSON.parse(fs.readFileSync(file, 'utf8')), name, file);
@@ -152,8 +168,8 @@ export function listMcpServerNames(root?: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name);
 }
 
 /** The endpoint an agent connects an MCP client to: the server's name and its URL. */
@@ -197,7 +213,11 @@ export function planMcpSelection(servers: McpServer[]): {
     if (server.transport === 'container') containerServers.push(server);
     else remoteServers.push(server);
   }
-  return { containerServers, remoteServers, endpoints: servers.map(mcpEndpoint) };
+  return {
+    containerServers,
+    remoteServers,
+    endpoints: servers.map(mcpEndpoint),
+  };
 }
 
 /** The rendered files for a shipped MCP server: its Dockerfile and mcp.json. */
@@ -224,7 +244,11 @@ export function renderEverythingFiles(): McpServerFiles {
         `# Serves streamable HTTP on PORT (default 3001) at /mcp.`,
         `CMD ["mcp-server-everything", "streamableHttp"]`,
       ].join('\n') + '\n',
-    'mcp.json': mcpJson({ transport: 'container', port: 3001, requiredEnv: [] }),
+    'mcp.json': mcpJson({
+      transport: 'container',
+      port: 3001,
+      requiredEnv: [],
+    }),
   };
 }
 
@@ -247,7 +271,11 @@ export function renderFilesystemFiles(): McpServerFiles {
         `# supergateway bridges the stdio server to streamable HTTP on /mcp.`,
         `CMD ["supergateway", "--stdio", "mcp-server-filesystem /data", "--outputTransport", "streamableHttp", "--port", "8000"]`,
       ].join('\n') + '\n',
-    'mcp.json': mcpJson({ transport: 'container', port: 8000, requiredEnv: [] }),
+    'mcp.json': mcpJson({
+      transport: 'container',
+      port: 8000,
+      requiredEnv: [],
+    }),
   };
 }
 

@@ -30,12 +30,12 @@ export function resolveSkill(name: string, root?: string): string {
     const list = available.length ? available.join(', ') : '(none)';
     throw new Error(
       `Unknown skill "${name}". Available: ${list}. ` +
-        `Add one under .e/skills/<name>/ (with a ${SKILL_MANIFEST}) or run \`e init\`.`,
+        `Add one under .e/skills/<name>/ (with a ${SKILL_MANIFEST}) or run \`e init\`.`
     );
   }
   if (!fs.existsSync(skillManifestPath(name, root))) {
     throw new Error(
-      `Skill "${name}" is missing its ${SKILL_MANIFEST} (expected at ${skillManifestPath(name, root)}).`,
+      `Skill "${name}" is missing its ${SKILL_MANIFEST} (expected at ${skillManifestPath(name, root)}).`
     );
   }
   return dir;
@@ -47,8 +47,8 @@ export function listSkillNames(root?: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name);
 }
 
 /**
@@ -72,7 +72,11 @@ export function parseSkillList(values: string[]): string[] {
  * mounted at `<skillsDir>/<name>` inside the container (outside `/workspace`, so
  * it never lands in the run's branch). Pure — the spawn edge collects these.
  */
-export function skillMountSpec(sourceDir: string, skillsDir: string, name: string): Mount {
+export function skillMountSpec(
+  sourceDir: string,
+  skillsDir: string,
+  name: string
+): Mount {
   return { host: sourceDir, container: `${skillsDir}/${name}`, ro: true };
 }
 

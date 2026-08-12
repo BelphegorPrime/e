@@ -65,7 +65,7 @@ export function renderDerivedDockerfile(p: DerivedDockerfileParams): string {
       `# the harness adapter, read from a config dir outside /workspace so it`,
       `# never lands in a run's branch.`,
       `ENV ${p.provider.configDirEnv}=${p.provider.configDir}`,
-      `COPY ${p.provider.configFileName} ${p.provider.configDir}/${p.provider.configFileName}`,
+      `COPY ${p.provider.configFileName} ${p.provider.configDir}/${p.provider.configFileName}`
     );
   }
 
@@ -73,7 +73,7 @@ export function renderDerivedDockerfile(p: DerivedDockerfileParams): string {
     lines.push(
       ``,
       `# Baked default skills (ADR-0006): each skill tree copied into the harness's`,
-      `# skills dir outside /workspace so it never lands in a run's branch.`,
+      `# skills dir outside /workspace so it never lands in a run's branch.`
     );
     for (const name of p.skills.names) {
       lines.push(`COPY skills/${name}/ ${p.skills.skillsDir}/${name}/`);
@@ -143,11 +143,16 @@ export function planProviderDelivery(
   facts: SpawnFacts,
   adapter: HarnessAdapter,
   provider: Provider,
-  resolved: ResolvedModel,
+  resolved: ResolvedModel
 ): ProviderDelivery {
   if (adapter.kind === 'env') {
     // Env harnesses carry the model at runtime already; use the resolved id.
-    return { runtimeEnv: adapter.renderProviderEnv({ ...provider, model: resolved.model }) };
+    return {
+      runtimeEnv: adapter.renderProviderEnv({
+        ...provider,
+        model: resolved.model,
+      }),
+    };
   }
 
   // File harness: bake the provider config into the derived image. `modelInFile`

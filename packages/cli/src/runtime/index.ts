@@ -120,7 +120,7 @@ export function imageInspectArgs(imageTag: string): string[] {
 export function buildImageArgs(
   imageTag: string,
   contextDir: string,
-  dockerfile?: string,
+  dockerfile?: string
 ): string[] {
   const args = ['build', '-t', imageTag];
   if (dockerfile) args.push('-f', dockerfile);
@@ -156,7 +156,11 @@ export function containerRemoveArgs(name: string): string[] {
   return ['rm', '-f', name];
 }
 
-export function tcpProbeArgs(network: string, host: string, port: number): string[] {
+export function tcpProbeArgs(
+  network: string,
+  host: string,
+  port: number
+): string[] {
   // BusyBox `nc HOST PORT` (empty stdin, 2s connect timeout) exits 0 on connect.
   return [
     'run',
@@ -223,7 +227,7 @@ export class ContainerRuntime implements ContainerRunner {
 
     if (result.error) {
       throw new Error(
-        `Failed to start ${this.command}: ${result.error.message}`,
+        `Failed to start ${this.command}: ${result.error.message}`
       );
     }
     if (result.status !== 0) {
@@ -235,7 +239,7 @@ export class ContainerRuntime implements ContainerRunner {
   buildRunArgs(
     image: string,
     opts: RunOptions,
-    commandArgs: string[],
+    commandArgs: string[]
   ): string[] {
     const args = ['run'];
 
@@ -275,7 +279,7 @@ export class ContainerRuntime implements ContainerRunner {
         shell: false,
       });
 
-      child.on('error', (err) => {
+      child.on('error', err => {
         reject(new Error(`Failed to start ${this.command}: ${err.message}`));
       });
 
@@ -293,12 +297,12 @@ export class ContainerRuntime implements ContainerRunner {
     });
     if (result.error) {
       throw new Error(
-        `Failed to start ${this.command}: ${result.error.message}`,
+        `Failed to start ${this.command}: ${result.error.message}`
       );
     }
     if (result.status !== 0) {
       throw new Error(
-        `Failed to create network "${name}" (exit code ${result.status ?? 1}).`,
+        `Failed to create network "${name}" (exit code ${result.status ?? 1}).`
       );
     }
   }
@@ -326,12 +330,12 @@ export class ContainerRuntime implements ContainerRunner {
     });
     if (result.error) {
       throw new Error(
-        `Failed to start ${this.command}: ${result.error.message}`,
+        `Failed to start ${this.command}: ${result.error.message}`
       );
     }
     if (result.status !== 0) {
       throw new Error(
-        `Failed to start sidecar "${spec.name}" (exit code ${result.status ?? 1}).`,
+        `Failed to start sidecar "${spec.name}" (exit code ${result.status ?? 1}).`
       );
     }
   }

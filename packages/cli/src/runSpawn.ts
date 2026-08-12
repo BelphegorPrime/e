@@ -1,10 +1,20 @@
 import path from 'path';
 import os from 'os';
 import type { Git } from './git/index';
-import type { ContainerRunner, RunOptions, SidecarSpec, Mount } from './runtime/index';
+import type {
+  ContainerRunner,
+  RunOptions,
+  SidecarSpec,
+  Mount,
+} from './runtime/index';
 import type { Harness } from './harness/index';
 import type { Agent } from './agent';
-import { runName, runBranchPrefix, maxRunCounter, type RunName } from './naming';
+import {
+  runName,
+  runBranchPrefix,
+  maxRunCounter,
+  type RunName,
+} from './naming';
 import { slugify } from './slugify';
 
 /** How many counter collisions to absorb before giving up (a runaway guard). */
@@ -108,7 +118,10 @@ export interface RunSpawnResult {
 /** True if a sidecar is ready now: its TCP port is open and any healthcheck exits 0. */
 function sidecarReady(runtime: ContainerRunner, spec: SidecarSpec): boolean {
   if (!runtime.probeTcp(spec.network, spec.alias, spec.port)) return false;
-  if (spec.healthcheck && !runtime.probeHealthcheck(spec.name, spec.healthcheck)) {
+  if (
+    spec.healthcheck &&
+    !runtime.probeHealthcheck(spec.name, spec.healthcheck)
+  ) {
     return false;
   }
   return true;
@@ -118,7 +131,7 @@ function sidecarReady(runtime: ContainerRunner, spec: SidecarSpec): boolean {
 async function awaitSidecarReady(
   runtime: ContainerRunner,
   spec: SidecarSpec,
-  opts: ReadinessPolicy & { sleep: (ms: number) => Promise<void> },
+  opts: ReadinessPolicy & { sleep: (ms: number) => Promise<void> }
 ): Promise<boolean> {
   for (let attempt = 0; attempt < opts.attempts; attempt++) {
     if (sidecarReady(runtime, spec)) return true;
@@ -149,14 +162,16 @@ function bestEffort(action: () => void): void {
  */
 export async function runSpawn(
   deps: RunSpawnDeps,
-  params: RunSpawnParams,
+  params: RunSpawnParams
 ): Promise<RunSpawnResult> {
   const { git, runtime } = deps;
   const { harness, agent, prompt, imageTag } = params;
   const sidecarPlans = params.sidecars ?? [];
   const mcpArgs = params.mcpArgs ?? [];
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const readinessAttempts = params.readiness?.attempts ?? DEFAULT_READINESS_ATTEMPTS;
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
+  const readinessAttempts =
+    params.readiness?.attempts ?? DEFAULT_READINESS_ATTEMPTS;
   const readinessIntervalMs =
     params.readiness?.intervalMs ?? DEFAULT_READINESS_INTERVAL_MS;
 
@@ -197,7 +212,7 @@ export async function runSpawn(
   // Turn each sidecar plan into a concrete spec now that the run name (and thus a
   // unique container name and the private network) exists.
   const network = run.network;
-  const specs: SidecarSpec[] = sidecarPlans.map((plan) => ({
+  const specs: SidecarSpec[] = sidecarPlans.map(plan => ({
     name: run.sidecarContainer(plan.alias),
     alias: plan.alias,
     image: plan.image,
@@ -265,7 +280,7 @@ export async function runSpawn(
       for (const spec of specs) {
         if (!runtime.isRunning(spec.name)) {
           sidecarWarnings.push(
-            `MCP sidecar "${spec.alias}" exited during the run (its tools may have stopped working).`,
+            `MCP sidecar "${spec.alias}" exited during the run (its tools may have stopped working).`
           );
         }
       }
@@ -297,7 +312,13 @@ export async function runSpawn(
 
   // A readiness miss aborts the run before the agent started: no commit, no push.
   if (readinessError) {
-    return { ran: false, exitCode: 1, branch, error: readinessError, sidecarWarnings: warnings };
+    return {
+      ran: false,
+      exitCode: 1,
+      branch,
+      error: readinessError,
+      sidecarWarnings: warnings,
+    };
   }
 
   // Publish only a successful run that actually produced commits, so aborted
@@ -314,5 +335,12 @@ export async function runSpawn(
     }
   }
 
-  return { ran, exitCode, branch, pushed, pushWarning, sidecarWarnings: warnings };
+  return {
+    ran,
+    exitCode,
+    branch,
+    pushed,
+    pushWarning,
+    sidecarWarnings: warnings,
+  };
 }

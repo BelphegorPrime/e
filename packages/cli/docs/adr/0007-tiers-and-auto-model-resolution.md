@@ -37,7 +37,7 @@ A concrete (non-`auto`) model keeps the baked path from ADR-0004 unchanged.
 **pi is the exception that must bake.** pi selects only models **declared** in
 `models.json`, so an `auto` id cannot be delivered command-line-only the way
 Codex's `-m` does — the file adapter's `modelInFile` flag forces the resolved
-model into the baked `models.json` and *also* passes it via `--provider e
+model into the baked `models.json` and _also_ passes it via `--provider e
 --model <id>` for selection. This reintroduces the ADR-0004 staleness the "bake
 `auto`" option was rejected for: a newly-shipped `auto` pick is not observed
 until the derived image is rebuilt (`--rebuild`). It is accepted here as pi's
@@ -62,11 +62,11 @@ whose model ids are **namespaced by provider** (`anthropic.…`, `openai.…`).
 Matching is exact or a preferred id followed by a version/date suffix
 (`anthropic.claude-haiku-4-5` → `anthropic.claude-haiku-4-5-20251001-v1:0`).
 
-| protocol | smart | fast | cheap | review |
-|---|---|---|---|---|
+| protocol             | smart                          | fast                              | cheap                             | review                         |
+| -------------------- | ------------------------------ | --------------------------------- | --------------------------------- | ------------------------------ |
 | `anthropic-messages` | claude-opus-5, claude-sonnet-5 | claude-sonnet-5, claude-haiku-4-5 | claude-haiku-4-5, claude-sonnet-5 | claude-opus-5, claude-sonnet-5 |
-| `openai-responses` | gpt-5.6-sol, gpt-5.5 | gpt-5.6-terra, gpt-5.5 | gpt-5.6-luna, gpt-oss-20b | gpt-5.6-sol, gpt-5.6-terra |
-| `openai-chat` | gpt-5.6-sol, gpt-5.5 | gpt-5.6-terra, gpt-5.5 | gpt-5.6-luna, gpt-oss-20b | gpt-5.6-sol, gpt-5.6-terra |
+| `openai-responses`   | gpt-5.6-sol, gpt-5.5           | gpt-5.6-terra, gpt-5.5            | gpt-5.6-luna, gpt-oss-20b         | gpt-5.6-sol, gpt-5.6-terra     |
+| `openai-chat`        | gpt-5.6-sol, gpt-5.5           | gpt-5.6-terra, gpt-5.5            | gpt-5.6-luna, gpt-oss-20b         | gpt-5.6-sol, gpt-5.6-terra     |
 
 (ids above are shown without their `anthropic.` / `openai.` namespace for
 brevity; the encoded list carries the full namespaced ids.)

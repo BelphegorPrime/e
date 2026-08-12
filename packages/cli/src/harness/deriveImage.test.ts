@@ -6,7 +6,12 @@ import {
   planProviderDelivery,
   planAgentImage,
 } from './deriveImage';
-import { claudeCodeAdapter, codexAdapter, piAdapter, type Provider } from './adapter';
+import {
+  claudeCodeAdapter,
+  codexAdapter,
+  piAdapter,
+  type Provider,
+} from './adapter';
 import { Harness } from '.';
 import { Agent } from '../agent';
 import { SpawnFacts } from '../spawnPlan';
@@ -58,7 +63,10 @@ test('renderDerivedDockerfile: copies the rendered config into the relocated con
     provider: providerBlock,
   });
   assert.match(dockerfile, /^ENV CODEX_HOME=\/root\/\.codex$/m);
-  assert.match(dockerfile, /^COPY config\.toml \/root\/\.codex\/config\.toml$/m);
+  assert.match(
+    dockerfile,
+    /^COPY config\.toml \/root\/\.codex\/config\.toml$/m
+  );
 });
 
 test('renderDerivedDockerfile: copies each baked skill tree into the harness skills dir', () => {
@@ -120,7 +128,10 @@ test('planProviderDelivery: an env harness delivers all env and bakes nothing', 
   assert.equal(plan.runtimeModel, undefined);
   assert.deepEqual(
     plan.runtimeEnv,
-    claudeCodeAdapter.renderProviderEnv({ ...envProvider, model: 'claude-opus-5' }),
+    claudeCodeAdapter.renderProviderEnv({
+      ...envProvider,
+      model: 'claude-opus-5',
+    })
   );
 });
 
@@ -129,13 +140,16 @@ test('planProviderDelivery: an env harness carries the auto-resolved model in en
     facts(),
     claudeCodeAdapter,
     { ...envProvider, model: 'auto' },
-    { model: 'claude-opus-5', fromAuto: true },
+    { model: 'claude-opus-5', fromAuto: true }
   );
   assert.equal(plan.runtimeModel, undefined);
   assert.ok(
     plan.runtimeEnv.some(
-      (e) => e.name === 'ANTHROPIC_MODEL' && 'value' in e && e.value === 'claude-opus-5',
-    ),
+      e =>
+        e.name === 'ANTHROPIC_MODEL' &&
+        'value' in e &&
+        e.value === 'claude-opus-5'
+    )
   );
 });
 
@@ -144,7 +158,7 @@ test('planProviderDelivery: a file harness bakes a concrete model into its confi
     facts(),
     codexAdapter,
     { ...fileProvider, model: 'gpt-5-codex' },
-    { model: 'gpt-5-codex', fromAuto: false },
+    { model: 'gpt-5-codex', fromAuto: false }
   );
   assert.ok(plan.bakedConfig);
   assert.equal(plan.bakedConfig.file.fileName, 'config.toml');
@@ -153,7 +167,10 @@ test('planProviderDelivery: a file harness bakes a concrete model into its confi
   assert.match(plan.bakedConfig.file.content, /^model = "gpt-5-codex"$/m);
   assert.equal(plan.runtimeModel, undefined);
   // Only the API key is delivered at runtime for a file harness.
-  assert.deepEqual(plan.runtimeEnv, codexAdapter.renderRuntimeEnv(fileProvider));
+  assert.deepEqual(
+    plan.runtimeEnv,
+    codexAdapter.renderRuntimeEnv(fileProvider)
+  );
 });
 
 test('planProviderDelivery: a file harness keeps an auto model out of the config, delivers it on the command', () => {
@@ -161,7 +178,7 @@ test('planProviderDelivery: a file harness keeps an auto model out of the config
     facts(),
     codexAdapter,
     { ...fileProvider, model: 'auto' },
-    { model: 'gpt-5-codex', fromAuto: true },
+    { model: 'gpt-5-codex', fromAuto: true }
   );
   assert.ok(plan.bakedConfig);
   assert.doesNotMatch(plan.bakedConfig.file.content, /^model = /m);
@@ -198,7 +215,7 @@ test('planProviderDelivery: pi bakes a concrete model too and passes it for sele
     facts(),
     piAdapter,
     { ...piProvider, model: 'claude-opus-5' },
-    { model: 'claude-opus-5', fromAuto: false },
+    { model: 'claude-opus-5', fromAuto: false }
   );
   const cfg = JSON.parse(plan.bakedConfig!.file.content);
   assert.deepEqual(cfg.providers.e.models, [{ id: 'claude-opus-5' }]);
@@ -208,7 +225,7 @@ test('planProviderDelivery: pi bakes a concrete model too and passes it for sele
 test('planAgentImage: nothing to bake (no provider, no skills) derives no image', () => {
   assert.equal(
     planAgentImage({ baseImage: 'e-harness-pi', agentName: 'pi' }),
-    undefined,
+    undefined
   );
 });
 
@@ -224,9 +241,12 @@ test('planAgentImage: provider-only bakes config + Dockerfile, no skills (Codex 
   });
   assert.ok(image);
   assert.equal(image.imageTag, 'e-agent-smart-codex');
-  assert.deepEqual(image.files.map((f) => f.fileName), ['config.toml', 'Dockerfile']);
+  assert.deepEqual(
+    image.files.map(f => f.fileName),
+    ['config.toml', 'Dockerfile']
+  );
   assert.deepEqual(image.skillNames, []);
-  const dockerfile = image.files.find((f) => f.fileName === 'Dockerfile')!;
+  const dockerfile = image.files.find(f => f.fileName === 'Dockerfile')!;
   assert.match(dockerfile.content, /^COPY config\.toml /m);
   assert.doesNotMatch(dockerfile.content, /COPY skills/);
 });
@@ -238,11 +258,17 @@ test('planAgentImage: skills-only bakes a Dockerfile that copies the skill trees
     skills: { skillsDir: '/root/.claude/skills', names: ['helper'] },
   });
   assert.ok(image);
-  assert.deepEqual(image.files.map((f) => f.fileName), ['Dockerfile']);
+  assert.deepEqual(
+    image.files.map(f => f.fileName),
+    ['Dockerfile']
+  );
   assert.deepEqual(image.skillNames, ['helper']);
   const dockerfile = image.files[0];
   assert.match(dockerfile.content, /^FROM e-harness-claudecode$/m);
-  assert.match(dockerfile.content, /^COPY skills\/helper\/ \/root\/\.claude\/skills\/helper\/$/m);
+  assert.match(
+    dockerfile.content,
+    /^COPY skills\/helper\/ \/root\/\.claude\/skills\/helper\/$/m
+  );
 });
 
 test('planAgentImage: provider + skills compose into one derived image', () => {
@@ -257,9 +283,12 @@ test('planAgentImage: provider + skills compose into one derived image', () => {
     skills: { skillsDir: '/root/.agents/skills', names: ['helper'] },
   });
   assert.ok(image);
-  assert.deepEqual(image.files.map((f) => f.fileName), ['config.toml', 'Dockerfile']);
+  assert.deepEqual(
+    image.files.map(f => f.fileName),
+    ['config.toml', 'Dockerfile']
+  );
   assert.deepEqual(image.skillNames, ['helper']);
-  const dockerfile = image.files.find((f) => f.fileName === 'Dockerfile')!;
+  const dockerfile = image.files.find(f => f.fileName === 'Dockerfile')!;
   assert.match(dockerfile.content, /^COPY config\.toml /m);
   assert.match(dockerfile.content, /^COPY skills\/helper\/ /m);
 });
