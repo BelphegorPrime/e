@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
+/* eslint-disable no-undef */
 const eslintRecommended = require('@eslint/js');
 const tseslint = require('typescript-eslint');
 
@@ -17,14 +19,25 @@ module.exports = tseslint.config(
       globals: {
         console: 'readonly',
         process: 'readonly',
+        setTimeout: 'readonly',
+        fetch: 'readonly',
       },
     },
   },
   {
     rules: {
-      'no-console': 'warn',
+      'no-console': 'off',
       'no-debugger': 'warn',
-      'no-unused-vars': 'error',
+
+      // Use TypeScript-aware version instead
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+        },
+      ],
+
       'no-undef': 'error',
     },
   }

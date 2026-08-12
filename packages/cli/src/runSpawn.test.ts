@@ -344,7 +344,7 @@ test('numbers the run from the next counter after existing branches', async () =
 
 test('counter considers remote-tracking branches', async () => {
   const slug = slugify('Fix the flaky test');
-  const { deps, git } = makeDeps({
+  const { deps } = makeDeps({
     git: new FakeGit({ existingBranches: [`origin/e/demo/${slug}-4`] }),
   });
   const result = await runSpawn(deps, makeParams());

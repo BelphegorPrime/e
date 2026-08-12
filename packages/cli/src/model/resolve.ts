@@ -98,7 +98,10 @@ export async function resolveProviderModel(
     }
     throw new Error(
       `Could not resolve an "auto" model: the model list at ${provider.baseUrl} was unreachable ` +
-        `(${(err as Error).message}), and no defaultModel is set on the provider.`
+        `(${(err as Error).message}), and no defaultModel is set on the provider.`,
+      {
+        cause: err,
+      }
     );
   }
 
@@ -148,10 +151,13 @@ export class HttpModelsLister implements ModelsLister {
       (provider.baseUrlEnv
         ? this.resolveKey(provider.baseUrlEnv)
         : undefined) || provider.baseUrl;
+
     const res = await fetch(modelsUrl(baseUrl), { headers });
+
     if (!res.ok) {
       throw new Error(`model list request failed with HTTP ${res.status}`);
     }
+
     return parseModelIds(await res.json(), { root: this.root });
   }
 }
