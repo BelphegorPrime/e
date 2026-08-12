@@ -90,6 +90,11 @@ export function configFilePath(root?: string): string {
   return path.join(eBaseDir(root), 'config.json');
 }
 
+/** Absolute path to an agent's definition file. */
+export function modelsFilePath(root?: string): string {
+  return path.join(eBaseDir(root), 'model-ids.json');
+}
+
 /** The favorite harness a bare `e spawn` resolves to when none is named. */
 export const DEFAULT_HARNESS = 'pi';
 

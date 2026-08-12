@@ -87,8 +87,8 @@ export const HARNESSES: Record<string, Harness> = {
     // `pi -p <prompt>` and uses pi's own built-in default).
     buildCommand: (prompt: string, model?: string) =>
       model
-        ? ['pi', '-p', prompt, '--provider', PI_PROVIDER_ID, '--model', model]
-        : ['pi', '-p', prompt],
+        ? ['pi', '-p', `"${prompt}"`, '--provider', PI_PROVIDER_ID, '--model', model]
+        : ['pi', '-p', `"${prompt}"`],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import type { Protocol, Provider } from '../harness/adapter';
 import { chooseModel } from './preferences';
+import { modelsFilePath } from '../store';
 
 /**
  * Resolving an Agent's model at spawn (ADR-0007). A concrete model is used as-is
@@ -57,7 +58,7 @@ export function parseModelIds(body: unknown, props: { root: string | undefined }
     return [];
   }
 
-  fs.writeFileSync(`${props.root}/model-ids.json`, JSON.stringify(data));
+  fs.writeFileSync(modelsFilePath(props.root), JSON.stringify(data, null, 2));
 
   return data
     .map((entry) =>
