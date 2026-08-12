@@ -64,6 +64,8 @@ export interface Harness {
  */
 const AGENTS_SKILLS_DIR = '/root/.agents/skills';
 
+const escapePrompt = (prompt: string) => `"${prompt}"`;
+
 /** Available coding harnesses, keyed by name. */
 export const HARNESSES: Record<string, Harness> = {
   pi: {
@@ -87,8 +89,8 @@ export const HARNESSES: Record<string, Harness> = {
     // `pi -p <prompt>` and uses pi's own built-in default).
     buildCommand: (prompt: string, model?: string) =>
       model
-        ? ['pi', '-p', `"${prompt}"`, '--provider', PI_PROVIDER_ID, '--model', model]
-        : ['pi', '-p', `"${prompt}"`],
+        ? ['pi', '-p', escapePrompt(prompt), '--provider', PI_PROVIDER_ID, '--model', model]
+        : ['pi', '-p', escapePrompt(prompt)],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
@@ -107,7 +109,7 @@ export const HARNESSES: Record<string, Harness> = {
     buildCommand: (prompt: string) => [
       'claude',
       '-p',
-      prompt,
+      escapePrompt(prompt),
       '--dangerously-skip-permissions',
     ],
     // Claude takes MCP config inline: `--mcp-config '<json>'` with a streamable
@@ -143,7 +145,7 @@ export const HARNESSES: Record<string, Harness> = {
     // arrives at runtime as `-m <id>` (a baked concrete model needs no flag).
     adapter: codexAdapter,
     buildCommand: (prompt: string, model?: string) =>
-      model ? ['codex', 'exec', '-m', model, prompt] : ['codex', 'exec', prompt],
+      model ? ['codex', 'exec', '-m', model, escapePrompt(prompt)] : ['codex', 'exec', escapePrompt(prompt)],
     // Codex reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
@@ -157,7 +159,7 @@ export const HARNESSES: Record<string, Harness> = {
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
     // opencode (Vercel AI SDK) speaks all four via its provider plugins.
     protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],
-    buildCommand: (prompt: string) => ['opencode', 'run', prompt],
+    buildCommand: (prompt: string) => ['opencode', 'run', escapePrompt(prompt)],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
