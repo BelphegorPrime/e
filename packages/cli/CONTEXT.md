@@ -13,7 +13,7 @@ A named, reusable pairing of a Harness with a specific model configuration (prov
 _Avoid_: harness (its packaging), bot, assistant
 
 **Provider**:
-The model endpoint an Agent talks to, defined inline in the Agent (not a standalone Store entity): `baseUrl`, `model` (a concrete id or `auto`), `protocol` (the wire API — `openai-chat`, `openai-responses`, `anthropic-messages`, or `google`), and `apiKeyEnv` — the _name_ of the env var holding the key (the value lives in `.e/.env`, never in an image). A Provider's protocol must be one of the set its Harness speaks.
+The model endpoint an Agent talks to, defined inline in the Agent (not a standalone Store entity): `baseUrl`, `model` (a concrete id or `auto`), `protocol` (the wire API — `openai-chat`, `openai-responses`, or `anthropic-messages`), and `apiKeyEnv` — the _name_ of the env var holding the key (the value lives in `.e/.env`, never in an image). Two fields are optional: `baseUrlEnv` (the _name_ of an env var that overrides `baseUrl` from `.e/.env`, so the endpoint need not be hard-coded in the Agent) and `defaultModel` (a fallback used when `model` is `auto` but resolution finds nothing or the endpoint is unreachable). A Provider's protocol must be one of the set its Harness speaks.
 _Avoid_: model, backend, endpoint (informal)
 
 **Sidecar**:
@@ -45,5 +45,5 @@ To start a run.
 _Avoid_: launch, create, exec
 
 **Store**:
-The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/`, the MCP server definitions under `mcp/`, the Skills under `skills/`, the host-only orchestration settings in `config.json` (e.g. the favorite/default harness — never injected into containers, unlike `.env`), and the shared `.env` — located by walking up from the working directory (or `--dir`), falling back to home.
+The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/<name>/<tier>/` (one subdirectory per tier, each holding that agent's `agent.json` plus any rendered `models.json`/`Dockerfile`), the MCP server definitions under `mcp/`, the Skills under `skills/`, the host-only orchestration settings in `config.json` (e.g. the favorite/default harness — never injected into containers, unlike `.env`), the shared `.env`, and `model-ids.json` (a cached dump of the last `/v1/models` fetch, written for reference during `auto` resolution) — located by walking up from the working directory (or `--dir`), falling back to home.
 _Avoid_: workspace (here "workspace" means the npm workspace under `packages/`; the container's mounted checkout is the run's worktree)

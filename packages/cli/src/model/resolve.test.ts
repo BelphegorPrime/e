@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import type { Provider } from '../harness/adapter';
 import {
   modelsUrl,
@@ -54,11 +57,12 @@ test('modelsUrl: tolerates a trailing slash', () => {
 });
 
 test('parseModelIds: extracts data[].id, ignoring malformed entries', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
   const ids = parseModelIds(
     {
       data: [{ id: 'gpt-5' }, { id: 'gpt-5-mini' }, { notId: 'x' }, 'nope'],
     },
-    { root: undefined }
+    { root }
   );
   assert.deepEqual(ids, ['gpt-5', 'gpt-5-mini']);
 });

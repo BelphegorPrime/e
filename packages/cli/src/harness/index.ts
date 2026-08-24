@@ -82,7 +82,7 @@ export const HARNESSES: Record<string, Harness> = {
       npmFlags: ['--ignore-scripts'],
     },
     requiredEnv: ['ANTHROPIC_API_KEY'],
-    // pi speaks all four wire protocols (its `openai-completions` is our
+    // pi speaks three wire protocols (its `openai-completions` is our
     // `openai-chat`). It is file-configured: a custom endpoint lives only in
     // `models.json` (no base-url env var), so the provider is delivered via the
     // file adapter, baked into the derived agent image. Grounding:
@@ -176,7 +176,7 @@ export const HARNESSES: Record<string, Harness> = {
       npmPackage: 'opencode-ai',
     },
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
-    // opencode (Vercel AI SDK) speaks all four via its provider plugins.
+    // opencode (Vercel AI SDK) speaks all three via its provider plugins.
     protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],
     buildCommand: (prompt: string) => ['opencode', 'run', escapePrompt(prompt)],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.

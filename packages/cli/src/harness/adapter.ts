@@ -333,8 +333,8 @@ export const codexAdapter: FileHarnessAdapter = {
 export const PI_PROVIDER_ID = 'e';
 
 /**
- * Maps e's wire {@link Protocol} to pi's `api` field value. Two names differ from
- * e's: our `openai-chat` is pi's `openai-completions`
+ * Maps e's wire {@link Protocol} to pi's `api` field value. Only one name differs
+ * from e's: our `openai-chat` is pi's `openai-completions`.
  * Grounding: pi `docs/models.md` "Supported APIs".
  */
 export function piApi(protocol: Protocol): string {
@@ -350,14 +350,13 @@ export function piApi(protocol: Protocol): string {
 
 /**
  * Renders a {@link Provider} into a pi `models.json` body: one custom provider
- * (id `e`) carrying the endpoint, the mapped `api`, the API key referenced by env
- * var name via pi's `${VAR}` interpolation (never a secret value — pi resolves it
- * from the process env at request time), and the one model to select.
- *
- * Unlike Codex, pi selects only models **declared** in `models.json`, so the
- * (spawn-resolved, concrete) model is always written here — {@link
- * planProviderDelivery} guarantees a concrete id even for `auto`. Grounding: pi
- * `docs/models.md`, `docs/providers.md`.
+ * (id `e`) carrying the endpoint, the mapped `api`, the API key, and the one model
+ * to select. Because pi selects only models **declared** here (unlike Codex),
+ * `e` resolves the key by name from the store and writes its **value** into the
+ * file — which is then baked into the derived agent image (ADR-0006's exception to
+ * the "credentials referenced by name" rule). {@link planProviderDelivery}
+ * guarantees a concrete model id even for `auto`. Grounding: pi `docs/models.md`,
+ * `docs/providers.md`.
  */
 export function renderPiModelsJson(
   facts: SpawnFacts,

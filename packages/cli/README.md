@@ -43,19 +43,22 @@ Exercise the pure rendering directly against the compiled modules — the fastes
 way to _see_ what a harness will receive. Run from `packages/cli/`:
 
 ```bash
-# The pi models.json a provider renders (API key referenced by name, never baked):
-node -e "const a=require('./dist/harness/adapter');console.log(a.renderPiModelsJson({baseUrl:'https://gw.example.com/v1',model:'claude-opus-5',protocol:'anthropic-messages',apiKeyEnv:'MY_GATEWAY_KEY'}))"
+# The pi models.json a provider renders. pi selects only models declared here, so
+# e resolves the API key by name from the store and writes its VALUE into the file
+# (which is then baked into the derived image — see the credential note below):
+node -e "const a=require('./dist/harness/adapter');console.log(a.renderPiModelsJson({storeEnv:{MY_GATEWAY_KEY:'sk-secret'}},{baseUrl:'https://gw.example.com/v1',model:'claude-opus-5',protocol:'anthropic-messages',apiKeyEnv:'MY_GATEWAY_KEY'}))"
 
-# Protocol → pi api mapping (two names differ from e's):
-node -e "const a=require('./dist/harness/adapter');console.log(a.piApi('openai-chat'), a.piApi('google'))"
-# → openai-completions google-generative-ai
+# Protocol → pi api mapping (only openai-chat's name differs from e's):
+node -e "const a=require('./dist/harness/adapter');console.log(a.piApi('openai-chat'), a.piApi('anthropic-messages'))"
+# → openai-completions anthropic-messages
 
-# The container argv pi runs when a provider/model is delivered:
+# The container argv pi runs when a provider/model is delivered (the prompt is
+# rendered quoted):
 node -e "const {HARNESSES}=require('./dist/harness/index');console.log(HARNESSES.pi.buildCommand('fix the bug','claude-opus-5'))"
-# → [ 'pi', '-p', 'fix the bug', '--provider', 'e', '--model', 'claude-opus-5' ]
+# → [ 'pi', '-p', '"fix the bug"', '--provider', 'e', '--model', 'claude-opus-5' ]
 
 # pi ships no MCP client, so --mcp is gated off:
-node -e "const {HARNESSES,mcpDeliveryForm}=require('./dist/harness/index');console.log(mcpDeliveryForm(HARNESSES.pi))"
+node -e "const {HARNESSES,harnessCapabilities}=require('./dist/harness/index');console.log(harnessCapabilities(HARNESSES.pi).mcp)"
 # → none
 ```
 
@@ -74,13 +77,17 @@ e init
 
 **b. Put the provider's API key in `~/.e/.env`.** A custom provider references
 its key by the env-var _name_ you choose (`apiKeyEnv` below); the value lives
-only here and is injected at runtime, never baked into an image:
+only here. Claude Code and Codex inject it at runtime by name, never baking it.
+**pi is the exception:** because it selects only models declared in `models.json`,
+`e` resolves the key by name and writes its _value_ into that file, which is then
+baked into the pi derived image (see step e).
 
 ```bash
 echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 ```
 
-**c. Define a pi agent with a provider** at `~/.e/agents/pi-gw/agent.json`:
+**c. Define a pi agent with a provider** at `~/.e/agents/pi-gw/default/agent.json`
+(the path carries a tier segment — `default` here matches the agent's `tier`):
 
 ```json
 {
@@ -96,8 +103,8 @@ echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 }
 ```
 
-`protocol` must be one pi speaks — `anthropic-messages`, `openai-chat`,
-`openai-responses`, or `google`. Use a concrete `model` for the first run;
+`protocol` must be one pi speaks — `anthropic-messages`, `openai-chat`, or
+`openai-responses`. Use a concrete `model` for the first run;
 `"auto"` (with a non-`default` tier) resolves the best model from the endpoint's
 `/v1/models` at spawn (see
 [ADR-0007](./docs/adr/0007-tiers-and-auto-model-resolution.md)).
@@ -118,8 +125,8 @@ commits).
 **e. Inspect the baked config** — proof the provider was delivered:
 
 ```bash
-cat ~/.e/agents/pi-gw/models.json    # the rendered provider (key by ${NAME})
-cat ~/.e/agents/pi-gw/Dockerfile     # ENV PI_CODING_AGENT_DIR + COPY models.json
+cat ~/.e/agents/pi-gw/default/models.json    # the rendered provider (baked API-key value)
+cat ~/.e/agents/pi-gw/default/Dockerfile      # ENV PI_CODING_AGENT_DIR + COPY models.json
 ```
 
 **f. Confirm MCP is gated** (fast; needs only the store, not a container):

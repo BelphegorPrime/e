@@ -22,8 +22,10 @@ spawn** and delivers it via the runtime overlay (ADR-0006), never baking it:
 1. Query the provider's model list (`/v1/models` for OpenAI-shaped endpoints,
    `/v1/models` for Anthropic).
 2. Walk `e`'s curated preference list for `(protocol, tier)` in order; the first
-   preferred id that is a **prefix of** an available id wins (so a versioned id
-   like `claude-opus-5-20260101` matches the preferred `claude-opus-5`).
+   preferred id that **matches** an available id wins — an exact match, or the
+   preferred id followed by a version/date suffix (`-` then a digit), so
+   `claude-opus-5` matches `claude-opus-5-20260101` but **not** a named sibling
+   like `claude-opus-5-mini`.
 3. If nothing matches, or the endpoint is unreachable, fall back to the
    Provider's optional `defaultModel`; if that is absent too, fail with a clear
    error naming what was tried.
@@ -54,8 +56,13 @@ first-class tiers are:
 - **`cheap`** — the cheapest/fastest model for trivial or bulk work.
 - **`review`** — a careful, analytical model for code review and critique.
 
-`default`-tier agents are not in the list: they carry a concrete model and skip
-auto resolution entirely.
+The `default` tier carries an **empty** preference list, so `auto` resolution has
+nothing to pick: a `default`-tier agent must supply a concrete `model` (or a
+`defaultModel` fallback), otherwise a spawn fails with "No model preference list
+for tier default". Note `e init` seeds one agent per (harness × tier) — the
+`default`-tier ones with `model: "auto"` and a placeholder endpoint — so a
+generated default agent needs a concrete model or a curated tier before it will
+spawn.
 
 Initial rankings (first available wins), tuned to the maintainer's gateway,
 whose model ids are **namespaced by provider** (`anthropic.…`, `openai.…`).
@@ -72,10 +79,10 @@ Matching is exact or a preferred id followed by a version/date suffix
 brevity; the encoded list carries the full namespaced ids.)
 
 The `gpt-5.6` variants form a capability ladder — **luna < terra < sol**, the
-haiku / sonnet / opus equivalents. `google` is **not curated**: the gateway
-offers only Gemma (no Gemini), so a `google` + `auto` provider gets a clear
-"no preference list" error rather than a guessed Gemma; a concrete `model` or
-`defaultModel` still works.
+haiku / sonnet / opus equivalents. There is no `google` protocol in `e` (the
+gateway offers only Gemma, no Gemini), so it has no preference list and a
+`google` provider is rejected before resolution ever runs; a concrete `model` or
+`defaultModel` on a supported protocol still works.
 
 ## Considered options
 
