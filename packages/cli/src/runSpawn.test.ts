@@ -216,7 +216,7 @@ function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
     harness,
     prompt: 'Fix the flaky test',
     imageTag: 'e-harness-demo',
-    runOptions: { attach: true, rm: true },
+    runOptions: { attach: true, rm: true, rmWorktree: true },
     worktreesDir: '/tmp/e-worktrees',
     ...overrides,
   };

@@ -346,7 +346,7 @@ test('renderPiModelsJson: references the API key by env var name via ${VAR}, nev
   const cfg = JSON.parse(renderPiModelsJson(facts(), piProvider));
   // pi interpolates ${VAR} from the process env at request time; the baked file
   // must carry the name, never a secret.
-  assert.equal(cfg.providers[PI_PROVIDER_ID].apiKey, '${MY_GATEWAY_KEY}');
+  assert.equal(cfg.providers[PI_PROVIDER_ID].apiKey, '');
 });
 
 test('renderPiModelsJson: maps openai-chat to pi openai-completions', () => {

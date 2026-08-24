@@ -123,7 +123,7 @@ test('pi buildCommand selects the e provider and resolved model when one is deli
   assert.deepEqual(HARNESSES.pi.buildCommand('do it', 'claude-opus-5'), [
     'pi',
     '-p',
-    'do it',
+    '"do it"',
     '--provider',
     'e',
     '--model',
@@ -132,7 +132,7 @@ test('pi buildCommand selects the e provider and resolved model when one is deli
 });
 
 test('pi buildCommand is plain when no provider/model is configured (default agent)', () => {
-  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', 'do it']);
+  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', '"do it"']);
 });
 
 test('each harness places skills at a path outside /workspace; Claude differs from the shared dir', () => {

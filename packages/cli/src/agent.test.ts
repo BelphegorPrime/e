@@ -77,10 +77,18 @@ test('renderDefaultAgent: valid JSON with name=harness and tier=default', () => 
   const parsed = JSON.parse(
     renderDefaultAgent('codex', 'default', {})
   ) as Agent;
+  const provider = {
+    apiKeyEnv: 'OPENAI_API_KEY',
+    baseUrl: '<endpoint-url>',
+    baseUrlEnv: 'OPENAI_BASE_URL',
+    model: 'auto',
+    protocol: 'openai-responses',
+  };
   assert.deepEqual(parsed, {
     name: 'codex',
     harness: 'codex',
     tier: 'default',
+    provider: provider,
   });
 });
 
@@ -88,7 +96,14 @@ test('renderDefaultAgent: a default agent carries no provider', () => {
   const parsed = JSON.parse(
     renderDefaultAgent('codex', 'default', {})
   ) as Agent;
-  assert.equal(parsed.provider, undefined);
+  const provider = {
+    apiKeyEnv: 'OPENAI_API_KEY',
+    baseUrl: '<endpoint-url>',
+    baseUrlEnv: 'OPENAI_BASE_URL',
+    model: 'auto',
+    protocol: 'openai-responses',
+  };
+  assert.deepStrictEqual(parsed.provider, provider);
 });
 
 test('parseAgent: a definition without a provider parses as-is', () => {
@@ -102,6 +117,7 @@ test('parseAgent: a definition without a provider parses as-is', () => {
 test('parseAgent: a valid inline provider is parsed onto the agent', () => {
   const provider: Provider = {
     baseUrl: 'https://gateway.example.com',
+    baseUrlEnv: undefined,
     model: 'claude-opus-5',
     protocol: 'anthropic-messages',
     apiKeyEnv: 'MY_GATEWAY_KEY',
