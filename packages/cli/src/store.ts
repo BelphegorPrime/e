@@ -104,10 +104,17 @@ export function modelsFilePath(root?: string): string {
 export const DEFAULT_HARNESS = 'pi';
 
 /** Host-only orchestration settings, persisted in `config.json`. */
-export interface StoreConfig {
+export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
   defaultHarness: string;
-}
+};
+
+export type ModelDataEntry = {
+  id: string;
+  object: string;
+  created: number;
+  owned_by: string;
+};
 
 /**
  * Resolves a parsed `config.json` body to a complete {@link StoreConfig},
@@ -124,9 +131,42 @@ export function resolveConfig(raw: unknown): StoreConfig {
   return { defaultHarness };
 }
 
+/**
+ * Resolves a parsed `model-ids.json` body to a complete {@link ModelDataEntry} array,
+ * applying built-in defaults for anything absent or malformed. Pure: the glue
+ * hands it the already-parsed JSON (or `undefined` when the file is missing).
+ */
+export function resolveModels(raw: unknown): ModelDataEntry[] {
+  const parsed = (raw ?? []) as Partial<ModelDataEntry[]>;
+  return Array.isArray(parsed)
+    ? parsed.filter((v): v is ModelDataEntry => !!v)
+    : [];
+}
+
 /** Serializes a {@link StoreConfig} to the on-disk `config.json` text. */
-export function serializeConfig(config: StoreConfig): string {
+export function serializeConfig(
+  config: Record<string, unknown> | Array<unknown>
+): string {
   return JSON.stringify(config, null, 2) + '\n';
+}
+
+/**
+ * Reads the host-only `model-ids.json`, applying defaults for anything absent — a
+ * missing file yields the built-in defaults ({@link DEFAULT_HARNESS}).
+ */
+export function readModelsJson(root?: string): ModelDataEntry[] {
+  const file = modelsFilePath(root);
+  if (!fs.existsSync(file)) {
+    return resolveModels(undefined);
+  }
+  return resolveModels(JSON.parse(fs.readFileSync(file, 'utf8')));
+}
+
+/** Writes the host-only `model-ids.json`, creating the `.e` directory if needed. */
+export function writeModelsJson(config: ModelDataEntry[], root?: string): void {
+  const file = modelsFilePath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, serializeConfig(config));
 }
 
 /**

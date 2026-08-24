@@ -1,7 +1,6 @@
-import fs from 'node:fs';
 import type { Protocol, Provider } from '../harness/adapter';
 import { chooseModel, Tier } from './preferences';
-import { modelsFilePath } from '../store';
+import { ModelDataEntry, writeModelsJson } from '../store';
 
 /**
  * Resolving an Agent's model at spawn (ADR-0007). A concrete model is used as-is
@@ -38,13 +37,6 @@ export function modelsUrl(baseUrl: string): string {
   return base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`;
 }
 
-type ModelDataEntry = {
-  id: string;
-  object: string;
-  created: number;
-  owned_by: string;
-};
-
 /**
  * Extracts model ids from a model-list response, purely. Both OpenAI and
  * Anthropic return `{ data: [{ id }] }`; anything that doesn't fit that shape is
@@ -61,7 +53,7 @@ export function parseModelIds(
     return [];
   }
 
-  fs.writeFileSync(modelsFilePath(props.root), JSON.stringify(data, null, 2));
+  writeModelsJson(data, props.root);
 
   return data
     .map(entry =>
