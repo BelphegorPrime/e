@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { log } from './utils/log';
 
 /**
  * Scaffolding writes shared by everything that renders e's on-disk state from a
@@ -23,19 +24,19 @@ export function writeIfAbsent(
 
   if (!fs.existsSync(file)) {
     fs.writeFileSync(file, content);
-    console.log(`wrote ${file}`);
+    log.success(`wrote ${file}`);
     return;
   }
 
   const existing = fs.readFileSync(file, 'utf8');
   if (existing === content) {
-    console.log(`up to date ${file}`);
+    log.info(`up to date ${file}`);
     return;
   }
 
-  console.log(`changed ${file} (kept existing, not overwritten):`);
+  log.warn(`changed ${file} (kept existing, not overwritten):`);
   for (const line of diffLines(existing, content)) {
-    console.log(`  ${line}`);
+    log.info(`  ${line}`);
   }
 }
 

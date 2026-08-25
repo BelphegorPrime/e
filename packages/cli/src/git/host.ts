@@ -1,5 +1,6 @@
 import { spawnSync } from 'child_process';
 import type { Git, WorktreeSpec } from './index';
+import { log } from '../utils/log';
 
 /**
  * The real `Git` port: shells out to the `git` executable in the host process.
@@ -104,7 +105,7 @@ export class HostGit implements Git {
       const detail = result.stderr?.trim() || result.stdout?.trim() || '';
       throw new Error(`git failed (${description}): ${detail}`);
     }
-    console.log(description);
+    log.command(description);
     return result.stdout;
   }
 }

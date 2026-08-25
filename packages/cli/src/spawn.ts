@@ -23,6 +23,7 @@ import { RunScratch } from './runScratch';
 import { executeSpawn } from './executeSpawn';
 import { findRoot, envFilePath, readConfig } from './store';
 import { Tier } from './model/preferences';
+import { log } from './utils/log';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
 const RUNTIMES: Record<string, string> = {
@@ -276,23 +277,23 @@ export function registerSpawnCommand(program: Command): void {
           }
 
           if (result.error) {
-            console.error(result.error);
+            log.error(result.error);
             process.exit(result.exitCode);
           }
           for (const warning of result.sidecarWarnings ?? []) {
-            console.warn(`Warning: ${warning}`);
+            log.warn(`Warning: ${warning}`);
           }
           if (result.pushWarning) {
-            console.warn(`Warning: ${result.pushWarning}`);
+            log.warn(`Warning: ${result.pushWarning}`);
           }
-          console.log(`\nRun branch: ${result.branch}`);
+          log.success(`\nRun branch: ${result.branch}`);
           if (result.pushed) {
-            console.log('Pushed to origin. Open a PR or merge when you like.');
+            log.success('Pushed to origin. Open a PR or merge when you like.');
           }
           process.exit(result.exitCode);
         } catch (err) {
           scratch.dispose();
-          console.error((err as Error).message);
+          log.error((err as Error).message);
           process.exit(1);
         }
       }

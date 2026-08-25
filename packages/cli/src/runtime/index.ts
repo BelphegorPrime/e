@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
+import { log } from '../utils/log';
 
 /**
  * A bind mount as structured data, so callers describe *what* to mount and the
@@ -219,7 +220,7 @@ export class ContainerRuntime implements ContainerRunner {
   build(imageTag: string, contextDir: string, dockerfile?: string): void {
     const args = buildImageArgs(imageTag, contextDir, dockerfile);
 
-    console.log(`> ${this.command} ${args.join(' ')}`);
+    log.command(`> ${this.command} ${args.join(' ')}`);
     const result = spawnSync(this.command, args, {
       stdio: 'inherit',
       shell: false,
@@ -270,8 +271,8 @@ export class ContainerRuntime implements ContainerRunner {
    */
   run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number> {
     const runArgs = this.buildRunArgs(image, opts, commandArgs);
-    console.log(`Using runtime: ${this.command}`);
-    console.log(`> ${this.command} ${runArgs.join(' ')}`);
+    log.info(`Using runtime: ${this.command}`);
+    log.command(`> ${this.command} ${runArgs.join(' ')}`);
 
     return new Promise<number>((resolve, reject) => {
       const child = spawn(this.command, runArgs, {
@@ -323,7 +324,7 @@ export class ContainerRuntime implements ContainerRunner {
   startSidecar(spec: SidecarSpec): void {
     const args = sidecarRunArgs(spec);
 
-    console.log(`> ${this.command} ${args.join(' ')}`);
+    log.command(`> ${this.command} ${args.join(' ')}`);
     const result = spawnSync(this.command, args, {
       stdio: ['ignore', 'ignore', 'inherit'],
       shell: false,

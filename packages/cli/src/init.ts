@@ -28,6 +28,7 @@ import {
   readConfig,
 } from './store';
 import { TIERS } from './model/preferences';
+import { log } from './utils/log';
 
 interface InitCommandOptions {
   dir?: string;
@@ -88,8 +89,8 @@ export function registerInitCommand(program: Command): void {
       }
 
       for (const harness of Object.values(HARNESSES)) {
-        console.log('');
-        console.log(`writing files for harness [${harness.name}]`);
+        log.info('');
+        log.info(`writing files for harness [${harness.name}]`);
         writeDockerfile(harness, root);
         writeDefaultAgents(harness, root, envValues);
       }
@@ -99,18 +100,18 @@ export function registerInitCommand(program: Command): void {
 
       writeEnvFile(root, envValues);
       writeConfig({ defaultHarness }, root);
-      console.log(`favorite harness: ${defaultHarness}`);
+      log.info(`favorite harness: ${defaultHarness}`);
 
-      console.log(
+      log.success(
         `\nInitialized ${Object.keys(HARNESSES).length} harnesses in ${harnessesBaseDir(root)}.`
       );
-      console.log(
+      log.info(
         `Container MCP servers ready: ${Object.keys(SHIPPED_MCP_SERVERS).join(', ')} (compose with \`--mcp <name>\`).`
       );
-      console.log(
+      log.info(
         `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent).`
       );
-      console.log(
+      log.info(
         'Run `e spawn "<prompt>"` to run your favorite harness, or `e spawn <harness> "<prompt>"` to pick one.'
       );
     });
@@ -153,16 +154,16 @@ async function promptFavoriteHarness(
   names: string[],
   current: string
 ): Promise<string> {
-  console.log('\nFavorite harness (used when `e spawn` names none):');
+  log.info('\nFavorite harness (used when `e spawn` names none):');
   names.forEach((name, i) => {
     const marker = name === current ? ' (default)' : '';
-    console.log(`  ${i + 1}) ${name}${marker}`);
+    log.info(`  ${i + 1}) ${name}${marker}`);
   });
   for (;;) {
     const answer = await rl.question(`Choose [${current}]: `);
     const choice = parseHarnessChoice(answer, names, current);
     if (choice) return choice;
-    console.log(`  "${answer.trim()}" is not one of: ${names.join(', ')}.`);
+    log.warn(`  "${answer.trim()}" is not one of: ${names.join(', ')}.`);
   }
 }
 
@@ -173,7 +174,7 @@ async function promptApiKeys(
 ): Promise<Record<string, string>> {
   const values: Record<string, string> = {};
   if (keys.length === 0) return values;
-  console.log('\nAPI keys (leave blank to skip; edit `.e/.env` later):');
+  log.info('\nAPI keys (leave blank to skip; edit `.e/.env` later):');
   for (const key of keys) {
     const answer = (await rl.question(`  ${key}: `)).trim();
     if (answer) values[key] = answer;
@@ -334,11 +335,11 @@ function writeEnvFile(
 
   if (existing === undefined) {
     fs.writeFileSync(file, content);
-    console.log(`wrote ${file}`);
+    log.success(`wrote ${file}`);
   } else if (content === existing) {
-    console.log(`up to date ${file}`);
+    log.info(`up to date ${file}`);
   } else {
     fs.writeFileSync(file, content);
-    console.log(`updated ${file}`);
+    log.success(`updated ${file}`);
   }
 }
