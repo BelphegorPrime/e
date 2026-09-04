@@ -42,6 +42,8 @@ export interface RunOptions {
    * (no sidecars) leaves this unset and uses the default bridge as before.
    */
   network?: string;
+  /** Hostname mappings added to the container (`--add-host`). */
+  extraHosts?: string[];
 }
 
 /**
@@ -183,6 +185,14 @@ export function runningInspectArgs(name: string): string[] {
   return ['inspect', '-f', '{{.State.Running}}', name];
 }
 
+export function composeUpArgs(composeFile: string): string[] {
+  return ['compose', '-f', composeFile, 'up', '-d'];
+}
+
+export function composeWaitArgs(composeFile: string): string[] {
+  return ['compose', '-f', composeFile, 'wait', 'bootstrap'];
+}
+
 /**
  * A container runtime (docker, podman, ...).
  *
@@ -250,6 +260,7 @@ export class ContainerRuntime implements ContainerRunner {
     if (opts.name) args.push('--name', opts.name);
     if (opts.workdir) args.push('-w', opts.workdir);
     if (opts.network) args.push('--network', opts.network);
+    for (const host of opts.extraHosts ?? []) args.push('--add-host', host);
     for (const f of opts.envFile ?? []) args.push('--env-file', f);
 
     for (const v of opts.volumes ?? []) args.push('-v', formatMount(v));
@@ -288,6 +299,44 @@ export class ContainerRuntime implements ContainerRunner {
         resolve(signal ? 1 : (code ?? 0));
       });
     });
+  }
+
+  /** Starts a Compose stack in the background, preserving its own lifecycle. */
+  composeUp(composeFile: string): void {
+    const args = composeUpArgs(composeFile);
+    log.command(`> ${this.command} ${args.join(' ')}`);
+    const result = spawnSync(this.command, args, {
+      stdio: 'inherit',
+      shell: false,
+    });
+    if (result.error) {
+      throw new Error(
+        `Failed to start ${this.command} compose: ${result.error.message}`
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `Compose startup failed (exit code ${result.status ?? 1}).`
+      );
+    }
+
+    const waitArgs = composeWaitArgs(composeFile);
+    log.command(`> ${this.command} ${waitArgs.join(' ')}`);
+    const waitResult = spawnSync(this.command, waitArgs, {
+      stdio: 'inherit',
+      shell: false,
+    });
+    if (waitResult.error) {
+      throw new Error(
+        `Failed to wait for ${this.command} compose: ${waitResult.error.message}`
+      );
+    }
+    if (waitResult.status !== 0) {
+      throw new Error(
+        `Compose bootstrap failed (exit code ${waitResult.status ?? 1}).`
+      );
+    }
+
   }
 
   /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */

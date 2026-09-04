@@ -13,6 +13,8 @@ import {
   tcpProbeArgs,
   execArgs,
   runningInspectArgs,
+  composeUpArgs,
+  composeWaitArgs,
   type RunOptions,
   type SidecarSpec,
 } from './index';
@@ -167,6 +169,34 @@ test('buildRunArgs: command args trail the image', () => {
     'echo hi',
   ]);
 });
+
+test('buildRunArgs: adds host gateway mapping for local Compose services', () => {
+  assert.deepEqual(
+    argsFor({ extraHosts: ['host.docker.internal:host-gateway'] }),
+    ['run', '-d', '--add-host', 'host.docker.internal:host-gateway', 'img']
+  );
+});
+
+test('composeUpArgs: starts the selected Compose file detached', () => {
+  assert.deepEqual(composeUpArgs('/project/.e/compose.yaml'), [
+    'compose',
+    '-f',
+    '/project/.e/compose.yaml',
+    'up',
+    '-d',
+  ]);
+});
+
+test('composeWaitArgs: waits for generated bootstrap service', () => {
+  assert.deepEqual(composeWaitArgs('/project/.e/compose.yaml'), [
+    'compose',
+    '-f',
+    '/project/.e/compose.yaml',
+    'wait',
+    'bootstrap',
+  ]);
+});
+
 
 // --- structured mounts ---
 

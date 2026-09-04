@@ -44,12 +44,6 @@ export interface Provider {
   protocol: Protocol;
   /** Name of the env var (in `.e/.env`) holding the API key — never the value. */
   apiKeyEnv: string;
-  /**
-   * Fallback model id used when `model` is `auto` but resolution finds no
-   * preferred model or the endpoint is unreachable (ADR-0007). Optional; without
-   * it an unresolvable `auto` is a hard error.
-   */
-  defaultModel?: string;
 }
 
 /**

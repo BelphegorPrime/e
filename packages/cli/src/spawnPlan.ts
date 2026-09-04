@@ -24,7 +24,6 @@ import {
   type DerivedImagePlan,
 } from './harness/deriveImage';
 import { planMcpSelection, type McpServer } from './mcp/index';
-import type { ResolvedModel } from './model/resolve';
 import type { Mount } from './runtime/index';
 import type { SidecarPlan } from './runSpawn';
 import { imageTag } from './naming';
@@ -272,7 +271,6 @@ export interface SpawnPlan {
  */
 export function planSpawn(
   facts: SpawnFacts,
-  resolvedModel?: ResolvedModel
 ): SpawnPlan {
   const { agent, harness, storeEnv, root } = facts;
   // One renderer, bound to the store's secrets, for every credential env-file this
@@ -282,12 +280,11 @@ export function planSpawn(
   // Provider delivery (env harness → runtime env; file harness → baked config).
   let delivery: ProviderDelivery | undefined;
   let providerEnvContent: string | undefined;
-  if (agent.provider && harness.adapter && resolvedModel) {
+  if (agent.provider && harness.adapter) {
     delivery = planProviderDelivery(
       facts,
       harness.adapter,
       agent.provider,
-      resolvedModel
     );
     providerEnvContent = envRenderer.render(
       delivery.runtimeEnv,

@@ -4,6 +4,9 @@ import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
 import { renderDockerfile } from './harness/renderDockerfile';
 import { renderEnvTemplate } from './harness/renderEnvTemplate';
+import { renderCompose } from './renderCompose';
+import { renderBootstrap } from './renderBootstrap';
+import { detectHardware, llamaCppImage } from './hardware/index';
 import { writeIfAbsent } from './scaffold';
 import {
   HARNESSES,
@@ -17,6 +20,8 @@ import { SHIPPED_MCP_SERVERS } from './mcp/index';
 import { SHIPPED_SKILLS } from './skill/index';
 import {
   dockerfilePath,
+  dockerComposePath,
+  bootstrapScriptPath,
   harnessDir,
   harnessesBaseDir,
   envFilePath,
@@ -27,7 +32,6 @@ import {
   writeConfig,
   readConfig,
 } from './store';
-import { TIERS } from './model/preferences';
 import { log } from './utils/log';
 
 interface InitCommandOptions {
@@ -97,6 +101,21 @@ export function registerInitCommand(program: Command): void {
 
       writeMcpServers(root);
       writeSkills(root);
+      const hardware = detectHardware();
+      writeIfAbsent(
+        path.dirname(bootstrapScriptPath(root)),
+        bootstrapScriptPath(root),
+        renderBootstrap()
+      );
+      prepareComposeDataDir(root);
+      writeIfAbsent(
+        path.dirname(dockerComposePath(root)),
+        dockerComposePath(root),
+        renderCompose(hardware)
+      );
+      log.info(
+        `Detected hardware: ${hardware} -> using ${llamaCppImage(hardware)} for the local llama.cpp provider.`
+      );
 
       writeEnvFile(root, envValues);
       writeConfig({ defaultHarness }, root);
@@ -239,6 +258,24 @@ export function applyEnvValues(
     .join('\n');
 }
 
+/** Creates local Compose volume directories with container-writable permissions. */
+export function prepareComposeDataDir(root?: string): void {
+  const volumesDir = path.join(
+    path.dirname(dockerComposePath(root)),
+    'volumes'
+  );
+  for (const name of [
+    'omniroute-data',
+    'llama-models',
+    'llama-data',
+    'redis-data',
+  ]) {
+    const directory = path.join(volumesDir, name);
+    fs.mkdirSync(directory, { recursive: true });
+    fs.chmodSync(directory, 0o777);
+  }
+}
+
 /** Writes a harness's Dockerfile (never overwriting a hand-edited one). */
 function writeDockerfile(harness: Harness, root: string | undefined): void {
   writeIfAbsent(
@@ -254,13 +291,11 @@ function writeDefaultAgents(
   root: string | undefined,
   envValues: Record<string, string>
 ): void {
-  for (const tier of TIERS) {
-    writeIfAbsent(
-      agentDir(harness.name, root, tier),
-      agentFilePath(harness.name, root, tier),
-      renderDefaultAgent(harness.name, tier, envValues)
-    );
-  }
+  writeIfAbsent(
+    agentDir(harness.name, root),
+    agentFilePath(harness.name, root),
+    renderDefaultAgent(harness.name, envValues)
+  );
 }
 
 /**

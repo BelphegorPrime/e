@@ -42,8 +42,8 @@ test('success and command go to stdout; error and warn go to stderr', () => {
   log.command('> docker run');
   log.error('boom');
   log.warn('careful');
-  assert.deepEqual(out, ['done\n', '> docker run\n']);
-  assert.deepEqual(err, ['boom\n', 'careful\n']);
+  assert.deepEqual(out, ['\x1B[32mdone\x1B[39m\n', '\x1B[34m> docker run\x1B[39m\n']);
+  assert.deepEqual(err, ['\x1B[31mboom\x1B[39m\n', '\x1B[33mcareful\x1B[39m\n']);
 });
 
 test('rest args format like console (specifiers and joins)', () => {

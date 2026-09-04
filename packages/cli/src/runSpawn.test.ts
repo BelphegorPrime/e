@@ -196,7 +196,7 @@ const harness: Harness = {
 };
 
 /** The default agent for the demo harness (name mirrors the harness). */
-const agent: Agent = { name: 'demo', harness: 'demo', tier: 'default' };
+const agent: Agent = { name: 'demo', harness: 'demo' };
 
 function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
   const git = overrides.git ?? new FakeGit();
@@ -254,7 +254,7 @@ test('creates a worktree from HEAD on branch e/<harness>/<slug>-1 and runs the h
 
 test('the run branch uses the agent name, while the image stays the harness image', async () => {
   const { deps, git, runtime } = makeDeps();
-  const smart: Agent = { name: 'smart-demo', harness: 'demo', tier: 'smart' };
+  const smart: Agent = { name: 'smart-demo', harness: 'demo' };
   const result = await runSpawn(deps, makeParams({ agent: smart }));
 
   const slug = slugify('Fix the flaky test');

@@ -86,14 +86,12 @@ baked into the pi derived image (see step e).
 echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 ```
 
-**c. Define a pi agent with a provider** at `~/.e/agents/pi-gw/default/agent.json`
-(the path carries a tier segment — `default` here matches the agent's `tier`):
+**c. Define a pi agent with a provider** at `~/.e/agents/pi-gw/agent.json`:
 
 ```json
 {
   "name": "pi-gw",
   "harness": "pi",
-  "tier": "default",
   "provider": {
     "baseUrl": "https://your-gateway.example.com",
     "model": "claude-sonnet-4-5",
@@ -104,9 +102,8 @@ echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 ```
 
 `protocol` must be one pi speaks — `anthropic-messages`, `openai-chat`, or
-`openai-responses`. Use a concrete `model` for the first run;
-`"auto"` (with a non-`default` tier) resolves the best model from the endpoint's
-`/v1/models` at spawn (see
+`openai-responses`. Use a concrete `model` for the first run; `"auto"` resolves
+the best model from the endpoint's `/v1/models` at spawn (see
 [ADR-0007](./docs/adr/0007-tiers-and-auto-model-resolution.md)).
 
 **d. Spawn it inside any git repo:**
@@ -125,8 +122,8 @@ commits).
 **e. Inspect the baked config** — proof the provider was delivered:
 
 ```bash
-cat ~/.e/agents/pi-gw/default/models.json    # the rendered provider (baked API-key value)
-cat ~/.e/agents/pi-gw/default/Dockerfile      # ENV PI_CODING_AGENT_DIR + COPY models.json
+cat ~/.e/agents/pi-gw/models.json    # the rendered provider (baked API-key value)
+cat ~/.e/agents/pi-gw/Dockerfile      # ENV PI_CODING_AGENT_DIR + COPY models.json
 ```
 
 **f. Confirm MCP is gated** (fast; needs only the store, not a container):
@@ -148,7 +145,6 @@ e spawn pi-gw --mcp everything "hi"
 | ---------------------------------------------- | ---------------------------------------------------------------------- |
 | `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config  |
 | `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt                                  |
-| `e spawn <harness> --tier <tier> "…"`          | Select a harness's agent by tier                                       |
 | `e spawn … --skill <name>`                     | Add a Skill for this run                                               |
 | `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for pi)                                   |
 | `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model) |

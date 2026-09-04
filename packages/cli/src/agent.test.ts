@@ -8,12 +8,12 @@ import {
   renderDefaultAgent,
   parseAgent,
   isKnownTarget,
-  selectAgentByTier,
   type Agent,
   type ResolveAgentDeps,
 } from './agent';
 import { agentDir } from './store';
 import type { Provider } from './harness/adapter';
+import { renderEnvTemplate } from './harness/renderEnvTemplate';
 
 // resolveAgent is pure: it takes a spawn target plus injected readers (an
 // agent loader, the valid harness names, and the available agent names), so we
@@ -28,26 +28,32 @@ function deps(overrides: Partial<ResolveAgentDeps> = {}): ResolveAgentDeps {
 }
 
 test('resolveAgent: a persisted agent is returned as-is', () => {
-  const smart: Agent = { name: 'smart-codex', harness: 'codex', tier: 'smart' };
+  const smart: Agent = { name: 'smart-codex', harness: 'codex' };
   const agent = resolveAgent(
     'smart-codex',
     deps({ readAgent: n => (n === 'smart-codex' ? smart : undefined) })
   );
   assert.deepEqual(agent, smart);
 });
+test('renderDefaultAgent: local OmniRoute API key is seeded in the env template', () => {
+  const env = renderEnvTemplate({
+    harnesses: [{ name: 'codex', env: ['OPENAI_API_KEY'] }],
+  });
+  assert.match(env, /OPENAI_API_KEY=local-development/);
+});
 
 test('resolveAgent: a bare harness name derives its default agent', () => {
   const agent = resolveAgent('pi', deps());
-  assert.deepEqual(agent, { name: 'pi', harness: 'pi', tier: 'default' });
+  assert.deepEqual(agent, { name: 'pi', harness: 'pi' });
 });
 
 test('resolveAgent: a persisted agent wins over a same-named harness', () => {
-  const custom: Agent = { name: 'pi', harness: 'pi', tier: 'smart' };
+  const custom: Agent = { name: 'pi', harness: 'pi' };
   const agent = resolveAgent(
     'pi',
     deps({ readAgent: n => (n === 'pi' ? custom : undefined) })
   );
-  assert.equal(agent.tier, 'smart');
+  assert.equal(agent.name, 'pi');
 });
 
 test('resolveAgent: an unknown name throws, listing agents and harnesses', () => {
@@ -58,7 +64,7 @@ test('resolveAgent: an unknown name throws, listing agents and harnesses', () =>
 });
 
 test('resolveAgent: a persisted agent referencing an unknown harness throws', () => {
-  const broken: Agent = { name: 'x', harness: 'ghost', tier: 'default' };
+  const broken: Agent = { name: 'x', harness: 'ghost' };
   assert.throws(
     () => resolveAgent('x', deps({ readAgent: () => broken })),
     /references unknown harness "ghost"/
@@ -66,52 +72,46 @@ test('resolveAgent: a persisted agent referencing an unknown harness throws', ()
 });
 
 test('resolveAgent: a persisted agent whose name differs from its key throws', () => {
-  const mislabelled: Agent = { name: 'other', harness: 'pi', tier: 'default' };
+  const mislabelled: Agent = { name: 'other', harness: 'pi' };
   assert.throws(
     () => resolveAgent('pi', deps({ readAgent: () => mislabelled })),
     /declares a different name "other"/
   );
 });
 
-test('renderDefaultAgent: valid JSON with name=harness and tier=default', () => {
-  const parsed = JSON.parse(
-    renderDefaultAgent('codex', 'default', {})
-  ) as Agent;
+test('renderDefaultAgent: defaults provider endpoint to local OmniRoute', () => {
+  const parsed = JSON.parse(renderDefaultAgent('codex', {})) as Agent;
   const provider = {
     apiKeyEnv: 'OPENAI_API_KEY',
-    baseUrl: '<endpoint-url>',
+    baseUrl: 'http://host.docker.internal:20128/v1',
     baseUrlEnv: 'OPENAI_BASE_URL',
     model: 'auto',
     protocol: 'openai-responses',
+    defaultModel: 'auto',
   };
   assert.deepEqual(parsed, {
     name: 'codex',
     harness: 'codex',
-    tier: 'default',
     provider: provider,
   });
 });
 
 test('renderDefaultAgent: a default agent carries no provider', () => {
-  const parsed = JSON.parse(
-    renderDefaultAgent('codex', 'default', {})
-  ) as Agent;
+  const parsed = JSON.parse(renderDefaultAgent('codex', {})) as Agent;
   const provider = {
     apiKeyEnv: 'OPENAI_API_KEY',
-    baseUrl: '<endpoint-url>',
+    baseUrl: 'http://host.docker.internal:20128/v1',
     baseUrlEnv: 'OPENAI_BASE_URL',
     model: 'auto',
     protocol: 'openai-responses',
+    defaultModel: 'auto',
   };
   assert.deepStrictEqual(parsed.provider, provider);
 });
 
 test('parseAgent: a definition without a provider parses as-is', () => {
-  const agent = parseAgent(
-    { name: 'pi', harness: 'pi', tier: 'default' },
-    'test.json'
-  );
-  assert.deepEqual(agent, { name: 'pi', harness: 'pi', tier: 'default' });
+  const agent = parseAgent({ name: 'pi', harness: 'pi' }, 'test.json');
+  assert.deepEqual(agent, { name: 'pi', harness: 'pi' });
 });
 
 test('parseAgent: a valid inline provider is parsed onto the agent', () => {
@@ -123,7 +123,7 @@ test('parseAgent: a valid inline provider is parsed onto the agent', () => {
     apiKeyEnv: 'MY_GATEWAY_KEY',
   };
   const agent = parseAgent(
-    { name: 'smart-claude', harness: 'claudeCode', tier: 'smart', provider },
+    { name: 'smart-claude', harness: 'claudeCode', provider },
     'test.json'
   );
   assert.deepEqual(agent.provider, provider);
@@ -134,7 +134,6 @@ test('parseAgent: a string[] of default skills is parsed onto the agent', () => 
     {
       name: 'skilled',
       harness: 'claudeCode',
-      tier: 'default',
       skills: ['a', 'b'],
     },
     'test.json'
@@ -144,7 +143,7 @@ test('parseAgent: a string[] of default skills is parsed onto the agent', () => 
 
 test('parseAgent: an empty skills array is treated as no baked skills', () => {
   const agent = parseAgent(
-    { name: 'x', harness: 'pi', tier: 'default', skills: [] },
+    { name: 'x', harness: 'pi', skills: [] },
     'test.json'
   );
   assert.equal(agent.skills, undefined);
@@ -153,18 +152,15 @@ test('parseAgent: an empty skills array is treated as no baked skills', () => {
 test('parseAgent: a non-string-array skills field throws', () => {
   assert.throws(
     () =>
-      parseAgent(
-        { name: 'x', harness: 'pi', tier: 'default', skills: 'a' },
-        'test.json'
-      ),
+      parseAgent({ name: 'x', harness: 'pi', skills: 'a' }, 'test.json'),
     /"skills" must be an array of strings/
   );
 });
 
 test('parseAgent: missing required fields throw', () => {
   assert.throws(
-    () => parseAgent({ name: 'x', harness: 'pi' }, 'test.json'),
-    /expected \{ name, harness, tier \} strings/
+    () => parseAgent({ name: 'x' }, 'test.json'),
+    /expected \{ name, harness \} strings/
   );
 });
 
@@ -175,7 +171,6 @@ test('parseAgent: a provider missing fields throws, naming the source', () => {
         {
           name: 'x',
           harness: 'claudeCode',
-          tier: 'default',
           provider: {
             baseUrl: 'https://x',
             model: 'm',
@@ -195,7 +190,6 @@ test('parseAgent: an unrecognised provider protocol throws, listing valid protoc
         {
           name: 'x',
           harness: 'claudeCode',
-          tier: 'default',
           provider: {
             baseUrl: 'https://x',
             model: 'm',
@@ -228,40 +222,4 @@ test('isKnownTarget: a persisted agent directory counts as a target', () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
-
-const agents: Agent[] = [
-  { name: 'codex', harness: 'codex', tier: 'default' },
-  { name: 'smart-codex', harness: 'codex', tier: 'smart' },
-  { name: 'cheap-codex', harness: 'codex', tier: 'cheap' },
-  { name: 'smart-claude', harness: 'claudeCode', tier: 'smart' },
-];
-
-test('selectAgentByTier: returns the single agent matching (harness, tier)', () => {
-  const agent = selectAgentByTier('codex', 'smart', agents);
-  assert.equal(agent.name, 'smart-codex');
-});
-
-test('selectAgentByTier: no match errors, listing the harness candidates and their tiers', () => {
-  assert.throws(
-    () => selectAgentByTier('codex', 'review', agents),
-    /No agent for harness "codex" at tier "review"[\s\S]*smart-codex \(tier: smart\)/
-  );
-});
-
-test('selectAgentByTier: an ambiguous tier errors, listing the conflicting agents', () => {
-  const dupes: Agent[] = [
-    { name: 'a', harness: 'codex', tier: 'smart' },
-    { name: 'b', harness: 'codex', tier: 'smart' },
-  ];
-  assert.throws(
-    () => selectAgentByTier('codex', 'smart', dupes),
-    /Ambiguous tier "smart"[\s\S]*a, b/
-  );
-});
-
-test('selectAgentByTier: matching is scoped to the named harness', () => {
-  // `smart` exists for claudeCode too, but selecting under codex must not see it.
-  const agent = selectAgentByTier('claudeCode', 'smart', agents);
-  assert.equal(agent.name, 'smart-claude');
 });

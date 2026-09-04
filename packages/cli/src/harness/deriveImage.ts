@@ -15,7 +15,6 @@ import type {
   Provider,
   RenderedConfigFile,
 } from './adapter';
-import type { ResolvedModel } from '../model/resolve';
 import { imageTag } from '../naming';
 import { SpawnFacts } from '../spawnPlan';
 
@@ -143,14 +142,13 @@ export function planProviderDelivery(
   facts: SpawnFacts,
   adapter: HarnessAdapter,
   provider: Provider,
-  resolved: ResolvedModel
 ): ProviderDelivery {
   if (adapter.kind === 'env') {
     // Env harnesses carry the model at runtime already; use the resolved id.
     return {
       runtimeEnv: adapter.renderProviderEnv({
         ...provider,
-        model: resolved.model,
+        model: provider.model,
       }),
     };
   }
@@ -159,14 +157,14 @@ export function planProviderDelivery(
   // forces the resolved model into the config (pi requires it declared to be
   // selectable) and passes it on the command line too; otherwise Codex keeps an
   // auto model out of the config and delivers it via `-m` at runtime.
-  const bakeResolvedModel = adapter.modelInFile || !resolved.fromAuto;
-  const passModelOnCommand = adapter.modelInFile || resolved.fromAuto;
+  const bakeResolvedModel = adapter.modelInFile || provider.model !== 'auto';
+  const passModelOnCommand = adapter.modelInFile || provider.model === 'auto';
   const configProvider: Provider = bakeResolvedModel
-    ? { ...provider, model: resolved.model }
+    ? { ...provider, model: provider.model }
     : provider;
   return {
     runtimeEnv: adapter.renderRuntimeEnv(provider),
-    runtimeModel: passModelOnCommand ? resolved.model : undefined,
+    runtimeModel: passModelOnCommand ? provider.model : undefined,
     bakedConfig: {
       file: adapter.renderProviderFile(facts, configProvider),
       configDir: adapter.configDir,

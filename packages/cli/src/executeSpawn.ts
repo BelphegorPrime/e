@@ -11,7 +11,13 @@ import {
 } from './spawnPlan';
 import { RunScratch } from './runScratch';
 import { writeIfAbsent } from './scaffold';
-import { harnessDir, agentDir, mcpDir, skillDir, isInitialized } from './store';
+import {
+  harnessDir,
+  agentDir,
+  mcpDir,
+  skillDir,
+  isInitialized,
+} from './store';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -50,7 +56,7 @@ function buildImages(
   let tag = harness.imageTag;
   const agentImagePlan = plan.agentImagePlan;
   if (agentImagePlan) {
-    const dir = agentDir(facts.agent.name, root, facts.agent.tier);
+    const dir = agentDir(facts.agent.name, root);
     for (const file of agentImagePlan.files) {
       writeIfAbsent(dir, path.join(dir, file.fileName), file.content);
     }
@@ -164,6 +170,7 @@ export async function executeSpawn(
         attach: facts.attach,
         rm: facts.rm,
         port: facts.port,
+        extraHosts: ['host.docker.internal:host-gateway'],
         env: plan.agentEnv,
         envFile: envFiles,
       },

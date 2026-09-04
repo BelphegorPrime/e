@@ -29,7 +29,7 @@ const harness: Harness = {
   protocols: [],
   buildCommand: (prompt: string) => ['demo', '-p', prompt],
 };
-const agent: Agent = { name: 'demo', harness: 'demo', tier: 'default' };
+const agent: Agent = { name: 'demo', harness: 'demo' };
 
 function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
   return {
@@ -120,10 +120,7 @@ const fileProvider: Provider = {
 };
 
 test('planProviderDelivery: an env harness delivers all env and bakes nothing', () => {
-  const plan = planProviderDelivery(facts(), claudeCodeAdapter, envProvider, {
-    model: 'claude-opus-5',
-    fromAuto: false,
-  });
+  const plan = planProviderDelivery(facts(), claudeCodeAdapter, envProvider);
   assert.equal(plan.bakedConfig, undefined);
   assert.equal(plan.runtimeModel, undefined);
   assert.deepEqual(
@@ -140,7 +137,6 @@ test('planProviderDelivery: an env harness carries the auto-resolved model in en
     facts(),
     claudeCodeAdapter,
     { ...envProvider, model: 'auto' },
-    { model: 'claude-opus-5', fromAuto: true }
   );
   assert.equal(plan.runtimeModel, undefined);
   assert.ok(
@@ -158,7 +154,6 @@ test('planProviderDelivery: a file harness bakes a concrete model into its confi
     facts(),
     codexAdapter,
     { ...fileProvider, model: 'gpt-5-codex' },
-    { model: 'gpt-5-codex', fromAuto: false }
   );
   assert.ok(plan.bakedConfig);
   assert.equal(plan.bakedConfig.file.fileName, 'config.toml');
@@ -178,7 +173,6 @@ test('planProviderDelivery: a file harness keeps an auto model out of the config
     facts(),
     codexAdapter,
     { ...fileProvider, model: 'auto' },
-    { model: 'gpt-5-codex', fromAuto: true }
   );
   assert.ok(plan.bakedConfig);
   assert.doesNotMatch(plan.bakedConfig.file.content, /^model = /m);
@@ -193,10 +187,7 @@ const piProvider: Provider = {
 };
 
 test('planProviderDelivery: pi bakes the resolved auto model into models.json AND passes it on the command', () => {
-  const plan = planProviderDelivery(facts(), piAdapter, piProvider, {
-    model: 'claude-opus-5',
-    fromAuto: true,
-  });
+  const plan = planProviderDelivery(facts(), piAdapter, piProvider);
   assert.ok(plan.bakedConfig);
   assert.equal(plan.bakedConfig.file.fileName, 'models.json');
   assert.equal(plan.bakedConfig.configDir, '/root/.pi/agent');
@@ -214,8 +205,7 @@ test('planProviderDelivery: pi bakes a concrete model too and passes it for sele
   const plan = planProviderDelivery(
     facts(),
     piAdapter,
-    { ...piProvider, model: 'claude-opus-5' },
-    { model: 'claude-opus-5', fromAuto: false }
+    { ...piProvider, model: 'claude-opus-5' }
   );
   const cfg = JSON.parse(plan.bakedConfig!.file.content);
   assert.deepEqual(cfg.providers.e.models, [{ id: 'claude-opus-5' }]);
@@ -230,10 +220,7 @@ test('planAgentImage: nothing to bake (no provider, no skills) derives no image'
 });
 
 test('planAgentImage: provider-only bakes config + Dockerfile, no skills (Codex today)', () => {
-  const delivery = planProviderDelivery(facts(), codexAdapter, fileProvider, {
-    model: 'gpt-5-codex',
-    fromAuto: false,
-  });
+  const delivery = planProviderDelivery(facts(), codexAdapter, fileProvider);
   const image = planAgentImage({
     baseImage: 'e-harness-codex',
     agentName: 'smart-codex',
@@ -272,10 +259,7 @@ test('planAgentImage: skills-only bakes a Dockerfile that copies the skill trees
 });
 
 test('planAgentImage: provider + skills compose into one derived image', () => {
-  const delivery = planProviderDelivery(facts(), codexAdapter, fileProvider, {
-    model: 'gpt-5-codex',
-    fromAuto: false,
-  });
+  const delivery = planProviderDelivery(facts(), codexAdapter, fileProvider);
   const image = planAgentImage({
     baseImage: 'e-harness-codex',
     agentName: 'smart-codex',

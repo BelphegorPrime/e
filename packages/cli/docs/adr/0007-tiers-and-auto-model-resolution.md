@@ -1,5 +1,9 @@
 # Tiers select agents, and drive `auto` model resolution against `/v1/models`
 
+> **The "Tier selects an agent" half of this decision is superseded by
+> [ADR-0009](./0009-remove-tier.md)**, which drops Tier entirely. The `auto`
+> model resolution mechanics below still apply, minus the tier dimension.
+
 A **Tier** is a capability/cost class of an Agent (ADR-0004, CONTEXT glossary). It
 has two jobs, and this decision records both plus the curated data behind the
 second.

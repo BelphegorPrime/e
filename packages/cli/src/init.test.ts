@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHarnessChoice, applyEnvValues, keysToPrompt } from './init';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  parseHarnessChoice,
+  applyEnvValues,
+  keysToPrompt,
+  prepareComposeDataDir,
+} from './init';
+import { renderCompose } from './renderCompose';
+import { renderBootstrap } from './renderBootstrap';
 
 // parseHarnessChoice is pure: it maps a prompt answer to a harness name, taking
 // the fallback for a blank answer and undefined for anything unrecognized.
@@ -54,6 +64,25 @@ test('applyEnvValues: comments and unrelated lines are preserved', () => {
   assert.equal(out, '# a comment\n\nANTHROPIC_API_KEY=sk-abc\n# --- pi ---\n');
 });
 
+test('prepareOmnirouteDataDir: creates container-writable local volume directories', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-init-'));
+  try {
+    prepareComposeDataDir(root);
+    for (const name of [
+      'omniroute-data',
+      'llama-models',
+      'llama-data',
+      'redis-data',
+    ]) {
+      const directory = path.join(root, '.e', 'volumes', name);
+      assert.ok(fs.statSync(directory).isDirectory());
+      assert.equal(fs.statSync(directory).mode & 0o777, 0o777);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // keysToPrompt is pure: it drops keys already filled in the existing `.env`.
 const KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 
@@ -83,4 +112,57 @@ test('keysToPrompt: all keys filled leaves nothing to prompt', () => {
     }),
     []
   );
+});
+
+test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networking', () => {
+  const compose = renderCompose('cpu');
+  assert.match(compose, /image: diegosouzapw\/omniroute:latest/);
+  assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server\n/);
+  assert.match(compose, /LOCAL_HOSTNAMES: llama/);
+  assert.match(compose, /OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS: "true"/);
+  assert.match(compose, /OMNIROUTE_BOOTSTRAPPED: "true"/);
+  assert.match(compose, /bootstrap:/);
+  assert.match(compose, /REDIS_URL: redis:\/\/redis:6379/);
+  assert.match(compose, /20128:20128/);
+  assert.match(compose, /- \.\/volumes\/omniroute-data:\/app\/data/);
+  assert.match(compose, /- \.\/volumes\/llama-data:\/root\/\.cache\/llama\.cpp/);
+  assert.match(compose, /- \.\/volumes\/redis-data:\/data/);
+  assert.match(compose, /LLAMA_ARG_HOST: "0\.0\.0\.0"/);
+  assert.match(compose, /LLAMA_ARG_PORT: "9931"/);
+  assert.match(compose, /LLAMA_ARG_CTX_SIZE: "65536"/);
+  assert.match(compose, /LLAMA_ARG_N_PARALLEL: "2"/);
+  assert.match(compose, /- \.\/bootstrap\.sh:\/bootstrap\.sh:ro/);
+  assert.doesNotMatch(compose, /^volumes:\n/m);
+});
+
+test('renderBootstrap: downloads and registers the configured llama.cpp model', () => {
+  const script = renderBootstrap();
+  assert.match(script, /^#!\/bin\/sh/);
+  assert.match(script, /POST http:\/\/llama:9931\/models/);
+  assert.match(script, /for model in \$models; do/);
+  assert.match(script, /models='unsloth\/Qwen3\.8-Flash-Next-GGUF:Q4_K_M'/);
+  assert.doesNotMatch(script, /until curl -sf http:\/\/llama:9931\/models/);
+  assert.match(script, /unsloth\/Qwen3\.8-Flash-Next-GGUF:Q4_K_M/);
+  assert.match(script, /llama\.cpp \(local\)/);
+  assert.match(script, /"provider":"llama-cpp"/);
+  assert.match(script, /"apiKey":"sk-no-key-required"/);
+});
+
+test('renderCompose: picks the CUDA image and reserves an nvidia GPU for the nvidia vendor', () => {
+  const compose = renderCompose('nvidia');
+  assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-cuda/);
+  assert.match(compose, /driver: nvidia/);
+  assert.match(compose, /capabilities: \[gpu\]/);
+});
+
+test('renderCompose: picks the ROCm image and passes through /dev/kfd for the amd vendor', () => {
+  const compose = renderCompose('amd');
+  assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-rocm/);
+  assert.match(compose, /\/dev\/kfd/);
+});
+
+test('renderCompose: picks the SYCL image and passes through /dev/dri for the intel vendor', () => {
+  const compose = renderCompose('intel');
+  assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-intel/);
+  assert.match(compose, /\/dev\/dri/);
 });

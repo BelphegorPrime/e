@@ -1,4 +1,5 @@
 import fs from 'fs';
+import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
 import { ContainerRuntime, type RunOptions } from './runtime/index';
 import { HostGit } from './git/host';
@@ -9,20 +10,18 @@ import {
   type SpawnFacts,
 } from './spawnPlan';
 import { resolveHarness, HARNESSES } from './harness/index';
-import {
-  findAgent,
-  isKnownTarget,
-  selectAgentByTier,
-  listAgents,
-} from './agent';
+import { findAgent, isKnownTarget } from './agent';
 import { parseDotenv } from './harness/adapter';
 import { resolveSkill, parseSkillList } from './skill/index';
-import { resolveProviderModel, HttpModelsLister } from './model/resolve';
 import { readMcpServer, listMcpServerNames, type McpServer } from './mcp/index';
 import { RunScratch } from './runScratch';
 import { executeSpawn } from './executeSpawn';
-import { findRoot, envFilePath, readConfig } from './store';
-import { Tier } from './model/preferences';
+import {
+  findRoot,
+  envFilePath,
+  readConfig,
+  dockerComposePath,
+} from './store';
 import { log } from './utils/log';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
@@ -71,8 +70,6 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   dir?: string;
   /** Raw `--env-file <path>` value from the CLI (a single path). */
   envFile?: string;
-  /** `--tier <tier>`: select the (harness, tier) agent rather than by name. */
-  tier?: Tier;
   /** `--mcp <name...>`: MCP servers to wire for this run (container sidecars and/or remote URLs). */
   mcp?: string[];
   /** `--skill <name...>`: Skills to add for this run (comma-separated or repeated). */
@@ -88,6 +85,47 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
 function loadStoreEnv(baseEnvFile: string | undefined): Record<string, string> {
   if (baseEnvFile === undefined || !fs.existsSync(baseEnvFile)) return {};
   return parseDotenv(fs.readFileSync(baseEnvFile, 'utf8'));
+}
+
+async function promptForLocalApiKey(envFile: string): Promise<string> {
+  log.info(
+    '\nOmniRoute needs an endpoint API key before `auto` model discovery can run.'
+  );
+  log.info('1. Open http://localhost:20128 in your browser.');
+  log.info('2. Sign in with the local password: local-development');
+  log.info('3. http://localhost:20128/dashboard/api-manager → Create API Key → Copy the key and paste it below.');
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    for (;;) {
+      const key = (await rl.question('OmniRoute API key: ')).trim();
+      if (key) {
+        const content = fs.readFileSync(envFile, 'utf8');
+        const updated = content
+          .replace(/^OPENAI_API_KEY=.*$/m, `OPENAI_API_KEY=${key}`)
+          .replace(/^ANTHROPIC_API_KEY=.*$/m, `ANTHROPIC_API_KEY=${key}`);
+        fs.writeFileSync(envFile, updated);
+        return key;
+      }
+      log.warn('API key cannot be blank.');
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+async function localApiKeyIsAccepted(key: string): Promise<boolean> {
+  try {
+    const response = await fetch('http://127.0.0.1:20128/v1/models', {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    return response.status !== 401;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -123,20 +161,15 @@ function gatherSpawnFacts(
   const root = findRoot(opts.dir);
   const defaultHarness = readConfig(root).defaultHarness;
 
-  // With `--tier`, the target (or the favorite) names a *harness* and the tier
-  // selects its agent; without it, the target is an agent/harness name resolved
-  // directly (a bare harness → its default agent).
+  // The target is an agent/harness name resolved directly (a bare harness →
+  // its default agent).
   const resolved = resolveSpawnTarget({
     target,
     prompt,
     defaultHarness,
-    isKnownTarget: opts.tier
-      ? name => Object.keys(HARNESSES).includes(name)
-      : name => isKnownTarget(name, root),
+    isKnownTarget: name => isKnownTarget(name, root),
   });
-  const agent = opts.tier
-    ? selectAgentByTier(resolved.agentTarget, opts.tier, listAgents(root))
-    : findAgent(resolved.agentTarget, root, opts.tier);
+  const agent = findAgent(resolved.agentTarget, root);
   const harness = resolveHarness(agent.harness);
 
   const baseEnvPath = root !== undefined ? envFilePath(root) : undefined;
@@ -198,10 +231,6 @@ export function registerSpawnCommand(program: Command): void {
     )
     .option('--env-file <path>', 'load environment variables from a file')
     .option(
-      '--tier <tier>',
-      'select the agent for a harness by tier (e.g. smart, fast, cheap, review)'
-    )
-    .option(
       '--mcp <name...>',
       'MCP server(s) to wire for this run — container (sidecar) or remote (hosted URL); repeatable'
     )
@@ -249,22 +278,27 @@ export function registerSpawnCommand(program: Command): void {
         try {
           const facts = gatherSpawnFacts(target, prompt, opts);
           validateSpawn(facts);
-
-          // Resolve an `auto` model against the provider's /v1/models (ADR-0007),
-          // only after the cheap checks pass, so a rejected spawn never calls out.
-          const resolvedModel = facts.agent.provider
-            ? await resolveProviderModel(
-                facts.agent.provider,
-                facts.agent.tier,
-                new HttpModelsLister(
-                  name => facts.storeEnv[name],
-                  findRoot(opts.dir)
-                )
-              )
-            : undefined;
-
-          const plan = planSpawn(facts, resolvedModel);
           const runtime = resolveRuntime(opts.runtime);
+          const composeFile = dockerComposePath(facts.root);
+          if (fs.existsSync(composeFile)) {
+            runtime.composeUp(composeFile);
+          }
+
+          const configuredApiKey = facts.agent.provider
+            ? facts.storeEnv[facts.agent.provider.apiKeyEnv] ?? ''
+            : '';
+          if (
+            facts.agent.provider &&
+            (['', 'local-development'].includes(configuredApiKey) ||
+              !(await localApiKeyIsAccepted(configuredApiKey)))
+          ) {
+            const key = await promptForLocalApiKey(
+              facts.baseEnvFile ?? envFilePath(facts.root)
+            );
+            facts.storeEnv[facts.agent.provider.apiKeyEnv] = key;
+          }
+
+          const plan = planSpawn(facts);
           const result = await executeSpawn(facts, plan, {
             git: new HostGit(),
             runtime,

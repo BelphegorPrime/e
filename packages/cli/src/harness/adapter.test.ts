@@ -33,7 +33,7 @@ const harness: Harness = {
   protocols: [],
   buildCommand: (prompt: string) => ['demo', '-p', prompt],
 };
-const agent: Agent = { name: 'demo', harness: 'demo', tier: 'default' };
+const agent: Agent = { name: 'demo', harness: 'demo' };
 
 function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
   return {

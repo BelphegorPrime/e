@@ -1,5 +1,9 @@
 # Agents are configured wrappers over Harnesses, built as derived images
 
+> **The Tier references below are superseded by
+> [ADR-0009](./0009-remove-tier.md)**, which drops Tier and the tier
+> subdirectory from the store layout.
+
 An **Agent** pairs a Harness with a **Provider** (endpoint, model, protocol, key-name) and a **Tier**, and is the unit a Run executes. It is realized as a _derived image_ built on the harness base with the Docker builder pattern: layer 1 is the shared harness base image (the CLI plus the code toolchain — Node/Python/Go); layer 2 is the agent image (`FROM` the base) that bakes the static provider/model config. Agents are declared as data (`.e/agents/<name>/<tier>/agent.json` — one subdirectory per tier); `e` renders the derived Dockerfile and config from the declaration and — like `e init` does for harness Dockerfiles — never overwrites hand edits, showing a diff instead.
 
 `e spawn` resolves to an Agent: a bare harness name resolves to that harness's default agent, and `--tier <tier>` selects among a harness's agents. A run branch is `e/<agent>/<slug>-N`.

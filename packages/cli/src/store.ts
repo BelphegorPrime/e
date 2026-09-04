@@ -1,7 +1,6 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Tier } from './model/preferences';
 
 /**
  * The **Store**: the `.e` directory holding e's on-disk state — the per-harness
@@ -65,17 +64,13 @@ export function mcpConfigPath(name: string, root?: string): string {
 }
 
 /** Directory containing a single agent's definition. */
-export function agentDir(name: string, root?: string, tier?: Tier): string {
-  return path.join(agentsBaseDir(root), name, tier || 'default');
+export function agentDir(name: string, root?: string): string {
+  return path.join(agentsBaseDir(root), name);
 }
 
 /** Absolute path to an agent's definition file. */
-export function agentFilePath(
-  name: string,
-  root?: string,
-  tier?: Tier
-): string {
-  return path.join(agentDir(name, root, tier), 'agent.json');
+export function agentFilePath(name: string, root?: string): string {
+  return path.join(agentDir(name, root), 'agent.json');
 }
 
 /**
@@ -84,6 +79,16 @@ export function agentFilePath(
  */
 export function envFilePath(root?: string): string {
   return path.join(eBaseDir(root), '.env');
+}
+
+/** Absolute path to the Store's Docker Compose file written by `e init`. */
+export function dockerComposePath(root?: string): string {
+  return path.join(eBaseDir(root), 'compose.yaml');
+}
+
+/** Absolute path to the generated Compose bootstrap script written by `e init`. */
+export function bootstrapScriptPath(root?: string): string {
+  return path.join(eBaseDir(root), 'bootstrap.sh');
 }
 
 /**

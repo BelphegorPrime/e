@@ -10,12 +10,11 @@ import {
 } from './spawnPlan';
 import { HARNESSES } from './harness/index';
 import type { McpServer } from './mcp/index';
-import type { ResolvedModel } from './model/resolve';
 
 function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
   return {
     root: '/root',
-    agent: { name: 'demo', harness: 'claudeCode', tier: 'default' },
+    agent: { name: 'demo', harness: 'claudeCode' },
     harness: HARNESSES.claudeCode,
     storeEnv: {},
     mcpServers: [],
@@ -41,8 +40,6 @@ const secretMcp: McpServer = {
   port: 3002,
   requiredEnv: ['SECRET_TOKEN'],
 };
-const auto: ResolvedModel = { model: 'gpt-5-codex', fromAuto: true };
-const concrete: ResolvedModel = { model: 'claude-opus-5', fromAuto: false };
 
 test('orderEnvFiles: no files when neither is present', () => {
   assert.deepEqual(orderEnvFiles(undefined, undefined), []);
@@ -170,7 +167,6 @@ test('validateSpawn: rejects a provider protocol the harness does not speak', ()
     agent: {
       name: 'x',
       harness: 'claudeCode',
-      tier: 'default',
       provider: {
         baseUrl: 'https://h',
         model: 'auto',
@@ -188,7 +184,6 @@ test('validateSpawn: rejects a provider on a harness with no config adapter', ()
     agent: {
       name: 'x',
       harness: 'opencode',
-      tier: 'default',
       provider: {
         baseUrl: 'https://h',
         model: 'auto',
@@ -203,7 +198,7 @@ test('validateSpawn: rejects a provider on a harness with no config adapter', ()
 test('validateSpawn: rejects --mcp against a harness with no MCP client (pi)', () => {
   const f = facts({
     harness: HARNESSES.pi,
-    agent: { name: 'pi', harness: 'pi', tier: 'default' },
+    agent: { name: 'pi', harness: 'pi' },
     mcpServers: [containerMcp],
   });
   assert.throws(() => validateSpawn(f), /has no MCP client/);
@@ -220,7 +215,6 @@ test('planSpawn: env harness delivers the provider as runtime env, nothing baked
     agent: {
       name: 'x',
       harness: 'claudeCode',
-      tier: 'default',
       provider: {
         baseUrl: 'https://h',
         model: 'auto',
@@ -230,7 +224,7 @@ test('planSpawn: env harness delivers the provider as runtime env, nothing baked
     },
     storeEnv: { MY_KEY: 'sk-abc' },
   });
-  const plan = planSpawn(f, concrete);
+  const plan = planSpawn(f);
   assert.ok(plan.delivery);
   assert.match(plan.providerEnvContent ?? '', /ANTHROPIC_MODEL=claude-opus-5/);
   assert.match(plan.providerEnvContent ?? '', /ANTHROPIC_AUTH_TOKEN=sk-abc/);
@@ -245,7 +239,6 @@ test('planSpawn: file harness bakes a derived image and passes an auto model on 
     agent: {
       name: 'smart-codex',
       harness: 'codex',
-      tier: 'smart',
       provider: {
         baseUrl: 'https://h',
         model: 'auto',
@@ -255,7 +248,7 @@ test('planSpawn: file harness bakes a derived image and passes an auto model on 
     },
     storeEnv: { OPENAI_API_KEY: 'sk-x' },
   });
-  const plan = planSpawn(f, auto);
+  const plan = planSpawn(f);
   assert.ok(plan.delivery?.bakedConfig);
   assert.equal(plan.agentImagePlan?.imageTag, 'e-agent-smart-codex');
   assert.equal(plan.runtimeModel, 'gpt-5-codex');
@@ -272,7 +265,7 @@ test('planSpawn: a flag-MCP harness (claude) wires --mcp-config, no overlay', ()
 test('planSpawn: a file-MCP harness (codex) renders a config overlay, no mcpArgs', () => {
   const f = facts({
     harness: HARNESSES.codex,
-    agent: { name: 'codex', harness: 'codex', tier: 'default' },
+    agent: { name: 'codex', harness: 'codex' },
     mcpServers: [containerMcp],
   });
   const plan = planSpawn(f);
