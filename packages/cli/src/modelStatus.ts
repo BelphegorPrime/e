@@ -1,5 +1,9 @@
 import { log } from './utils/log';
 
+/** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
+export const LOCAL_LLAMA_URL =
+  process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
+
 /** A locally-provisionable llama.cpp model, with its approximate download size. */
 export interface ModelCatalogEntry {
   id: string;
@@ -11,11 +15,11 @@ export interface ModelCatalogEntry {
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
   {
     id: 'unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M',
-    sizeBytes: 16_500_000_000
+    sizeBytes: 16_500_000_000,
   },
   {
     id: 'unsloth/Qwen3.6-35B-A3B-GGUF:UD-IQ4_XS',
-    sizeBytes: 17_700_000_000
+    sizeBytes: 17_700_000_000,
   },
   {
     id: 'ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M',
@@ -28,11 +32,7 @@ export const MODELS = MODEL_CATALOG.map(m => m.id);
 export const DEFAULT_MODEL = MODELS[0];
 
 export type ModelStatusValue =
-  | 'unloaded'
-  | 'loading'
-  | 'loaded'
-  | 'downloading'
-  | 'sleeping';
+  'unloaded' | 'loading' | 'loaded' | 'downloading' | 'sleeping';
 
 /** Per-file download progress, keyed by source URL (llama.cpp downloads shards in parallel). */
 export interface DownloadProgress {
@@ -203,9 +203,7 @@ export async function waitForModelsReady(
   for (;;) {
     const res = await fetchImpl(`${baseUrl}/models`);
     if (!res.ok) {
-      throw new Error(
-        `Failed to query model status (HTTP ${res.status}).`
-      );
+      throw new Error(`Failed to query model status (HTTP ${res.status}).`);
     }
     const body = (await res.json()) as ModelsResponse;
     const { lines, ready, failed } = describeModels(
