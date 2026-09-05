@@ -16,12 +16,7 @@ import { resolveSkill, parseSkillList } from './skill/index';
 import { readMcpServer, listMcpServerNames, type McpServer } from './mcp/index';
 import { RunScratch } from './runScratch';
 import { executeSpawn } from './executeSpawn';
-import {
-  findRoot,
-  envFilePath,
-  readConfig,
-  dockerComposePath,
-} from './store';
+import { findRoot, envFilePath, readConfig, dockerComposePath } from './store';
 import { log } from './utils/log';
 import { waitForModelsReady } from './modelStatus';
 
@@ -93,13 +88,22 @@ function loadStoreEnv(baseEnvFile: string | undefined): Record<string, string> {
   return parseDotenv(fs.readFileSync(baseEnvFile, 'utf8'));
 }
 
-async function promptForLocalApiKey(envFile: string): Promise<string> {
+async function promptForLocalApiKey(
+  envFile: string,
+  initialPassword: string
+): Promise<string> {
   log.info(
     '\nOmniRoute needs an endpoint API key before `auto` model discovery can run.'
   );
   log.info('1. Open http://localhost:20128 in your browser.');
-  log.info('2. Sign in with the local password: local-development');
-  log.info('3. http://localhost:20128/dashboard/api-manager → Create API Key → Copy the key and paste it below.');
+  log.info(
+    initialPassword
+      ? `2. Sign in with the local password: ${initialPassword}`
+      : '2. Sign in with the password in `OMNIROUTE_INITIAL_PASSWORD` in `.e/.env` (run `e init` to generate one).'
+  );
+  log.info(
+    '3. http://localhost:20128/dashboard/api-manager → Create API Key → Copy the key and paste it below.'
+  );
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -293,7 +297,13 @@ export function registerSpawnCommand(program: Command): void {
           const runtime = resolveRuntime(opts.runtime);
           const composeFile = dockerComposePath(facts.root);
           if (fs.existsSync(composeFile)) {
-            runtime.composeUp(composeFile);
+            // The stack is interpolated from `.e/.env` (no fallback secrets), so
+            // pass it explicitly — compose does not otherwise look inside `.e/`.
+            const envFile = envFilePath(facts.root);
+            runtime.composeUp(
+              composeFile,
+              fs.existsSync(envFile) ? envFile : undefined
+            );
             await waitForModelsReady({
               baseUrl: LOCAL_LLAMA_URL,
               models: readConfig(facts.root).models,
@@ -301,15 +311,19 @@ export function registerSpawnCommand(program: Command): void {
           }
 
           const configuredApiKey = facts.agent.provider
-            ? facts.storeEnv[facts.agent.provider.apiKeyEnv] ?? ''
+            ? (facts.storeEnv[facts.agent.provider.apiKeyEnv] ?? '')
             : '';
+          // Unconfigured means empty, or still the generated initial password —
+          // the user has not created an endpoint API key yet.
+          const stackPassword = facts.storeEnv.OMNIROUTE_INITIAL_PASSWORD ?? '';
           if (
             facts.agent.provider &&
-            (['', 'local-development'].includes(configuredApiKey) ||
+            (['', stackPassword].includes(configuredApiKey) ||
               !(await localApiKeyIsAccepted(configuredApiKey)))
           ) {
             const key = await promptForLocalApiKey(
-              facts.baseEnvFile ?? envFilePath(facts.root)
+              facts.baseEnvFile ?? envFilePath(facts.root),
+              stackPassword
             );
             facts.storeEnv[facts.agent.provider.apiKeyEnv] = key;
           }

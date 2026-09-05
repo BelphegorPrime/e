@@ -11,6 +11,9 @@ export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
   return `# Local OmniRoute gateway with llama.cpp as a self-hosted provider.
 # Hardware detected: ${vendor} -> ${image}
 # Start with: docker compose -f .e/compose.yaml up -d
+# OmniRoute secrets (OMNIROUTE_INITIAL_PASSWORD, JWT_SECRET, API_KEY_SECRET) are
+# interpolated from .e/.env — e init seeds random values there; there are no
+# fallback defaults, so an unseeded stack simply has no known password.
 # The bootstrap service downloads the model from Hugging Face through llama.cpp's API.
 # In OmniRoute Dashboard -> Providers, add llama.cpp with base URL http://llama:9931/v1.
 
@@ -31,13 +34,13 @@ services:
       REDIS_URL: redis://redis:6379
       LOCAL_HOSTNAMES: llama
       OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS: "true"
-      JWT_SECRET: \${JWT_SECRET:-local-development-jwt-secret-32-bytes}
-      API_KEY_SECRET: \${API_KEY_SECRET:-local-development-api-key-secret-32-bytes}
-      INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD:-local-development}
+      JWT_SECRET: \${JWT_SECRET}
+      API_KEY_SECRET: \${API_KEY_SECRET}
+      INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD}
       OMNIROUTE_BOOTSTRAPPED: "true"
       REQUIRE_API_KEY: "false"
     ports:
-      - "20128:20128"
+      - "127.0.0.1:20128:20128"
     volumes:
       - ./volumes/omniroute-data:/app/data
 
@@ -49,7 +52,7 @@ services:
       llama:
         condition: service_started
     environment:
-      INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD:-local-development}
+      INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD}
     volumes:
       - ./bootstrap.sh:/bootstrap.sh:ro
     entrypoint: ["/bin/sh", "/bootstrap.sh"]

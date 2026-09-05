@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomBytes } from 'node:crypto';
 import * as readline from 'node:readline/promises';
 import * as readlineSync from 'node:readline';
 import { setImmediate } from 'node:timers';
@@ -40,6 +41,43 @@ import {
   readConfig,
 } from './store';
 import { log } from './utils/log';
+
+/**
+ * The OmniRoute stack secrets the local Compose stack interpolates from
+ * `.e/.env` (see `renderCompose`). No fallbacks exist in the template, so an
+ * unseeded variable makes the stack unusable rather than known-default;
+ * `e init` seeds these with fresh random values.
+ */
+export const OMNIROUTE_STACK_SECRETS = [
+  'OMNIROUTE_INITIAL_PASSWORD',
+  'JWT_SECRET',
+  'API_KEY_SECRET',
+] as const;
+
+/** Seeder for each stack secret (caller picks the fresh random value). */
+const STACK_SECRET_GENERATORS: ReadonlyArray<readonly [string, () => string]> =
+  [
+    ['OMNIROUTE_INITIAL_PASSWORD', () => randomBytes(16).toString('hex')],
+    ['JWT_SECRET', () => randomBytes(32).toString('hex')],
+    ['API_KEY_SECRET', () => randomBytes(32).toString('hex')],
+  ];
+
+/**
+ * Generates fresh random values for the OmniRoute stack secrets, purely: a key
+ * already set to a non-blank value keeps its value, so a re-init never rotates
+ * a password or secret the user already configured (or a previous init
+ * generated). Only unset/blank keys get a random value.
+ */
+export function seedStackSecrets(
+  env: Record<string, string>
+): Record<string, string> {
+  const seeded: Record<string, string> = {};
+  for (const [key, generate] of STACK_SECRET_GENERATORS) {
+    const current = (env[key] ?? '').trim();
+    seeded[key] = current !== '' ? current : generate();
+  }
+  return seeded;
+}
 
 interface InitCommandOptions {
   dir?: string;
@@ -102,6 +140,10 @@ export function registerInitCommand(program: Command): void {
         envValues = { ...envValues, ...answers.envValues };
         selectedModels = answers.models;
       }
+
+      // Seed the OmniRoute stack secrets into `.e/.env` — generated only when
+      // absent, so a re-init keeps whatever the user (or a prior init) set.
+      envValues = { ...envValues, ...seedStackSecrets(envValues) };
 
       for (const harness of Object.values(HARNESSES)) {
         log.info('');
@@ -515,7 +557,12 @@ function writeEnvFile(
   const file = envFilePath(root);
   fs.mkdirSync(path.dirname(file), { recursive: true });
 
-  const sections = envHarnessSections();
+  const sections = [
+    ...envHarnessSections(),
+    // The OmniRoute stack section: compose interpolates these from `.e/.env`
+    // (no fallbacks), so an old `.e/.env` gains the lines on re-init too.
+    { name: 'omniroute-stack', env: [...OMNIROUTE_STACK_SECRETS] },
+  ];
   const existing = fs.existsSync(file)
     ? fs.readFileSync(file, 'utf8')
     : undefined;

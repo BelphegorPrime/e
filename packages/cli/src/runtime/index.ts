@@ -187,12 +187,28 @@ export function runningInspectArgs(name: string): string[] {
   return ['inspect', '-f', '{{.State.Running}}', name];
 }
 
-export function composeUpArgs(composeFile: string): string[] {
-  return ['compose', '-f', composeFile, 'up', '-d'];
+/**
+ * Starts an entire Compose stack (`compose up -d`). `envFile`, when given, is
+ * passed as `--env-file` so `${VAR}` interpolation in the compose file sees the
+ * store's `.e/.env` (the stack has no fallback secrets; `e init` seeds them).
+ */
+export function composeUpArgs(composeFile: string, envFile?: string): string[] {
+  const args = ['compose'];
+  if (envFile) args.push('--env-file', envFile);
+  return [...args, '-f', composeFile, 'up', '-d'];
 }
 
-export function composeWaitArgs(composeFile: string): string[] {
-  return ['compose', '-f', composeFile, 'wait', 'bootstrap'];
+/**
+ * Waits for the compose stack's `bootstrap` service (same env-file rationale
+ * as {@link composeUpArgs} — the file is re-interpolated on `compose wait`).
+ */
+export function composeWaitArgs(
+  composeFile: string,
+  envFile?: string
+): string[] {
+  const args = ['compose'];
+  if (envFile) args.push('--env-file', envFile);
+  return [...args, '-f', composeFile, 'wait', 'bootstrap'];
 }
 
 /**
@@ -305,8 +321,8 @@ export class ContainerRuntime implements ContainerRunner {
   }
 
   /** Starts a Compose stack in the background, preserving its own lifecycle. */
-  composeUp(composeFile: string): void {
-    const args = composeUpArgs(composeFile);
+  composeUp(composeFile: string, envFile?: string): void {
+    const args = composeUpArgs(composeFile, envFile);
     log.command(`> ${this.command} ${args.join(' ')}`);
     const result = spawnSync(this.command, args, {
       stdio: 'inherit',
@@ -323,7 +339,7 @@ export class ContainerRuntime implements ContainerRunner {
       );
     }
 
-    const waitArgs = composeWaitArgs(composeFile);
+    const waitArgs = composeWaitArgs(composeFile, envFile);
     log.command(`> ${this.command} ${waitArgs.join(' ')}`);
     const waitResult = spawnSync(this.command, waitArgs, {
       stdio: 'inherit',
@@ -339,7 +355,6 @@ export class ContainerRuntime implements ContainerRunner {
         `Compose bootstrap failed (exit code ${waitResult.status ?? 1}).`
       );
     }
-
   }
 
   /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */

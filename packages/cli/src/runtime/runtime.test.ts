@@ -192,6 +192,21 @@ test('composeUpArgs: starts the selected Compose file detached', () => {
   ]);
 });
 
+test('composeUpArgs: passes the store env-file for secret interpolation', () => {
+  assert.deepEqual(
+    composeUpArgs('/project/.e/compose.yaml', '/project/.e/.env'),
+    [
+      'compose',
+      '--env-file',
+      '/project/.e/.env',
+      '-f',
+      '/project/.e/compose.yaml',
+      'up',
+      '-d',
+    ]
+  );
+});
+
 test('composeWaitArgs: waits for generated bootstrap service', () => {
   assert.deepEqual(composeWaitArgs('/project/.e/compose.yaml'), [
     'compose',
@@ -202,6 +217,20 @@ test('composeWaitArgs: waits for generated bootstrap service', () => {
   ]);
 });
 
+test('composeWaitArgs: passes the store env-file for secret interpolation', () => {
+  assert.deepEqual(
+    composeWaitArgs('/project/.e/compose.yaml', '/project/.e/.env'),
+    [
+      'compose',
+      '--env-file',
+      '/project/.e/.env',
+      '-f',
+      '/project/.e/compose.yaml',
+      'wait',
+      'bootstrap',
+    ]
+  );
+});
 
 // --- structured mounts ---
 
