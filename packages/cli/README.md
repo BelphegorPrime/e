@@ -26,6 +26,15 @@ alias e="node $(pwd)/packages/cli/dist/index.js"
 native binaries under `command/` via pkg. The UI assets are embedded in each
 standalone binary.
 
+For local development, `npm run link --workspace @e/cli` (or `npm run link`
+inside `packages/cli`) builds everything except the pkg binaries and installs
+the CLI globally via `npm link`, putting `e` on your PATH:
+
+```bash
+npm run link --workspace @e/cli
+e --version
+```
+
 Serve the bundled UI locally:
 
 ```bash
