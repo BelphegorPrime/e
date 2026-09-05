@@ -4,6 +4,20 @@ import {
   type HardwareVendor,
 } from './hardware/index';
 
+/**
+ * The stack edge network the run container joins so it can reach OmniRoute
+ * directly by service alias instead of hopping through the host. Fixed name so
+ * `e spawn` (executeSpawn) attaches the run container to it. OmniRoute aliases
+ * `host.docker.internal` here, so the baked agent default base URL
+ * (`http://host.docker.internal:20128/v1`) resolves to the container itself
+ * rather than the host bridge gateway, which cannot reach the loopback-bound
+ * host port. See docs/security/attack-surface.md, Zone 3.
+ */
+export const OMNIROUTE_EDGE_NETWORK = 'omniroute-edge';
+
+/** The stack-internal network: redis, llama, bootstrap, and OmniRoute itself. */
+const OMNIROUTE_STACK_NETWORK = 'omniroute-stack';
+
 /** Renders the local OmniRoute + llama.cpp development stack for `vendor`'s GPU. */
 export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
   const image = llamaCppImage(vendor);
@@ -16,6 +30,19 @@ export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
 # fallback defaults, so an unseeded stack simply has no known password.
 # The bootstrap service downloads the model from Hugging Face through llama.cpp's API.
 # In OmniRoute Dashboard -> Providers, add llama.cpp with base URL http://llama:9931/v1.
+#
+# Networking: the stack is split into two networks.
+#   omniroute-stack — redis, llama.cpp, bootstrap, and OmniRoute's backplane.
+#                     Nothing on it publishes a host port except OmniRoute/llama,
+#                     and the harness run container never joins it, so the
+#                     untrusted agent cannot reach Redis or llama.cpp directly.
+#   omniroute-edge  — OmniRoute only, aliased as host.docker.internal. The run
+#                     container attaches here (e spawn does this when it sees
+#                     .e/compose.yaml), so its baked base URL
+#                     http://host.docker.internal:20128/v1 resolves straight to
+#                     OmniRoute's container IP via compose DNS — no host hop.
+# The published host ports stay bound to 127.0.0.1: only the host's own browser
+# and CLI (e spawn, e serve) reach the dashboard; untrusted LAN peers cannot.
 
 services:
   omniroute:
@@ -41,6 +68,11 @@ services:
       REQUIRE_API_KEY: "false"
     ports:
       - "127.0.0.1:20128:20128"
+    networks:
+      ${OMNIROUTE_STACK_NETWORK}: {}
+      omniroute-edge:
+        aliases:
+          - host.docker.internal
     volumes:
       - ./volumes/omniroute-data:/app/data
 
@@ -53,6 +85,8 @@ services:
         condition: service_started
     environment:
       INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD}
+    networks:
+      - ${OMNIROUTE_STACK_NETWORK}
     volumes:
       - ./bootstrap.sh:/bootstrap.sh:ro
     entrypoint: ["/bin/sh", "/bootstrap.sh"]
@@ -69,6 +103,8 @@ services:
       LLAMA_ARG_N_PARALLEL: "2"
     ports:
       - "127.0.0.1:9931:9931"
+    networks:
+      - ${OMNIROUTE_STACK_NETWORK}
     volumes:
       - ./volumes/llama-data:/root/.cache
 ${gpu}
@@ -78,6 +114,8 @@ ${gpu}
     restart: unless-stopped
     expose:
       - "6379"
+    networks:
+      - ${OMNIROUTE_STACK_NETWORK}
     volumes:
       - ./volumes/redis-data:/data
     healthcheck:
@@ -85,5 +123,11 @@ ${gpu}
       interval: 10s
       timeout: 5s
       retries: 5
+
+networks:
+  ${OMNIROUTE_STACK_NETWORK}:
+    name: ${OMNIROUTE_STACK_NETWORK}
+  omniroute-edge:
+    name: omniroute-edge
 `;
 }

@@ -76,7 +76,7 @@ they are a separate, per-harness channel managed by the config adapter. (`#24`.)
 
 | Fact | Status |
 | ---- | ------ |
-| OmniRoute dashboard/API binds **`127.0.0.1:20128`** in `renderCompose.ts` (host-only; untrusted LAN peers cannot reach it) | **Fixed** |
+| OmniRoute dashboard/API binds **`127.0.0.1:20128`** in `renderCompose.ts` (host-only; untrusted LAN peers cannot reach it); the run container reaches it over the compose **edge network**, not the host port | **Fixed** |
 | Default secrets baked into compose: `INITIAL_PASSWORD=local-development`, `JWT_SECRET=local-development-jwt-secret-32-bytes`, `API_KEY_SECRET=local-development-api-key-secret-32-bytes` | **Fixed** — fallbacks removed; `e init` seeds random `OMNIROUTE_INITIAL_PASSWORD`/`JWT_SECRET`/`API_KEY_SECRET` into `.e/.env`, preserving values already set on re-init |
 | llama.cpp binds `127.0.0.1:9931` host-side | Good |
 | Redis is exposed only on the compose network, with a healthcheck | Good |
@@ -85,9 +85,19 @@ they are a separate, per-harness channel managed by the config adapter. (`#24`.)
 The 0.0.0.0 bind plus hardcoded default credentials was the gap that mattered on
 the host network: on an untrusted LAN any machine could open the OmniRoute
 dashboard and log in with the well-known default password. Fixed (#25): the
-OmniRoute port binds to `127.0.0.1` only, the compose template no longer ships
-fallback secrets, and `e init` seeds fresh random stack secrets into `.e/.env`
-(`seedStackSecrets` in `init.ts`). `e spawn` passes `.e/.env` to
+compose stack is split into two networks — `omniroute-stack` (redis, llama.cpp,
+bootstrap, OmniRoute's backplane) and `omniroute-edge` (OmniRoute only, aliased
+as `host.docker.internal`). The OmniRoute host port binds to `127.0.0.1` only;
+`e spawn` attaches the run container to the edge network when `.e/compose.yaml`
+exists (and drops the `host.docker.internal:host-gateway` mapping, which would
+shadow the compose alias), so the baked agent base URL
+(`http://host.docker.internal:20128/v1`) resolves straight to the OmniRoute
+container over compose DNS instead of hopping through the host — where a
+loopback-bound published port is unreachable from a container on a Linux/podman
+bridge. The run container never joins `omniroute-stack`, so the untrusted agent
+still cannot reach Redis or llama.cpp directly. The compose template no longer
+ships fallback secrets, and `e init` seeds fresh random stack secrets into
+`.e/.env` (`seedStackSecrets` in `init.ts`). `e spawn` passes `.e/.env` to
 `docker compose --env-file` so the ${VAR} interpolation picks the seeded
 values; the `spawn.ts` sign-in prompt and unconfigured-key check read
 `OMNIROUTE_INITIAL_PASSWORD` from the store env instead of the old literal.
@@ -119,7 +129,7 @@ reporting "already serving".
 | # | Issue | Fix | Zone | When |
 | - | ----- | --- | ---- | ---- |
 | 1 | [#24](https://github.com/BelphegorPrime/e/issues/24) | Whitelist `.e/.env` injection to declared provider/MCP keys | 2 | Done — `baseEnvWhitelist` filter in `planSpawn`/`executeSpawn`, unblocks #2 |
-| 2 | [#25](https://github.com/BelphegorPrime/e/issues/25) | Bind OmniRoute to `127.0.0.1:20128` with no default secrets; `e init` generates stack secrets | 3 | Done — port bound in `renderCompose.ts`; fallbacks removed; `seedStackSecrets` in `init.ts`; `spawn.ts` reads `OMNIROUTE_INITIAL_PASSWORD` from the store env; compose invoked with `--env-file .e/.env` |
+| 2 | [#25](https://github.com/BelphegorPrime/e/issues/25) | Bind OmniRoute to `127.0.0.1:20128` with no default secrets; `e init` generates stack secrets; the run container reaches OmniRoute over the compose edge network (service alias) | 3 | Done — two-network compose in `renderCompose.ts`; port bound to `127.0.0.1`; fallbacks removed; `seedStackSecrets` in `init.ts`; `spawn.ts` reads `OMNIROUTE_INITIAL_PASSWORD` from the store env; compose invoked with `--env-file .e/.env`; `executeSpawn` attaches the run to `omniroute-edge` when the stack exists |
 | 3 | [#26](https://github.com/BelphegorPrime/e/issues/26) | Non-root runtime user in the harness Dockerfile template, per-harness override | 1 | `ready-for-agent` |
 | 4 | [#27](https://github.com/BelphegorPrime/e/issues/27) | Egress hardening (proxy/network policy allowing provider + MCP endpoints only) | 1 | `ready-for-agent` |
 | 5 | [#28](https://github.com/BelphegorPrime/e/issues/28) | Verify stale `serve.json` handling in detached mode | 4 | `ready-for-agent` |

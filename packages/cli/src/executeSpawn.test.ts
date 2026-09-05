@@ -122,6 +122,40 @@ class RecordingRuntime extends ContainerRuntime {
   }
 }
 
+test('routes the agent over the compose edge network when the stack is present; keeps host-gateway otherwise', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-net-'));
+  try {
+    // Stack present: the run container joins omniroute-edge (where OmniRoute
+    // aliases host.docker.internal) and must NOT also get the host-gateway
+    // mapping, which would shadow the compose alias in /etc/hosts.
+    fs.mkdirSync(path.join(tmp, '.e'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.e', 'compose.yaml'), 'services: {}\n');
+    const withStack = new RecordingRuntime();
+    const result = await executeSpawn(facts({ root: tmp }), emptyPlan, {
+      git: new StubGit(true),
+      runtime: withStack,
+      scratch: new RunScratch(),
+    });
+    assert.equal(result.ran, true);
+    assert.deepEqual(withStack.options?.networks, ['omniroute-edge']);
+    assert.equal(withStack.options?.extraHosts, undefined);
+
+    // No stack: unchanged default-bridge behavior, host-gateway mapping kept.
+    const plain = new RecordingRuntime();
+    await executeSpawn(facts(), emptyPlan, {
+      git: new StubGit(true),
+      runtime: plain,
+      scratch: new RunScratch(),
+    });
+    assert.equal(plain.options?.networks, undefined);
+    assert.deepEqual(plain.options?.extraHosts, [
+      'host.docker.internal:host-gateway',
+    ]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('filters the base .e/.env to the plan whitelist before the container gets it (Zone 2)', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-test-'));
   try {

@@ -65,7 +65,7 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
       attach: true,
       name: 'run-1',
       workdir: '/workspace',
-      network: 'run-1-net',
+      networks: ['run-1-net'],
     },
     expected: [
       'run',
@@ -73,6 +73,21 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
       'run-1',
       '-w',
       '/workspace',
+      '--network',
+      'run-1-net',
+      'img',
+    ],
+  },
+  {
+    name: 'multi --network keeps order (sidecar net + compose edge net)',
+    opts: {
+      attach: true,
+      networks: ['omniroute-edge', 'run-1-net'],
+    },
+    expected: [
+      'run',
+      '--network',
+      'omniroute-edge',
       '--network',
       'run-1-net',
       'img',

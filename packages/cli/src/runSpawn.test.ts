@@ -445,7 +445,7 @@ test('regression: with no sidecars the run behaves exactly as before (no group c
 
   assert.equal(result.ran, true);
   assert.equal(result.exitCode, 0);
-  assert.equal(runtime.options?.network, undefined);
+  assert.equal(runtime.options?.networks, undefined);
   assert.deepEqual(runtime.calls, ['run']);
   assert.equal(runtime.networks.length, 0);
   assert.equal(runtime.startedSidecars.length, 0);
@@ -483,7 +483,7 @@ test('the agent joins the run network and the sidecar gets a unique name + alias
   );
   const runName = git.worktrees[0].branch.replace(/\//g, '-');
 
-  assert.equal(runtime.options?.network, `${runName}-net`);
+  assert.deepEqual(runtime.options?.networks, [`${runName}-net`]);
   const spec = runtime.startedSidecars[0];
   assert.equal(spec.name, `${runName}-mcp-everything`);
   assert.equal(spec.alias, 'everything');

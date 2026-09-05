@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Git } from './git/index';
-import type { ContainerRuntime, Mount } from './runtime/index';
+import type { ContainerRuntime, Mount, RunOptions } from './runtime/index';
 import { runSpawn, type RunSpawnResult, type SidecarPlan } from './runSpawn';
 import { filterEnvContent } from './harness/adapter';
 import {
@@ -12,7 +12,15 @@ import {
 } from './spawnPlan';
 import { RunScratch } from './runScratch';
 import { writeIfAbsent } from './scaffold';
-import { harnessDir, agentDir, mcpDir, skillDir, isInitialized } from './store';
+import {
+  harnessDir,
+  agentDir,
+  mcpDir,
+  skillDir,
+  isInitialized,
+  dockerComposePath,
+} from './store';
+import { OMNIROUTE_EDGE_NETWORK } from './renderCompose';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -170,6 +178,25 @@ export async function executeSpawn(
   }
   configMounts.push(...plan.skillMounts);
 
+  // When the local OmniRoute stack is present, the agent reaches it over the
+  // stack's edge network (compose DNS alias host.docker.internal → omniroute),
+  // not through the host's loopback-bound published port. The host-gateway
+  // mapping must then be dropped: an /etc/hosts entry would shadow the compose
+  // alias, and the gateway IP cannot reach the 127.0.0.1-published port anyway
+  // (attack-surface.md, Zone 3). Without the stack, keep the old behavior.
+  const stackActive =
+    facts.root !== undefined && fs.existsSync(dockerComposePath(facts.root));
+  const runOptions: RunOptions = {
+    attach: facts.attach,
+    interactive: facts.interactive,
+    rm: facts.rm,
+    port: facts.port,
+    extraHosts: stackActive ? undefined : ['host.docker.internal:host-gateway'],
+    networks: stackActive ? [OMNIROUTE_EDGE_NETWORK] : undefined,
+    env: plan.agentEnv,
+    envFile: envFiles,
+  };
+
   return runSpawn(
     { git, runtime },
     {
@@ -180,15 +207,7 @@ export async function executeSpawn(
       imageTag,
       model: plan.runtimeModel,
       name: facts.name,
-      runOptions: {
-        attach: facts.attach,
-        interactive: facts.interactive,
-        rm: facts.rm,
-        port: facts.port,
-        extraHosts: ['host.docker.internal:host-gateway'],
-        env: plan.agentEnv,
-        envFile: envFiles,
-      },
+      runOptions,
       sidecars,
       mcpArgs: plan.mcpArgs,
       configMounts,
