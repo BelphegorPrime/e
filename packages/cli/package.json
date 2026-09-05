@@ -11,15 +11,23 @@
     "start": "npm run build:ts && node dist/index.js",
     "test": "npm run build:ts && node --test \"dist/**/*.test.js\"",
     "build:ts": "tsc",
-    "build:bin": "pkg ./dist/index.js -t node24-linux-x64,node24-macos-x64,node24-win-x64,node24-linux-arm64,node24-macos-arm64,node24-win-arm64 --output ./command/e --fallback-to-source",
-    "build": "npm run build:ts && npm run build:bin"
+    "copy:ui": "rm -rf ./dist/ui && cp -R ../ui/dist/ui ./dist/ui",
+    "build:bin": "pkg -c ./package.json ./dist/index.js -t node24-linux-x64,node24-macos-x64,node24-win-x64,node24-linux-arm64,node24-macos-arm64,node24-win-arm64 --output ./command/e --fallback-to-source",
+    "build": "npm run build --workspace @e/ui && npm run build:ts && npm run copy:ui && npm run build:bin"
+  },
+  "pkg": {
+    "assets": [
+      "dist/ui/**/*"
+    ]
   },
   "dependencies": {
     "commander": "^15.0.0",
+    "express": "^4.22.2",
     "mustache": "^4.2.0"
   },
   "devDependencies": {
     "@types/commander": "^2.12.0",
+    "@types/express": "^4.17.25",
     "@types/mustache": "^4.2.6",
     "@types/node": "^26.1.2",
     "@yao-pkg/pkg": "^6.22.0",

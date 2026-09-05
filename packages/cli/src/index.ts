@@ -3,6 +3,7 @@
 import { Command } from 'commander';
 import { registerSpawnCommand } from './spawn';
 import { registerInitCommand } from './init';
+import { registerServeCommand } from './serve';
 const program = new Command();
 
 program
@@ -12,5 +13,6 @@ program
 
 registerSpawnCommand(program);
 registerInitCommand(program);
+registerServeCommand(program);
 
 program.parse();

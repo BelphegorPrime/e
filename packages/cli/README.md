@@ -22,7 +22,20 @@ repo root):
 alias e="node $(pwd)/packages/cli/dist/index.js"
 ```
 
-`npm run build` additionally packages native binaries under `command/` via pkg.
+`npm run build` builds the UI, copies it into the CLI distribution, and packages
+native binaries under `command/` via pkg. The UI assets are embedded in each
+standalone binary.
+
+Serve the bundled UI locally:
+
+```bash
+npm run build --workspace @e/cli
+packages/cli/command/e-linux-x64 serve
+```
+
+The server binds to `127.0.0.1:8080` by default. Use `--host` and `--port` to
+change the bind address. It serves the UI at `/` and provides `/api/health` and
+`/api/info`.
 
 ## Test
 
