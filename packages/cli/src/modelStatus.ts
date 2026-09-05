@@ -14,6 +14,10 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     sizeBytes: 16_500_000_000
   },
   {
+    id: 'unsloth/Qwen3.6-35B-A3B-GGUF:UD-IQ4_XS',
+    sizeBytes: 17_700_000_000
+  },
+  {
     id: 'ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M',
     sizeBytes: 21_000_000_000,
   },

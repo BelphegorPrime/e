@@ -237,6 +237,8 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   assert.match(script, /^#!\/bin\/sh/);
   assert.match(script, /POST http:\/\/llama:9931\/models/);
   assert.match(script, /for model in \$models; do/);
+  assert.match(script, /OmniRoute rejected INITIAL_PASSWORD/);
+  assert.match(script, /remove \.e\/volumes\/omniroute-data/);
   assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"/);
   assert.match(
     script,
@@ -244,11 +246,12 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   );
   assert.match(
     script,
-    /models='unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M'/
+    /models='unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M unsloth\/Qwen3\.6-35B-A3B-GGUF:UD-IQ4_XS ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M'/
   );
   assert.doesNotMatch(script, /until curl -sf http:\/\/llama:9931\/models/);
   assert.match(script, /unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M/);
-  assert.match(script, /ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M/);
+  assert.match(script, /unsloth\/Qwen3\.6-35B-A3B-GGUF:UD-IQ4_XS/);
+  assert.match(script, /ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M/); 
   assert.match(script, /llama\.cpp \(local\)/);
   assert.match(script, /"provider":"llama-cpp"/);
   assert.match(script, /"apiKey":"sk-no-key-required"/);

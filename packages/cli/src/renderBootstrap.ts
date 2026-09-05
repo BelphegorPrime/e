@@ -15,11 +15,14 @@ log() {
 log 'waiting for OmniRoute'
 until curl -sf http://omniroute:20128/healthz > /dev/null; do sleep 2; done
 log 'OmniRoute ready; logging in'
-token=$(curl -sf -D - -o /dev/null -H 'Content-Type: application/json' \
+login_headers=$(curl -sS -D - -o /dev/null -H 'Content-Type: application/json' \
   -d '{"password":"'"$INITIAL_PASSWORD"'"}' \
-  http://omniroute:20128/api/auth/login \
-  | sed -n 's/^set-cookie: auth_token=\\([^;]*\\).*/\\1/pI')
-test -n "$token"
+  http://omniroute:20128/api/auth/login)
+token=$(printf '%s\\n' "$login_headers" | sed -n 's/^set-cookie: auth_token=\\([^;]*\\).*/\\1/pI')
+if test -z "$token"; then
+  log 'OmniRoute rejected INITIAL_PASSWORD. Restore OMNIROUTE_INITIAL_PASSWORD from the stack\x27s original setup, or remove .e/volumes/omniroute-data to reset its local state.'
+  exit 1
+fi
 log 'waiting for llama.cpp'
 until curl -sf http://llama:9931/health > /dev/null; do sleep 2; done
 log 'llama.cpp ready; synchronizing models'
