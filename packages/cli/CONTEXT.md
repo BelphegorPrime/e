@@ -25,7 +25,7 @@ A capability the agent connects to over the Model Context Protocol, chosen per-R
 _Avoid_: tool (an MCP server _exposes_ tools; it is not itself a tool)
 
 **Skill**:
-A packaged capability (a `SKILL.md` plus resources) an Agent can load, stored under the Store's `skills/`. Selected two ways: an Agent may bake a default set into its image, and a Run may add more at spawn time (`--skill`). Delivered by the per-harness adapter into the path its CLI reads, outside `/workspace`; only harnesses that support skills receive them.
+A packaged capability (a `SKILL.md` plus resources) an Agent can load, stored under the Store's `skills/`. Selected three ways: every harness image installs skill collections at build time via the `skills` CLI (layer 1), an Agent may bake a default set into its image (layer 2), and a Run may add more at spawn time (`--skill`, layer 3). Delivered by the per-harness adapter into the path its CLI reads, outside `/workspace`; only harnesses that support skills receive them.
 _Avoid_: tool, command, plugin
 
 **Run**:

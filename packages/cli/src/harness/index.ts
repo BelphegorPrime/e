@@ -14,6 +14,7 @@ import {
   PI_PROVIDER_ID,
 } from './adapter';
 import { imageTag as eImageTag } from '../naming';
+import { SHIPPED_SKILL_COLLECTIONS } from '../skill/index';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
 export interface Harness {
@@ -85,6 +86,8 @@ export const HARNESSES: Record<string, Harness> = {
       label: 'Pi Coding Agent CLI harness.',
       npmPackage: '@earendil-works/pi-coding-agent',
       npmFlags: ['--ignore-scripts'],
+      skillCollections: SHIPPED_SKILL_COLLECTIONS,
+      skillsAgent: 'pi',
     },
     requiredEnv: ['ANTHROPIC_API_KEY'],
     // pi speaks three wire protocols (its `openai-completions` is our
@@ -110,9 +113,7 @@ export const HARNESSES: Record<string, Harness> = {
           ]
         : ['pi', '-p', escapePrompt(prompt)],
     buildInteractiveCommand: (model?: string) =>
-      model
-        ? ['pi', '--provider', PI_PROVIDER_ID, '--model', model]
-        : ['pi'],
+      model ? ['pi', '--provider', PI_PROVIDER_ID, '--model', model] : ['pi'],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
@@ -122,6 +123,8 @@ export const HARNESSES: Record<string, Harness> = {
     dockerfile: {
       label: 'Claude Code CLI harness.',
       npmPackage: '@anthropic-ai/claude-code',
+      skillCollections: SHIPPED_SKILL_COLLECTIONS,
+      skillsAgent: 'claude-code',
     },
     requiredEnv: ['ANTHROPIC_API_KEY'],
     // Claude Code speaks only the Anthropic Messages API and is configured via
@@ -163,6 +166,8 @@ export const HARNESSES: Record<string, Harness> = {
     dockerfile: {
       label: 'OpenAI Codex CLI harness.',
       npmPackage: '@openai/codex',
+      skillCollections: SHIPPED_SKILL_COLLECTIONS,
+      skillsAgent: 'codex',
     },
     requiredEnv: ['OPENAI_API_KEY'],
     // Codex speaks only OpenAI Responses (`/v1/chat/completions` was removed).
@@ -186,6 +191,8 @@ export const HARNESSES: Record<string, Harness> = {
     dockerfile: {
       label: 'opencode CLI harness.',
       npmPackage: 'opencode-ai',
+      skillCollections: SHIPPED_SKILL_COLLECTIONS,
+      skillsAgent: 'opencode',
     },
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
     // opencode (Vercel AI SDK) speaks all three via its provider plugins.

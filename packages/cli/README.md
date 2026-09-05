@@ -153,6 +153,25 @@ e spawn pi-gw --mcp everything "hi"
 > not picked up until you rebuild: `e spawn pi-gw --rebuild "…"`. This trade-off
 > is recorded in [ADR-0007](./docs/adr/0007-tiers-and-auto-model-resolution.md).
 
+## Skills
+
+Every harness image installs a default set of skill **collections** at build
+time, one `RUN npx -y skills@latest add <collection> -a <agent> -g -y --copy`
+per collection. The `-a <agent>` flag makes the CLI place them into the
+exact skills dir the harness CLI reads (Claude Code `~/.claude/skills`; the
+shared `~/.agents/skills` for Codex, opencode, and pi) — outside `/workspace`,
+so they never land in a run's branch. `e init` renders these instructions into
+each harness Dockerfile from its declared `skillCollections`/`skillsAgent`;
+git is installed in the image first so the CLI can clone the source.
+
+Two further layers add skills for a specific agent or run:
+
+| Way                          | What it does                                                    |
+| ---------------------------- | --------------------------------------------------------------- |
+| Harness image (layer 1)      | Collections installed at build time, available to every run     |
+| `agent.json` `skills: ["…"]` | Baked into an agent's derived image (`e-agent-<name>`, layer 2) |
+| `e spawn … --skill <name>`   | Mounted read-only for that run (layer 3)                        |
+
 ## Cheat sheet
 
 | Command                                        | What it does                                                           |

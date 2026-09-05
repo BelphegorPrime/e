@@ -115,3 +115,15 @@ export function renderConventionalCommitsSkill(): SkillFiles {
 export const SHIPPED_SKILLS: Record<string, () => SkillFiles> = {
   'conventional-commits': renderConventionalCommitsSkill,
 };
+
+/**
+ * The skill **collections** (git sources understood by the `skills` CLI, e.g.
+ * "owner/repo") `e init` bakes into every harness image at build time via
+ * `npx skills@latest add <collection> -a <agent> -g -y --copy`. Each harness
+ * renders one `RUN` per entry so the collection lands in the skills dir the
+ * harness CLI actually reads (outside /workspace).
+ */
+export const SHIPPED_SKILL_COLLECTIONS: string[] = [
+  'mattpocock/skills',
+  'JuliusBrussee/caveman',
+];
