@@ -18,10 +18,6 @@ import { RunScratch } from './runScratch';
 import { executeSpawn } from './executeSpawn';
 import { findRoot, envFilePath, readConfig, dockerComposePath } from './store';
 import { log } from './utils/log';
-import { waitForModelsReady } from './modelStatus';
-
-/** Host-published port of the local llama.cpp router (see `renderCompose`). */
-const LOCAL_LLAMA_URL = process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
 const RUNTIMES: Record<string, string> = {
@@ -304,10 +300,9 @@ export function registerSpawnCommand(program: Command): void {
               composeFile,
               fs.existsSync(envFile) ? envFile : undefined
             );
-            await waitForModelsReady({
-              baseUrl: LOCAL_LLAMA_URL,
-              models: readConfig(facts.root).models,
-            });
+            // composeUp blocks on `compose wait bootstrap`; the bootstrap script
+            // registers the models and loads one synchronously before exiting,
+            // so the model is in memory by the time we get here. No extra wait.
           }
 
           const configuredApiKey = facts.agent.provider

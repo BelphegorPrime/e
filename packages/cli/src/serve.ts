@@ -8,14 +8,22 @@ import type { Command } from 'commander';
 import { resolveUiDirectory } from './assets';
 import { eBaseDir } from './store';
 import { log } from './utils/log';
+import { LOCAL_LLAMA_URL, type ModelsResponse } from './modelStatus';
 
 const SERVE_STATE_ENV = 'E_SERVE_DETACHED';
 const serveStatePath = path.join(eBaseDir(), 'serve.json');
 
-interface ServeState {
+export interface ServeState {
   pid: number;
   host: string;
   port: number;
+}
+
+export interface ServeProbes {
+  /** Returns whether `pid` belongs to a live process. */
+  isAlive?: (pid: number) => boolean;
+  /** True when `url` answers a health probe. */
+  probeHealth?: (url: string) => Promise<boolean>;
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -66,6 +74,54 @@ function startDetachedServe(): Promise<void> {
   });
 }
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM still means the process exists (owned by another user).
+    return errorCode(error) === 'EPERM';
+  }
+}
+
+async function healthProbe(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the recorded detached server is really up: its pid is alive and
+ * its `/api/health` answers. A reboot leaves a file whose pid is dead and
+ * whose port answers nothing — this is how we tell that entry apart.
+ */
+export async function isServeStateLive(
+  state: ServeState,
+  probes: ServeProbes = {}
+): Promise<boolean> {
+  const isAlive = probes.isAlive ?? isProcessAlive;
+  const probe = probes.probeHealth ?? healthProbe;
+  return (
+    isAlive(state.pid) &&
+    (await probe(`http://${state.host}:${state.port}/api/health`))
+  );
+}
+
+/**
+ * Decides whether a re-invocation should reuse the recorded server or start
+ * fresh. No recorded entry (or a stale one) means a fresh start; only a
+ * verified-live entry short-circuits to "already serving".
+ */
+export async function shouldReuseDetachedServe(
+  existing: ServeState | undefined,
+  probes: ServeProbes = {}
+): Promise<boolean> {
+  return existing !== undefined && (await isServeStateLive(existing, probes));
+}
+
 function writeServeState(state: ServeState): void {
   fs.mkdirSync(path.dirname(serveStatePath), { recursive: true });
   const temporaryPath = `${serveStatePath}.${process.pid}.tmp`;
@@ -83,7 +139,9 @@ function removeServeState(): void {
 
 function readServeState(): ServeState | undefined {
   try {
-    const state = JSON.parse(fs.readFileSync(serveStatePath, 'utf8')) as Partial<ServeState>;
+    const state = JSON.parse(
+      fs.readFileSync(serveStatePath, 'utf8')
+    ) as Partial<ServeState>;
     if (
       !Number.isInteger(state.pid) ||
       typeof state.host !== 'string' ||
@@ -108,7 +166,9 @@ function stopDetachedServe(): void {
 
   try {
     process.kill(state.pid, 'SIGTERM');
-    log.info(`Stopping detached UI server on http://${state.host}:${state.port}`);
+    log.info(
+      `Stopping detached UI server on http://${state.host}:${state.port}`
+    );
   } catch (error) {
     if (errorCode(error) !== 'ESRCH') throw error;
     removeServeState();
@@ -126,7 +186,18 @@ function trackDetachedServer(server: Server, host: string, port: number): void {
   process.once('SIGTERM', shutdown);
 }
 
-export function createServeApp(uiDirectory: string): Express {
+/** Dependency injection point for the BFF's live llama.cpp views (ADR-0010). */
+export interface ServeAppDeps {
+  /** Base URL of the local llama.cpp router, e.g. `http://127.0.0.1:9931`. */
+  llamaBaseUrl?: string;
+  fetchImpl?: typeof fetch;
+}
+
+export function createServeApp(
+  uiDirectory: string,
+  deps: ServeAppDeps = {}
+): Express {
+  const { llamaBaseUrl = LOCAL_LLAMA_URL, fetchImpl = fetch } = deps;
   const app = express();
 
   app.get('/api/health', (_request, response) => {
@@ -135,6 +206,25 @@ export function createServeApp(uiDirectory: string): Express {
 
   app.get('/api/info', (_request, response) => {
     response.json({ name: 'e', version: '1.0.0' });
+  });
+
+  // Observer-first model view (ADR-0010): a raw snapshot of llama.cpp's
+  // `/models` payload, so the UI can render download/load progress without
+  // reaching the stack itself.
+  app.get('/api/omniroute/models', async (_request, response) => {
+    try {
+      const res = await fetchImpl(`${llamaBaseUrl}/models`);
+      if (!res.ok) {
+        response
+          .status(502)
+          .json({ error: `llama.cpp returned HTTP ${res.status}` });
+        return;
+      }
+      const body = (await res.json()) as ModelsResponse;
+      response.json(body);
+    } catch {
+      response.status(503).json({ error: 'llama.cpp stack is not running' });
+    }
   });
 
   app.use('/api', (_request, response) => {
@@ -176,6 +266,22 @@ export function registerServeCommand(program: Command): void {
       }
 
       if (options.detached) {
+        // Verify a recorded server before trusting it: after a host reboot the
+        // pid is stale but the file persists, and blindly spawning a second
+        // child would fail on the busy port (or, worse, resolve on a stale
+        // entry). A live entry means "already serving"; a dead one is cleared
+        // so a fresh server takes over cleanly (security/attack-surface.md, Zone 4).
+        const existing = readServeState();
+        if (existing && (await shouldReuseDetachedServe(existing))) {
+          log.info(
+            `UI already serving at http://${existing.host}:${existing.port}`
+          );
+          return;
+        }
+        if (existing) {
+          removeServeState();
+          log.info('Removed stale detached UI server state');
+        }
         await startDetachedServe();
         log.info('UI server started in background');
         return;

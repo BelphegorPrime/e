@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
-/* eslint-disable no-undef */
 const eslintRecommended = require('@eslint/js');
 const tseslint = require('typescript-eslint');
 
@@ -15,12 +14,22 @@ module.exports = tseslint.config(
       '**/dist/',
       '**/.git/',
     ],
+  },
+  {
     languageOptions: {
       globals: {
         console: 'readonly',
         process: 'readonly',
         setTimeout: 'readonly',
         fetch: 'readonly',
+        // Node 18+ / 24 runtime globals used in fetch mocking and tests
+        Response: 'readonly',
+        Request: 'readonly',
+        URL: 'readonly',
+        AbortSignal: 'readonly',
+        // CommonJS globals (.cjs skill templates)
+        module: 'readonly',
+        require: 'readonly',
       },
     },
   },
