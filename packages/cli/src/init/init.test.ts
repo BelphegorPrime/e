@@ -8,13 +8,13 @@ import {
   parseModelChoice,
   applyEnvValues,
   keysToPrompt,
-  prepareComposeDataDir,
   seedStackSecrets,
   OMNIROUTE_STACK_SECRETS,
-} from './init';
+} from './initPlan';
+import { prepareComposeDataDir } from './index';
 import { renderCompose } from './renderCompose';
 import { renderBootstrap } from './renderBootstrap';
-import { MODEL_CATALOG } from './modelStatus';
+import { MODEL_CATALOG } from '../modelStatus';
 
 // parseHarnessChoice is pure: it maps a prompt answer to a harness name, taking
 // the fallback for a blank answer and undefined for anything unrecognized.

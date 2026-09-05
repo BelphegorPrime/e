@@ -6,12 +6,12 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import type { Command } from 'commander';
 import { resolveUiDirectory } from './assets';
-import type { Git } from './git/index';
-import { HostGit } from './git/host';
-import { buildRunIndex, parseRunBranch, resolveRunRef } from './runIndex';
-import { eBaseDir } from './store';
-import { log } from './utils/log';
-import { LOCAL_LLAMA_URL, type ModelsResponse } from './modelStatus';
+import type { Git } from '../git/index';
+import { HostGit } from '../git/host';
+import { buildRunIndex, parseRunBranch, resolveRunRef } from '../runs/runIndex';
+import { eBaseDir } from '../store/paths';
+import { log } from '../utils/log';
+import { LOCAL_LLAMA_URL, type ModelsResponse } from '../modelStatus';
 
 const SERVE_STATE_ENV = 'E_SERVE_DETACHED';
 const serveStatePath = path.join(eBaseDir(), 'serve.json');

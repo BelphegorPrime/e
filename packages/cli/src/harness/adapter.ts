@@ -9,7 +9,6 @@
  */
 
 import type { McpEndpoint } from '../mcp/index';
-import { SpawnFacts } from '../spawnPlan';
 
 /**
  * Every model wire protocol `e` recognises — the single source of truth. A
@@ -126,7 +125,10 @@ export interface FileHarnessAdapter {
    */
   modelInFile: boolean;
   /** Renders the Provider into this harness's native config file. */
-  renderProviderFile(facts: SpawnFacts, provider: Provider): RenderedConfigFile;
+  renderProviderFile(
+    provider: Provider,
+    storeEnv: Record<string, string>
+  ): RenderedConfigFile;
   /**
    * The runtime env the derived image still needs — the API key, by name only
    * (never baked). The baked config file points at it via the harness's own
@@ -215,10 +217,7 @@ function tomlBasicString(value: string): string {
  * (`codex exec -m <id>`, ADR-0007), so the derived image is not rebuilt when the
  * resolved model changes.
  */
-export function renderCodexConfig(
-  facts: SpawnFacts,
-  provider: Provider
-): string {
+export function renderCodexConfig(provider: Provider): string {
   // A fixed provider id: `e` owns the whole file, so there is only ever one
   // custom provider and no id collision to worry about.
   const id = 'e';
@@ -291,12 +290,12 @@ export const codexAdapter: FileHarnessAdapter = {
   // so it keeps the config model-agnostic rather than baking the model.
   modelInFile: false,
   renderProviderFile(
-    facts: SpawnFacts,
-    provider: Provider
+    provider: Provider,
+    _storeEnv: Record<string, string>
   ): RenderedConfigFile {
     return {
       fileName: 'config.toml',
-      content: renderCodexConfig(facts, provider),
+      content: renderCodexConfig(provider),
     };
   },
   renderRuntimeEnv(provider: Provider): ContainerEnv[] {
@@ -353,14 +352,13 @@ export function piApi(protocol: Protocol): string {
  * `docs/providers.md`.
  */
 export function renderPiModelsJson(
-  facts: SpawnFacts,
-  provider: Provider
+  provider: Provider,
+  storeEnv: Record<string, string>
 ): string {
-  const store = facts.storeEnv;
   const baseUrl = provider.baseUrlEnv
-    ? store[provider.baseUrlEnv]
+    ? storeEnv[provider.baseUrlEnv]
     : provider.baseUrl;
-  const apiKey = store[provider.apiKeyEnv] || '';
+  const apiKey = storeEnv[provider.apiKeyEnv] || '';
 
   const config = {
     providers: {
@@ -391,12 +389,12 @@ export const piAdapter: FileHarnessAdapter = {
   configFileName: 'models.json',
   modelInFile: true,
   renderProviderFile(
-    facts: SpawnFacts,
-    provider: Provider
+    provider: Provider,
+    storeEnv: Record<string, string>
   ): RenderedConfigFile {
     return {
       fileName: 'models.json',
-      content: renderPiModelsJson(facts, provider),
+      content: renderPiModelsJson(provider, storeEnv),
     };
   },
   renderRuntimeEnv(provider: Provider): ContainerEnv[] {

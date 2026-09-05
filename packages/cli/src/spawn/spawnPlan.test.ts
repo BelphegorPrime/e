@@ -8,9 +8,9 @@ import {
   planSpawn,
   type SpawnFacts,
 } from './spawnPlan';
-import { HARNESSES } from './harness/index';
-import { GLOBAL_BASE_URL_ENV } from './harness/renderEnvTemplate';
-import type { McpServer } from './mcp/index';
+import { HARNESSES } from '../harness/index';
+import { GLOBAL_BASE_URL_ENV } from '../harness/renderEnvTemplate';
+import type { McpServer } from '../mcp/index';
 
 function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
   return {

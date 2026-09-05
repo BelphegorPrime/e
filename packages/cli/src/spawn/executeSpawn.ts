@@ -1,26 +1,26 @@
 import fs from 'fs';
 import path from 'path';
-import type { Git } from './git/index';
-import type { ContainerRuntime, Mount, RunOptions } from './runtime/index';
-import { runSpawn, type RunSpawnResult, type SidecarPlan } from './runSpawn';
-import { filterEnvContent } from './harness/adapter';
+import type { Git } from '../git/index';
+import type { ContainerRuntime, Mount, RunOptions } from '../runtime/index';
+import { runSpawn, type RunSpawnResult, type SidecarPlan } from '../runs/runSpawn';
+import { filterEnvContent } from '../harness/adapter';
 import {
   decideImageAction,
   orderEnvFiles,
   type SpawnFacts,
   type SpawnPlan,
 } from './spawnPlan';
-import { RunScratch } from './runScratch';
-import { writeIfAbsent } from './scaffold';
+import { RunScratch } from '../runs/runScratch';
+import { writeIfAbsent } from '../scaffold';
 import {
   harnessDir,
   agentDir,
   mcpDir,
   skillDir,
-  isInitialized,
-  dockerComposePath,
-} from './store';
-import { OMNIROUTE_EDGE_NETWORK } from './renderCompose';
+} from '../store/paths';
+import { isInitialized } from '../store/config';
+import { localStack } from '../runtime/stack';
+import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -184,8 +184,7 @@ export async function executeSpawn(
   // mapping must then be dropped: an /etc/hosts entry would shadow the compose
   // alias, and the gateway IP cannot reach the 127.0.0.1-published port anyway
   // (attack-surface.md, Zone 3). Without the stack, keep the old behavior.
-  const stackActive =
-    facts.root !== undefined && fs.existsSync(dockerComposePath(facts.root));
+  const stackActive = localStack(facts.root)?.present ?? false;
   const runOptions: RunOptions = {
     attach: facts.attach,
     interactive: facts.interactive,

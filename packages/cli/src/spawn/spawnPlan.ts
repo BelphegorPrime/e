@@ -12,24 +12,24 @@
  * effects the plan names (ADR-0008).
  */
 
-import type { Agent } from './agent';
-import type { Harness } from './harness/index';
-import { harnessCapabilities, planMcpDelivery } from './harness/index';
-import { validateProviderProtocol, EnvFileRenderer } from './harness/adapter';
-import type { ConfigOverlayDelivery, ContainerEnv } from './harness/adapter';
-import { GLOBAL_BASE_URL_ENV } from './harness/renderEnvTemplate';
+import type { Agent } from '../agent/index';
+import type { Harness } from '../harness/index';
+import { harnessCapabilities, planMcpDelivery } from '../harness/index';
+import { validateProviderProtocol, EnvFileRenderer } from '../harness/adapter';
+import type { ConfigOverlayDelivery, ContainerEnv } from '../harness/adapter';
+import { GLOBAL_BASE_URL_ENV } from '../harness/renderEnvTemplate';
 import {
   planProviderDelivery,
   planAgentImage,
   type ProviderDelivery,
   type DerivedImagePlan,
-} from './harness/deriveImage';
-import { planMcpSelection, type McpServer } from './mcp/index';
-import type { Mount } from './runtime/index';
-import type { SidecarPlan } from './runSpawn';
-import { imageTag } from './naming';
-import { skillMountSpec } from './skill/index';
-import { skillDir } from './store';
+} from '../harness/deriveImage';
+import { planMcpSelection, type McpServer } from '../mcp/index';
+import type { Mount } from '../runtime/index';
+import type { SidecarPlan } from '../runs/runSpawn';
+import { imageTag } from '../identity/naming';
+import { skillMountSpec } from '../skill/index';
+import { skillDir } from '../store/paths';
 
 /**
  * The env files a run loads, in precedence order. `--env-file` entries loaded
@@ -290,7 +290,7 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
   let delivery: ProviderDelivery | undefined;
   let providerEnvContent: string | undefined;
   if (agent.provider && harness.adapter) {
-    delivery = planProviderDelivery(facts, harness.adapter, agent.provider);
+    delivery = planProviderDelivery(storeEnv, harness.adapter, agent.provider);
     providerEnvContent = envRenderer.render(
       delivery.runtimeEnv,
       'Provider API key'

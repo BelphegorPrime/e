@@ -1,4 +1,4 @@
-import { MODELS } from './modelStatus';
+import { MODELS } from '../modelStatus';
 
 /** Renders the one-shot script that provisions llama.cpp and OmniRoute for `models` (default: all). */
 export function renderBootstrap(models: string[] = MODELS): string {

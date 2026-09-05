@@ -12,7 +12,7 @@ import {
   SHIPPED_SKILLS,
   SKILL_MANIFEST,
 } from './index';
-import { skillDir, skillManifestPath } from '../store';
+import { skillDir, skillManifestPath } from '../store/paths';
 
 /** Makes a temp store root with the given skills (each a dir + SKILL.md). */
 function makeRoot(skills: string[] = []): string {

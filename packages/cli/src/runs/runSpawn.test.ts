@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
-import type { Git, RunCommit, RunRef, WorktreeSpec } from './git/index';
-import type { ContainerRunner, RunOptions, SidecarSpec } from './runtime/index';
-import type { Harness } from './harness/index';
-import type { Agent } from './agent';
+import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index';
+import type { ContainerRunner, RunOptions, SidecarSpec } from '../runtime/index';
+import type { Harness } from '../harness/index';
+import type { Agent } from '../agent/index';
 import {
   runSpawn,
   RUN_GIT_INSTRUCTIONS,
@@ -12,7 +12,7 @@ import {
   type RunSpawnParams,
   type SidecarPlan,
 } from './runSpawn';
-import { slugify } from './slugify';
+import { slugify } from '../identity/slugify';
 
 /** A `Git` fake that records what the orchestrator asked it to do. */
 class FakeGit implements Git {
