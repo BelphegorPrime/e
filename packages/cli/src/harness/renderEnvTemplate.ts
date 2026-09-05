@@ -48,6 +48,17 @@ OPENAI_API_KEY=local-development
 
 const globalRequiredEnv = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 
+/**
+ * The template's global base-URL lines (the header section, always present).
+ * These non-secret keys are always allowed through the base `.e/.env` container
+ * filter (Zone 2); the per-harness sections below are a separate channel,
+ * delivered by the config adapter instead.
+ */
+export const GLOBAL_BASE_URL_ENV = [
+  'ANTHROPIC_BASE_URL',
+  'OPENAI_BASE_URL',
+] as const;
+
 /** Renders the shared `.env` template from {@link TEMPLATE}. */
 export function renderEnvTemplate(p: EnvTemplateParams): string {
   const harnesses = p.harnesses.map(h => ({

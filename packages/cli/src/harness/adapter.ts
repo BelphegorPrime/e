@@ -479,3 +479,23 @@ export function parseDotenv(content: string): Record<string, string> {
   }
   return env;
 }
+
+/**
+ * Filters `.env`-style content down to `allowedKeys` only (Zone 2: the base
+ * `.e/.env` is never injected whole into a container). Values are kept verbatim;
+ * comments and blank lines are dropped — the output is a container env-file, not
+ * a human file. Unknown keys stay in the source file, readable by the user's own
+ * shell, but never reach the untrusted harness agent. The caller names the
+ * whitelist: {@link SpawnPlan.baseEnvWhitelist}. See
+ * `docs/security/attack-surface.md` Zone 2.
+ */
+export function filterEnvContent(
+  content: string,
+  allowedKeys: Iterable<string>
+): string {
+  const allowed = new Set(allowedKeys);
+  const lines = Object.entries(parseDotenv(content))
+    .filter(([key]) => allowed.has(key))
+    .map(([key, value]) => `${key}=${value}`);
+  return lines.length > 0 ? lines.join('\n') + '\n' : '';
+}

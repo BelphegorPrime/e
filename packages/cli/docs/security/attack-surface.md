@@ -36,7 +36,7 @@ packages, `npx skills@latest` at build time) — noted, not analyzed here.
 | Config overlays (Codex config, skills) are mounted read-only outside `/workspace` | Good |
 | Sidecar MCP servers join a private per-run network; the primary joins it only when sidecars exist | Good |
 | Full network egress (only the model API is *needed*) | **Finding** (ADR-0002 deferred gap) |
-| `.e/.env` injected whole into every container, unfiltered | **Finding** |
+| `.e/.env` injected whole into every container, unfiltered | Fixed — whitelisted (see Zone 2) |
 
 Root in the container is the highest-value finding: the hardening work is
 relatively mechanical (a non-root user in the Dockerfile template, plus wiring
@@ -60,17 +60,17 @@ Zone-2 fixes.
 | `.e/.env` (home or `--dir` root) is the sole secret source (ADR-0006); git-ignored | Good |
 | Secrets are rendered into per-run scratch env-files, disposed after the run | Good |
 | API keys are never baked into agent images (env-file delivery) | Good |
-| `.e/.env` is injected **whole** into every container (ADR-0002 accepted this) | **Finding** |
+| Base `.e/.env` container injection is filtered to declared provider/MCP keys (`baseEnvWhitelist`, `filterEnvContent` in `executeSpawn`) | **Fixed** |
 
-The whole-file injection means every secret the user keeps in `.e/.env` — not
-just the keys a run's provider and MCP servers declare — is visible to the
-untrusted agent. The fix agreed in the architecture review: filter injection to
-a whitelist built from `provider.apiKeyEnv`, `provider.baseUrlEnv`, and the
-MCP credential env refs for the run's selected servers. Unknown keys stay in
-the file (the user's own shell remains able to read them) but never reach a
-container. Harness-specific env templates (pi, Codex-specific sections) are
-unaffected — they are a separate, per-harness channel managed by the config
-adapter.
+The whole-file injection previously meant every secret the user keeps in
+`.e/.env` — not just the keys a run's provider and MCP servers declare — was
+visible to the untrusted agent. Injection is now filtered to a whitelist built
+from `provider.apiKeyEnv`, `provider.baseUrlEnv`, the MCP credential env refs
+for the run's selected servers, and the template's global base-URL lines
+(`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). Unknown keys stay in the file (the
+user's own shell remains able to read them) but never reach a container.
+Harness-specific env templates (pi, Codex-specific sections) are unaffected —
+they are a separate, per-harness channel managed by the config adapter. (`#24`.)
 
 ## Zone 3: local compose stack (OmniRoute + llama.cpp + Redis)
 
@@ -97,10 +97,7 @@ the `.e/.env` whitelist below):
 3. The hardcoded `local-development` references in `spawn.ts` (sign-in prompt
    and accepted-key check) read the generated password from the store env.
 
-Ordering note: this fix is **blocked by** the whitelist fix in Zone 2. Once
-`.e/.env` gains the OmniRoute secrets, a container must not receive them — so
-injection filtering lands first, then the secret randomization and the port
-bind.
+Ordering note: this fix was **blocked by** the whitelist fix in Zone 2, which has now landed (#24): `.e/.env` can gain the OmniRoute secrets because a container no longer receives them — injection filtering is in, so the secret randomization and the port bind are next.
 
 llama.cpp already binds localhost correctly and runs as its own service; Redis
 is scoped to the compose network. No change needed there.
@@ -125,7 +122,7 @@ reporting "already serving".
 
 | # | Issue | Fix | Zone | When |
 | - | ----- | --- | ---- | ---- |
-| 1 | [#24](https://github.com/BelphegorPrime/e/issues/24) | Whitelist `.e/.env` injection to declared provider/MCP keys | 2 | Next — `ready-for-agent`, unblocks #2 |
+| 1 | [#24](https://github.com/BelphegorPrime/e/issues/24) | Whitelist `.e/.env` injection to declared provider/MCP keys | 2 | Done — `baseEnvWhitelist` filter in `planSpawn`/`executeSpawn`, unblocks #2 |
 | 2 | [#25](https://github.com/BelphegorPrime/e/issues/25) | Bind OmniRoute to `127.0.0.1:20128` with no default secrets; `e init` generates stack secrets | 3 | After #1 — `ready-for-agent`, blocked by #1 |
 | 3 | [#26](https://github.com/BelphegorPrime/e/issues/26) | Non-root runtime user in the harness Dockerfile template, per-harness override | 1 | `ready-for-agent` |
 | 4 | [#27](https://github.com/BelphegorPrime/e/issues/27) | Egress hardening (proxy/network policy allowing provider + MCP endpoints only) | 1 | `ready-for-agent` |

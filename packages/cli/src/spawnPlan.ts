@@ -17,6 +17,7 @@ import type { Harness } from './harness/index';
 import { harnessCapabilities, planMcpDelivery } from './harness/index';
 import { validateProviderProtocol, EnvFileRenderer } from './harness/adapter';
 import type { ConfigOverlayDelivery, ContainerEnv } from './harness/adapter';
+import { GLOBAL_BASE_URL_ENV } from './harness/renderEnvTemplate';
 import {
   planProviderDelivery,
   planAgentImage,
@@ -260,6 +261,14 @@ export interface SpawnPlan {
   agentEnv: string[];
   /** A runtime-resolved model to pass on the harness command line, when applicable. */
   runtimeModel?: string;
+  /**
+   * The base `.e/.env` key whitelist (Zone 2): the only keys a container may
+   * receive — the provider's `apiKeyEnv`/`baseUrlEnv`, the `requiredEnv` of every
+   * selected MCP server (sidecar and remote), and the template's global base-URL
+   * lines. Everything else in `.e/.env` is filtered out at execute, so an
+   * unrelated secret never reaches the untrusted harness agent.
+   */
+  baseEnvWhitelist: string[];
 }
 
 /**
@@ -271,9 +280,7 @@ export interface SpawnPlan {
  * thing is testable without a runtime, a container, or the network. Throws on a
  * missing credential (via {@link renderMcpCredentials}/{@link EnvFileRenderer}).
  */
-export function planSpawn(
-  facts: SpawnFacts,
-): SpawnPlan {
+export function planSpawn(facts: SpawnFacts): SpawnPlan {
   const { agent, harness, storeEnv, root } = facts;
   // One renderer, bound to the store's secrets, for every credential env-file this
   // spawn writes — the provider's and each MCP server's (ADR-0008).
@@ -283,15 +290,24 @@ export function planSpawn(
   let delivery: ProviderDelivery | undefined;
   let providerEnvContent: string | undefined;
   if (agent.provider && harness.adapter) {
-    delivery = planProviderDelivery(
-      facts,
-      harness.adapter,
-      agent.provider,
-    );
+    delivery = planProviderDelivery(facts, harness.adapter, agent.provider);
     providerEnvContent = envRenderer.render(
       delivery.runtimeEnv,
       'Provider API key'
     );
+  }
+
+  // The base `.e/.env` whitelist (Zone 2): which keys may reach a container. The
+  // template's global base-URL lines are always allowed; the provider's key and
+  // base-URL names, and every selected MCP server's required env, are added
+  // below. Everything else in `.e/.env` is filtered out at execute time — an
+  // unrelated secret stays in the file (the user's own shell reads it) but never
+  // enters the untrusted harness container.
+  const allowedEnvKeys = new Set<string>(GLOBAL_BASE_URL_ENV);
+  if (agent.provider) {
+    allowedEnvKeys.add(agent.provider.apiKeyEnv);
+    if (agent.provider.baseUrlEnv)
+      allowedEnvKeys.add(agent.provider.baseUrlEnv);
   }
 
   // MCP: split by transport, render credentials, decide the delivery form.
@@ -302,6 +318,14 @@ export function planSpawn(
   let configOverlay: ConfigOverlayDelivery | undefined;
   if (facts.mcpServers.length > 0) {
     const selection = planMcpSelection(facts.mcpServers);
+    // Every selected server's required env passes the base filter: a sidecar's
+    // via its own env-file, a remote server's via the agent's env-files.
+    for (const server of [
+      ...selection.containerServers,
+      ...selection.remoteServers,
+    ]) {
+      for (const key of server.requiredEnv) allowedEnvKeys.add(key);
+    }
     for (const server of selection.containerServers) {
       sidecars.push({
         alias: server.name,
@@ -354,6 +378,7 @@ export function planSpawn(
   return {
     delivery,
     providerEnvContent,
+    baseEnvWhitelist: [...allowedEnvKeys],
     sidecars,
     sidecarCredentials,
     remoteCredentials,
