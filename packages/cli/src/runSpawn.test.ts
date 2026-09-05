@@ -7,6 +7,7 @@ import type { Harness } from './harness/index';
 import type { Agent } from './agent';
 import {
   runSpawn,
+  RUN_GIT_INSTRUCTIONS,
   type RunSpawnDeps,
   type RunSpawnParams,
   type SidecarPlan,
@@ -246,7 +247,11 @@ test('creates a worktree from HEAD on branch e/<harness>/<slug>-1 and runs the h
   assert.deepEqual(runtime.options?.volumes, [
     { host: git.worktrees[0].path, container: '/workspace' },
   ]);
-  assert.deepEqual(runtime.command, ['demo', '-p', 'Fix the flaky test']);
+  assert.deepEqual(runtime.command, [
+    'demo',
+    '-p',
+    `${RUN_GIT_INSTRUCTIONS}\n\nFix the flaky test`,
+  ]);
 
   assert.equal(result.ran, true);
   assert.equal(result.exitCode, 0);
@@ -287,7 +292,7 @@ test('threads a runtime-resolved model into the harness command', async () => {
     'exec',
     '-m',
     'gpt-5-codex',
-    'Fix the flaky test',
+    `${RUN_GIT_INSTRUCTIONS}\n\nFix the flaky test`,
   ]);
 });
 
@@ -319,9 +324,10 @@ test('does not modify the working tree in place: worktree lives under worktreesD
 
 test('commits when the worktree is dirty', async () => {
   const { deps, git } = makeDeps({ git: new FakeGit({ dirty: true }) });
-  await runSpawn(deps, makeParams());
+  const result = await runSpawn(deps, makeParams());
   assert.equal(git.commits.length, 1);
   assert.equal(git.commits[0].path, git.worktrees[0].path);
+  assert.equal(result.captured, true);
 });
 
 test('leaves the agent commits alone when the worktree is clean', async () => {
@@ -495,7 +501,7 @@ test('appends the harness MCP args to the container command', async () => {
   assert.deepEqual(runtime.command, [
     'demo',
     '-p',
-    'Fix the flaky test',
+    `${RUN_GIT_INSTRUCTIONS}\n\nFix the flaky test`,
     '--mcp-config',
     '{"mcpServers":{}}',
   ]);

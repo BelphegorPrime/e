@@ -24,6 +24,10 @@ const MAX_COUNTER_ATTEMPTS = 50;
 const DEFAULT_READINESS_ATTEMPTS = 30;
 const DEFAULT_READINESS_INTERVAL_MS = 1000;
 
+/** Tells one-shot harnesses that the host owns Git for their disposable worktree. */
+export const RUN_GIT_INSTRUCTIONS =
+  'You are working in an e-managed Git worktree. Do not run git add, git commit, git push, or git worktree: Git metadata and credentials intentionally remain on the host. Make requested file changes only; e will capture, commit, and push them after the run.';
+
 /** How readiness polling is paced: how many probe attempts, and the wait between them. */
 export interface ReadinessPolicy {
   attempts: number;
@@ -105,6 +109,8 @@ export interface RunSpawnResult {
   ran: boolean;
   /** The exit code the caller should exit the process with. */
   exitCode: number;
+  /** True when the host committed uncommitted changes left by the harness. */
+  captured?: boolean;
   /** The run's branch, when one was created. */
   branch?: string;
   /** True if the branch was pushed to origin. */
@@ -226,6 +232,7 @@ export async function runSpawn(
 
   let exitCode = 1;
   let ran = false;
+  let captured = false;
   let readinessError: string | undefined;
   const sidecarWarnings: string[] = [];
   const startedContainers: string[] = [];
@@ -273,7 +280,10 @@ export async function runSpawn(
       };
       const command = params.interactive
         ? harness.buildInteractiveCommand(params.model)
-        : harness.buildCommand(prompt, params.model);
+        : harness.buildCommand(
+            `${RUN_GIT_INSTRUCTIONS}\n\n${prompt}`,
+            params.model
+          );
       exitCode = await runtime.run(imageTag, runOptions, [...command, ...mcpArgs]);
       ran = true;
 
@@ -291,6 +301,7 @@ export async function runSpawn(
       // agent's own commits untouched.
       if (git.isDirty(worktreePath)) {
         git.commitAll(worktreePath, `e: capture run output for ${branch}`);
+        captured = true;
       }
     }
   } finally {
@@ -340,6 +351,7 @@ export async function runSpawn(
   return {
     ran,
     exitCode,
+    captured,
     branch,
     pushed,
     pushWarning,

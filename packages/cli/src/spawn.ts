@@ -337,6 +337,9 @@ export function registerSpawnCommand(program: Command): void {
             log.warn(`Warning: ${result.pushWarning}`);
           }
           log.success(`\nRun branch: ${result.branch}`);
+          if (result.captured) {
+            log.success('Captured uncommitted changes in a host commit.');
+          }
           if (result.pushed) {
             log.success('Pushed to origin. Open a PR or merge when you like.');
           }

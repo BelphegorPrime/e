@@ -20,6 +20,15 @@ Five canonical triage roles, each label string equal to its name (`needs-triage`
 
 Multi-context layout: a root `CONTEXT-MAP.md` points to a per-package `CONTEXT.md`. See `docs/agents/domain.md`.
 
+### e runs
+
+When running inside `/workspace` from `e spawn`, Git is host-orchestrated:
+
+- `/workspace` is a disposable Git worktree.
+- Do not run `git add`, `git commit`, `git push`, or `git worktree`.
+- Git metadata and credentials intentionally remain outside the container.
+- Make requested file changes only. `e` captures, commits, and pushes them after the harness exits.
+
 ### Common things
 
 - if you want to execute commands be aware that `&amp;` should be replaced with `&`
