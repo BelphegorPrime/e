@@ -1,12 +1,20 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { AppSidebar } from '@/components/app-sidebar';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { DashboardPage } from '@/pages/dashboard';
+
+import './index.css';
+
 function App() {
   return (
-    <main>
-      <h1>e</h1>
-      <p>Orchestrator UI</p>
-    </main>
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
+        <DashboardPage />
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
 
