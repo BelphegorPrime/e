@@ -9,6 +9,7 @@ import {
   type SpawnFacts,
 } from './spawnPlan';
 import { HARNESSES } from './harness/index';
+import { GLOBAL_BASE_URL_ENV } from './harness/renderEnvTemplate';
 import type { McpServer } from './mcp/index';
 
 function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
@@ -39,6 +40,12 @@ const secretMcp: McpServer = {
   transport: 'container',
   port: 3002,
   requiredEnv: ['SECRET_TOKEN'],
+};
+const remoteSecretMcp: McpServer = {
+  name: 'hosted',
+  transport: 'remote',
+  url: 'https://mcp.example.com/mcp',
+  requiredEnv: ['REMOTE_TOKEN'],
 };
 
 test('orderEnvFiles: no files when neither is present', () => {
@@ -286,6 +293,48 @@ test('planSpawn: a missing sidecar credential is a hard error', () => {
     () => planSpawn(facts({ mcpServers: [secretMcp], storeEnv: {} })),
     /MCP server "secret"[\s\S]*SECRET_TOKEN[\s\S]*not set in \.e\/\.env/
   );
+});
+
+test('planSpawn: a bare run whitelists only the template global base URLs', () => {
+  const plan = planSpawn(facts({}));
+  assert.deepEqual(plan.baseEnvWhitelist, [...GLOBAL_BASE_URL_ENV]);
+});
+
+test('planSpawn: whitelist adds the provider key and base-URL env names', () => {
+  const plan = planSpawn(
+    facts({
+      agent: {
+        name: 'x',
+        harness: 'claudeCode',
+        provider: {
+          baseUrl: 'https://h',
+          baseUrlEnv: 'MY_BASE_URL',
+          model: 'auto',
+          protocol: 'anthropic-messages',
+          apiKeyEnv: 'MY_KEY',
+        },
+      },
+      storeEnv: { MY_KEY: 'sk-abc', MY_BASE_URL: 'https://h' },
+    })
+  );
+  assert.ok(plan.baseEnvWhitelist.includes('MY_KEY'));
+  assert.ok(plan.baseEnvWhitelist.includes('MY_BASE_URL'));
+  // Neither the harness sections nor unrelated store keys are whitelisted.
+  assert.deepEqual(
+    [...plan.baseEnvWhitelist].filter(k => /MY_/.test(k)).sort(),
+    ['MY_BASE_URL', 'MY_KEY']
+  );
+});
+
+test('planSpawn: whitelist adds requiredEnv of container and remote MCP servers', () => {
+  const plan = planSpawn(
+    facts({
+      mcpServers: [secretMcp, remoteSecretMcp],
+      storeEnv: { SECRET_TOKEN: 'a', REMOTE_TOKEN: 'b' },
+    })
+  );
+  assert.ok(plan.baseEnvWhitelist.includes('SECRET_TOKEN'));
+  assert.ok(plan.baseEnvWhitelist.includes('REMOTE_TOKEN'));
 });
 
 test('planSpawn: baked skills go to the derived image; per-run skills become mounts', () => {

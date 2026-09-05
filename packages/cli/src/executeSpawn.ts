@@ -3,6 +3,7 @@ import path from 'path';
 import type { Git } from './git/index';
 import type { ContainerRuntime, Mount } from './runtime/index';
 import { runSpawn, type RunSpawnResult, type SidecarPlan } from './runSpawn';
+import { filterEnvContent } from './harness/adapter';
 import {
   decideImageAction,
   orderEnvFiles,
@@ -121,9 +122,23 @@ export async function executeSpawn(
   const imageTag = buildImages(facts, plan, runtime, scratch);
 
   // Materialize every rendered file into scratch and wire the resulting paths.
-  // Base `.e/.env` first, then the user's --env-file, then remote-MCP and provider
-  // credentials layered last (each container gets its own copy at run time).
-  const envFiles = orderEnvFiles(facts.baseEnvFile, facts.userEnvFile);
+  // The base `.e/.env` comes first, filtered to the run's declared keys (Zone 2:
+  // the provider's and MCP servers' env refs plus the template's global base
+  // URLs). Unknown keys stay in `.e/.env` — the user's own shell keeps reading
+  // them — but never reach a container. Then the user's --env-file, then
+  // remote-MCP and provider credentials layered last (each container gets its
+  // own copy at run time).
+  const baseEnvPath =
+    facts.baseEnvFile === undefined
+      ? undefined
+      : scratch.file(
+          'base-env.env',
+          filterEnvContent(
+            fs.readFileSync(facts.baseEnvFile, 'utf8'),
+            plan.baseEnvWhitelist
+          )
+        );
+  const envFiles = orderEnvFiles(baseEnvPath, facts.userEnvFile);
   for (const content of plan.remoteCredentials) {
     envFiles.push(scratch.file('remote-mcp.env', content));
   }
