@@ -9,6 +9,8 @@ import {
   applyEnvValues,
   keysToPrompt,
   prepareComposeDataDir,
+  seedStackSecrets,
+  OMNIROUTE_STACK_SECRETS,
 } from './init';
 import { renderCompose } from './renderCompose';
 import { renderBootstrap } from './renderBootstrap';
@@ -117,11 +119,7 @@ test('prepareOmnirouteDataDir: creates container-writable local volume directori
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-init-'));
   try {
     prepareComposeDataDir(root);
-    for (const name of [
-      'omniroute-data',
-      'llama-data',
-      'redis-data',
-    ]) {
+    for (const name of ['omniroute-data', 'llama-data', 'redis-data']) {
       const directory = path.join(root, '.e', 'volumes', name);
       assert.ok(fs.statSync(directory).isDirectory());
       assert.equal(fs.statSync(directory).mode & 0o777, 0o777);
@@ -162,6 +160,39 @@ test('keysToPrompt: all keys filled leaves nothing to prompt', () => {
   );
 });
 
+test('seedStackSecrets: fills unset stack secrets with fresh random values', () => {
+  const seeded = seedStackSecrets({});
+  for (const key of OMNIROUTE_STACK_SECRETS) {
+    assert.ok(seeded[key], `${key} should be generated on an empty store env`);
+  }
+  // Random hex: the password is 16 bytes, the secrets 32 bytes.
+  assert.match(seeded.OMNIROUTE_INITIAL_PASSWORD, /^[0-9a-f]{32}$/);
+  assert.match(seeded.JWT_SECRET, /^[0-9a-f]{64}$/);
+  assert.match(seeded.API_KEY_SECRET, /^[0-9a-f]{64}$/);
+  // Each call draws fresh bytes: two seeds never produce the same value.
+  assert.notEqual(
+    seedStackSecrets({}).OMNIROUTE_INITIAL_PASSWORD,
+    seeded.OMNIROUTE_INITIAL_PASSWORD
+  );
+});
+
+test('seedStackSecrets: never rotates a value already set (re-init preserves)', () => {
+  const existing = {
+    OMNIROUTE_INITIAL_PASSWORD: 'user-picked',
+    JWT_SECRET: 'kept',
+  };
+  const seeded = seedStackSecrets(existing);
+  assert.equal(seeded.OMNIROUTE_INITIAL_PASSWORD, 'user-picked');
+  assert.equal(seeded.JWT_SECRET, 'kept');
+  // Unset keys still get generated.
+  assert.match(seeded.API_KEY_SECRET, /^[0-9a-f]{64}$/);
+});
+
+test('seedStackSecrets: a blank key counts as absent and is generated', () => {
+  const seeded = seedStackSecrets({ OMNIROUTE_INITIAL_PASSWORD: '' });
+  assert.match(seeded.OMNIROUTE_INITIAL_PASSWORD, /^[0-9a-f]{32}$/);
+});
+
 test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networking', () => {
   const compose = renderCompose('cpu');
   assert.match(compose, /image: diegosouzapw\/omniroute:latest/);
@@ -171,7 +202,7 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.match(compose, /OMNIROUTE_BOOTSTRAPPED: "true"/);
   assert.match(compose, /bootstrap:/);
   assert.match(compose, /REDIS_URL: redis:\/\/redis:6379/);
-  assert.match(compose, /20128:20128/);
+  assert.match(compose, /127\.0\.0\.1:20128:20128/);
   assert.match(compose, /- \.\/volumes\/omniroute-data:\/app\/data/);
   assert.match(compose, /- \.\/volumes\/llama-data:\/root\/\.cache/);
   assert.match(compose, /- \.\/volumes\/redis-data:\/data/);
@@ -183,16 +214,37 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.doesNotMatch(compose, /^volumes:\n/m);
 });
 
+test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () => {
+  const compose = renderCompose('cpu');
+  // The OmniRoute dashboard is a login surface; only the host itself may reach it.
+  assert.doesNotMatch(compose, /\s- "20128:20128"/);
+  assert.doesNotMatch(compose, /0\.0\.0\.0:20128/);
+});
+
+test('renderCompose: no default secrets — every stack var must come from .env', () => {
+  const compose = renderCompose('cpu');
+  // Fallback defaults are gone; an unseeded stack fails closed instead of
+  // shipping the well-known local-development credentials.
+  assert.doesNotMatch(compose, /local-development/);
+  assert.doesNotMatch(compose, /:-/);
+  assert.match(compose, /JWT_SECRET: \$\{JWT_SECRET}/);
+  assert.match(compose, /API_KEY_SECRET: \$\{API_KEY_SECRET}/);
+  assert.match(compose, /INITIAL_PASSWORD: \$\{OMNIROUTE_INITIAL_PASSWORD}/g);
+});
+
 test('renderBootstrap: downloads and registers the configured llama.cpp model', () => {
   const script = renderBootstrap();
   assert.match(script, /^#!\/bin\/sh/);
   assert.match(script, /POST http:\/\/llama:9931\/models/);
   assert.match(script, /for model in \$models; do/);
   assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"/);
-  assert.match(script, /"id".*"value"\[\[:space:\]\]\*:\[\[:space:\]\]\*"loaded"/);
   assert.match(
     script,
-    /models='unsloth\/Qwen3\.8-Flash-Next-GGUF:Q4_K_M ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M'/,
+    /"id".*"value"\[\[:space:\]\]\*:\[\[:space:\]\]\*"loaded"/
+  );
+  assert.match(
+    script,
+    /models='unsloth\/Qwen3\.8-Flash-Next-GGUF:Q4_K_M ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M'/
   );
   assert.doesNotMatch(script, /until curl -sf http:\/\/llama:9931\/models/);
   assert.match(script, /unsloth\/Qwen3\.8-Flash-Next-GGUF:Q4_K_M/);

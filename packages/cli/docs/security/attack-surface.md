@@ -76,28 +76,24 @@ they are a separate, per-harness channel managed by the config adapter. (`#24`.)
 
 | Fact | Status |
 | ---- | ------ |
-| OmniRoute dashboard/API binds **`0.0.0.0:20128`** in `renderCompose.ts` | **Finding** |
-| Default secrets baked into compose: `INITIAL_PASSWORD=local-development`, `JWT_SECRET=local-development-jwt-secret-32-bytes`, `API_KEY_SECRET=local-development-api-key-secret-32-bytes` | **Finding** |
+| OmniRoute dashboard/API binds **`127.0.0.1:20128`** in `renderCompose.ts` (host-only; untrusted LAN peers cannot reach it) | **Fixed** |
+| Default secrets baked into compose: `INITIAL_PASSWORD=local-development`, `JWT_SECRET=local-development-jwt-secret-32-bytes`, `API_KEY_SECRET=local-development-api-key-secret-32-bytes` | **Fixed** — fallbacks removed; `e init` seeds random `OMNIROUTE_INITIAL_PASSWORD`/`JWT_SECRET`/`API_KEY_SECRET` into `.e/.env`, preserving values already set on re-init |
 | llama.cpp binds `127.0.0.1:9931` host-side | Good |
 | Redis is exposed only on the compose network, with a healthcheck | Good |
 | The stack is started by `e spawn` automatically when `.e/compose.yaml` exists | User choice (configurable, see architecture review) |
 
-The 0.0.0.0 bind plus hardcoded default credentials is the gap that matters on
-the host network: on an untrusted LAN any machine can open the OmniRoute
-dashboard and log in with the well-known default password. Fix (agreed in the
-architecture review, **not implemented yet** — tracked as an issue, blocked by
-the `.e/.env` whitelist below):
-
-1. Bind the OmniRoute port to `127.0.0.1` in `renderCompose.ts`.
-2. Stop baking default secrets: `e init` generates a random
-   `INITIAL_PASSWORD` (and JWT/API-key secrets) into `.e/.env` (the compose
-   stack reads them via `${VAR}` interpolation; the bootstrap script already
-   consumes `$INITIAL_PASSWORD`). A fallback in the template is removed
-   rather than kept, so a fresh init has no well-known default.
-3. The hardcoded `local-development` references in `spawn.ts` (sign-in prompt
-   and accepted-key check) read the generated password from the store env.
-
-Ordering note: this fix was **blocked by** the whitelist fix in Zone 2, which has now landed (#24): `.e/.env` can gain the OmniRoute secrets because a container no longer receives them — injection filtering is in, so the secret randomization and the port bind are next.
+The 0.0.0.0 bind plus hardcoded default credentials was the gap that mattered on
+the host network: on an untrusted LAN any machine could open the OmniRoute
+dashboard and log in with the well-known default password. Fixed (#25): the
+OmniRoute port binds to `127.0.0.1` only, the compose template no longer ships
+fallback secrets, and `e init` seeds fresh random stack secrets into `.e/.env`
+(`seedStackSecrets` in `init.ts`). `e spawn` passes `.e/.env` to
+`docker compose --env-file` so the ${VAR} interpolation picks the seeded
+values; the `spawn.ts` sign-in prompt and unconfigured-key check read
+`OMNIROUTE_INITIAL_PASSWORD` from the store env instead of the old literal.
+The stack secrets stay out of harness containers: they are not in
+`baseEnvWhitelist` (Zone 2), so the injection filter keeps them host-side even
+though they now live in `.e/.env`.
 
 llama.cpp already binds localhost correctly and runs as its own service; Redis
 is scoped to the compose network. No change needed there.
@@ -123,7 +119,7 @@ reporting "already serving".
 | # | Issue | Fix | Zone | When |
 | - | ----- | --- | ---- | ---- |
 | 1 | [#24](https://github.com/BelphegorPrime/e/issues/24) | Whitelist `.e/.env` injection to declared provider/MCP keys | 2 | Done — `baseEnvWhitelist` filter in `planSpawn`/`executeSpawn`, unblocks #2 |
-| 2 | [#25](https://github.com/BelphegorPrime/e/issues/25) | Bind OmniRoute to `127.0.0.1:20128` with no default secrets; `e init` generates stack secrets | 3 | After #1 — `ready-for-agent`, blocked by #1 |
+| 2 | [#25](https://github.com/BelphegorPrime/e/issues/25) | Bind OmniRoute to `127.0.0.1:20128` with no default secrets; `e init` generates stack secrets | 3 | Done — port bound in `renderCompose.ts`; fallbacks removed; `seedStackSecrets` in `init.ts`; `spawn.ts` reads `OMNIROUTE_INITIAL_PASSWORD` from the store env; compose invoked with `--env-file .e/.env` |
 | 3 | [#26](https://github.com/BelphegorPrime/e/issues/26) | Non-root runtime user in the harness Dockerfile template, per-harness override | 1 | `ready-for-agent` |
 | 4 | [#27](https://github.com/BelphegorPrime/e/issues/27) | Egress hardening (proxy/network policy allowing provider + MCP endpoints only) | 1 | `ready-for-agent` |
 | 5 | [#28](https://github.com/BelphegorPrime/e/issues/28) | Verify stale `serve.json` handling in detached mode | 4 | `ready-for-agent` |
@@ -136,7 +132,7 @@ reporting "already serving".
 - `packages/cli/src/renderCompose.ts`, `renderBootstrap.ts`,
   `harness/renderDockerfile.ts`, `store.ts`, `serve.ts`
 - Issues: [#24](https://github.com/BelphegorPrime/e/issues/24) (env whitelist),
-  [#25](https://github.com/BelphegorPrime/e/issues/25) (OmniRoute bind + secrets),
+  [#25](https://github.com/BelphegorPrime/e/issues/25) (OmniRoute bind + secrets, done),
   [#26](https://github.com/BelphegorPrime/e/issues/26) (non-root container),
   [#27](https://github.com/BelphegorPrime/e/issues/27) (egress),
   [#28](https://github.com/BelphegorPrime/e/issues/28) (stale serve.json)
