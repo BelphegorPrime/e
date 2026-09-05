@@ -55,6 +55,24 @@ test('describeModels: reports downloading progress with an ETA once a second sam
   assert.match(second.lines[0], /remaining/);
 });
 
+test('describeModels: reports ready when at least one requested model is ready', () => {
+  const result = describeModels(
+    {
+      data: [
+        { id: 'org/model-a', status: { value: 'loaded' } },
+        { id: 'org/model-b', status: { value: 'loading' } },
+      ],
+    },
+    ['org/model-a', 'org/model-b'],
+    new Map(),
+    0
+  );
+
+  assert.equal(result.ready, true);
+  assert.match(result.lines[0], /ready \(loaded\)/);
+  assert.match(result.lines[1], /loading into memory/);
+});
+
 test('describeModels: loading and loaded states', () => {
   const models = ['org/model-a'];
   const history = new Map();
@@ -137,7 +155,7 @@ test('waitForModelsReady: polls until ready, printing progress and a final ready
 
   assert.match(lines.join('\n'), /downloading 50%/);
   assert.match(lines.join('\n'), /loading into memory/);
-  assert.match(lines.join('\n'), /All models ready\./);
+  assert.match(lines.join('\n'), /At least one model is ready\./);
 });
 
 test('waitForModelsReady: rejects when a model fails to load', async () => {

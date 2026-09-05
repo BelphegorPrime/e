@@ -103,7 +103,7 @@ export interface ProgressSample {
 }
 
 /**
- * Renders one status line per requested model and reports whether every model
+ * Renders one status line per requested model and reports whether one model
  * is ready. Pure and side-effect free so it's testable without a real server;
  * `history` is mutated in place to remember each model's last sample for speed/ETA.
  */
@@ -115,7 +115,7 @@ export function describeModels(
 ): { lines: string[]; ready: boolean; failed: string[] } {
   const lines: string[] = [];
   const failed: string[] = [];
-  let ready = true;
+  let ready = false;
 
   for (const id of models) {
     const entry = response.data.find(d => d.id === id);
@@ -128,13 +128,11 @@ export function describeModels(
     }
 
     if (!status || status.value === 'unloaded') {
-      ready = false;
       lines.push(`${id}: waiting to start`);
       continue;
     }
 
     if (status.value === 'downloading' && status.progress) {
-      ready = false;
       const { done, total } = totalProgress(status.progress);
       const pct = total > 0 ? Math.floor((done / total) * 100) : 0;
       const prev = history.get(id);
@@ -155,15 +153,18 @@ export function describeModels(
     }
 
     if (status.value === 'loading') {
-      ready = false;
       lines.push(`${id}: loading into memory...`);
       continue;
+    }
+
+    if (isModelReady(status)) {
+      ready = true;
     }
 
     lines.push(`${id}: ready (${status.value})`);
   }
 
-  return { lines, ready: ready && failed.length === 0, failed };
+  return { lines, ready: ready && failed.length < models.length, failed };
 }
 
 export interface WaitForModelsReadyOptions {
@@ -178,7 +179,7 @@ export interface WaitForModelsReadyOptions {
 }
 
 /**
- * Polls llama.cpp's `/models` endpoint until every requested model has
+ * Polls llama.cpp's `/models` endpoint until at least one requested model has
  * finished downloading and loading, printing download progress and an ETA
  * along the way. Throws if any model reports a load failure.
  */
@@ -225,7 +226,7 @@ export async function waitForModelsReady(
     }
 
     if (ready) {
-      onLine('All models ready.');
+      onLine('At least one model is ready.');
       return;
     }
 
