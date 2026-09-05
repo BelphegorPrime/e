@@ -3,7 +3,35 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { createServeApp, startServeServer } from './serve';
+import {
+  createServeApp,
+  detachedServeArguments,
+  startServeServer,
+} from './serve';
+
+test('detachedServeArguments preserves command arguments and removes detached flags', () => {
+  assert.deepEqual(
+    detachedServeArguments([
+      '/usr/bin/node',
+      '/workspace/dist/index.js',
+      'serve',
+      '--detached',
+      '--host',
+      '0.0.0.0',
+      '-d',
+      '--port',
+      '8080',
+    ]),
+    [
+      '/workspace/dist/index.js',
+      'serve',
+      '--host',
+      '0.0.0.0',
+      '--port',
+      '8080',
+    ]
+  );
+});
 
 test('serve app exposes API routes and the UI fallback', async () => {
   const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
