@@ -9,7 +9,10 @@ export interface ModelCatalogEntry {
 
 /** Models `e init` offers to provision locally, in preference order — first is the default. */
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
-  { id: 'unsloth/Qwen3.8-Flash-Next-GGUF:Q4_K_M', sizeBytes: 5_400_000_000 },
+  {
+    id: 'unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M',
+    sizeBytes: 16_500_000_000
+  },
   {
     id: 'ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M',
     sizeBytes: 21_000_000_000,
