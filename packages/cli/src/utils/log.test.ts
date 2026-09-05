@@ -1,4 +1,5 @@
 import { test, beforeEach, afterEach } from 'node:test';
+import { stripVTControlCharacters } from 'node:util';
 import assert from 'node:assert/strict';
 import { log } from './log';
 
@@ -28,10 +29,6 @@ beforeEach(() => {
   };
 });
 
-function withoutAnsi(text: string): string {
-  return text.replace(/\x1B\[[0-9;]*m/g, '');
-}
-
 afterEach(() => restore());
 
 test('info writes a plain line to stdout with a trailing newline', () => {
@@ -45,8 +42,8 @@ test('success and command go to stdout; error and warn go to stderr', () => {
   log.command('> docker run');
   log.error('boom');
   log.warn('careful');
-  assert.deepEqual(out.map(withoutAnsi), ['done\n', '> docker run\n']);
-  assert.deepEqual(err.map(withoutAnsi), ['boom\n', 'careful\n']);
+  assert.deepEqual(out.map(stripVTControlCharacters), ['done\n', '> docker run\n']);
+  assert.deepEqual(err.map(stripVTControlCharacters), ['boom\n', 'careful\n']);
 });
 
 test('rest args format like console (specifiers and joins)', () => {
