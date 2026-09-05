@@ -266,7 +266,6 @@ export function prepareComposeDataDir(root?: string): void {
   );
   for (const name of [
     'omniroute-data',
-    'llama-models',
     'llama-data',
     'redis-data',
   ]) {

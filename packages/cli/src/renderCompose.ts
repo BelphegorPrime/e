@@ -64,12 +64,10 @@ services:
       LLAMA_ARG_PORT: "9931"
       LLAMA_ARG_CTX_SIZE: "65536"
       LLAMA_ARG_N_PARALLEL: "2"
-      LLAMA_ARG_MODELS_DIR: /models
     ports:
-        - "127.0.0.1:9931:9931"
+      - "127.0.0.1:9931:9931"
     volumes:
-        - ./volumes/llama-models:/models
-        - ./volumes/llama-data:/root/.cache/llama.cpp
+      - ./volumes/llama-data:/root/.cache
 ${gpu}
   redis:
     image: redis:8-alpine

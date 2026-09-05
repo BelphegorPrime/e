@@ -70,7 +70,6 @@ test('prepareOmnirouteDataDir: creates container-writable local volume directori
     prepareComposeDataDir(root);
     for (const name of [
       'omniroute-data',
-      'llama-models',
       'llama-data',
       'redis-data',
     ]) {
@@ -125,7 +124,7 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.match(compose, /REDIS_URL: redis:\/\/redis:6379/);
   assert.match(compose, /20128:20128/);
   assert.match(compose, /- \.\/volumes\/omniroute-data:\/app\/data/);
-  assert.match(compose, /- \.\/volumes\/llama-data:\/root\/\.cache\/llama\.cpp/);
+  assert.match(compose, /- \.\/volumes\/llama-data:\/root\/\.cache/);
   assert.match(compose, /- \.\/volumes\/redis-data:\/data/);
   assert.match(compose, /LLAMA_ARG_HOST: "0\.0\.0\.0"/);
   assert.match(compose, /LLAMA_ARG_PORT: "9931"/);
@@ -140,9 +139,15 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   assert.match(script, /^#!\/bin\/sh/);
   assert.match(script, /POST http:\/\/llama:9931\/models/);
   assert.match(script, /for model in \$models; do/);
-  assert.match(script, /models='unsloth\/Qwen3\.8-Flash-Next-GGUF:Q4_K_M'/);
+  assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"/);
+  assert.match(script, /"id".*"value"\[\[:space:\]\]\*:\[\[:space:\]\]\*"loaded"/);
+  assert.match(
+    script,
+    /models='unsloth\/Qwen3\.8-Flash-Next-GGUF:Q4_K_M ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M'/,
+  );
   assert.doesNotMatch(script, /until curl -sf http:\/\/llama:9931\/models/);
   assert.match(script, /unsloth\/Qwen3\.8-Flash-Next-GGUF:Q4_K_M/);
+  assert.match(script, /ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M/);
   assert.match(script, /llama\.cpp \(local\)/);
   assert.match(script, /"provider":"llama-cpp"/);
   assert.match(script, /"apiKey":"sk-no-key-required"/);

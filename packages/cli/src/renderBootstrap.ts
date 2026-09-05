@@ -1,4 +1,7 @@
-const MODELS = ['unsloth/Qwen3.8-Flash-Next-GGUF:Q4_K_M'];
+const MODELS = [
+  'unsloth/Qwen3.8-Flash-Next-GGUF:Q4_K_M',
+  'ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M',
+];
 const DEFAULT_MODEL = MODELS[0];
 
 /** Renders the one-shot script that provisions llama.cpp and OmniRoute. */
@@ -26,8 +29,8 @@ log 'llama.cpp ready; synchronizing models'
 
 for model in $models; do
   model_state=$(curl -sf http://llama:9931/models)
-  if echo "$model_state" | grep -q '"model"[[:space:]]*:[[:space:]]*"'"$model"'"'; then
-    if ! echo "$model_state" | grep -q '"model"[[:space:]]*:[[:space:]]*"'"$model"'".*"value"[[:space:]]*:[[:space:]]*"loaded"'; then
+  if echo "$model_state" | grep -q '"id"[[:space:]]*:[[:space:]]*"'"$model"'"'; then
+    if ! echo "$model_state" | grep -q '"id"[[:space:]]*:[[:space:]]*"'"$model"'".*"value"[[:space:]]*:[[:space:]]*"loaded"'; then
       log "loading model $model"
       curl -sf -X POST http://llama:9931/models/load \
         -H 'Content-Type: application/json' \
