@@ -1,0 +1,111 @@
+import fs from 'fs';
+import path from 'path';
+import { MODELS } from '../modelStatus';
+import { configFilePath, dockerfilePath, modelsFilePath } from './paths';
+
+/**
+ * The Store's **state files** (host-only): `config.json` orchestration
+ * settings, `model-ids.json`, and the per-harness `Dockerfile` presence that
+ * answers "has `e init` provisioned this harness?". The pure resolvers
+ * ({@link resolveConfig}, {@link resolveModels}) take already-parsed JSON so
+ * the read/write glue stays thin and the defaults are testable without disk.
+ */
+
+/** The favorite harness a bare `e spawn` resolves to when none is named. */
+export const DEFAULT_HARNESS = 'pi';
+
+/** Host-only orchestration settings, persisted in `config.json`. */
+export type StoreConfig = {
+  /** The favorite harness `e spawn` resolves to when no target is named. */
+  defaultHarness: string;
+  /** Local llama.cpp models `e init` provisions; `e spawn` waits for exactly these. */
+  models: string[];
+};
+
+export type ModelDataEntry = {
+  id: string;
+  object: string;
+  created: number;
+  owned_by: string;
+};
+
+/**
+ * Resolves a parsed `config.json` body to a complete {@link StoreConfig},
+ * applying built-in defaults for anything absent or malformed. Pure: the glue
+ * hands it the already-parsed JSON (or `undefined` when the file is missing).
+ */
+export function resolveConfig(raw: unknown): StoreConfig {
+  const parsed = (raw ?? {}) as Partial<StoreConfig>;
+  const defaultHarness =
+    typeof parsed.defaultHarness === 'string' &&
+    parsed.defaultHarness.length > 0
+      ? parsed.defaultHarness
+      : DEFAULT_HARNESS;
+  const models =
+    Array.isArray(parsed.models) &&
+    parsed.models.length > 0 &&
+    parsed.models.every(m => typeof m === 'string')
+      ? parsed.models
+      : MODELS;
+  return { defaultHarness, models };
+}
+
+/**
+ * Resolves a parsed `model-ids.json` body to a complete {@link ModelDataEntry} array,
+ * applying built-in defaults for anything absent or malformed. Pure: the glue
+ * hands it the already-parsed JSON (or `undefined` when the file is missing).
+ */
+export function resolveModels(raw: unknown): ModelDataEntry[] {
+  const parsed = (raw ?? []) as Partial<ModelDataEntry[]>;
+  return Array.isArray(parsed)
+    ? parsed.filter((v): v is ModelDataEntry => !!v)
+    : [];
+}
+
+/** Serializes a {@link StoreConfig} to the on-disk `config.json` text. */
+export function serializeConfig(
+  config: Record<string, unknown> | Array<unknown>
+): string {
+  return JSON.stringify(config, null, 2) + '\n';
+}
+
+/**
+ * Reads the host-only `model-ids.json`, applying defaults for anything absent — a
+ * missing file yields the built-in defaults.
+ */
+export function readModelsJson(root?: string): ModelDataEntry[] {
+  const file = modelsFilePath(root);
+  if (!fs.existsSync(file)) {
+    return resolveModels(undefined);
+  }
+  return resolveModels(JSON.parse(fs.readFileSync(file, 'utf8')));
+}
+
+/** Writes the host-only `model-ids.json`, creating the `.e` directory if needed. */
+export function writeModelsJson(config: ModelDataEntry[], root?: string): void {
+  const file = modelsFilePath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, serializeConfig(config));
+}
+
+/**
+ * Reads the host-only `config.json`, applying defaults for anything absent — a
+ * missing file yields the built-in defaults ({@link DEFAULT_HARNESS}).
+ */
+export function readConfig(root?: string): StoreConfig {
+  const file = configFilePath(root);
+  if (!fs.existsSync(file)) return resolveConfig(undefined);
+  return resolveConfig(JSON.parse(fs.readFileSync(file, 'utf8')));
+}
+
+/** Writes the host-only `config.json`, creating the `.e` directory if needed. */
+export function writeConfig(config: StoreConfig, root?: string): void {
+  const file = configFilePath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, serializeConfig(config));
+}
+
+/** Returns true if `e init` has written this harness's Dockerfile under `root`. */
+export function isInitialized(name: string, root?: string): boolean {
+  return fs.existsSync(dockerfilePath(name, root));
+}

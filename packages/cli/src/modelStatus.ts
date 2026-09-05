@@ -1,5 +1,16 @@
 import { log } from './utils/log';
 
+/**
+ * The stack edge network the run container joins so it can reach OmniRoute
+ * directly by service alias instead of hopping through the host. Fixed name so
+ * `e spawn` (executeSpawn) attaches the run container to it. OmniRoute aliases
+ * `host.docker.internal` here, so the baked agent default base URL
+ * (`http://host.docker.internal:20128/v1`) resolves to the container itself
+ * rather than the host bridge gateway, which cannot reach the loopback-bound
+ * host port. See docs/security/attack-surface.md, Zone 3.
+ */
+export const OMNIROUTE_EDGE_NETWORK = 'omniroute-edge';
+
 /** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
 export const LOCAL_LLAMA_URL =
   process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';

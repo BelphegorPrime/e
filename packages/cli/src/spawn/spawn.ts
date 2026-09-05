@@ -1,23 +1,26 @@
 import fs from 'fs';
 import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
-import { ContainerRuntime, type RunOptions } from './runtime/index';
-import { HostGit } from './git/host';
+import { ContainerRuntime, type RunOptions } from '../runtime/index';
+import { HostGit } from '../git/host';
 import {
   resolveSpawnTarget,
   validateSpawn,
   planSpawn,
   type SpawnFacts,
 } from './spawnPlan';
-import { resolveHarness, HARNESSES } from './harness/index';
-import { findAgent, isKnownTarget } from './agent';
-import { parseDotenv } from './harness/adapter';
-import { resolveSkill, parseSkillList } from './skill/index';
-import { readMcpServer, listMcpServerNames, type McpServer } from './mcp/index';
-import { RunScratch } from './runScratch';
+import { resolveHarness, HARNESSES } from '../harness/index';
+import { findAgent, isKnownTarget } from '../agent/index';
+import { parseDotenv } from '../harness/adapter';
+import { resolveSkill, parseSkillList } from '../skill/index';
+import { readMcpServer, listMcpServerNames, type McpServer } from '../mcp/index';
+import { RunScratch } from '../runs/runScratch';
 import { executeSpawn } from './executeSpawn';
-import { findRoot, envFilePath, readConfig, dockerComposePath } from './store';
-import { log } from './utils/log';
+import { findRoot } from '../store/root';
+import { envFilePath } from '../store/paths';
+import { readConfig } from '../store/config';
+import { localStack } from '../runtime/stack';
+import { log } from '../utils/log';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
 const RUNTIMES: Record<string, string> = {
@@ -291,15 +294,11 @@ export function registerSpawnCommand(program: Command): void {
           const facts = gatherSpawnFacts(target, prompt, opts);
           validateSpawn(facts);
           const runtime = resolveRuntime(opts.runtime);
-          const composeFile = dockerComposePath(facts.root);
-          if (fs.existsSync(composeFile)) {
+          const stack = localStack(facts.root);
+          if (stack?.present) {
             // The stack is interpolated from `.e/.env` (no fallback secrets), so
             // pass it explicitly — compose does not otherwise look inside `.e/`.
-            const envFile = envFilePath(facts.root);
-            runtime.composeUp(
-              composeFile,
-              fs.existsSync(envFile) ? envFile : undefined
-            );
+            runtime.composeUp(stack.composeFile, stack.envFile);
             // composeUp blocks on `compose wait bootstrap`; the bootstrap script
             // registers the models and loads one synchronously before exiting,
             // so the model is in memory by the time we get here. No extra wait.

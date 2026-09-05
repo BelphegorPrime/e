@@ -12,42 +12,12 @@ import {
   piAdapter,
   type Provider,
 } from './adapter';
-import { Harness } from '.';
-import { Agent } from '../agent';
-import { SpawnFacts } from '../spawnPlan';
 
 const providerBlock = {
   configFileName: 'config.toml',
   configDir: '/root/.codex',
   configDirEnv: 'CODEX_HOME',
 };
-const harness: Harness = {
-  name: 'demo',
-  imageTag: 'e-harness-demo',
-  dockerfile: { label: 'demo', npmPackage: 'demo' },
-  requiredEnv: [],
-  protocols: [],
-  buildCommand: (prompt: string) => ['demo', '-p', prompt],
-  buildInteractiveCommand: () => ['demo'],
-};
-const agent: Agent = { name: 'demo', harness: 'demo' };
-
-function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
-  return {
-    root: '/root',
-    agent,
-    harness,
-    storeEnv: {},
-    mcpServers: [],
-    perRunSkills: [],
-    bakedSkills: [],
-    prompt: 'do it',
-    rebuild: false,
-    env: [],
-    attach: true,
-    ...overrides,
-  };
-}
 
 test('renderDerivedDockerfile: builds FROM the harness base image (layer-2 reuse)', () => {
   const dockerfile = renderDerivedDockerfile({
@@ -121,7 +91,7 @@ const fileProvider: Provider = {
 };
 
 test('planProviderDelivery: an env harness delivers all env and bakes nothing', () => {
-  const plan = planProviderDelivery(facts(), claudeCodeAdapter, envProvider);
+  const plan = planProviderDelivery({}, claudeCodeAdapter, envProvider);
   assert.equal(plan.bakedConfig, undefined);
   assert.equal(plan.runtimeModel, undefined);
   assert.deepEqual(
@@ -135,7 +105,7 @@ test('planProviderDelivery: an env harness delivers all env and bakes nothing', 
 
 test('planProviderDelivery: an env harness carries auto model in env', () => {
   const plan = planProviderDelivery(
-    facts(),
+    {},
     claudeCodeAdapter,
     { ...envProvider, model: 'auto' },
   );
@@ -152,7 +122,7 @@ test('planProviderDelivery: an env harness carries auto model in env', () => {
 
 test('planProviderDelivery: a file harness bakes a concrete model into its config, no runtime model', () => {
   const plan = planProviderDelivery(
-    facts(),
+    {},
     codexAdapter,
     { ...fileProvider, model: 'gpt-5-codex' },
   );
@@ -171,7 +141,7 @@ test('planProviderDelivery: a file harness bakes a concrete model into its confi
 
 test('planProviderDelivery: a file harness keeps an auto model out of the config, delivers it on the command', () => {
   const plan = planProviderDelivery(
-    facts(),
+    {},
     codexAdapter,
     { ...fileProvider, model: 'auto' },
   );
@@ -188,7 +158,7 @@ const piProvider: Provider = {
 };
 
 test('planProviderDelivery: pi bakes auto model into models.json and passes it on the command', () => {
-  const plan = planProviderDelivery(facts(), piAdapter, piProvider);
+  const plan = planProviderDelivery({}, piAdapter, piProvider);
   assert.ok(plan.bakedConfig);
   assert.equal(plan.bakedConfig.file.fileName, 'models.json');
   assert.equal(plan.bakedConfig.configDir, '/root/.pi/agent');
@@ -203,7 +173,7 @@ test('planProviderDelivery: pi bakes auto model into models.json and passes it o
 
 test('planProviderDelivery: pi bakes a concrete model too and passes it for selection', () => {
   const plan = planProviderDelivery(
-    facts(),
+    {},
     piAdapter,
     { ...piProvider, model: 'claude-opus-5' }
   );
@@ -220,7 +190,7 @@ test('planAgentImage: nothing to bake (no provider, no skills) derives no image'
 });
 
 test('planAgentImage: provider-only bakes config + Dockerfile, no skills (Codex today)', () => {
-  const delivery = planProviderDelivery(facts(), codexAdapter, fileProvider);
+  const delivery = planProviderDelivery({}, codexAdapter, fileProvider);
   const image = planAgentImage({
     baseImage: 'e-harness-codex',
     agentName: 'smart-codex',
@@ -259,7 +229,7 @@ test('planAgentImage: skills-only bakes a Dockerfile that copies the skill trees
 });
 
 test('planAgentImage: provider + skills compose into one derived image', () => {
-  const delivery = planProviderDelivery(facts(), codexAdapter, fileProvider);
+  const delivery = planProviderDelivery({}, codexAdapter, fileProvider);
   const image = planAgentImage({
     baseImage: 'e-harness-codex',
     agentName: 'smart-codex',

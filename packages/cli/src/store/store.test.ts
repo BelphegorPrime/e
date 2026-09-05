@@ -11,8 +11,8 @@ import {
   writeConfig,
   configFilePath,
   DEFAULT_HARNESS,
-} from './store';
-import { MODELS } from './modelStatus';
+} from './index';
+import { MODELS } from '../modelStatus';
 
 // resolveRoot is pure: it takes cwd, homedir, and a `hasStore` predicate, so we
 // exercise the resolution order with synthetic paths and a fake predicate — no

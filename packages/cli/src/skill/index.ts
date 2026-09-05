@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { skillManifestPath, skillDir, skillsBaseDir } from '../store';
+import { skillManifestPath, skillDir, skillsBaseDir } from '../store/paths';
 import type { Mount } from '../runtime/index';
 
 /**
