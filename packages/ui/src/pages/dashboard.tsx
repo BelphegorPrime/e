@@ -1,5 +1,4 @@
-import { Separator } from '@/components/ui/separator';
-import { SidebarTrigger } from '@/components/ui/sidebar';
+import { PageHeader } from '@/components/page-header';
 
 /**
  * Placeholder layout for the dashboard. CSS containers stand in
@@ -8,14 +7,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar';
 export function DashboardPage() {
   return (
     <div className="flex h-full flex-col gap-6 p-6">
-      <div className="flex items-center gap-2">
-        <SidebarTrigger />
-        <Separator orientation="vertical" className="mr-2 !h-6" />
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">e - overview</p>
-        </div>
-      </div>
+      <PageHeader title="Dashboard" description="e - overview" />
 
       {/* hero container */}
       <div className="flex min-h-56 flex-col justify-between rounded-xl border border-dashed border-border bg-muted/30 p-6">

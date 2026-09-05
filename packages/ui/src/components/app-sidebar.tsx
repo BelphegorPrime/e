@@ -6,6 +6,7 @@ import {
   Settings,
   TerminalSquare,
 } from 'lucide-react';
+import { NavLink, useLocation } from 'react-router-dom';
 
 import { Logo } from '@/components/logo';
 import {
@@ -22,30 +23,32 @@ import {
 } from '@/components/ui/sidebar';
 
 const mainNav = [
-  { title: 'Dashboard', url: '#', icon: LayoutDashboard },
-  { title: 'Runs', url: '#', icon: Play },
-  { title: 'Agents', url: '#', icon: Bot },
+  { title: 'Dashboard', to: '/', icon: LayoutDashboard },
+  { title: 'Runs', to: '/runs', icon: Play },
+  { title: 'Agents', to: '/agents', icon: Bot },
 ];
 
 const systemNav = [
-  { title: 'Activity', url: '#', icon: Activity },
-  { title: 'Terminal', url: '#', icon: TerminalSquare },
-  { title: 'Settings', url: '#', icon: Settings },
+  { title: 'Activity', to: '/activity', icon: Activity },
+  { title: 'Terminal', to: '/terminal', icon: TerminalSquare },
+  { title: 'Settings', to: '/settings', icon: Settings },
 ];
 
 export function AppSidebar() {
+  const { pathname } = useLocation();
+
   return (
     <Sidebar>
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <a href="#">
+              <NavLink to="/">
                 <Logo className="h-8 w-8" />
                 <span className="font-mono text-lg font-bold leading-none">
                   e -
                 </span>
-              </a>
+              </NavLink>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -57,11 +60,15 @@ export function AppSidebar() {
             <SidebarMenu>
               {mainNav.map(item => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
-                    <a href={item.url}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === item.to}
+                    tooltip={item.title}
+                  >
+                    <NavLink to={item.to}>
                       <item.icon />
                       <span>{item.title}</span>
-                    </a>
+                    </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -74,11 +81,15 @@ export function AppSidebar() {
             <SidebarMenu>
               {systemNav.map(item => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
-                    <a href={item.url}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === item.to}
+                    tooltip={item.title}
+                  >
+                    <NavLink to={item.to}>
                       <item.icon />
                       <span>{item.title}</span>
-                    </a>
+                    </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

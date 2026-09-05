@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title><%= htmlWebpackPlugin.options.title %></title>
+    <script>
+      // Apply the stored (or OS-derived) theme before React mounts to
+      // avoid a flash of the wrong palette. Mirrors use-theme.ts.
+      (function () {
+        try {
+          var t = localStorage.getItem('e-theme');
+          var dark =
+            t === 'dark' ||
+            (t !== 'light' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="h-full">
     <div id="root" class="h-full"></div>

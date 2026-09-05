@@ -1,20 +1,36 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { ActivityPage } from '@/pages/activity';
+import { AgentsPage } from '@/pages/agents';
 import { DashboardPage } from '@/pages/dashboard';
+import { RunsPage } from '@/pages/runs';
+import { SettingsPage } from '@/pages/settings';
+import { TerminalPage } from '@/pages/terminal';
 
 import './index.css';
 
 function App() {
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset>
-        <DashboardPage />
-      </SidebarInset>
-    </SidebarProvider>
+    <HashRouter>
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/runs" element={<RunsPage />} />
+            <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/terminal" element={<TerminalPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </SidebarInset>
+      </SidebarProvider>
+    </HashRouter>
   );
 }
 
