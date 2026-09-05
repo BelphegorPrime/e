@@ -22,9 +22,21 @@ repo root):
 alias e="node $(pwd)/packages/cli/dist/index.js"
 ```
 
-`npm run build` builds the UI, copies it into the CLI distribution, and packages
+`npm run build` builds the UI, bundles it into the CLI distribution, and packages
 native binaries under `command/` via pkg. The UI assets are embedded in each
 standalone binary.
+
+Bundling is `npm run bundle:ui` (a real script, not a shell `cp`): it builds
+the UI, verifies the webpack output, copies it into `dist/ui`, re-verifies the
+copy hash-by-hash, and records what shipped in `dist/ui/ui-manifest.json`. A
+bundle that still matches the current UI build is skipped; `--force` rebuilds
+anyway, `--no-build` copies an already-built UI without invoking npm:
+
+```bash
+npm run bundle:ui --workspace @e/cli
+npm run bundle:ui --workspace @e/cli -- --force
+npm run bundle:ui --workspace @e/cli -- --no-build
+```
 
 For local development, `npm run link --workspace @e/cli` (or `npm run link`
 inside `packages/cli`) builds everything except the pkg binaries and installs
@@ -58,7 +70,8 @@ npm test --workspace @e/cli
 ```
 
 Builds and runs the full `node --test` suite (adapters, delivery planning,
-harness registry, spawn planning, store, …).
+harness registry, spawn planning, store, …). `npm run test:ui-bundle` runs the
+UI bundling tests (verified copy, freshness, staleness) separately:
 
 ### 2. Rendering checks (no container, no gateway)
 
