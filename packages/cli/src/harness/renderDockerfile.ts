@@ -28,7 +28,8 @@ export interface DockerfileParams {
 const TEMPLATE = `FROM {{{baseImage}}}
 
 # {{{label}}}
-RUN npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}
+RUN apk add --no-cache git \
+  && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}
 
 WORKDIR {{{workdir}}}
 `;

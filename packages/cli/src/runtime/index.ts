@@ -23,6 +23,8 @@ export function formatMount(m: Mount): string {
 export interface RunOptions {
   name?: string;
   attach?: boolean;
+  /** Keep stdin open and allocate a TTY for an interactive harness session. */
+  interactive?: boolean;
   port?: string[];
   env?: string[];
   rm?: boolean;
@@ -254,6 +256,7 @@ export class ContainerRuntime implements ContainerRunner {
   ): string[] {
     const args = ['run'];
 
+    if (opts.interactive) args.push('-it');
     // Detached is the default; only run in the foreground when --attach is set.
     if (!opts.attach) args.push('-d');
     if (opts.rm) args.push('--rm');

@@ -135,6 +135,16 @@ test('pi buildCommand is plain when no provider/model is configured (default age
   assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', '"do it"']);
 });
 
+test('interactive commands start each harness without a one-shot prompt', () => {
+  assert.deepEqual(HARNESSES.pi.buildInteractiveCommand(), ['pi']);
+  assert.deepEqual(HARNESSES.claudeCode.buildInteractiveCommand(), [
+    'claude',
+    '--dangerously-skip-permissions',
+  ]);
+  assert.deepEqual(HARNESSES.codex.buildInteractiveCommand(), ['codex']);
+  assert.deepEqual(HARNESSES.opencode.buildInteractiveCommand(), ['opencode']);
+});
+
 test('each harness places skills at a path outside /workspace; Claude differs from the shared dir', () => {
   // Claude reads its own skills dir; the others share ~/.agents/skills.
   assert.equal(HARNESSES.claudeCode.skillsDir, '/root/.claude/skills');

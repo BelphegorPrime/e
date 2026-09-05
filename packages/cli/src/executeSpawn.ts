@@ -169,6 +169,7 @@ export async function executeSpawn(
       name: facts.name,
       runOptions: {
         attach: facts.attach,
+        interactive: facts.interactive,
         rm: facts.rm,
         port: facts.port,
         extraHosts: ['host.docker.internal:host-gateway'],

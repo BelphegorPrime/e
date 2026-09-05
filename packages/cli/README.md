@@ -34,8 +34,9 @@ packages/cli/command/e-linux-x64 serve
 ```
 
 The server binds to `127.0.0.1:8080` by default. Use `--host` and `--port` to
-change the bind address. It serves the UI at `/` and provides `/api/health` and
-`/api/info`.
+change the bind address, or `--detached` to run it in the background. Stop a
+detached server with `e serve stop`. It serves the UI at `/` and provides
+`/api/health` and `/api/info`.
 
 ## Test
 
@@ -158,6 +159,7 @@ e spawn pi-gw --mcp everything "hi"
 | ---------------------------------------------- | ---------------------------------------------------------------------- |
 | `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config  |
 | `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt                                  |
+| `e spawn <agent-or-harness> --interactive`     | Start the harness TUI for the first message                            |
 | `e spawn … --skill <name>`                     | Add a Skill for this run                                               |
 | `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for pi)                                   |
 | `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model) |

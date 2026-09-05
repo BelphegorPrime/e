@@ -40,6 +40,11 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
     expected: ['run', 'img'],
   },
   {
+    name: 'interactive: keeps stdin open and allocates a TTY',
+    opts: { attach: true, interactive: true },
+    expected: ['run', '-it', 'img'],
+  },
+  {
     name: 'detached: -d is added',
     opts: { attach: false },
     expected: ['run', '-d', 'img'],
