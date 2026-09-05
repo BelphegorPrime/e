@@ -19,6 +19,22 @@ export interface Git {
   listRunBranches(prefix: string): string[];
 
   /**
+   * Tip metadata for every branch under `refs/heads/<prefix>-*` and under
+   * `refs/remotes/<remote>/<prefix>-*`, newest commit first — the raw
+   * material of the branch-backed runs index (ADR-0010).
+   */
+  listRunRefs(prefix: string): RunRef[];
+
+  /**
+   * A branch's commits, newest first. `branch` is any ref git understands,
+   * including a remote-tracking short name like `origin/e/<agent>/<slug>-N`.
+   */
+  runLog(branch: string): RunCommit[];
+
+  /** True if `branch` (a local or remote-tracking ref) resolves to a commit. */
+  branchExists(branch: string): boolean;
+
+  /**
    * Create a worktree at `path`, checking out a new `branch` from `base`.
    * Atomic: fails (throws) if the branch or the path already exists, so two
    * concurrent Spawns can never clobber each other's branch.
@@ -39,6 +55,23 @@ export interface Git {
 
   /** Remove the worktree at `path`, keeping its branch. */
   removeWorktree(worktreePath: string): void;
+}
+
+/** A run branch's current tip, as enumerated by `for-each-ref`. */
+export interface RunRef {
+  /** Short name: `e/<agent>/<slug>-N` (local) or `<remote>/e/<agent>/<slug>-N`. */
+  name: string;
+  sha: string;
+  /** ISO-8601 committer timestamp (`%(committerdate:iso-strict)`). */
+  committerDate: string;
+  subject: string;
+}
+
+/** One commit on a run branch, newest first (`git log`). */
+export interface RunCommit {
+  sha: string;
+  subject: string;
+  committerDate: string;
 }
 
 /** Where and how a Run's worktree is checked out. */

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
-import type { Git, WorktreeSpec } from './git/index';
+import type { Git, RunCommit, RunRef, WorktreeSpec } from './git/index';
 import type { ContainerRunner, RunOptions, SidecarSpec } from './runtime/index';
 import type { Harness } from './harness/index';
 import type { Agent } from './agent';
@@ -66,6 +66,18 @@ class FakeGit implements Git {
     this.calls.push('listRunBranches');
     this.listedPrefixes.push(prefix);
     return this.existingBranches;
+  }
+  listRunRefs(): RunRef[] {
+    this.calls.push('listRunRefs');
+    return [];
+  }
+  runLog(): RunCommit[] {
+    this.calls.push('runLog');
+    return [];
+  }
+  branchExists(): boolean {
+    this.calls.push('branchExists');
+    return false;
   }
   addWorktree(spec: WorktreeSpec): void {
     this.calls.push('addWorktree');

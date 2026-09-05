@@ -1,5 +1,5 @@
 import { spawnSync } from 'child_process';
-import type { Git, WorktreeSpec } from './index';
+import type { Git, RunCommit, RunRef, WorktreeSpec } from './index';
 import { log } from '../utils/log';
 
 /**
@@ -36,6 +36,55 @@ export class HostGit implements Git {
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0);
+  }
+
+  listRunRefs(prefix: string): RunRef[] {
+    // NUL-separated fields so subject text can never collide with the other
+    // columns; one `for-each-ref` call covers local heads and remotes.
+    const out = this.capture(
+      [
+        'for-each-ref',
+        '--sort=-committerdate',
+        `--format=%(refname:short)%00%(objectname)%00%(committerdate:iso-strict)%00%(subject)`,
+        `refs/heads/${prefix}-*`,
+        `refs/remotes/*/${prefix}-*`,
+      ],
+      `list run refs for ${prefix}`
+    );
+    return out
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .map(line => {
+        const [name, sha, committerDate, subject = ''] = line.split('\0');
+        return { name, sha, committerDate, subject };
+      });
+  }
+
+  runLog(branch: string): RunCommit[] {
+    const out = this.capture(
+      ['log', `--format=%H%00%s%00%cI`, branch],
+      `log ${branch}`
+    );
+    return out
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .map(line => {
+        const [sha, subject = '', committerDate = ''] = line.split('\0');
+        return { sha, subject, committerDate };
+      });
+  }
+
+  branchExists(branch: string): boolean {
+    // `--quiet` keeps a missing ref from writing to stderr; any exit code
+    // other than 0 means the ref does not resolve.
+    const result = spawnSync(
+      'git',
+      ['rev-parse', '--verify', '--quiet', `${branch}^{commit}`],
+      { stdio: 'ignore', shell: false }
+    );
+    return result.status === 0;
   }
 
   addWorktree(spec: WorktreeSpec): void {

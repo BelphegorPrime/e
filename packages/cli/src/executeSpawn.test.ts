@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { Git, WorktreeSpec } from './git/index';
+import type { Git, RunCommit, RunRef, WorktreeSpec } from './git/index';
 import { ContainerRuntime, type RunOptions } from './runtime/index';
 import { RunScratch } from './runScratch';
 import { executeSpawn } from './executeSpawn';
@@ -24,6 +24,15 @@ class StubGit implements Git {
   }
   listRunBranches(): string[] {
     return [];
+  }
+  listRunRefs(): RunRef[] {
+    return [];
+  }
+  runLog(): RunCommit[] {
+    return [];
+  }
+  branchExists(): boolean {
+    return false;
   }
   addWorktree(_spec: WorktreeSpec): void {}
   isDirty(): boolean {

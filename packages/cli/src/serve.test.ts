@@ -9,8 +9,10 @@ import {
   isServeStateLive,
   shouldReuseDetachedServe,
   startServeServer,
+  type ServeAppDeps,
   type ServeState,
 } from './serve';
+import type { Git, RunCommit, RunRef } from './git/index';
 import type { ModelsResponse } from './modelStatus';
 
 test('detachedServeArguments preserves command arguments and removes detached flags', () => {
@@ -239,4 +241,289 @@ test('shouldReuseDetachedServe: a live entry short-circuits to already serving',
     probeHealth: async () => true,
   });
   assert.equal(result, true);
+});
+
+/** Scripted `Git` fake for the branch-backed runs index routes. */
+class FakeGit implements Git {
+  refs: RunRef[];
+  commits: Record<string, RunCommit[]> = {};
+  throwsOn?: string;
+
+  constructor(
+    opts: {
+      refs?: RunRef[];
+      commits?: Record<string, RunCommit[]>;
+      throwsOn?: string;
+    } = {}
+  ) {
+    this.refs = opts.refs ?? [];
+    this.commits = opts.commits ?? {};
+    this.throwsOn = opts.throwsOn;
+  }
+
+  isRepo(): boolean {
+    return true;
+  }
+  headSha(): string {
+    return 'base';
+  }
+  listRunBranches(): string[] {
+    return this.refs.map(ref => ref.name);
+  }
+  listRunRefs(): RunRef[] {
+    if (this.throwsOn) throw new Error(this.throwsOn);
+    return this.refs;
+  }
+  runLog(branch: string): RunCommit[] {
+    return this.commits[branch] ?? [];
+  }
+  branchExists(branch: string): boolean {
+    return this.refs.some(ref => ref.name === branch);
+  }
+  addWorktree(): void {}
+  isDirty(): boolean {
+    return false;
+  }
+  commitAll(): void {}
+  hasCommitsBeyondBase(): boolean {
+    return false;
+  }
+  push(): void {}
+  removeWorktree(): void {}
+}
+
+/** Boots the app on an ephemeral port with a temp UI dir and runs `fn`. */
+async function withServeApp(
+  deps: ServeAppDeps,
+  fn: (baseUrl: string) => Promise<void>
+): Promise<void> {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  await fs.writeFile(
+    path.join(uiDirectory, 'index.html'),
+    '<!doctype html><title>e</title>'
+  );
+  const server = await startServeServer(
+    createServeApp(uiDirectory, deps),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    await fn(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+    });
+    await fs.rm(uiDirectory, { recursive: true, force: true });
+  }
+}
+
+const runRefs: RunRef[] = [
+  {
+    name: 'e/claudeCode/fix-typos-2',
+    sha: 'aaa',
+    committerDate: '2025-01-02T10:00:00+00:00',
+    subject: 'e: capture run output for e/claudeCode/fix-typos-2',
+  },
+  {
+    name: 'origin/e/claudeCode/fix-typos-2',
+    sha: 'aaa',
+    committerDate: '2025-01-02T10:00:00+00:00',
+    subject: 'e: capture run output for e/claudeCode/fix-typos-2',
+  },
+  {
+    name: 'e/claudeCode/fix-typos-1',
+    sha: 'bbb',
+    committerDate: '2025-01-01T09:00:00+00:00',
+    subject: 'older run',
+  },
+];
+
+const runCommits: Record<string, RunCommit[]> = {
+  'e/claudeCode/fix-typos-2': [
+    {
+      sha: 'aaa',
+      subject: 'e: capture run output for e/claudeCode/fix-typos-2',
+      committerDate: '2025-01-02T10:00:00+00:00',
+    },
+    {
+      sha: 'base',
+      subject: 'base commit',
+      committerDate: '2025-01-01T09:00:00+00:00',
+    },
+  ],
+};
+
+test('/api/runs lists the branch-backed runs index, newest first', async () => {
+  await withServeApp({ git: new FakeGit({ refs: runRefs }) }, async baseUrl => {
+    const res = await fetch(`${baseUrl}/api/runs`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      runs: Array<{
+        branch: string;
+        agent: string;
+        counter: number;
+        pushed: boolean;
+      }>;
+    };
+    assert.deepEqual(
+      body.runs.map(run => [run.branch, run.agent, run.counter, run.pushed]),
+      [
+        ['e/claudeCode/fix-typos-2', 'claudeCode', 2, true],
+        ['e/claudeCode/fix-typos-1', 'claudeCode', 1, false],
+      ]
+    );
+  });
+});
+
+test('/api/runs: a local-only run reports local and unpushed', async () => {
+  await withServeApp(
+    {
+      git: new FakeGit({ refs: [runRefs[2]!] }), // local twin only
+    },
+    async baseUrl => {
+      const res = await fetch(`${baseUrl}/api/runs`);
+      const body = (await res.json()) as {
+        runs: Array<Record<string, unknown>>;
+      };
+      assert.deepEqual(body.runs, [
+        {
+          branch: 'e/claudeCode/fix-typos-1',
+          agent: 'claudeCode',
+          slug: 'fix-typos',
+          counter: 1,
+          sha: 'bbb',
+          committerDate: '2025-01-01T09:00:00+00:00',
+          subject: 'older run',
+          local: true,
+          pushed: false,
+        },
+      ]);
+    }
+  );
+});
+
+test('/api/runs/<branch> reports per-run status', async () => {
+  await withServeApp(
+    { git: new FakeGit({ refs: runRefs, commits: runCommits }) },
+    async baseUrl => {
+      const res = await fetch(`${baseUrl}/api/runs/e/claudeCode/fix-typos-2`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Record<string, unknown>;
+      assert.deepEqual(body, {
+        branch: 'e/claudeCode/fix-typos-2',
+        agent: 'claudeCode',
+        slug: 'fix-typos',
+        counter: 2,
+        commits: 2,
+        latest: runCommits['e/claudeCode/fix-typos-2']![0],
+        local: true,
+        pushed: true,
+      });
+    }
+  );
+});
+
+test('/api/runs/<branch>/logs returns the branch commit history', async () => {
+  await withServeApp(
+    { git: new FakeGit({ refs: runRefs, commits: runCommits }) },
+    async baseUrl => {
+      const res = await fetch(
+        `${baseUrl}/api/runs/e/claudeCode/fix-typos-2/logs`
+      );
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), {
+        branch: 'e/claudeCode/fix-typos-2',
+        commits: runCommits['e/claudeCode/fix-typos-2'],
+      });
+    }
+  );
+});
+
+test('/api/runs reads a remote-only run from its remote-tracking ref', async () => {
+  const remoteOnly: RunRef = {
+    name: 'origin/e/cheap-codex/tidy-tests-1',
+    sha: 'ccc',
+    committerDate: '2025-01-03T08:00:00+00:00',
+    subject: 'remote-only run',
+  };
+  const commits: Record<string, RunCommit[]> = {
+    'origin/e/cheap-codex/tidy-tests-1': [
+      {
+        sha: 'ccc',
+        subject: 'remote-only run',
+        committerDate: '2025-01-03T08:00:00+00:00',
+      },
+    ],
+  };
+  await withServeApp(
+    { git: new FakeGit({ refs: [remoteOnly], commits }) },
+    async baseUrl => {
+      const status = await fetch(
+        `${baseUrl}/api/runs/e/cheap-codex/tidy-tests-1`
+      );
+      assert.equal(status.status, 200);
+      const body = (await status.json()) as {
+        branch: string;
+        local: boolean;
+        pushed: boolean;
+        commits: number;
+      };
+      assert.deepEqual(
+        {
+          branch: body.branch,
+          local: body.local,
+          pushed: body.pushed,
+          commits: body.commits,
+        },
+        {
+          branch: 'e/cheap-codex/tidy-tests-1',
+          local: false,
+          pushed: true,
+          commits: 1,
+        }
+      );
+
+      const logs = await fetch(
+        `${baseUrl}/api/runs/e/cheap-codex/tidy-tests-1/logs`
+      );
+      assert.equal(logs.status, 200);
+      assert.deepEqual(await logs.json(), {
+        branch: 'e/cheap-codex/tidy-tests-1',
+        commits: commits['origin/e/cheap-codex/tidy-tests-1'],
+      });
+    }
+  );
+});
+
+test('/api/runs returns 404 for an unknown or non-run branch', async () => {
+  await withServeApp(
+    { git: new FakeGit({ refs: runRefs, commits: runCommits }) },
+    async baseUrl => {
+      for (const route of [
+        '/api/runs/e/claudeCode/never-ran-9',
+        '/api/runs/main',
+        '/api/runs/not-a-run',
+        '/api/runs/e/README',
+      ]) {
+        const res = await fetch(`${baseUrl}${route}`);
+        assert.equal(res.status, 404, `route ${route}`);
+        assert.deepEqual(await res.json(), { error: 'Not found' });
+      }
+    }
+  );
+});
+
+test('/api/runs reports 500 when git enumeration fails', async () => {
+  await withServeApp(
+    { git: new FakeGit({ refs: runRefs, throwsOn: 'not a repository' }) },
+    async baseUrl => {
+      const res = await fetch(`${baseUrl}/api/runs`);
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), {
+        error: 'not a repository',
+      });
+    }
+  );
 });
