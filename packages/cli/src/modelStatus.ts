@@ -1,10 +1,23 @@
 import { log } from './utils/log';
 
-/** Models `e init` provisions locally, in preference order — first is the default. */
-export const MODELS = [
-  'unsloth/Qwen3.8-Flash-Next-GGUF:Q4_K_M',
-  'ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M',
+/** A locally-provisionable llama.cpp model, with its approximate download size. */
+export interface ModelCatalogEntry {
+  id: string;
+  /** Approximate download size in bytes — shown during `e init` selection. */
+  sizeBytes: number;
+}
+
+/** Models `e init` offers to provision locally, in preference order — first is the default. */
+export const MODEL_CATALOG: ModelCatalogEntry[] = [
+  { id: 'unsloth/Qwen3.8-Flash-Next-GGUF:Q4_K_M', sizeBytes: 5_400_000_000 },
+  {
+    id: 'ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M',
+    sizeBytes: 21_000_000_000,
+  },
 ];
+
+/** All catalog model ids, selected by default when a user hasn't chosen otherwise. */
+export const MODELS = MODEL_CATALOG.map(m => m.id);
 export const DEFAULT_MODEL = MODELS[0];
 
 export type ModelStatusValue =

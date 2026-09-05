@@ -5,12 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   parseHarnessChoice,
+  parseModelChoice,
   applyEnvValues,
   keysToPrompt,
   prepareComposeDataDir,
 } from './init';
 import { renderCompose } from './renderCompose';
 import { renderBootstrap } from './renderBootstrap';
+import { MODEL_CATALOG } from './modelStatus';
 
 // parseHarnessChoice is pure: it maps a prompt answer to a harness name, taking
 // the fallback for a blank answer and undefined for anything unrecognized.
@@ -35,6 +37,53 @@ test('parseHarnessChoice: an out-of-range index or unknown name is unrecognized'
   assert.equal(parseHarnessChoice('0', NAMES, 'pi'), undefined);
   assert.equal(parseHarnessChoice('99', NAMES, 'pi'), undefined);
   assert.equal(parseHarnessChoice('nope', NAMES, 'pi'), undefined);
+});
+
+// parseModelChoice is pure: it maps a multi-select prompt answer to a set of
+// catalog model ids, taking the fallback for a blank answer.
+const CATALOG = [
+  { id: 'org/model-a', sizeBytes: 1 },
+  { id: 'org/model-b', sizeBytes: 2 },
+  { id: 'org/model-c', sizeBytes: 3 },
+];
+
+test('parseModelChoice: a blank answer takes the fallback', () => {
+  assert.deepEqual(parseModelChoice('', CATALOG, ['org/model-b']), [
+    'org/model-b',
+  ]);
+  assert.deepEqual(parseModelChoice('   ', CATALOG, []), []);
+});
+
+test('parseModelChoice: "all" and "none" select every/no model', () => {
+  assert.deepEqual(parseModelChoice('all', CATALOG, []), [
+    'org/model-a',
+    'org/model-b',
+    'org/model-c',
+  ]);
+  assert.deepEqual(parseModelChoice('ALL', CATALOG, []), [
+    'org/model-a',
+    'org/model-b',
+    'org/model-c',
+  ]);
+  assert.deepEqual(parseModelChoice('none', CATALOG, ['org/model-a']), []);
+});
+
+test('parseModelChoice: comma-separated 1-based indices select those models, deduplicated', () => {
+  assert.deepEqual(parseModelChoice('1,3', CATALOG, []), [
+    'org/model-a',
+    'org/model-c',
+  ]);
+  assert.deepEqual(parseModelChoice('2, 2, 1', CATALOG, []), [
+    'org/model-b',
+    'org/model-a',
+  ]);
+});
+
+test('parseModelChoice: an out-of-range index or unknown token is unrecognized', () => {
+  assert.equal(parseModelChoice('0', CATALOG, []), undefined);
+  assert.equal(parseModelChoice('99', CATALOG, []), undefined);
+  assert.equal(parseModelChoice('nope', CATALOG, []), undefined);
+  assert.equal(parseModelChoice('1,nope', CATALOG, []), undefined);
 });
 
 // applyEnvValues is pure: it fills blank `KEY=` lines with collected values and
@@ -151,6 +200,14 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   assert.match(script, /llama\.cpp \(local\)/);
   assert.match(script, /"provider":"llama-cpp"/);
   assert.match(script, /"apiKey":"sk-no-key-required"/);
+});
+
+test('renderBootstrap: a custom model selection only provisions those models, with the first as default', () => {
+  const [excluded, included] = MODEL_CATALOG;
+  const script = renderBootstrap([included.id]);
+  assert.ok(script.includes(`models='${included.id}'`));
+  assert.ok(!script.includes(excluded.id));
+  assert.ok(script.includes(`"defaultModel":"llama-cpp/${included.id}"`));
 });
 
 test('renderCompose: picks the CUDA image and reserves an nvidia GPU for the nvidia vendor', () => {

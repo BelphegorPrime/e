@@ -12,6 +12,7 @@ import {
   configFilePath,
   DEFAULT_HARNESS,
 } from './store';
+import { MODELS } from './modelStatus';
 
 // resolveRoot is pure: it takes cwd, homedir, and a `hasStore` predicate, so we
 // exercise the resolution order with synthetic paths and a fake predicate — no
@@ -79,12 +80,14 @@ test('resolveRoot: cwd itself is checked before its ancestors', () => {
 test('resolveConfig: a missing config yields the built-in defaults', () => {
   assert.deepEqual(resolveConfig(undefined), {
     defaultHarness: DEFAULT_HARNESS,
+    models: MODELS,
   });
 });
 
 test('resolveConfig: an explicit defaultHarness is kept', () => {
   assert.deepEqual(resolveConfig({ defaultHarness: 'codex' }), {
     defaultHarness: 'codex',
+    models: MODELS,
   });
 });
 
@@ -100,6 +103,18 @@ test('resolveConfig: a blank or non-string defaultHarness falls back to the defa
   assert.equal(resolveConfig({}).defaultHarness, DEFAULT_HARNESS);
 });
 
+test('resolveConfig: an explicit models selection is kept', () => {
+  assert.deepEqual(resolveConfig({ models: ['org/one'] }).models, [
+    'org/one',
+  ]);
+});
+
+test('resolveConfig: an empty or malformed models list falls back to the default catalog', () => {
+  assert.deepEqual(resolveConfig({ models: [] }).models, MODELS);
+  assert.deepEqual(resolveConfig({ models: [1, 2] }).models, MODELS);
+  assert.deepEqual(resolveConfig({}).models, MODELS);
+});
+
 test('serializeConfig: pretty JSON with a trailing newline', () => {
   assert.equal(
     serializeConfig({ defaultHarness: 'pi' }),
@@ -110,9 +125,12 @@ test('serializeConfig: pretty JSON with a trailing newline', () => {
 test('config round-trip: writeConfig then readConfig returns the written value', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
   try {
-    writeConfig({ defaultHarness: 'codex' }, root);
+    writeConfig({ defaultHarness: 'codex', models: ['org/one'] }, root);
     assert.equal(fs.existsSync(configFilePath(root)), true);
-    assert.deepEqual(readConfig(root), { defaultHarness: 'codex' });
+    assert.deepEqual(readConfig(root), {
+      defaultHarness: 'codex',
+      models: ['org/one'],
+    });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -121,7 +139,10 @@ test('config round-trip: writeConfig then readConfig returns the written value',
 test('readConfig: a missing config.json returns the defaults, no file written', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
   try {
-    assert.deepEqual(readConfig(root), { defaultHarness: DEFAULT_HARNESS });
+    assert.deepEqual(readConfig(root), {
+      defaultHarness: DEFAULT_HARNESS,
+      models: MODELS,
+    });
     assert.equal(fs.existsSync(configFilePath(root)), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

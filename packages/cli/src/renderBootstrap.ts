@@ -1,11 +1,12 @@
-import { MODELS, DEFAULT_MODEL } from './modelStatus';
+import { MODELS } from './modelStatus';
 
-/** Renders the one-shot script that provisions llama.cpp and OmniRoute. */
-export function renderBootstrap(): string {
+/** Renders the one-shot script that provisions llama.cpp and OmniRoute for `models` (default: all). */
+export function renderBootstrap(models: string[] = MODELS): string {
+  const defaultModel = models[0];
   return `#!/bin/sh
 set -eu
 
-models='${MODELS.join(' ')}'
+models='${models.join(' ')}'
 
 log() {
   printf '[bootstrap] %s\n' "$1"
@@ -46,7 +47,7 @@ log 'synchronizing OmniRoute provider'
 if ! curl -sf -H "Cookie: auth_token=$token" \
   http://omniroute:20128/api/providers | grep -q 'llama.cpp (local)'; then
   curl -sf -H "Cookie: auth_token=$token" -H 'Content-Type: application/json' \
-    -d '{"provider":"llama-cpp","apiKey":"sk-no-key-required","name":"llama.cpp (local)","defaultModel":"llama-cpp/${DEFAULT_MODEL}","providerSpecificData":{"baseUrl":"http://llama:9931/v1"}}' \
+    -d '{"provider":"llama-cpp","apiKey":"sk-no-key-required","name":"llama.cpp (local)","defaultModel":"llama-cpp/${defaultModel}","providerSpecificData":{"baseUrl":"http://llama:9931/v1"}}' \
     http://omniroute:20128/api/providers > /dev/null
   log 'OmniRoute provider registered'
 else

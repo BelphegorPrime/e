@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { MODELS } from './modelStatus';
 
 /**
  * The **Store**: the `.e` directory holding e's on-disk state — the per-harness
@@ -112,6 +113,8 @@ export const DEFAULT_HARNESS = 'pi';
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
   defaultHarness: string;
+  /** Local llama.cpp models `e init` provisions; `e spawn` waits for exactly these. */
+  models: string[];
 };
 
 export type ModelDataEntry = {
@@ -133,7 +136,13 @@ export function resolveConfig(raw: unknown): StoreConfig {
     parsed.defaultHarness.length > 0
       ? parsed.defaultHarness
       : DEFAULT_HARNESS;
-  return { defaultHarness };
+  const models =
+    Array.isArray(parsed.models) &&
+    parsed.models.length > 0 &&
+    parsed.models.every(m => typeof m === 'string')
+      ? parsed.models
+      : MODELS;
+  return { defaultHarness, models };
 }
 
 /**

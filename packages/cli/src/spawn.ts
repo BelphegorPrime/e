@@ -23,7 +23,7 @@ import {
   dockerComposePath,
 } from './store';
 import { log } from './utils/log';
-import { waitForModelsReady, MODELS } from './modelStatus';
+import { waitForModelsReady } from './modelStatus';
 
 /** Host-published port of the local llama.cpp router (see `renderCompose`). */
 const LOCAL_LLAMA_URL = process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
@@ -296,7 +296,7 @@ export function registerSpawnCommand(program: Command): void {
             runtime.composeUp(composeFile);
             await waitForModelsReady({
               baseUrl: LOCAL_LLAMA_URL,
-              models: MODELS,
+              models: readConfig(facts.root).models,
             });
           }
 

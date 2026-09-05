@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import * as readline from 'node:readline/promises';
+import * as readlineSync from 'node:readline';
+import { setImmediate } from 'node:timers';
 import type { Command } from 'commander';
 import { renderDockerfile } from './harness/renderDockerfile';
 import { renderEnvTemplate } from './harness/renderEnvTemplate';
@@ -18,6 +20,11 @@ import { renderDefaultAgent } from './agent';
 import { parseDotenv } from './harness/adapter';
 import { SHIPPED_MCP_SERVERS } from './mcp/index';
 import { SHIPPED_SKILLS } from './skill/index';
+import {
+  MODEL_CATALOG,
+  formatBytes,
+  type ModelCatalogEntry,
+} from './modelStatus';
 import {
   dockerfilePath,
   dockerComposePath,
@@ -69,6 +76,7 @@ export function registerInitCommand(program: Command): void {
       // favorite instead of silently resetting it — mirrors how the `.env` and
       // Dockerfiles are never clobbered. A fresh store reads back the default.
       let defaultHarness = readConfig(root).defaultHarness;
+      let selectedModels = readConfig(root).models;
 
       const envFile = envFilePath(root);
       const existingEnv = fs.existsSync(envFile)
@@ -86,10 +94,13 @@ export function registerInitCommand(program: Command): void {
         const answers = await promptInit(
           Object.keys(HARNESSES),
           defaultHarness,
-          keysToPrompt(requiredEnvKeys(), envValues)
+          keysToPrompt(requiredEnvKeys(), envValues),
+          MODEL_CATALOG,
+          selectedModels
         );
         defaultHarness = answers.defaultHarness;
         envValues = { ...envValues, ...answers.envValues };
+        selectedModels = answers.models;
       }
 
       for (const harness of Object.values(HARNESSES)) {
@@ -102,11 +113,8 @@ export function registerInitCommand(program: Command): void {
       writeMcpServers(root);
       writeSkills(root);
       const hardware = detectHardware();
-      writeIfAbsent(
-        path.dirname(bootstrapScriptPath(root)),
-        bootstrapScriptPath(root),
-        renderBootstrap()
-      );
+      fs.mkdirSync(path.dirname(bootstrapScriptPath(root)), { recursive: true });
+      fs.writeFileSync(bootstrapScriptPath(root), renderBootstrap(selectedModels));
       prepareComposeDataDir(root);
       writeIfAbsent(
         path.dirname(dockerComposePath(root)),
@@ -118,8 +126,9 @@ export function registerInitCommand(program: Command): void {
       );
 
       writeEnvFile(root, envValues);
-      writeConfig({ defaultHarness }, root);
+      writeConfig({ defaultHarness, models: selectedModels }, root);
       log.info(`favorite harness: ${defaultHarness}`);
+      log.info(`local models: ${selectedModels.join(', ')}`);
 
       log.success(
         `\nInitialized ${Object.keys(HARNESSES).length} harnesses in ${harnessesBaseDir(root)}.`
@@ -138,17 +147,21 @@ export function registerInitCommand(program: Command): void {
 
 /**
  * Runs the interactive `e init` flow: asks for the favorite harness (defaulting
- * to `current`, preselected) and for each API key in `apiKeys` (already-set keys
+ * to `current`, preselected), which local models to provision (multi-select,
+ * `current` preselected), and for each API key in `apiKeys` (already-set keys
  * are filtered out by the caller). Owns the readline lifecycle so the callers
  * stay effect-free.
  */
 async function promptInit(
   harnessNames: string[],
   current: string,
-  envKeys: string[]
+  envKeys: string[],
+  modelCatalog: ModelCatalogEntry[],
+  currentModels: string[]
 ): Promise<{
   defaultHarness: string;
   envValues: Record<string, string>;
+  models: string[];
 }> {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -160,8 +173,9 @@ async function promptInit(
       harnessNames,
       current
     );
+    const models = await promptModels(rl, modelCatalog, currentModels);
     const envValues = await promptApiKeys(rl, envKeys);
-    return { defaultHarness, envValues };
+    return { defaultHarness, envValues, models };
   } finally {
     rl.close();
   }
@@ -184,6 +198,122 @@ async function promptFavoriteHarness(
     if (choice) return choice;
     log.warn(`  "${answer.trim()}" is not one of: ${names.join(', ')}.`);
   }
+}
+
+/** Prompts for which local models to provision, re-asking until the answer is valid. */
+async function promptModels(
+  rl: readline.Interface,
+  catalog: ModelCatalogEntry[],
+  current: string[]
+): Promise<string[]> {
+  if (typeof process.stdin.setRawMode === 'function') {
+    return selectModels(catalog, current);
+  }
+
+  log.info(
+    '\nLocal models to download (used by `e spawn` via llama.cpp):'
+  );
+  catalog.forEach((model, i) => {
+    const marker = current.includes(model.id) ? '*' : ' ';
+    log.info(`  [${marker}] ${i + 1}) ${model.id} (${formatBytes(model.sizeBytes)})`);
+  });
+  for (;;) {
+    const answer = await rl.question(
+      'Choose (comma-separated numbers, "all", "none", or blank to keep current): '
+    );
+    const choice = parseModelChoice(answer, catalog, current);
+    if (choice) return choice;
+    log.warn(`  "${answer.trim()}" is not a valid selection.`);
+  }
+}
+
+/** Provides a keyboard-selectable model list when init is attached to a terminal. */
+async function selectModels(
+  catalog: ModelCatalogEntry[],
+  current: string[]
+): Promise<string[]> {
+  const input = process.stdin;
+  const output = process.stdout;
+  const selected = new Set(
+    current.filter(model => catalog.some(entry => entry.id === model))
+  );
+  let cursor = 0;
+  let renderedLines = 0;
+  const allSelected = (): boolean => selected.size === catalog.length;
+
+  const render = (): void => {
+    if (renderedLines > 0) output.write(`\x1b[${renderedLines}A`);
+    const lines = [
+      'Local models to download (Space toggles, Enter confirms):',
+      `${cursor === 0 ? '>' : ' '} [${allSelected() ? 'x' : ' '}] All models`,
+      ...catalog.map((model, index) => {
+        const marker = selected.has(model.id) ? 'x' : ' ';
+        const pointer = index + 1 === cursor ? '>' : ' ';
+        return `${pointer} [${marker}] ${index + 1}) ${model.id} (${formatBytes(model.sizeBytes)})`;
+      }),
+      'Use Up/Down to move, Space to select, Enter to continue.',
+    ];
+    output.write(lines.map(line => `\x1b[2K\r${line}`).join('\n') + '\n');
+    renderedLines = lines.length;
+  };
+
+  return new Promise<string[]>((resolve, reject) => {
+    const finish = (error?: Error): void => {
+      input.setRawMode?.(false);
+      input.removeListener('keypress', onKeypress);
+      input.resume();
+      output.write(`\x1b[${renderedLines}A`);
+      output.write(
+        Array.from({ length: renderedLines }, (_, index) =>
+          `\x1b[2K\r${index === renderedLines - 1 ? '' : '\n'}`
+        ).join('')
+      );
+      if (error) {
+        reject(error);
+      } else {
+        output.write(`Selected models: ${[...selected].join(', ') || 'none'}\n`);
+        resolve([...selected]);
+      }
+    };
+
+    const onKeypress = (_: string, key: readlineSync.Key): void => {
+      if (key.ctrl && key.name === 'c') {
+        finish(new Error('Model selection cancelled.'));
+      } else if (key.name === 'return' || key.name === 'enter') {
+        finish();
+      } else if (key.name === 'space') {
+        if (cursor === 0) {
+          if (allSelected()) selected.clear();
+          else catalog.forEach(model => selected.add(model.id));
+        } else {
+          const model = catalog[cursor - 1].id;
+          if (selected.has(model)) selected.delete(model);
+          else selected.add(model);
+        }
+        render();
+      } else if (key.name === 'up' || key.name === 'k') {
+        cursor = (cursor + catalog.length) % (catalog.length + 1);
+        render();
+      } else if (key.name === 'down' || key.name === 'j') {
+        cursor = (cursor + 1) % (catalog.length + 1);
+        render();
+      }
+    };
+
+    input.pause();
+    readlineSync.emitKeypressEvents(input);
+    input.setRawMode?.(true);
+    render();
+    setImmediate(() => {
+      // The previous readline.question can leave its Enter in the input buffer.
+      // Discard it before this selector begins handling keypresses.
+      while (input.read() !== null) {
+        // Drain buffered input.
+      }
+      input.on('keypress', onKeypress);
+      input.resume();
+    });
+  });
 }
 
 /** Prompts for each API key; a blank answer leaves that key unset in `.env`. */
@@ -219,6 +349,39 @@ export function parseHarnessChoice(
     if (idx >= 0 && idx < names.length) return names[idx];
   }
   return undefined;
+}
+
+/**
+ * Resolves a model multi-select prompt answer, purely: a blank answer keeps
+ * `fallback`, `"all"`/`"none"` select every/no catalog entry, and a
+ * comma-separated list of 1-based indices selects those models (deduplicated).
+ * Anything else — an unknown token, an out-of-range index — is unrecognized
+ * (`undefined`, so the glue re-prompts).
+ */
+export function parseModelChoice(
+  input: string,
+  catalog: ModelCatalogEntry[],
+  fallback: string[]
+): string[] | undefined {
+  const trimmed = input.trim();
+  if (trimmed === '') return fallback;
+  if (trimmed.toLowerCase() === 'all') return catalog.map(m => m.id);
+  if (trimmed.toLowerCase() === 'none') return [];
+
+  const parts = trimmed
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return undefined;
+
+  const ids = new Set<string>();
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return undefined;
+    const idx = Number(part) - 1;
+    if (idx < 0 || idx >= catalog.length) return undefined;
+    ids.add(catalog[idx].id);
+  }
+  return [...ids];
 }
 
 /**
