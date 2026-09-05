@@ -32,6 +32,7 @@ const harness: Harness = {
   requiredEnv: [],
   protocols: [],
   buildCommand: (prompt: string) => ['demo', '-p', prompt],
+  buildInteractiveCommand: () => ['demo'],
 };
 const agent: Agent = { name: 'demo', harness: 'demo' };
 

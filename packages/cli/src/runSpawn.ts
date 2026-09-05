@@ -63,6 +63,8 @@ export interface RunSpawnParams {
   harness: Harness;
   /** The prompt, already joined into a single string. */
   prompt: string;
+  /** Start the harness TUI instead of sending the prompt as a one-shot command. */
+  interactive?: boolean;
   /**
    * The image this run executes, already built by the executor before the run
    * (ADR-0005/0008): the harness base, or a derived agent image built on it.
@@ -269,10 +271,10 @@ export async function runSpawn(
         // reach; a plain run stays on the default bridge, unchanged.
         network: specs.length > 0 ? network : undefined,
       };
-      exitCode = await runtime.run(imageTag, runOptions, [
-        ...harness.buildCommand(prompt, params.model),
-        ...mcpArgs,
-      ]);
+      const command = params.interactive
+        ? harness.buildInteractiveCommand(params.model)
+        : harness.buildCommand(prompt, params.model);
+      exitCode = await runtime.run(imageTag, runOptions, [...command, ...mcpArgs]);
       ran = true;
 
       // A sidecar that crashed mid-run is non-fatal (like a failed push): the

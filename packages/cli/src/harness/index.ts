@@ -45,6 +45,11 @@ export interface Harness {
    */
   buildCommand(prompt: string, model?: string): string[];
   /**
+   * Builds the argv for this harness's interactive TUI. `model` is supplied where
+   * the harness supports selecting a runtime-resolved model on its command line.
+   */
+  buildInteractiveCommand(model?: string): string[];
+  /**
    * Wires container MCP sidecar endpoints into this harness, returning the extra
    * argv to append to {@link buildCommand}. Present only for harnesses that take
    * MCP config inline via a flag (Claude Code's `--mcp-config`); absent for
@@ -104,6 +109,10 @@ export const HARNESSES: Record<string, Harness> = {
             model,
           ]
         : ['pi', '-p', escapePrompt(prompt)],
+    buildInteractiveCommand: (model?: string) =>
+      model
+        ? ['pi', '--provider', PI_PROVIDER_ID, '--model', model]
+        : ['pi'],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
@@ -125,6 +134,7 @@ export const HARNESSES: Record<string, Harness> = {
       escapePrompt(prompt),
       '--dangerously-skip-permissions',
     ],
+    buildInteractiveCommand: () => ['claude', '--dangerously-skip-permissions'],
     // Claude takes MCP config inline: `--mcp-config '<json>'` with a streamable
     // HTTP server def per server (type "http"). No file, no restart. A remote
     // server may carry auth headers whose `${VAR}` values Claude expands from the
@@ -165,6 +175,8 @@ export const HARNESSES: Record<string, Harness> = {
       model
         ? ['codex', 'exec', '-m', model, escapePrompt(prompt)]
         : ['codex', 'exec', escapePrompt(prompt)],
+    buildInteractiveCommand: (model?: string) =>
+      model ? ['codex', '-m', model] : ['codex'],
     // Codex reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
@@ -179,6 +191,7 @@ export const HARNESSES: Record<string, Harness> = {
     // opencode (Vercel AI SDK) speaks all three via its provider plugins.
     protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],
     buildCommand: (prompt: string) => ['opencode', 'run', escapePrompt(prompt)],
+    buildInteractiveCommand: () => ['opencode'],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },

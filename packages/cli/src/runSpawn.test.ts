@@ -193,6 +193,7 @@ const harness: Harness = {
   requiredEnv: [],
   protocols: [],
   buildCommand: (prompt: string) => ['demo', '-p', prompt],
+  buildInteractiveCommand: () => ['demo'],
 };
 
 /** The default agent for the demo harness (name mirrors the harness). */
@@ -288,6 +289,26 @@ test('threads a runtime-resolved model into the harness command', async () => {
     'gpt-5-codex',
     'Fix the flaky test',
   ]);
+});
+
+test('interactive mode starts the harness TUI and ignores the one-shot prompt', async () => {
+  const { deps, runtime } = makeDeps();
+  const interactiveHarness: Harness = {
+    ...harness,
+    buildInteractiveCommand: model =>
+      model ? ['demo', 'tui', '-m', model] : ['demo', 'tui'],
+  };
+
+  await runSpawn(
+    deps,
+    makeParams({
+      harness: interactiveHarness,
+      interactive: true,
+      model: 'demo-pro',
+    })
+  );
+
+  assert.deepEqual(runtime.command, ['demo', 'tui', '-m', 'demo-pro']);
 });
 
 test('does not modify the working tree in place: worktree lives under worktreesDir', async () => {

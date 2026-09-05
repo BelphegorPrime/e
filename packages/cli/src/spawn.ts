@@ -74,6 +74,8 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   mcp?: string[];
   /** `--skill <name...>`: Skills to add for this run (comma-separated or repeated). */
   skill?: string[];
+  /** `--interactive`: start the harness's terminal UI. */
+  interactive?: boolean;
 }
 
 /**
@@ -201,6 +203,7 @@ function gatherSpawnFacts(
     env: opts.env ?? [],
     port: opts.port,
     attach: opts.attach,
+    interactive: Boolean(opts.interactive),
     rm: opts.rm,
     // Layer the shared base only when it exists on disk (ADR-0006).
     baseEnvFile:
@@ -239,6 +242,11 @@ export function registerSpawnCommand(program: Command): void {
       'Skill(s) to add for this run, from .e/skills (comma-separated or repeated)'
     )
     .option('--rebuild', 'force a rebuild of the harness image', false)
+    .option(
+      '-i, --interactive',
+      'start the harness terminal UI instead of running a one-shot prompt',
+      false
+    )
     .option(
       '--dir <path>',
       'root directory holding the harness Dockerfiles (default: home directory)'

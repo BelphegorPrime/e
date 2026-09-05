@@ -163,6 +163,7 @@ export async function executeSpawn(
       agent: facts.agent,
       harness: facts.harness,
       prompt: facts.prompt,
+      interactive: facts.interactive,
       imageTag,
       model: plan.runtimeModel,
       name: facts.name,

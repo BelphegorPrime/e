@@ -157,6 +157,8 @@ export interface SpawnFacts {
   port?: string[];
   /** `--attach` (foreground). */
   attach?: boolean;
+  /** `--interactive`: start the harness TUI rather than issuing a one-shot prompt. */
+  interactive?: boolean;
   /** `--rm`. */
   rm?: boolean;
   /** The shared `.e/.env` path when it exists on disk, for env-file layering. */
