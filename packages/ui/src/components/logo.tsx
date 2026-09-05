@@ -6,7 +6,8 @@ export interface LogoProps {
 
 /**
  * Brand mark for `e -`. Inline SVG so it renders at any size
- * and inherits the current text color.
+ * and inherits the current text color. Terminal caret with block
+ * cursor replaces the old text glyph.
  */
 export function Logo({ className }: LogoProps) {
   return (
@@ -27,17 +28,21 @@ export function Logo({ className }: LogoProps) {
         stroke="currentColor"
         strokeWidth="2"
       />
-      <text
-        x="16"
-        y="21.5"
-        textAnchor="middle"
-        fontSize="16"
-        fontWeight="700"
+      <path
+        d="M10 10 L17 16 L10 22"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <rect
+        x="19"
+        y="12.5"
+        width="3.5"
+        height="7"
+        rx="1.5"
         fill="currentColor"
-        fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-      >
-        e -
-      </text>
+      />
     </svg>
   );
 }
