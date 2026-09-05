@@ -39,11 +39,13 @@ export interface RunOptions {
    */
   envFile?: string[];
   /**
-   * Private network to attach the container to (`--network`). The primary agent
-   * joins its Run's network so it can reach sidecars by their alias; a bare run
-   * (no sidecars) leaves this unset and uses the default bridge as before.
+   * Private networks to attach the container to (`--network`, repeatable). The
+   * primary agent joins its Run's private network so it can reach sidecars by
+   * their alias, and the compose edge network when the local OmniRoute stack
+   * is present (so `host.docker.internal` resolves to OmniRoute itself); a bare
+   * run with neither leaves this unset and uses the default bridge as before.
    */
-  network?: string;
+  networks?: string[];
   /** Hostname mappings added to the container (`--add-host`). */
   extraHosts?: string[];
 }
@@ -278,7 +280,7 @@ export class ContainerRuntime implements ContainerRunner {
     if (opts.rm) args.push('--rm');
     if (opts.name) args.push('--name', opts.name);
     if (opts.workdir) args.push('-w', opts.workdir);
-    if (opts.network) args.push('--network', opts.network);
+    for (const net of opts.networks ?? []) args.push('--network', net);
     for (const host of opts.extraHosts ?? []) args.push('--add-host', host);
     for (const f of opts.envFile ?? []) args.push('--env-file', f);
 

@@ -264,6 +264,16 @@ export async function runSpawn(
     }
 
     if (!readinessError) {
+      // The agent joins its Run's private network only when it has sidecars to
+      // reach (a plain run stays on the default bridge), plus any pre-wired
+      // networks (the compose edge network, so `host.docker.internal` resolves
+      // to the local OmniRoute). Sidecar runs join both.
+      const networks = [
+        ...new Set([
+          ...(params.runOptions.networks ?? []),
+          ...(specs.length > 0 ? [network] : []),
+        ]),
+      ];
       const runOptions: RunOptions = {
         ...params.runOptions,
         name: run.name,
@@ -274,9 +284,7 @@ export async function runSpawn(
           ...(params.configMounts ?? []),
         ],
         workdir: '/workspace',
-        // The agent joins the run's private network only when it has sidecars to
-        // reach; a plain run stays on the default bridge, unchanged.
-        network: specs.length > 0 ? network : undefined,
+        networks: networks.length > 0 ? networks : undefined,
       };
       const command = params.interactive
         ? harness.buildInteractiveCommand(params.model)
@@ -284,7 +292,10 @@ export async function runSpawn(
             `${RUN_GIT_INSTRUCTIONS}\n\n${prompt}`,
             params.model
           );
-      exitCode = await runtime.run(imageTag, runOptions, [...command, ...mcpArgs]);
+      exitCode = await runtime.run(imageTag, runOptions, [
+        ...command,
+        ...mcpArgs,
+      ]);
       ran = true;
 
       // A sidecar that crashed mid-run is non-fatal (like a failed push): the
