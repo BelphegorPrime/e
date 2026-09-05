@@ -6,6 +6,9 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import type { Command } from 'commander';
 import { resolveUiDirectory } from './assets';
+import type { Git } from './git/index';
+import { HostGit } from './git/host';
+import { buildRunIndex, parseRunBranch, resolveRunRef } from './runIndex';
 import { eBaseDir } from './store';
 import { log } from './utils/log';
 import { LOCAL_LLAMA_URL, type ModelsResponse } from './modelStatus';
@@ -24,6 +27,10 @@ export interface ServeProbes {
   isAlive?: (pid: number) => boolean;
   /** True when `url` answers a health probe. */
   probeHealth?: (url: string) => Promise<boolean>;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -191,13 +198,22 @@ export interface ServeAppDeps {
   /** Base URL of the local llama.cpp router, e.g. `http://127.0.0.1:9931`. */
   llamaBaseUrl?: string;
   fetchImpl?: typeof fetch;
+  /**
+   * Git read source for the branch-backed runs index (ADR-0010). Defaults to
+   * the host git executable; tests inject a fake.
+   */
+  git?: Git;
 }
 
 export function createServeApp(
   uiDirectory: string,
   deps: ServeAppDeps = {}
 ): Express {
-  const { llamaBaseUrl = LOCAL_LLAMA_URL, fetchImpl = fetch } = deps;
+  const {
+    llamaBaseUrl = LOCAL_LLAMA_URL,
+    fetchImpl = fetch,
+    git = new HostGit(),
+  } = deps;
   const app = express();
 
   app.get('/api/health', (_request, response) => {
@@ -224,6 +240,71 @@ export function createServeApp(
       response.json(body);
     } catch {
       response.status(503).json({ error: 'llama.cpp stack is not running' });
+    }
+  });
+
+  // Branch-backed runs index (ADR-0010): runs _are_ git branches
+  // (`e/<agent>/<slug>-N` per ADR-0003), so everything here reads git. No
+  // write endpoints and no live timing or streaming logs yet — the namespace
+  // stays extensible by layering a state store on top.
+  app.get('/api/runs', (_request, response) => {
+    try {
+      response.json({ runs: buildRunIndex(git.listRunRefs('e')) });
+    } catch (error) {
+      response.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  // Covers `/api/runs/e/<agent>/<slug>-N` (per-run status) and
+  // `/api/runs/e/<agent>/<slug>-N/logs`; the wildcard captures the whole
+  // branch path, which itself contains slashes.
+  app.get('/api/runs/*', (request, response) => {
+    const params = request.params as { [key: string]: string | undefined };
+    const restPath = params['0'];
+    if (!restPath) {
+      response.status(404).json({ error: 'Not found' });
+      return;
+    }
+    const logsRequested = restPath.endsWith('/logs');
+    const branchName = logsRequested
+      ? restPath.slice(0, -'/logs'.length)
+      : restPath;
+    const identity = parseRunBranch(branchName);
+    if (!identity) {
+      response.status(404).json({ error: 'Not found' });
+      return;
+    }
+    try {
+      // One enumeration per request keeps status and logs consistent with the
+      // index and answers the `pushed`/existence checks without extra calls.
+      const refs = git.listRunRefs('e');
+      const entry = buildRunIndex(refs).find(run => run.branch === branchName);
+      if (!entry) {
+        response.status(404).json({ error: 'Not found' });
+        return;
+      }
+      if (logsRequested) {
+        const ref = resolveRunRef(refs, branchName);
+        response.json({
+          branch: entry.branch,
+          commits: ref ? git.runLog(ref.name) : [],
+        });
+        return;
+      }
+      const ref = resolveRunRef(refs, branchName);
+      const commits = ref ? git.runLog(ref.name) : [];
+      response.json({
+        branch: entry.branch,
+        agent: entry.agent,
+        slug: entry.slug,
+        counter: entry.counter,
+        commits: commits.length,
+        latest: commits[0] ?? null,
+        local: entry.local,
+        pushed: entry.pushed,
+      });
+    } catch (error) {
+      response.status(500).json({ error: errorMessage(error) });
     }
   });
 
