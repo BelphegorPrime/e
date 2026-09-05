@@ -19,7 +19,7 @@ import {
 import { renderDefaultAgent } from './agent';
 import { parseDotenv } from './harness/adapter';
 import { SHIPPED_MCP_SERVERS } from './mcp/index';
-import { SHIPPED_SKILLS } from './skill/index';
+import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from './skill/index';
 import {
   MODEL_CATALOG,
   formatBytes,
@@ -113,8 +113,13 @@ export function registerInitCommand(program: Command): void {
       writeMcpServers(root);
       writeSkills(root);
       const hardware = detectHardware();
-      fs.mkdirSync(path.dirname(bootstrapScriptPath(root)), { recursive: true });
-      fs.writeFileSync(bootstrapScriptPath(root), renderBootstrap(selectedModels));
+      fs.mkdirSync(path.dirname(bootstrapScriptPath(root)), {
+        recursive: true,
+      });
+      fs.writeFileSync(
+        bootstrapScriptPath(root),
+        renderBootstrap(selectedModels)
+      );
       prepareComposeDataDir(root);
       writeIfAbsent(
         path.dirname(dockerComposePath(root)),
@@ -137,7 +142,7 @@ export function registerInitCommand(program: Command): void {
         `Container MCP servers ready: ${Object.keys(SHIPPED_MCP_SERVERS).join(', ')} (compose with \`--mcp <name>\`).`
       );
       log.info(
-        `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent).`
+        `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent); collections ${SHIPPED_SKILL_COLLECTIONS.join(', ')} install into every harness image at build time.`
       );
       log.info(
         'Run `e spawn "<prompt>"` to run your favorite harness, or `e spawn <harness> "<prompt>"` to pick one.'
@@ -210,12 +215,12 @@ async function promptModels(
     return selectModels(catalog, current);
   }
 
-  log.info(
-    '\nLocal models to download (used by `e spawn` via llama.cpp):'
-  );
+  log.info('\nLocal models to download (used by `e spawn` via llama.cpp):');
   catalog.forEach((model, i) => {
     const marker = current.includes(model.id) ? '*' : ' ';
-    log.info(`  [${marker}] ${i + 1}) ${model.id} (${formatBytes(model.sizeBytes)})`);
+    log.info(
+      `  [${marker}] ${i + 1}) ${model.id} (${formatBytes(model.sizeBytes)})`
+    );
   });
   for (;;) {
     const answer = await rl.question(
@@ -264,14 +269,17 @@ async function selectModels(
       input.resume();
       output.write(`\x1b[${renderedLines}A`);
       output.write(
-        Array.from({ length: renderedLines }, (_, index) =>
-          `\x1b[2K\r${index === renderedLines - 1 ? '' : '\n'}`
+        Array.from(
+          { length: renderedLines },
+          (_, index) => `\x1b[2K\r${index === renderedLines - 1 ? '' : '\n'}`
         ).join('')
       );
       if (error) {
         reject(error);
       } else {
-        output.write(`Selected models: ${[...selected].join(', ') || 'none'}\n`);
+        output.write(
+          `Selected models: ${[...selected].join(', ') || 'none'}\n`
+        );
         resolve([...selected]);
       }
     };
@@ -427,18 +435,20 @@ export function prepareComposeDataDir(root?: string): void {
     path.dirname(dockerComposePath(root)),
     'volumes'
   );
-  for (const name of [
-    'omniroute-data',
-    'llama-data',
-    'redis-data',
-  ]) {
+  for (const name of ['omniroute-data', 'llama-data', 'redis-data']) {
     const directory = path.join(volumesDir, name);
     fs.mkdirSync(directory, { recursive: true });
     fs.chmodSync(directory, 0o777);
   }
 }
 
-/** Writes a harness's Dockerfile (never overwriting a hand-edited one). */
+/**
+ * Writes a harness's Dockerfile (never overwriting a hand-edited one). The
+ * harness's own dockerfile params carry its skill collections and the skills
+ * CLI agent name; the rendered Dockerfile installs each collection at build
+ * time (`npx skills@latest add … -a <agent> -g -y --copy`) into the skills
+ * dir the harness CLI reads, outside `/workspace` (ADR-0006 layer 1).
+ */
 function writeDockerfile(harness: Harness, root: string | undefined): void {
   writeIfAbsent(
     harnessDir(harness.name, root),

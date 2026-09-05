@@ -11,13 +11,7 @@ import {
 } from './spawnPlan';
 import { RunScratch } from './runScratch';
 import { writeIfAbsent } from './scaffold';
-import {
-  harnessDir,
-  agentDir,
-  mcpDir,
-  skillDir,
-  isInitialized,
-} from './store';
+import { harnessDir, agentDir, mcpDir, skillDir, isInitialized } from './store';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -50,8 +44,12 @@ function buildImages(
       `Harness "${harness.name}" is not initialized. Run \`e init\`${facts.dirOpt ? ` --dir ${facts.dirOpt}` : ''} first.`
     );
   }
-  if (action === 'build')
+  if (action === 'build') {
+    // The base harness image is self-contained: the Dockerfile installs npm,
+    // then runs `npx skills@latest add <collection> …` for each declared
+    // collection, so the harness dir alone is the whole build context.
     runtime.build(harness.imageTag, harnessDir(harness.name, root));
+  }
 
   let tag = harness.imageTag;
   const agentImagePlan = plan.agentImagePlan;
