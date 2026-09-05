@@ -2,9 +2,8 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { log } from './log';
 
-// Tests run under `node --test`, where stdout/stderr are not TTYs, so
-// `styleText` emits plain text — output is asserted without ANSI escapes.
-// We capture by swapping each stream's `write` for the duration of a test.
+// Capture each stream's writes. Color availability varies with test runner
+// environment, so stream-routing assertions strip ANSI escape sequences.
 
 let out: string[];
 let err: string[];
@@ -29,6 +28,10 @@ beforeEach(() => {
   };
 });
 
+function withoutAnsi(text: string): string {
+  return text.replace(/\x1B\[[0-9;]*m/g, '');
+}
+
 afterEach(() => restore());
 
 test('info writes a plain line to stdout with a trailing newline', () => {
@@ -42,8 +45,8 @@ test('success and command go to stdout; error and warn go to stderr', () => {
   log.command('> docker run');
   log.error('boom');
   log.warn('careful');
-  assert.deepEqual(out, ['\x1B[32mdone\x1B[39m\n', '\x1B[34m> docker run\x1B[39m\n']);
-  assert.deepEqual(err, ['\x1B[31mboom\x1B[39m\n', '\x1B[33mcareful\x1B[39m\n']);
+  assert.deepEqual(out.map(withoutAnsi), ['done\n', '> docker run\n']);
+  assert.deepEqual(err.map(withoutAnsi), ['boom\n', 'careful\n']);
 });
 
 test('rest args format like console (specifiers and joins)', () => {

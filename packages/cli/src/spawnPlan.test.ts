@@ -226,7 +226,7 @@ test('planSpawn: env harness delivers the provider as runtime env, nothing baked
   });
   const plan = planSpawn(f);
   assert.ok(plan.delivery);
-  assert.match(plan.providerEnvContent ?? '', /ANTHROPIC_MODEL=claude-opus-5/);
+  assert.match(plan.providerEnvContent ?? '', /ANTHROPIC_MODEL=auto/);
   assert.match(plan.providerEnvContent ?? '', /ANTHROPIC_AUTH_TOKEN=sk-abc/);
   // Env harness bakes nothing from the provider, so no derived image.
   assert.equal(plan.agentImagePlan, undefined);
@@ -251,7 +251,7 @@ test('planSpawn: file harness bakes a derived image and passes an auto model on 
   const plan = planSpawn(f);
   assert.ok(plan.delivery?.bakedConfig);
   assert.equal(plan.agentImagePlan?.imageTag, 'e-agent-smart-codex');
-  assert.equal(plan.runtimeModel, 'gpt-5-codex');
+  assert.equal(plan.runtimeModel, 'auto');
 });
 
 test('planSpawn: a flag-MCP harness (claude) wires --mcp-config, no overlay', () => {

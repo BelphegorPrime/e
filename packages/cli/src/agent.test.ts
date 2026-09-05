@@ -87,7 +87,6 @@ test('renderDefaultAgent: defaults provider endpoint to local OmniRoute', () => 
     baseUrlEnv: 'OPENAI_BASE_URL',
     model: 'auto',
     protocol: 'openai-responses',
-    defaultModel: 'auto',
   };
   assert.deepEqual(parsed, {
     name: 'codex',
@@ -104,7 +103,6 @@ test('renderDefaultAgent: a default agent carries no provider', () => {
     baseUrlEnv: 'OPENAI_BASE_URL',
     model: 'auto',
     protocol: 'openai-responses',
-    defaultModel: 'auto',
   };
   assert.deepStrictEqual(parsed.provider, provider);
 });

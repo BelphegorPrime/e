@@ -133,7 +133,7 @@ test('planProviderDelivery: an env harness delivers all env and bakes nothing', 
   );
 });
 
-test('planProviderDelivery: an env harness carries the auto-resolved model in env', () => {
+test('planProviderDelivery: an env harness carries auto model in env', () => {
   const plan = planProviderDelivery(
     facts(),
     claudeCodeAdapter,
@@ -145,7 +145,7 @@ test('planProviderDelivery: an env harness carries the auto-resolved model in en
       e =>
         e.name === 'ANTHROPIC_MODEL' &&
         'value' in e &&
-        e.value === 'claude-opus-5'
+        e.value === 'auto'
     )
   );
 });
@@ -177,7 +177,7 @@ test('planProviderDelivery: a file harness keeps an auto model out of the config
   );
   assert.ok(plan.bakedConfig);
   assert.doesNotMatch(plan.bakedConfig.file.content, /^model = /m);
-  assert.equal(plan.runtimeModel, 'gpt-5-codex');
+  assert.equal(plan.runtimeModel, 'auto');
 });
 
 const piProvider: Provider = {
@@ -187,18 +187,17 @@ const piProvider: Provider = {
   apiKeyEnv: 'MY_GATEWAY_KEY',
 };
 
-test('planProviderDelivery: pi bakes the resolved auto model into models.json AND passes it on the command', () => {
+test('planProviderDelivery: pi bakes auto model into models.json and passes it on the command', () => {
   const plan = planProviderDelivery(facts(), piAdapter, piProvider);
   assert.ok(plan.bakedConfig);
   assert.equal(plan.bakedConfig.file.fileName, 'models.json');
   assert.equal(plan.bakedConfig.configDir, '/root/.pi/agent');
   assert.equal(plan.bakedConfig.configDirEnv, 'PI_CODING_AGENT_DIR');
-  // pi requires the model declared in the file to select it, so even an
-  // auto-resolved model is baked (unlike Codex's command-only `-m`).
+  // pi requires the model declared in the file to select it, so auto is baked.
   const cfg = JSON.parse(plan.bakedConfig.file.content);
-  assert.deepEqual(cfg.providers.e.models, [{ id: 'claude-opus-5' }]);
-  // ...and it is still passed on the command line for provider/model selection.
-  assert.equal(plan.runtimeModel, 'claude-opus-5');
+  assert.deepEqual(cfg.providers.e.models, [{ id: 'auto' }]);
+  // It is still passed on the command line for provider/model selection.
+  assert.equal(plan.runtimeModel, 'auto');
   assert.deepEqual(plan.runtimeEnv, piAdapter.renderRuntimeEnv(piProvider));
 });
 
