@@ -11,10 +11,17 @@ module.exports = {
         exclude: /node_modules/,
         use: 'ts-loader',
       },
+      {
+        test: /\.css$/,
+        use: ['style-loader', 'css-loader', 'postcss-loader'],
+      },
     ],
   },
   resolve: {
     extensions: ['.tsx', '.ts', '.js'],
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+    },
   },
   output: {
     path: path.resolve(__dirname, 'dist/ui'),
@@ -23,7 +30,7 @@ module.exports = {
   },
   plugins: [
     new HtmlWebpackPlugin({
-      title: 'e',
+      title: 'e -',
       template: './src/index.html',
     }),
   ],

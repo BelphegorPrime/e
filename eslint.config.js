@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const eslintRecommended = require('@eslint/js');
 const tseslint = require('typescript-eslint');
+const globals = require('globals');
 
 module.exports = tseslint.config(
   eslintRecommended.configs.recommended,
@@ -30,6 +31,16 @@ module.exports = tseslint.config(
         // CommonJS globals (.cjs skill templates)
         module: 'readonly',
         require: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['packages/ui/**/*.{js,cjs,mjs,ts,tsx}'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        // UMD global exposed by @types/react for the classic runtime
+        React: 'readonly',
       },
     },
   },
