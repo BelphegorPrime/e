@@ -13,7 +13,9 @@
     "build:ts": "tsc",
     "copy:ui": "rm -rf ./dist/ui && cp -R ../ui/dist/ui ./dist/ui",
     "build:bin": "pkg -c ./package.json ./dist/index.js -t node24-linux-x64,node24-macos-x64,node24-win-x64,node24-linux-arm64,node24-macos-arm64,node24-win-arm64 --output ./command/e --fallback-to-source",
-    "build": "npm run build --workspace @e/ui && npm run build:ts && npm run copy:ui && npm run build:bin"
+    "build:dev": "npm run build --workspace @e/ui && npm run build:ts && npm run copy:ui",
+    "build": "npm run build:dev && npm run build:bin",
+    "link": "npm run build:dev && npm link"
   },
   "pkg": {
     "assets": [
