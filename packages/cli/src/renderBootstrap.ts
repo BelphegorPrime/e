@@ -1,8 +1,4 @@
-const MODELS = [
-  'unsloth/Qwen3.8-Flash-Next-GGUF:Q4_K_M',
-  'ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M',
-];
-const DEFAULT_MODEL = MODELS[0];
+import { MODELS, DEFAULT_MODEL } from './modelStatus';
 
 /** Renders the one-shot script that provisions llama.cpp and OmniRoute. */
 export function renderBootstrap(): string {

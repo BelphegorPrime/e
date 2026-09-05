@@ -23,6 +23,10 @@ import {
   dockerComposePath,
 } from './store';
 import { log } from './utils/log';
+import { waitForModelsReady, MODELS } from './modelStatus';
+
+/** Host-published port of the local llama.cpp router (see `renderCompose`). */
+const LOCAL_LLAMA_URL = process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
 const RUNTIMES: Record<string, string> = {
@@ -290,6 +294,10 @@ export function registerSpawnCommand(program: Command): void {
           const composeFile = dockerComposePath(facts.root);
           if (fs.existsSync(composeFile)) {
             runtime.composeUp(composeFile);
+            await waitForModelsReady({
+              baseUrl: LOCAL_LLAMA_URL,
+              models: MODELS,
+            });
           }
 
           const configuredApiKey = facts.agent.provider
