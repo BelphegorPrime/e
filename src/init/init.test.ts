@@ -193,6 +193,7 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.match(compose, /LLAMA_ARG_PORT: "9931"/);
   assert.match(compose, /LLAMA_ARG_CTX_SIZE: "32768"/);
   assert.match(compose, /LLAMA_ARG_N_PARALLEL: "1"/);
+  assert.match(compose, /LLAMA_ARG_MODELS_MAX: "1"/);
   assert.match(compose, /- \.\/bootstrap\.sh:\/bootstrap\.sh:ro/);
   assert.match(
     compose,
@@ -240,12 +241,11 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   assert.match(script, /^#!\/bin\/sh/);
   assert.match(script, /POST http:\/\/llama:9931\/models/);
   assert.match(script, /for model in \$models; do/);
+  assert.match(script, /repo=\$\{model%%:\*\}/);
   assert.match(script, /OmniRoute rejected INITIAL_PASSWORD/);
-  assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"/);
-  assert.match(
-    script,
-    /"id".*"value"\[\[:space:\]\]\*:\[\[:space:\]\]\*"loaded"/
-  );
+  assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"'?\$repo/);
+  assert.match(script, /loading model \$llama_id/);
+  assert.match(script, /registering model \$model/);
   assert.doesNotMatch(script, /until curl -sf http:\/\/llama:9931\/models/);
   assert.match(script, /unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M/);
   assert.match(script, /unsloth\/Qwen3\.6-35B-A3B-GGUF:UD-IQ4_XS/);
@@ -253,6 +253,32 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   assert.match(script, /llama\.cpp \(local\)/);
   assert.match(script, /"provider":"llama-cpp"/);
   assert.match(script, /"apiKey":"sk-no-key-required"/);
+});
+
+test('renderBootstrap: matches cached llama presets by repo prefix, not exact quant id (exit-22 regression)', () => {
+  const script = renderBootstrap();
+  // llama.cpp canonicalizes the quant suffix of cached presets: a catalog id
+  // like unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M appears as ...:Q4_K_M once cached.
+  // Exact-quant matching made bootstrap re-register a known model, which
+  // llama.cpp rejects with "model limit reached" (HTTP 500 -> curl exit 22).
+  //
+  // The existence check must match on the repo prefix only and never embed the
+  // full catalog id (with its quant) in the id grep.
+  assert.match(
+    script,
+    /grep '"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"'"\$repo | head/
+  );
+  assert.doesNotMatch(
+    script,
+    /grep -q '"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"'"\$model/
+  );
+  // The resolved id, not the catalog id, is what gets loaded.
+  assert.match(script, /-d '\{"model":"'"\$llama_id"'"\}'/);
+  // Loading a known model must use the resolved (canonical) id.
+  assert.doesNotMatch(
+    script,
+    /-X POST http:\/\/llama:9931\/models\/load.*\$model/
+  );
 });
 
 test('renderBootstrap: a custom model selection only provisions those models, with the first as default', () => {
