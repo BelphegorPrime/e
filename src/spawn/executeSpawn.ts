@@ -10,13 +10,6 @@ import {
   type SpawnFacts,
   type SpawnPlan,
 } from './spawnPlan.js';
-import {
-  planEgressProxies,
-  renderEgressDockerfile,
-  EGRESS_IMAGE_TAG,
-  LOCAL_STACK_HOST,
-  type EgressProxyPlan,
-} from '../egress/index.js';
 import { RunScratch } from '../runs/runScratch.js';
 import { writeIfAbsent } from '../scaffold.js';
 import {
@@ -28,7 +21,6 @@ import {
 import { isInitialized } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
 import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus.js';
-import { resolveHostIp4 } from '../utils/dns.js';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -97,14 +89,6 @@ function buildImages(
     if (rebuild || !runtime.imageExists(sc.image)) {
       runtime.build(sc.image, mcpDir(sc.alias, root));
     }
-  }
-  // The egress proxy image is built once and cached, like the mcp sidecars
-  // (ADR-0011). The Dockerfile is a static template with no build context.
-  if (plan.egressAllowList && (rebuild || !runtime.imageExists(EGRESS_IMAGE_TAG))) {
-    const ctx = scratch.dir();
-    const ctxFile = path.join(ctx, 'Dockerfile');
-    fs.writeFileSync(ctxFile, renderEgressDockerfile());
-    runtime.build(EGRESS_IMAGE_TAG, ctx);
   }
   return tag;
 }
@@ -212,31 +196,6 @@ export async function executeSpawn(
     envFile: envFiles,
   };
 
-  // The run's egress allow-list (ADR-0011), when it has one: plan per-host
-  // proxies and pin each public upstream to an IP host-side, so a proxy never
-  // resolves its own alias (it would forward to itself). A hardened run drops
-  // the compose edge network and host-gateway mapping (see runSpawn); the
-  // fallbacks here only matter for a bare run, which carries no allow-list.
-  let egress: EgressProxyPlan[] | undefined;
-  if (plan.egressAllowList && plan.egressAllowList.length > 0) {
-    egress = planEgressProxies(plan.egressAllowList, {
-      stackPresent: stackActive,
-      edgeNetwork: OMNIROUTE_EDGE_NETWORK,
-    });
-    for (const proxy of egress) {
-      if (proxy.upstreamHost !== LOCAL_STACK_HOST) {
-        const ip = await resolveHostIp4(proxy.upstreamHost);
-        if (ip === undefined) {
-          throw new Error(
-            `Cannot resolve egress target "${proxy.upstreamHost}" to an IP to pin for the proxy. ` +
-              `The agent needs egress to it, so the lock-down cannot proceed.`
-          );
-        }
-        proxy.upstreamHost = ip;
-      }
-    }
-  }
-
   return runSpawn(
     { git, runtime },
     {
@@ -249,7 +208,6 @@ export async function executeSpawn(
       name: facts.name,
       runOptions,
       sidecars,
-      egress,
       mcpArgs: plan.mcpArgs,
       configMounts,
     }

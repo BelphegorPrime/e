@@ -1,6 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
 import { log } from '../utils/log.js';
-import { EGRESS_HOST_ENV, EGRESS_PORTS_ENV } from '../egress/index.js';
 
 /**
  * A bind mount as structured data, so callers describe *what* to mount and the
@@ -72,13 +71,6 @@ export interface SidecarSpec {
   healthcheck?: string[];
   /** Env files delivering the sidecar's own credentials (never the agent's). */
   envFile?: string[];
-  /**
-   * A second WAN-capable network to join beside `network` — set when the run's
-   * private network is `--internal` (egress lockdown, ADR-0011), so a sidecar
-   * MCP server that needs external APIs keeps its egress while sidecar-to-
-   * sidecar traffic stays on the run network.
-   */
-  wan?: string;
 }
 
 /**
@@ -93,7 +85,7 @@ export interface ContainerRunner {
   run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number>;
 
   /** Create a private container network. Throws on failure. */
-  createNetwork(name: string, opts?: NetworkCreateOptions): void;
+  createNetwork(name: string): void;
   /**
    * Remove a network. Best-effort: never throws — it runs in teardown, where a
    * failure must not mask the Run's result.
@@ -102,11 +94,6 @@ export interface ContainerRunner {
 
   /** Start a sidecar detached on its network (with its alias). Throws if it fails to start. */
   startSidecar(spec: SidecarSpec): void;
-  /**
-   * Start an egress proxy detached on the run network (aliased to its endpoint
-   * hostname, forwarding to `upstreamHost`). Throws if it fails to start.
-   */
-  startEgressProxy(spec: EgressProxySpec): void;
   /** Stop and remove a container by name. Best-effort: never throws (teardown). */
   removeContainer(name: string): void;
 
@@ -148,25 +135,8 @@ export function buildImageArgs(
   return args;
 }
 
-/** Optional settings for a new network, matching `docker network create`'s flags. */
-export interface NetworkCreateOptions {
-  /**
-   * `--internal`: block external connectivity for every container on the
-   * network. Used for a hardened run's private network (ADR-0011): nothing on
-   * it — agent, sidecars, egress proxies — can reach the outside world; egress
-   * happens only through proxies that also join a WAN-capable network.
-   */
-  internal?: boolean;
-}
-
-export function networkCreateArgs(
-  name: string,
-  opts?: NetworkCreateOptions
-): string[] {
-  const args = ['network', 'create'];
-  if (opts?.internal) args.push('--internal');
-  args.push(name);
-  return args;
+export function networkCreateArgs(name: string): string[] {
+  return ['network', 'create', name];
 }
 
 export function networkRemoveArgs(name: string): string[] {
@@ -184,61 +154,8 @@ export function sidecarRunArgs(spec: SidecarSpec): string[] {
     '--network-alias',
     spec.alias,
   ];
-  if (spec.wan) args.push('--network', spec.wan);
   for (const f of spec.envFile ?? []) args.push('--env-file', f);
   args.push(spec.image);
-  return args;
-}
-
-/**
- * An **egress proxy** to bring up on the run's private network (ADR-0011): the
- * allow-listed `host:port` pairs, enforced by forwarding them through this
- * container. It joins the run network (aliased to the endpoint hostname, so the
- * agent's URLs are unchanged) plus a WAN-capable network (`wan`), and forwards
- * each byte to `upstreamHost` on the same ports. `upstreamHost` is either
- * `host.docker.internal` or a public IP pinned at spawn — the proxy must never
- * resolve its own alias.
- */
-export interface EgressProxySpec {
-  /** Unique per-run container name, e.g. `<runName>-egress-0`. */
-  name: string;
-  /** Endpoint hostname = the run-network alias the agent resolves. */
-  alias: string;
-  /** The static proxy image (`e-egress`), built once and cached. */
-  image: string;
-  /** The run's private (internal) network. */
-  network: string;
-  /** WAN-capable network giving the proxy its outbound face. */
-  wan: string;
-  /** Ports to listen on and forward (the allow-listed ports for this host). */
-  ports: number[];
-  /** Forward target: `host.docker.internal` or a public IP pinned at spawn. */
-  upstreamHost: string;
-  /** Extra `--add-host` mappings (the `host-gateway` mapping for a stack-less `host.docker.internal`). */
-  extraHosts?: string[];
-}
-
-export function egressProxyRunArgs(spec: EgressProxySpec): string[] {
-  const args = [
-    'run',
-    '-d',
-    '--name',
-    spec.name,
-    '--network',
-    spec.network,
-    '--network-alias',
-    spec.alias,
-    '--network',
-    spec.wan,
-  ];
-  for (const host of spec.extraHosts ?? []) args.push('--add-host', host);
-  args.push(
-    '-e',
-    `${EGRESS_PORTS_ENV}=${spec.ports.join(' ')}`,
-    '-e',
-    `${EGRESS_HOST_ENV}=${spec.upstreamHost}`,
-    spec.image
-  );
   return args;
 }
 
@@ -483,8 +400,8 @@ export class ContainerRuntime implements ContainerRunner {
   }
 
   /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */
-  createNetwork(name: string, opts?: NetworkCreateOptions): void {
-    const result = spawnSync(this.command, networkCreateArgs(name, opts), {
+  createNetwork(name: string): void {
+    const result = spawnSync(this.command, networkCreateArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -539,31 +456,6 @@ export class ContainerRuntime implements ContainerRunner {
       stdio: 'ignore',
       shell: false,
     });
-  }
-
-  /**
-   * Start an egress proxy detached on the run network, reachable by the
-   * endpoint hostname and forwarding to its pinned upstream. Throws if the
-   * container fails to start.
-   */
-  startEgressProxy(spec: EgressProxySpec): void {
-    const args = egressProxyRunArgs(spec);
-
-    log.command(`> ${this.command} ${args.join(' ')}`);
-    const result = spawnSync(this.command, args, {
-      stdio: ['ignore', 'ignore', 'inherit'],
-      shell: false,
-    });
-    if (result.error) {
-      throw new Error(
-        `Failed to start ${this.command}: ${result.error.message}`
-      );
-    }
-    if (result.status !== 0) {
-      throw new Error(
-        `Failed to start egress proxy "${spec.name}" (exit code ${result.status ?? 1}).`
-      );
-    }
   }
 
   /**
