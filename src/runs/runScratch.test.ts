@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { RunScratch } from './runScratch';
+import { RunScratch } from './runScratch.js';
 
 test('file: writes the content and returns an existing path', () => {
   const scratch = new RunScratch();

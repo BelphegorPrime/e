@@ -14,8 +14,8 @@ import type {
   HarnessAdapter,
   Provider,
   RenderedConfigFile,
-} from './adapter';
-import { imageTag } from '../identity/naming';
+} from './adapter.js';
+import { imageTag } from '../identity/naming.js';
 
 /** The baked provider config block of a derived Dockerfile (a file harness). */
 export interface DockerfileProviderBlock {

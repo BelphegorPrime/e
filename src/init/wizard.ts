@@ -1,13 +1,13 @@
 import * as readline from 'node:readline/promises';
 import * as readlineSync from 'node:readline';
 import { setImmediate } from 'node:timers';
-import { formatBytes, type ModelCatalogEntry } from '../modelStatus';
-import { log } from '../utils/log';
+import { formatBytes, type ModelCatalogEntry } from '../modelStatus.js';
+import { log } from '../utils/log.js';
 import {
   parseHarnessChoice,
   parseModelChoice,
   type InitAnswers,
-} from './initPlan';
+} from './initPlan.js';
 
 /** What the `e init` wizard needs to know to ask its questions. */
 export interface WizardState {

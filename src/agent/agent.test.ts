@@ -10,10 +10,10 @@ import {
   isKnownTarget,
   type Agent,
   type ResolveAgentDeps,
-} from './agent';
-import { agentDir } from '../store/paths';
-import type { Provider } from '../harness/adapter';
-import { renderEnvTemplate } from '../harness/renderEnvTemplate';
+} from './agent.js';
+import { agentDir } from '../store/paths.js';
+import type { Provider } from '../harness/adapter.js';
+import { renderEnvTemplate } from '../harness/renderEnvTemplate.js';
 
 // resolveAgent is pure: it takes a spawn target plus injected readers (an
 // agent loader, the valid harness names, and the available agent names), so we

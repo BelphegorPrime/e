@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { imageTag, runName, runBranchPrefix } from './naming';
+import { imageTag, runName, runBranchPrefix } from './naming.js';
 
 test('imageTag namespaces per kind under e-<kind>-', () => {
   assert.equal(imageTag('agent', 'smart-codex'), 'e-agent-smart-codex');

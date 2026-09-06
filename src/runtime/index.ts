@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
-import { log } from '../utils/log';
+import { log } from '../utils/log.js';
 
 /**
  * A bind mount as structured data, so callers describe *what* to mount and the

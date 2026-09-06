@@ -11,8 +11,8 @@ import {
   renderConventionalCommitsSkill,
   SHIPPED_SKILLS,
   SKILL_MANIFEST,
-} from './index';
-import { skillDir, skillManifestPath } from '../store/paths';
+} from './index.js';
+import { skillDir, skillManifestPath } from '../store/paths.js';
 
 /** Makes a temp store root with the given skills (each a dir + SKILL.md). */
 function makeRoot(skills: string[] = []): string {

@@ -12,24 +12,24 @@
  * effects the plan names (ADR-0008).
  */
 
-import type { Agent } from '../agent/index';
-import type { Harness } from '../harness/index';
-import { harnessCapabilities, planMcpDelivery } from '../harness/index';
-import { validateProviderProtocol, EnvFileRenderer } from '../harness/adapter';
-import type { ConfigOverlayDelivery, ContainerEnv } from '../harness/adapter';
-import { GLOBAL_BASE_URL_ENV } from '../harness/renderEnvTemplate';
+import type { Agent } from '../agent/index.js';
+import type { Harness } from '../harness/index.js';
+import { harnessCapabilities, planMcpDelivery } from '../harness/index.js';
+import { validateProviderProtocol, EnvFileRenderer } from '../harness/adapter.js';
+import type { ConfigOverlayDelivery, ContainerEnv } from '../harness/adapter.js';
+import { GLOBAL_BASE_URL_ENV } from '../harness/renderEnvTemplate.js';
 import {
   planProviderDelivery,
   planAgentImage,
   type ProviderDelivery,
   type DerivedImagePlan,
-} from '../harness/deriveImage';
-import { planMcpSelection, type McpServer } from '../mcp/index';
-import type { Mount } from '../runtime/index';
-import type { SidecarPlan } from '../runs/runSpawn';
-import { imageTag } from '../identity/naming';
-import { skillMountSpec } from '../skill/index';
-import { skillDir } from '../store/paths';
+} from '../harness/deriveImage.js';
+import { planMcpSelection, type McpServer } from '../mcp/index.js';
+import type { Mount } from '../runtime/index.js';
+import type { SidecarPlan } from '../runs/runSpawn.js';
+import { imageTag } from '../identity/naming.js';
+import { skillMountSpec } from '../skill/index.js';
+import { skillDir } from '../store/paths.js';
 
 /**
  * The env files a run loads, in precedence order. `--env-file` entries loaded

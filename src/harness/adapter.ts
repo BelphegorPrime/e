@@ -8,7 +8,7 @@
  * agent image (ADR-0004), with only the API key delivered at runtime.
  */
 
-import type { McpEndpoint } from '../mcp/index';
+import type { McpEndpoint } from '../mcp/index.js';
 
 /**
  * Every model wire protocol `e` recognises — the single source of truth. A

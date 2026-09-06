@@ -1,18 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
-import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index';
-import type { ContainerRunner, RunOptions, SidecarSpec } from '../runtime/index';
-import type { Harness } from '../harness/index';
-import type { Agent } from '../agent/index';
+import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index.js';
+import type { ContainerRunner, RunOptions, SidecarSpec } from '../runtime/index.js';
+import type { Harness } from '../harness/index.js';
+import type { Agent } from '../agent/index.js';
 import {
   runSpawn,
   RUN_GIT_INSTRUCTIONS,
   type RunSpawnDeps,
   type RunSpawnParams,
   type SidecarPlan,
-} from './runSpawn';
-import { slugify } from '../identity/slugify';
+} from './runSpawn.js';
+import { slugify } from '../identity/slugify.js';
 
 /** A `Git` fake that records what the orchestrator asked it to do. */
 class FakeGit implements Git {

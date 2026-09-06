@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { RunRef } from '../git/index';
-import { buildRunIndex, parseRunBranch, resolveRunRef } from './runIndex';
+import type { RunRef } from '../git/index.js';
+import { buildRunIndex, parseRunBranch, resolveRunRef } from './runIndex.js';
 
 const refs: RunRef[] = [
   {

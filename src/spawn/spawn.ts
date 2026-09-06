@@ -1,26 +1,26 @@
 import fs from 'fs';
 import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
-import { ContainerRuntime, type RunOptions } from '../runtime/index';
-import { HostGit } from '../git/host';
+import { ContainerRuntime, type RunOptions } from '../runtime/index.js';
+import { HostGit } from '../git/host.js';
 import {
   resolveSpawnTarget,
   validateSpawn,
   planSpawn,
   type SpawnFacts,
-} from './spawnPlan';
-import { resolveHarness, HARNESSES } from '../harness/index';
-import { findAgent, isKnownTarget } from '../agent/index';
-import { parseDotenv } from '../harness/adapter';
-import { resolveSkill, parseSkillList } from '../skill/index';
-import { readMcpServer, listMcpServerNames, type McpServer } from '../mcp/index';
-import { RunScratch } from '../runs/runScratch';
-import { executeSpawn } from './executeSpawn';
-import { findRoot } from '../store/root';
-import { envFilePath } from '../store/paths';
-import { readConfig } from '../store/config';
-import { localStack } from '../runtime/stack';
-import { log } from '../utils/log';
+} from './spawnPlan.js';
+import { resolveHarness, HARNESSES } from '../harness/index.js';
+import { findAgent, isKnownTarget } from '../agent/index.js';
+import { parseDotenv } from '../harness/adapter.js';
+import { resolveSkill, parseSkillList } from '../skill/index.js';
+import { readMcpServer, listMcpServerNames, type McpServer } from '../mcp/index.js';
+import { RunScratch } from '../runs/runScratch.js';
+import { executeSpawn } from './executeSpawn.js';
+import { findRoot } from '../store/root.js';
+import { envFilePath } from '../store/paths.js';
+import { readConfig } from '../store/config.js';
+import { localStack } from '../runtime/stack.js';
+import { log } from '../utils/log.js';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
 const RUNTIMES: Record<string, string> = {

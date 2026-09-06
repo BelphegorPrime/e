@@ -14,7 +14,7 @@ import {
   parseDotenv,
   filterEnvContent,
   type Provider,
-} from './adapter';
+} from './adapter.js';
 
 const provider: Provider = {
   baseUrl: 'https://gateway.example.com',

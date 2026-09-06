@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { registerSpawnCommand } from './spawn/spawn';
-import { registerInitCommand } from './init/index';
-import { registerServeCommand } from './serve/serve';
+import { registerSpawnCommand } from './spawn/spawn.js';
+import { registerInitCommand } from './init/index.js';
+import { registerServeCommand } from './serve/serve.js';
 const program = new Command();
 
 program

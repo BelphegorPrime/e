@@ -9,7 +9,7 @@ import {
   type McpServer,
   type ContainerMcpServer,
   type RemoteMcpServer,
-} from './index';
+} from './index.js';
 
 test('parseMcpServer accepts a minimal container server', () => {
   const server = parseMcpServer(

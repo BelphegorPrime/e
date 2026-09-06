@@ -1,24 +1,24 @@
 import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
-import { detectHardware, llamaCppImage } from '../hardware/index';
-import { writeIfAbsent } from '../scaffold';
-import { HARNESSES, requiredEnvKeys } from '../harness/index';
-import { parseDotenv } from '../harness/adapter';
-import { SHIPPED_MCP_SERVERS } from '../mcp/index';
-import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from '../skill/index';
-import { MODEL_CATALOG } from '../modelStatus';
-import { envFilePath, harnessesBaseDir } from '../store/paths';
-import { readConfig, writeConfig } from '../store/config';
-import { log } from '../utils/log';
+import { detectHardware, llamaCppImage } from '../hardware/index.js';
+import { writeIfAbsent } from '../scaffold.js';
+import { HARNESSES, requiredEnvKeys } from '../harness/index.js';
+import { parseDotenv } from '../harness/adapter.js';
+import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
+import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from '../skill/index.js';
+import { MODEL_CATALOG } from '../modelStatus.js';
+import { envFilePath, harnessesBaseDir } from '../store/paths.js';
+import { readConfig, writeConfig } from '../store/config.js';
+import { log } from '../utils/log.js';
 import {
   keysToPrompt,
   planInit,
   type InitPlan,
   type InitState,
   type InitWrite,
-} from './initPlan';
-import { defaultsWizard, interactiveWizard, type Wizard } from './wizard';
+} from './initPlan.js';
+import { defaultsWizard, interactiveWizard, type Wizard } from './wizard.js';
 
 interface InitCommandOptions {
   dir?: string;

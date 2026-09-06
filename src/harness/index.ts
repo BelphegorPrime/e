@@ -1,20 +1,20 @@
-import type { DockerfileParams } from './renderDockerfile';
-import type { EnvHarnessSection } from './renderEnvTemplate';
+import type { DockerfileParams } from './renderDockerfile.js';
+import type { EnvHarnessSection } from './renderEnvTemplate.js';
 import type {
   Protocol,
   HarnessAdapter,
   FileHarnessAdapter,
   ConfigOverlayDelivery,
-} from './adapter';
-import type { McpEndpoint } from '../mcp/index';
+} from './adapter.js';
+import type { McpEndpoint } from '../mcp/index.js';
 import {
   claudeCodeAdapter,
   codexAdapter,
   piAdapter,
   PI_PROVIDER_ID,
-} from './adapter';
-import { imageTag as eImageTag } from '../identity/naming';
-import { SHIPPED_SKILL_COLLECTIONS } from '../skill/index';
+} from './adapter.js';
+import { imageTag as eImageTag } from '../identity/naming.js';
+import { SHIPPED_SKILL_COLLECTIONS } from '../skill/index.js';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */
 export interface Harness {

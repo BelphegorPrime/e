@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { dockerComposePath, envFilePath } from '../store/paths';
+import { dockerComposePath, envFilePath } from '../store/paths.js';
 
 /**
  * The **local OmniRoute stack**: the composed set of sidecar services under

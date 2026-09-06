@@ -1,4 +1,4 @@
-import { log } from './utils/log';
+import { log } from './utils/log.js';
 
 /**
  * The stack edge network the run container joins so it can reach OmniRoute

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseVendor, llamaCppImage, llamaGpuCompose } from './index';
+import { chooseVendor, llamaCppImage, llamaGpuCompose } from './index.js';
 
 const SIGNALS = {
   platform: 'linux',

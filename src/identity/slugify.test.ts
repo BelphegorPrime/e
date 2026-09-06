@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { slugify } from './slugify';
+import { slugify } from './slugify.js';
 
 test('lowercases and hyphenates spaces', () => {
   assert.equal(slugify('Create Cool Feature'), 'create-cool-feature');

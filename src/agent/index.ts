@@ -5,4 +5,4 @@
  * Registry never imports it, so the dependency runs one way:
  * `spawn`/`runs`/`init` → `agent` → `harness`/`store`.
  */
-export * from './agent';
+export * from './agent.js';

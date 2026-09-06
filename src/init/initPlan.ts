@@ -1,16 +1,16 @@
 import path from 'path';
 import { randomBytes } from 'node:crypto';
-import { renderDockerfile } from '../harness/renderDockerfile';
-import { renderEnvTemplate } from '../harness/renderEnvTemplate';
-import { renderCompose } from './renderCompose';
-import { renderBootstrap } from './renderBootstrap';
-import { HARNESSES, envHarnessSections } from '../harness/index';
-import { renderDefaultAgent } from '../agent/index';
-import { parseDotenv } from '../harness/adapter';
-import { SHIPPED_MCP_SERVERS } from '../mcp/index';
-import { SHIPPED_SKILLS } from '../skill/index';
-import type { HardwareVendor } from '../hardware/index';
-import type { ModelCatalogEntry } from '../modelStatus';
+import { renderDockerfile } from '../harness/renderDockerfile.js';
+import { renderEnvTemplate } from '../harness/renderEnvTemplate.js';
+import { renderCompose } from './renderCompose.js';
+import { renderBootstrap } from './renderBootstrap.js';
+import { HARNESSES, envHarnessSections } from '../harness/index.js';
+import { renderDefaultAgent } from '../agent/index.js';
+import { parseDotenv } from '../harness/adapter.js';
+import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
+import { SHIPPED_SKILLS } from '../skill/index.js';
+import type { HardwareVendor } from '../hardware/index.js';
+import type { ModelCatalogEntry } from '../modelStatus.js';
 import {
   agentDir,
   agentFilePath,
@@ -21,7 +21,7 @@ import {
   harnessDir,
   mcpDir,
   skillDir,
-} from '../store/paths';
+} from '../store/paths.js';
 
 /**
  * The OmniRoute stack secrets the local Compose stack interpolates from

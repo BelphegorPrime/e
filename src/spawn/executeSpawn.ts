@@ -1,26 +1,26 @@
 import fs from 'fs';
 import path from 'path';
-import type { Git } from '../git/index';
-import type { ContainerRuntime, Mount, RunOptions } from '../runtime/index';
-import { runSpawn, type RunSpawnResult, type SidecarPlan } from '../runs/runSpawn';
-import { filterEnvContent } from '../harness/adapter';
+import type { Git } from '../git/index.js';
+import type { ContainerRuntime, Mount, RunOptions } from '../runtime/index.js';
+import { runSpawn, type RunSpawnResult, type SidecarPlan } from '../runs/runSpawn.js';
+import { filterEnvContent } from '../harness/adapter.js';
 import {
   decideImageAction,
   orderEnvFiles,
   type SpawnFacts,
   type SpawnPlan,
-} from './spawnPlan';
-import { RunScratch } from '../runs/runScratch';
-import { writeIfAbsent } from '../scaffold';
+} from './spawnPlan.js';
+import { RunScratch } from '../runs/runScratch.js';
+import { writeIfAbsent } from '../scaffold.js';
 import {
   harnessDir,
   agentDir,
   mcpDir,
   skillDir,
-} from '../store/paths';
-import { isInitialized } from '../store/config';
-import { localStack } from '../runtime/stack';
-import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus';
+} from '../store/paths.js';
+import { isInitialized } from '../store/config.js';
+import { localStack } from '../runtime/stack.js';
+import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus.js';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {

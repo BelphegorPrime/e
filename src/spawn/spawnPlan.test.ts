@@ -7,10 +7,10 @@ import {
   validateSpawn,
   planSpawn,
   type SpawnFacts,
-} from './spawnPlan';
-import { HARNESSES } from '../harness/index';
-import { GLOBAL_BASE_URL_ENV } from '../harness/renderEnvTemplate';
-import type { McpServer } from '../mcp/index';
+} from './spawnPlan.js';
+import { HARNESSES } from '../harness/index.js';
+import { GLOBAL_BASE_URL_ENV } from '../harness/renderEnvTemplate.js';
+import type { McpServer } from '../mcp/index.js';
 
 function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
   return {
