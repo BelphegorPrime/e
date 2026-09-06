@@ -8,11 +8,7 @@ import { parseDotenv } from '../harness/adapter';
 import { SHIPPED_MCP_SERVERS } from '../mcp/index';
 import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from '../skill/index';
 import { MODEL_CATALOG } from '../modelStatus';
-import {
-  dockerComposePath,
-  envFilePath,
-  harnessesBaseDir,
-} from '../store/paths';
+import { envFilePath, harnessesBaseDir } from '../store/paths';
 import { readConfig, writeConfig } from '../store/config';
 import { log } from '../utils/log';
 import {
@@ -115,9 +111,6 @@ function applyPlan(root: string | undefined, plan: InitPlan): void {
     } else if (step.kind === 'bootstrap') {
       applyWrite(step.write);
     } else if (step.kind === 'compose') {
-      // Local Compose volume dirs are prepared just before the compose file,
-      // matching the historic write order.
-      prepareComposeDataDir(root);
       applyWrite(step.write);
     } else {
       for (const write of step.writes) applyWrite(write);
@@ -168,18 +161,5 @@ function writeEnv(env: InitPlan['env']): void {
     log.success(`updated ${env.file}`);
   } else {
     log.info(`up to date ${env.file}`);
-  }
-}
-
-/** Creates local Compose volume directories with container-writable permissions. */
-export function prepareComposeDataDir(root?: string): void {
-  const volumesDir = path.join(
-    path.dirname(dockerComposePath(root)),
-    'volumes'
-  );
-  for (const name of ['omniroute-data', 'llama-data', 'redis-data']) {
-    const directory = path.join(volumesDir, name);
-    fs.mkdirSync(directory, { recursive: true });
-    fs.chmodSync(directory, 0o777);
   }
 }

@@ -63,7 +63,7 @@ services:
         aliases:
           - host.docker.internal
     volumes:
-      - ./volumes/omniroute-data:/app/data
+      - omniroute-data:/app/data
 
   bootstrap:
     image: curlimages/curl:latest
@@ -96,7 +96,7 @@ services:
     networks:
       - ${OMNIROUTE_STACK_NETWORK}
     volumes:
-      - ./volumes/llama-data:/root/.cache
+      - llama-data:/root/.cache
 ${gpu}
   redis:
     image: redis:8-alpine
@@ -107,7 +107,7 @@ ${gpu}
     networks:
       - ${OMNIROUTE_STACK_NETWORK}
     volumes:
-      - ./volumes/redis-data:/data
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -119,5 +119,13 @@ networks:
     name: ${OMNIROUTE_STACK_NETWORK}
   omniroute-edge:
     name: omniroute-edge
+
+volumes:
+  omniroute-data:
+    name: omniroute-data
+  llama-data:
+    name: llama-data
+  redis-data:
+    name: redis-data
 `;
 }

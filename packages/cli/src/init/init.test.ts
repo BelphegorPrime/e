@@ -1,8 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import {
   parseHarnessChoice,
   parseModelChoice,
@@ -11,7 +8,6 @@ import {
   seedStackSecrets,
   OMNIROUTE_STACK_SECRETS,
 } from './initPlan';
-import { prepareComposeDataDir } from './index';
 import { renderCompose } from './renderCompose';
 import { renderBootstrap } from './renderBootstrap';
 import { MODEL_CATALOG } from '../modelStatus';
@@ -115,20 +111,6 @@ test('applyEnvValues: comments and unrelated lines are preserved', () => {
   assert.equal(out, '# a comment\n\nANTHROPIC_API_KEY=sk-abc\n# --- pi ---\n');
 });
 
-test('prepareOmnirouteDataDir: creates container-writable local volume directories', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-init-'));
-  try {
-    prepareComposeDataDir(root);
-    for (const name of ['omniroute-data', 'llama-data', 'redis-data']) {
-      const directory = path.join(root, '.e', 'volumes', name);
-      assert.ok(fs.statSync(directory).isDirectory());
-      assert.equal(fs.statSync(directory).mode & 0o777, 0o777);
-    }
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
 // keysToPrompt is pure: it drops keys already filled in the existing `.env`.
 const KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
 
@@ -203,15 +185,19 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.match(compose, /bootstrap:/);
   assert.match(compose, /REDIS_URL: redis:\/\/redis:6379/);
   assert.match(compose, /127\.0\.0\.1:20128:20128/);
-  assert.match(compose, /- \.\/volumes\/omniroute-data:\/app\/data/);
-  assert.match(compose, /- \.\/volumes\/llama-data:\/root\/\.cache/);
-  assert.match(compose, /- \.\/volumes\/redis-data:\/data/);
+  assert.match(compose, /- omniroute-data:\/app\/data/);
+  assert.match(compose, /- llama-data:\/root\/\.cache/);
+  assert.match(compose, /- redis-data:\/data/);
+  assert.doesNotMatch(compose, /\.\/volumes\//);
   assert.match(compose, /LLAMA_ARG_HOST: "0\.0\.0\.0"/);
   assert.match(compose, /LLAMA_ARG_PORT: "9931"/);
   assert.match(compose, /LLAMA_ARG_CTX_SIZE: "32768"/);
   assert.match(compose, /LLAMA_ARG_N_PARALLEL: "1"/);
   assert.match(compose, /- \.\/bootstrap\.sh:\/bootstrap\.sh:ro/);
-  assert.doesNotMatch(compose, /^volumes:\n/m);
+  assert.match(
+    compose,
+    /^volumes:\n {2}omniroute-data:\n {4}name: omniroute-data\n {2}llama-data:\n {4}name: llama-data\n {2}redis-data:\n {4}name: redis-data$/m
+  );
 });
 
 test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () => {
@@ -255,7 +241,6 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   assert.match(script, /POST http:\/\/llama:9931\/models/);
   assert.match(script, /for model in \$models; do/);
   assert.match(script, /OmniRoute rejected INITIAL_PASSWORD/);
-  assert.match(script, /remove \.e\/volumes\/omniroute-data/);
   assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"/);
   assert.match(
     script,
