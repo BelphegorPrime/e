@@ -18,7 +18,7 @@ Five canonical triage roles, each label string equal to its name (`needs-triage`
 
 ### Domain docs
 
-Multi-context layout: a root `CONTEXT-MAP.md` points to a per-package `CONTEXT.md`. See `docs/agents/domain.md`.
+Single-context layout: a root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.
 
 ### e runs
 

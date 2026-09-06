@@ -4,44 +4,23 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, or
-- **`CONTEXT-MAP.md`** at the repo root if it exists — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
+- **`CONTEXT.md`** at the repo root
+- **`docs/adr/`** — read ADRs that touch the area you're about to work in.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
 ## File structure
 
-Single-context repo (most repos):
+Single-context repo:
 
 ```
 /
 ├── CONTEXT.md
 ├── docs/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
+│   ├── 0001-per-run-git-worktree.md
+│   └── 0002-host-orchestrates-git.md
 └── src/
 ```
-
-This repo uses the multi-context layout (a `CONTEXT-MAP.md` at the root), one context per workspace package:
-
-```
-/
-├── CONTEXT-MAP.md
-├── docs/adr/                          ← system-wide decisions
-└── packages/
-    ├── cli/
-    │   ├── CONTEXT.md
-    │   └── docs/adr/                  ← context-specific decisions
-    ├── ui/
-    │   ├── CONTEXT.md
-    │   └── docs/adr/
-    └── docker/
-        ├── CONTEXT.md
-        └── docs/adr/
-```
-
-`CONTEXT-MAP.md` and the per-package `CONTEXT.md` / `docs/adr/` files don't exist yet — that's expected. `/domain-modeling` creates them lazily as terms and decisions get resolved. In a monorepo, also check `packages/<name>/docs/adr/` for context-scoped decisions.
 
 ## Use the glossary's vocabulary
 

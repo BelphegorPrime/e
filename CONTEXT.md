@@ -42,4 +42,4 @@ _Avoid_: launch, create, exec
 
 **Store**:
 The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/<name>/` (each holding that agent's `agent.json` plus any rendered `models.json`/`Dockerfile`), the MCP server definitions under `mcp/`, the Skills under `skills/`, the host-only orchestration settings in `config.json` (e.g. the favorite/default harness — never injected into containers, unlike `.env`), the shared `.env`, and `model-ids.json` (a cached dump of the last `/v1/models` fetch, written for reference during `auto` resolution) — located by walking up from the working directory (or `--dir`), falling back to home.
-_Avoid_: workspace (here "workspace" means the npm workspace under `packages/`; the container's mounted checkout is the run's worktree)
+_Avoid_: workspace (the container's mounted checkout is the run's worktree)

@@ -1,6 +1,6 @@
 # Security Analysis: `e` orchestrator attack surface
 
-Status: review draft, 2026-09-05. Grounded in the current `packages/cli` source
+Status: review draft, 2026-09-05. Grounded in the current source
 and the ADR set. The goal is a written attack-surface review of the four
 execution zones — container, store, local compose stack, and the `serve` BFF —
 with concrete, time-boxed recommendations. Implementation of the recommended
@@ -139,7 +139,7 @@ reporting "already serving".
 - ADR-0002 (host orchestrates git; accepted egress + whole-file env injection)
 - ADR-0005 (container groups, sidecars, private networks)
 - ADR-0006 (per-harness config adapter; `.e/.env` as the secret source)
-- `packages/cli/src/renderCompose.ts`, `renderBootstrap.ts`,
+- `src/renderCompose.ts`, `renderBootstrap.ts`,
   `harness/renderDockerfile.ts`, `store.ts`, `serve.ts`
 - Issues: [#24](https://github.com/BelphegorPrime/e/issues/24) (env whitelist),
   [#25](https://github.com/BelphegorPrime/e/issues/25) (OmniRoute bind + secrets, done),
