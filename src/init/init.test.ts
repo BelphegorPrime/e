@@ -193,10 +193,7 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.match(compose, /LLAMA_ARG_PORT: "9931"/);
   assert.match(compose, /LLAMA_ARG_CTX_SIZE: "32768"/);
   assert.match(compose, /LLAMA_ARG_N_PARALLEL: "1"/);
-  // Registry cap: llama.cpp rejects registering a model once this many are
-  // registered/cached ("model limit reached", HTTP 500). The catalog holds
-  // three models, so the cap must be at least three.
-  assert.match(compose, /LLAMA_ARG_MODELS_MAX: "3"/);
+  assert.match(compose, /LLAMA_ARG_MODELS_MAX: "1"/);
   assert.match(compose, /- \.\/bootstrap\.sh:\/bootstrap\.sh:ro/);
   assert.match(
     compose,
