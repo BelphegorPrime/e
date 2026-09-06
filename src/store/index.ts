@@ -8,6 +8,6 @@
  * Harness, Agent, MCP, or Skill registries, so the dependency runs one way:
  * `harness`/`agent`/`mcp`/`skill` → `store`.
  */
-export * from './paths';
-export * from './config';
-export * from './root';
+export * from './paths.js';
+export * from './config.js';
+export * from './root.js';

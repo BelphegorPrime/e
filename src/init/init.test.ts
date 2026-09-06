@@ -7,10 +7,10 @@ import {
   keysToPrompt,
   seedStackSecrets,
   OMNIROUTE_STACK_SECRETS,
-} from './initPlan';
-import { renderCompose } from './renderCompose';
-import { renderBootstrap } from './renderBootstrap';
-import { MODEL_CATALOG } from '../modelStatus';
+} from './initPlan.js';
+import { renderCompose } from './renderCompose.js';
+import { renderBootstrap } from './renderBootstrap.js';
+import { MODEL_CATALOG } from '../modelStatus.js';
 
 // parseHarnessChoice is pure: it maps a prompt answer to a harness name, taking
 // the fallback for a blank answer and undefined for anything unrecognized.

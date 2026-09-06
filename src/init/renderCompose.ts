@@ -2,7 +2,7 @@ import {
   llamaCppImage,
   llamaGpuCompose,
   type HardwareVendor,
-} from '../hardware/index';
+} from '../hardware/index.js';
 
 /** The stack-internal network: redis, llama, bootstrap, and OmniRoute itself. */
 const OMNIROUTE_STACK_NETWORK = 'omniroute-stack';

@@ -17,7 +17,7 @@ import {
   composeWaitArgs,
   type RunOptions,
   type SidecarSpec,
-} from './index';
+} from './index.js';
 
 // buildRunArgs is pure argv construction — no child process is spawned — so we
 // exercise it directly on a concrete ContainerRuntime and assert the exact

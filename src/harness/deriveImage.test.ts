@@ -5,13 +5,13 @@ import {
   derivedImageTag,
   planProviderDelivery,
   planAgentImage,
-} from './deriveImage';
+} from './deriveImage.js';
 import {
   claudeCodeAdapter,
   codexAdapter,
   piAdapter,
   type Provider,
-} from './adapter';
+} from './adapter.js';
 
 const providerBlock = {
   configFileName: 'config.toml',

@@ -1,21 +1,21 @@
 import path from 'path';
 import os from 'os';
-import type { Git } from '../git/index';
+import type { Git } from '../git/index.js';
 import type {
   ContainerRunner,
   RunOptions,
   SidecarSpec,
   Mount,
-} from '../runtime/index';
-import type { Harness } from '../harness/index';
-import type { Agent } from '../agent/index';
+} from '../runtime/index.js';
+import type { Harness } from '../harness/index.js';
+import type { Agent } from '../agent/index.js';
 import {
   runName,
   runBranchPrefix,
   maxRunCounter,
   type RunName,
-} from '../identity/naming';
-import { slugify } from '../identity/slugify';
+} from '../identity/naming.js';
+import { slugify } from '../identity/slugify.js';
 
 /** How many counter collisions to absorb before giving up (a runaway guard). */
 const MAX_COUNTER_ATTEMPTS = 50;

@@ -1,6 +1,6 @@
 import fs from 'fs';
-import { skillManifestPath, skillDir, skillsBaseDir } from '../store/paths';
-import type { Mount } from '../runtime/index';
+import { skillManifestPath, skillDir, skillsBaseDir } from '../store/paths.js';
+import type { Mount } from '../runtime/index.js';
 
 /**
  * The **Skill** context (ADR-0006): a packaged capability — a `SKILL.md` plus

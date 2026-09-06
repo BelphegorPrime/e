@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index';
-import { ContainerRuntime, type RunOptions } from '../runtime/index';
-import { RunScratch } from '../runs/runScratch';
-import { executeSpawn } from './executeSpawn';
-import type { SpawnFacts, SpawnPlan } from './spawnPlan';
-import type { Harness } from '../harness/index';
-import type { Agent } from '../agent/index';
+import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index.js';
+import { ContainerRuntime, type RunOptions } from '../runtime/index.js';
+import { RunScratch } from '../runs/runScratch.js';
+import { executeSpawn } from './executeSpawn.js';
+import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
+import type { Harness } from '../harness/index.js';
+import type { Agent } from '../agent/index.js';
 
 // The preflight guards (a git repo, foreground) run before any build, so they
 // are reachable with a fake git and an untouched runtime.

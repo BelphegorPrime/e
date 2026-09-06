@@ -1,7 +1,7 @@
 import fs from 'fs';
-import { HARNESSES } from '../harness/index';
-import { PROTOCOLS, type Provider, type Protocol } from '../harness/adapter';
-import { agentFilePath, agentsBaseDir } from '../store/paths';
+import { HARNESSES } from '../harness/index.js';
+import { PROTOCOLS, type Provider, type Protocol } from '../harness/adapter.js';
+import { agentFilePath, agentsBaseDir } from '../store/paths.js';
 
 /**
  * An **Agent**: a named pairing of a Harness with, optionally, an inline

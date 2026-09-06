@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { localStack } from './stack';
+import { localStack } from './stack.js';
 
 // The stack predicate is a filesystem probe, so these tests build a real `.e`
 // fixture in a temp dir and assert on the resolved paths.

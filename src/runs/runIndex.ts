@@ -8,7 +8,7 @@
  * note).
  */
 
-import type { RunRef } from '../git/index';
+import type { RunRef } from '../git/index.js';
 
 /**
  * A parsed run branch: `e/<agent>/<slug>-N` (ADR-0003). The slug itself may

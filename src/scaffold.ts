@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { log } from './utils/log';
+import { log } from './utils/log.js';
 
 /**
  * Scaffolding writes shared by everything that renders e's on-disk state from a

@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import test from 'node:test';
-import { renderDockerfile } from './renderDockerfile';
+import { renderDockerfile } from './renderDockerfile.js';
 
 /** The valid outputs of the render — one `RUN skills add` per collection. */
 const pi = {

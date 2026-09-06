@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HARNESSES } from '../harness/index';
-import { MODEL_CATALOG } from '../modelStatus';
-import { planInit, type InitState } from './initPlan';
-import { defaultsWizard, type Wizard, type WizardState } from './wizard';
+import { HARNESSES } from '../harness/index.js';
+import { MODEL_CATALOG } from '../modelStatus.js';
+import { planInit, type InitState } from './initPlan.js';
+import { defaultsWizard, type Wizard, type WizardState } from './wizard.js';
 
 const WIZARD_STATE: WizardState = {
   harnessNames: Object.keys(HARNESSES),

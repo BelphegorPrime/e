@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HARNESSES } from '../harness/index';
-import { MODEL_CATALOG } from '../modelStatus';
+import { HARNESSES } from '../harness/index.js';
+import { MODEL_CATALOG } from '../modelStatus.js';
 import {
   OMNIROUTE_STACK_SECRETS,
   planInit,
   type InitAnswers,
   type InitState,
-} from './initPlan';
+} from './initPlan.js';
 
 const HARNESS_NAMES = Object.keys(HARNESSES);
 

@@ -11,9 +11,9 @@ import {
   startServeServer,
   type ServeAppDeps,
   type ServeState,
-} from './serve';
-import type { Git, RunCommit, RunRef } from '../git/index';
-import type { ModelsResponse } from '../modelStatus';
+} from './serve.js';
+import type { Git, RunCommit, RunRef } from '../git/index.js';
+import type { ModelsResponse } from '../modelStatus.js';
 
 test('detachedServeArguments preserves command arguments and removes detached flags', () => {
   assert.deepEqual(

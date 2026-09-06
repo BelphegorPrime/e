@@ -1,6 +1,6 @@
 import { spawnSync } from 'child_process';
-import type { Git, RunCommit, RunRef, WorktreeSpec } from './index';
-import { log } from '../utils/log';
+import type { Git, RunCommit, RunRef, WorktreeSpec } from './index.js';
+import { log } from '../utils/log.js';
 
 /**
  * The real `Git` port: shells out to the `git` executable in the host process.

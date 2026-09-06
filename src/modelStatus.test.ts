@@ -7,7 +7,7 @@ import {
   describeModels,
   waitForModelsReady,
   type ModelsResponse,
-} from './modelStatus';
+} from './modelStatus.js';
 
 test('formatBytes: renders human-readable sizes', () => {
   assert.equal(formatBytes(0), '0 B');

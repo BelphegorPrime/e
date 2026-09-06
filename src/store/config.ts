@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { MODELS } from '../modelStatus';
-import { configFilePath, dockerfilePath, modelsFilePath } from './paths';
+import { MODELS } from '../modelStatus.js';
+import { configFilePath, dockerfilePath, modelsFilePath } from './paths.js';
 
 /**
  * The Store's **state files** (host-only): `config.json` orchestration

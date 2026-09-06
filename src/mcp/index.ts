@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { mcpConfigPath, mcpBaseDir } from '../store/paths';
+import { mcpConfigPath, mcpBaseDir } from '../store/paths.js';
 
 /**
  * The **MCP server** context (ADR-0005/0006): a capability the agent connects to
