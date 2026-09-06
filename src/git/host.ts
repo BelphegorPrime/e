@@ -20,6 +20,17 @@ export class HostGit implements Git {
     return this.capture(['rev-parse', 'HEAD'], 'resolve HEAD').trim();
   }
 
+  currentBranch(): string {
+    const result = spawnSync(
+      'git',
+      ['rev-parse', '--abbrev-ref', 'HEAD'],
+      { encoding: 'utf8', shell: false }
+    );
+    if (result.status !== 0) return '';
+    const name = (result.stdout ?? '').trim();
+    return name === 'HEAD' ? '' : name;
+  }
+
   listRunBranches(prefix: string): string[] {
     // for-each-ref over both local heads and remote-tracking refs; `short`
     // yields `<prefix>-N` for heads and `<remote>/<prefix>-N` for remotes.

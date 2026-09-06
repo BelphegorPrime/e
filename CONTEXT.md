@@ -29,7 +29,7 @@ A packaged capability (a `SKILL.md` plus resources) an Agent can load, stored un
 _Avoid_: tool, command, plugin
 
 **Run**:
-One execution of an Agent against a prompt, isolated in its own git worktree and branch and identified by a prompt-derived slug. A Run may attach Sidecars chosen at spawn time; it brings up the resulting group — the primary agent container plus those Sidecars — on a private network, and tears it down as a group.
+One execution of an Agent against a prompt, isolated in its own git worktree and branch and identified by a prompt-derived slug. A Run may attach Sidecars chosen at spawn time; it brings up the resulting group — the primary agent container plus those Sidecars — on a private network, and tears it down as a group. On a successful run that pushes, `e` opens a PullRequest/MR (when the Store's `config.json` records a git platform) into the branch the user spawned from, titled by the run branch's tip commit and bodied by the prompt.
 _Avoid_: job, task, session
 
 **Runtime**:
@@ -41,5 +41,5 @@ To start a run.
 _Avoid_: launch, create, exec
 
 **Store**:
-The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/<name>/` (each holding that agent's `agent.json` plus any rendered `models.json`/`Dockerfile`), the MCP server definitions under `mcp/`, the Skills under `skills/`, the host-only orchestration settings in `config.json` (e.g. the favorite/default harness — never injected into containers, unlike `.env`), the shared `.env`, and `model-ids.json` (a cached dump of the last `/v1/models` fetch, written for reference during `auto` resolution) — located by walking up from the working directory (or `--dir`), falling back to home.
+The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/<name>/` (each holding that agent's `agent.json` plus any rendered `models.json`/`Dockerfile`), the MCP server definitions under `mcp/`, the Skills under `skills/`, the host-only orchestration settings in `config.json` (the favorite/default harness, the git platform for PR/MR creation — never injected into containers, unlike `.env`), the shared `.env`, and `model-ids.json` (a cached dump of the last `/v1/models` fetch, written for reference during `auto` resolution) — located by walking up from the working directory (or `--dir`), falling back to home.
 _Avoid_: workspace (the container's mounted checkout is the run's worktree)

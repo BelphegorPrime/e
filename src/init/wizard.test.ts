@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HARNESSES } from '../harness/index.js';
 import { MODEL_CATALOG } from '../modelStatus.js';
+import { GIT_PLATFORMS } from '../store/config.js';
 import { planInit, type InitState } from './initPlan.js';
 import { defaultsWizard, type Wizard, type WizardState } from './wizard.js';
 
@@ -11,6 +12,7 @@ const WIZARD_STATE: WizardState = {
   promptKeys: ['ANTHROPIC_API_KEY'],
   modelCatalog: MODEL_CATALOG,
   currentModels: [],
+  gitPlatforms: [...GIT_PLATFORMS],
 };
 
 function state(): InitState {
@@ -21,6 +23,7 @@ function state(): InitState {
     currentModels: WIZARD_STATE.currentModels,
     existingEnvContent: undefined,
     modelCatalog: WIZARD_STATE.modelCatalog,
+    gitPlatforms: [...GIT_PLATFORMS] as const,
     hardware: 'cpu',
   };
 }

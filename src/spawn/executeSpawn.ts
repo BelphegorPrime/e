@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import type { Git } from '../git/index.js';
+import type { PullRequest } from '../github/index.js';
+import type { GitPlatform } from '../store/config.js';
 import type { ContainerRuntime, Mount, RunOptions } from '../runtime/index.js';
 import { runSpawn, type RunSpawnResult, type SidecarPlan } from '../runs/runSpawn.js';
 import { filterEnvContent } from '../harness/adapter.js';
@@ -27,6 +29,10 @@ export interface ExecuteSpawnDeps {
   git: Git;
   runtime: ContainerRuntime;
   scratch: RunScratch;
+  /** Optional PR/MR opener (present only when the store has a platform). */
+  pullRequest?: PullRequest;
+  /** The configured git platform, forwarded to `runSpawn`. */
+  gitPlatform?: GitPlatform;
 }
 
 /**
@@ -197,7 +203,7 @@ export async function executeSpawn(
   };
 
   return runSpawn(
-    { git, runtime },
+    { git, runtime, pullRequest: deps.pullRequest },
     {
       agent: facts.agent,
       harness: facts.harness,
@@ -210,6 +216,7 @@ export async function executeSpawn(
       sidecars,
       mcpArgs: plan.mcpArgs,
       configMounts,
+      gitPlatform: deps.gitPlatform,
     }
   );
 }
