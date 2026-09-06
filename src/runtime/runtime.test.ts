@@ -9,6 +9,7 @@ import {
   networkCreateArgs,
   networkRemoveArgs,
   sidecarRunArgs,
+  egressProxyRunArgs,
   containerRemoveArgs,
   tcpProbeArgs,
   execArgs,
@@ -18,6 +19,7 @@ import {
   composeRestartArgs,
   type RunOptions,
   type SidecarSpec,
+  type EgressProxySpec,
 } from './index.js';
 
 // buildRunArgs is pure argv construction — no child process is spawned — so we
@@ -375,6 +377,25 @@ test('sidecarRunArgs: detached, named, on its network with an alias', () => {
   ]);
 });
 
+test('sidecarRunArgs: a WAN network joins beside the run network', () => {
+  const spec: SidecarSpec = {
+    name: 'run-1-mcp-everything',
+    alias: 'everything',
+    image: 'e-mcp-everything',
+    network: 'run-1-net',
+    port: 3001,
+    wan: 'bridge',
+  };
+  const args = sidecarRunArgs(spec);
+  assert.deepEqual(
+    args.slice(
+      args.indexOf('--network-alias') + 2,
+      args.indexOf('e-mcp-everything')
+    ),
+    ['--network', 'bridge']
+  );
+});
+
 test('sidecarRunArgs: env-files precede the image, in order', () => {
   const spec: SidecarSpec = {
     name: 'run-1-mcp-x',
@@ -398,6 +419,71 @@ test('sidecarRunArgs: env-files precede the image, in order', () => {
     '--env-file',
     '/b.env',
     'e-mcp-x',
+  ]);
+});
+
+test('egressProxyRunArgs: internal run network + WAN face, ports and upstream as env', () => {
+  const spec: EgressProxySpec = {
+    name: 'run-1-egress-0',
+    alias: 'gateway.example.com',
+    image: 'e-egress',
+    network: 'run-1-net',
+    wan: 'bridge',
+    ports: [443, 80],
+    upstreamHost: '203.0.113.10',
+  };
+  assert.deepEqual(egressProxyRunArgs(spec), [
+    'run',
+    '-d',
+    '--name',
+    'run-1-egress-0',
+    '--network',
+    'run-1-net',
+    '--network-alias',
+    'gateway.example.com',
+    '--network',
+    'bridge',
+    '-e',
+    'EGRESS_PORTS=443 80',
+    '-e',
+    'EGRESS_HOST=203.0.113.10',
+    'e-egress',
+  ]);
+});
+
+test('egressProxyRunArgs: host-gateway mapping for a stack-less host.docker.internal', () => {
+  const spec: EgressProxySpec = {
+    name: 'run-1-egress-0',
+    alias: 'host.docker.internal',
+    image: 'e-egress',
+    network: 'run-1-net',
+    wan: 'bridge',
+    ports: [20128],
+    upstreamHost: 'host.docker.internal',
+    extraHosts: ['host.docker.internal:host-gateway'],
+  };
+  const args = egressProxyRunArgs(spec);
+  assert.deepEqual(
+    args.slice(0, args.indexOf('-e')),
+    [
+      'run',
+      '-d',
+      '--name',
+      'run-1-egress-0',
+      '--network',
+      'run-1-net',
+      '--network-alias',
+      'host.docker.internal',
+      '--network',
+      'bridge',
+      '--add-host',
+      'host.docker.internal:host-gateway',
+    ]
+  );
+  assert.deepEqual(args.slice(-3), [
+    '-e',
+    'EGRESS_HOST=host.docker.internal',
+    'e-egress',
   ]);
 });
 

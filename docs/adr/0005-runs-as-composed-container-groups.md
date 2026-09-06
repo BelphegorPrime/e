@@ -20,4 +20,4 @@ Teardown is group-wide in the same `finally` that already drops the worktree: ag
 
 - The Runtime port grows from "run one container" to "bring up a group, wait on the primary, tear all down."
 - Container-transport MCP servers must speak **streamable HTTP** — stdio cannot cross a container boundary, and SSE is deprecated in Claude Code and unsupported by Codex — so stdio-only servers are wrapped with a stdio→HTTP bridge inside their sidecar image (ADR-0006).
-- VPN / egress routing is a future sidecar; it intersects the deferred egress-hardening gap in ADR-0002 and gets its own decision.
+- VPN / egress routing is a future sidecar; it intersects the deferred egress-hardening gap in ADR-0002 and gets its own decision. Egress hardening itself is now resolved by per-host proxy containers on an internal run network (ADR-0011): the run network is `--internal`, the proxies carry the allow-list, and sidecars join the default bridge alongside the run network to keep their own external API access.

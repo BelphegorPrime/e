@@ -5,10 +5,13 @@ import type {
   ContainerRunner,
   RunOptions,
   SidecarSpec,
+  EgressProxySpec,
   Mount,
 } from '../runtime/index.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
+import type { EgressProxyPlan } from '../egress/index.js';
+import { EGRESS_IMAGE_TAG } from '../egress/index.js';
 import {
   runName,
   runBranchPrefix,
@@ -100,6 +103,13 @@ export interface RunSpawnParams {
    * Codex's merged `config.toml`) and per-run skills outside `/workspace`.
    */
   configMounts?: Mount[];
+  /**
+   * Per-host egress proxies enforcing the run's allow-list (ADR-0011): when
+   * present, the run's private network is created `--internal`, the proxies
+   * forward the allow-listed host:port pairs, and the agent joins only that
+   * network. Absent → the historical full-egress networking.
+   */
+  egress?: EgressProxyPlan[];
   /** Readiness polling overrides (mainly for tests). */
   readiness?: ReadinessPolicy;
 }
@@ -217,9 +227,14 @@ export async function runSpawn(
   }
   const branch = run.branch;
 
-  // Turn each sidecar plan into a concrete spec now that the run name (and thus a
-  // unique container name and the private network) exists.
+  // Turn each sidecar and egress-proxy plan into a concrete spec now that the
+  // run name (and thus a unique container name and the private network) exists.
+  // Egress lockdown (ADR-0011): the run network is `--internal`, sidecars keep
+  // their WAN face via the default bridge, and the proxies enforce the
+  // allow-list. A proxy's upstream is already pinned (a public IP or the
+  // compose edge DNS name), so it never resolves its own alias.
   const network = run.network;
+  const egressActive = (params.egress ?? []).length > 0;
   const specs: SidecarSpec[] = sidecarPlans.map(plan => ({
     name: run.sidecarContainer(plan.alias),
     alias: plan.alias,
@@ -228,7 +243,22 @@ export async function runSpawn(
     port: plan.port,
     healthcheck: plan.healthcheck,
     envFile: plan.envFile,
+    // A sidecar that needs external APIs keeps them when the run network is
+    // internal; sidecar-to-sidecar traffic stays on the run network.
+    wan: egressActive ? 'bridge' : undefined,
   }));
+  const egressSpecs: EgressProxySpec[] = (params.egress ?? []).map(
+    (plan, index) => ({
+      name: run.egressContainer(index),
+      alias: plan.alias,
+      image: EGRESS_IMAGE_TAG,
+      network,
+      wan: plan.wan,
+      ports: plan.ports,
+      upstreamHost: plan.upstreamHost,
+      extraHosts: plan.extraHosts,
+    })
+  );
 
   let exitCode = 1;
   let ran = false;
@@ -238,12 +268,17 @@ export async function runSpawn(
   const startedContainers: string[] = [];
   let networkCreated = false;
   try {
-    // Bring up the group: private network → sidecars → readiness. A sidecar that
-    // never reaches readiness aborts the run before the agent starts (fail-fast);
-    // teardown still runs in the finally.
-    if (specs.length > 0) {
-      runtime.createNetwork(network);
+    // Bring up the group: private network (internal under egress lockdown) →
+    // egress proxies → sidecars → readiness. A sidecar that never reaches
+    // readiness aborts the run before the agent starts (fail-fast); teardown
+    // still runs in the finally.
+    if (specs.length > 0 || egressActive) {
+      runtime.createNetwork(network, { internal: egressActive });
       networkCreated = true;
+      for (const spec of egressSpecs) {
+        runtime.startEgressProxy(spec);
+        startedContainers.push(spec.name);
+      }
       for (const spec of specs) {
         runtime.startSidecar(spec);
         startedContainers.push(spec.name);
@@ -264,16 +299,20 @@ export async function runSpawn(
     }
 
     if (!readinessError) {
-      // The agent joins its Run's private network only when it has sidecars to
-      // reach (a plain run stays on the default bridge), plus any pre-wired
-      // networks (the compose edge network, so `host.docker.internal` resolves
-      // to the local OmniRoute). Sidecar runs join both.
-      const networks = [
-        ...new Set([
-          ...(params.runOptions.networks ?? []),
-          ...(specs.length > 0 ? [network] : []),
-        ]),
-      ];
+      // The agent's networks. Under egress lockdown the agent joins *only* the
+      // internal run network — the proxies hold the allow-list, so the compose
+      // edge network (which would also grant full WAN) and any other pre-wired
+      // network are dropped. Without lockdown: the run's private network when it
+      // has sidecars, plus any pre-wired networks (the compose edge network, so
+      // `host.docker.internal` resolves to the local OmniRoute).
+      const agentNetworks = egressActive
+        ? [network]
+        : [
+            ...new Set([
+              ...(params.runOptions.networks ?? []),
+              ...(specs.length > 0 ? [network] : []),
+            ]),
+          ];
       const runOptions: RunOptions = {
         ...params.runOptions,
         name: run.name,
@@ -284,7 +323,13 @@ export async function runSpawn(
           ...(params.configMounts ?? []),
         ],
         workdir: '/workspace',
-        networks: networks.length > 0 ? networks : undefined,
+        networks: agentNetworks.length > 0 ? agentNetworks : undefined,
+        // Under lockdown the host-gateway mapping would shadow the proxy's
+        // `host.docker.internal` alias in /etc/hosts (files beat DNS), and the
+        // gateway is unreachable from an internal network anyway.
+        extraHosts: egressActive
+          ? undefined
+          : params.runOptions.extraHosts,
       };
       const command = params.interactive
         ? harness.buildInteractiveCommand(params.model)

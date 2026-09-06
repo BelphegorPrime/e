@@ -13,9 +13,9 @@ The attacker we harden against is a **compromised or prompt-injected harness
 agent**: the container runs the harness CLI unsupervised
 (`--dangerously-skip-permissions`, see ADR-0002), so anything the agent can
 reach, it can abuse. The host is assumed hostile-adjacent for the container:
-the container must be treated as untrusted code with full network egress (the
-model API must be reachable), limited only by what is mounted and what
-credentials are present.
+the container must be treated as untrusted code with network egress limited to
+the provider base URL and configured MCP endpoints (ADR-0011; see Zone 1),
+limited further by what is mounted and what credentials are present.
 
 Secondary actors: a **local compromise on the host network** (another process
 or container reaching the host's listening ports), and **misconfiguration**
@@ -35,7 +35,7 @@ packages, `npx skills@latest` at build time) — noted, not analyzed here.
 | The run worktree is bind-mounted at `/workspace` read-write | By design |
 | Config overlays (Codex config, skills) are mounted read-only outside `/workspace` | Good |
 | Sidecar MCP servers join a private per-run network; the primary joins it only when sidecars exist | Good |
-| Full network egress (only the model API is *needed*) | **Finding** (ADR-0002 deferred gap) |
+| Network egress is limited to the provider base URL and configured MCP endpoints via per-host proxy containers on an internal run network | **Fixed** (ADR-0011) |
 | `.e/.env` injected whole into every container, unfiltered | Fixed — whitelisted (see Zone 2) |
 
 Root in the container is the highest-value finding: the hardening work is
@@ -46,12 +46,18 @@ write to their config/home dirs at runtime — so the Dockerfile template needs 
 "runtime user" parameter defaulting to a non-root uid, with the harness
 registry able to override where needed.
 
-Egress hardening (only allow the provider base URL and configured MCP
-endpoints) is the second finding, but it is architecturally significant:
-Docker has no native egress firewall, so it needs a proxy container or network
-policy on the run group. It is the least-urgent of the three because the agent
-must reach its model API anyway and credential exposure is already bounded by
-Zone-2 fixes.
+Egress hardening (allow only the provider base URL and configured MCP
+endpoints) is fixed in ADR-0011. Docker has no native egress firewall, so the
+run uses per-host transparent TCP forwarder proxy containers (`e-egress`) on an
+`--internal` run network. The agent joins only that internal network; the
+proxies alias each allow-listed hostname on it and forward to pinned upstream
+addresses (public IPs for remote targets, the compose edge DNS name for the
+local OmniRoute), so the agent can only reach exactly the hosts and ports it is
+given. Sidecar MCP servers keep a WAN face on the default bridge so they can
+still reach their own external APIs. The provider base URL and configured MCP
+targets form the allow-list up front (`deriveEgressAllowList` in the spawn
+plan); a public target that cannot be pinned to an IP aborts the run rather
+than silently granting egress.
 
 ## Zone 2: Store and secrets
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
 import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index.js';
-import type { ContainerRunner, RunOptions, SidecarSpec } from '../runtime/index.js';
+import type { ContainerRunner, RunOptions, SidecarSpec, EgressProxySpec } from '../runtime/index.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
 import {
@@ -120,8 +120,10 @@ class FakeRuntime implements ContainerRunner {
   /** Ordered record of every group primitive called, for asserting lifecycle order. */
   calls: string[] = [];
   networks: string[] = [];
+  networkInternal = false;
   removedNetworks: string[] = [];
   startedSidecars: SidecarSpec[] = [];
+  startedEgressProxies: EgressProxySpec[] = [];
   removedContainers: string[] = [];
   sleeps: number[] = [];
 
@@ -154,11 +156,12 @@ class FakeRuntime implements ContainerRunner {
     return this.exitCode;
   }
 
-  createNetwork(name: string): void {
+  createNetwork(name: string, opts?: { internal?: boolean }): void {
     this.calls.push('createNetwork');
     if (this.throwOn?.op === 'createNetwork')
       throw new Error(this.throwOn.message);
     this.networks.push(name);
+    if (opts?.internal) this.networkInternal = true;
   }
   removeNetwork(name: string): void {
     this.calls.push('removeNetwork');
@@ -169,6 +172,10 @@ class FakeRuntime implements ContainerRunner {
   startSidecar(spec: SidecarSpec): void {
     this.calls.push('startSidecar');
     this.startedSidecars.push(spec);
+  }
+  startEgressProxy(spec: EgressProxySpec): void {
+    this.calls.push('startEgressProxy');
+    this.startedEgressProxies.push(spec);
   }
   removeContainer(name: string): void {
     this.calls.push('removeContainer');
@@ -613,6 +620,95 @@ test('a healthy sidecar produces no warning', async () => {
   );
   assert.equal(runtime.calls.includes('isRunning'), true);
   assert.equal(result.sidecarWarnings, undefined);
+});
+
+// --- egress lockdown (ADR-0011) ---
+
+const egressPlan: import('../egress/index.js').EgressProxyPlan = {
+  alias: 'gateway.example.com',
+  ports: [443],
+  upstreamHost: '203.0.113.10',
+  wan: 'bridge',
+};
+const RN = 'e-demo-fix-flaky-test-1';
+
+test('egress lockdown: internal network, proxy up before sidecars, agent joins only the run network', async () => {
+  const { deps, git, runtime } = makeDeps();
+  await runSpawn(
+    deps,
+    makeParams({
+      sidecars: [sidecar],
+      egress: [egressPlan],
+      readiness: fastReadiness,
+    })
+  );
+
+  assert.ok(runtime.networkInternal);
+  const runName = git.worktrees[0].branch.replace(/\//g, '-');
+  assert.equal(runName, RN);
+  assert.deepEqual(runtime.calls, [
+    'createNetwork',
+    'startEgressProxy',
+    'startSidecar',
+    'probeTcp',
+    'run',
+    'isRunning',
+    'removeContainer',
+    'removeContainer',
+    'removeNetwork',
+  ]);
+  assert.equal(runtime.startedEgressProxies.length, 1);
+  assert.equal(runtime.startedEgressProxies[0].name, `${runName}-egress-0`);
+  assert.equal(runtime.startedEgressProxies[0].alias, 'gateway.example.com');
+  assert.equal(runtime.startedEgressProxies[0].image, 'e-egress');
+  assert.deepEqual(runtime.startedEgressProxies[0].ports, [443]);
+  assert.equal(runtime.startedEgressProxies[0].upstreamHost, '203.0.113.10');
+  // The sidecar keeps its WAN face on the default bridge.
+  assert.equal(runtime.startedSidecars[0].wan, 'bridge');
+  // The agent joins only the internal run network (no edge network, no gateway).
+  assert.deepEqual(runtime.options?.networks, [`${runName}-net`]);
+  assert.equal(runtime.options?.extraHosts, undefined);
+});
+
+test('egress lockdown: a standalone provider run (no sidecars) still locks down', async () => {
+  const { deps, runtime } = makeDeps();
+  await runSpawn(deps, makeParams({ egress: [egressPlan] }));
+
+  assert.ok(runtime.networkInternal);
+  assert.equal(runtime.startedEgressProxies.length, 1);
+  assert.deepEqual(runtime.options?.networks, [`${RN}-net`]);
+  assert.equal(runtime.options?.extraHosts, undefined);
+  assert.deepEqual(runtime.calls, [
+    'createNetwork',
+    'startEgressProxy',
+    'run',
+    'removeContainer',
+    'removeNetwork',
+  ]);
+});
+
+test('egress lockdown: teardown removes proxies too', async () => {
+  const { deps, runtime } = makeDeps();
+  await runSpawn(deps, makeParams({ egress: [egressPlan] }));
+  assert.deepEqual(runtime.removedContainers, [`${RN}-egress-0`]);
+  assert.deepEqual(runtime.removedNetworks, [`${RN}-net`]);
+});
+
+test('egress lockdown: the agent network does not include the compose edge network', async () => {
+  const { deps, runtime } = makeDeps();
+  await runSpawn(
+    deps,
+    makeParams({
+      runOptions: {
+        attach: true,
+        rm: true,
+        rmWorktree: true,
+        networks: ['omniroute-edge'],
+      },
+      egress: [egressPlan],
+    })
+  );
+  assert.deepEqual(runtime.options?.networks, [`${RN}-net`]);
 });
 
 test('tears the group down even when the agent exits non-zero', async () => {
