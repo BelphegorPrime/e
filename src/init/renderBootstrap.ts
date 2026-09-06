@@ -42,9 +42,47 @@ for model in $models; do
       log "model already loaded: $llama_id"
     else
       log "loading model $llama_id"
-      curl -sf -X POST http://llama:9931/models/load \
+      # llama may return HTTP 500 "model limit reached" while
+      # it evicts the previous model and continues this load asynchronously.
+      # Accept only that known response; all other transport/HTTP errors fail.
+      if ! load_response=$(curl -sS -X POST http://llama:9931/models/load \
         -H 'Content-Type: application/json' \
-        -d '{"model":"'"$llama_id"'"}' > /dev/null
+        -d '{"model":"'"$llama_id"'"}' \
+        -w '\\n%{http_code}'); then
+        log "llama.cpp load request failed: $llama_id"
+        exit 1
+      fi
+      load_status=$(printf '%s\\n' "$load_response" | tail -n 1)
+      load_body=$(printf '%s\\n' "$load_response" | sed '$d')
+      case "$load_status" in
+        2??) ;;
+        500)
+          if ! printf '%s\\n' "$load_body" | grep -q '"message"[[:space:]]*:[[:space:]]*"model limit reached, try again later"'; then
+            log "llama.cpp rejected model load (HTTP $load_status): $llama_id"
+            exit 1
+          fi
+          log "model load continues after capacity eviction: $llama_id"
+          ;;
+        *)
+          log "llama.cpp rejected model load (HTTP $load_status): $llama_id"
+          exit 1
+          ;;
+      esac
+
+      attempts=0
+      until model_state=$(curl -sf http://llama:9931/models) && entry=$(printf '%s\\n' "$model_state" | sed 's/},{/}\\n{/g' | grep '"id"[[:space:]]*:[[:space:]]*"'$repo | head -1) && printf '%s\\n' "$entry" | grep -q '"value"[[:space:]]*:[[:space:]]*"loaded"'; do
+        if printf '%s\\n' "$entry" | grep -q '"value"[[:space:]]*:[[:space:]]*"failed"'; then
+          log "llama.cpp failed loading model: $llama_id"
+          exit 1
+        fi
+        attempts=$((attempts + 1))
+        if test "$attempts" -ge 600; then
+          log "timed out loading model: $llama_id"
+          exit 1
+        fi
+        sleep 2
+      done
+      log "model loaded: $llama_id"
     fi
   else
     log "registering model $model"

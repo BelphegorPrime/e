@@ -1,5 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import {
+  chmodSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseHarnessChoice,
   parseModelChoice,
@@ -279,6 +288,93 @@ test('renderBootstrap: matches cached llama presets by repo prefix, not exact qu
     script,
     /-X POST http:\/\/llama:9931\/models\/load.*\$model/
   );
+});
+
+function runBootstrapWithLoadResponse(
+  status: number,
+  message: string
+): { output?: string; status?: number } {
+  const directory = mkdtempSync(join(tmpdir(), 'e-bootstrap-test-'));
+  const model = 'example/model:Q4';
+  const stateFile = join(directory, 'load-started');
+  const bootstrapPath = join(directory, 'bootstrap.sh');
+  const curlPath = join(directory, 'curl');
+  const sleepPath = join(directory, 'sleep');
+
+  writeFileSync(bootstrapPath, renderBootstrap([model]), { mode: 0o755 });
+  writeFileSync(
+    curlPath,
+    `#!/bin/sh
+case "$*" in
+  *omniroute:20128/api/auth/login*)
+    printf 'HTTP/1.1 200 OK\\r\\nset-cookie: auth_token=test-token; Path=/\\r\\n'
+    ;;
+  *omniroute:20128/healthz*|*llama:9931/health*)
+    ;;
+  *llama:9931/models/load*)
+    touch "$STATE_FILE"
+    printf '{"error":{"code":${status},"message":"${message}","type":"server_error"}}\\n${status}'
+    ;;
+  *llama:9931/models*)
+    if test -f "$STATE_FILE"; then value=loaded; else value=unloaded; fi
+    printf '{"data":[{"id":"${model}","status":{"value":"%s"}}]}' "$value"
+    ;;
+  *omniroute:20128/api/providers*)
+    printf 'llama.cpp (local)'
+    ;;
+  *)
+    printf 'unexpected curl invocation: %s\\n' "$*" >&2
+    exit 99
+    ;;
+esac
+`,
+    { mode: 0o755 }
+  );
+  writeFileSync(sleepPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  chmodSync(curlPath, 0o755);
+  chmodSync(sleepPath, 0o755);
+
+  try {
+    return {
+      output: execFileSync('/bin/sh', [bootstrapPath], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          INITIAL_PASSWORD: 'test-password',
+          PATH: `${directory}:${process.env.PATH ?? ''}`,
+          STATE_FILE: stateFile,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    };
+  } catch (error) {
+    return {
+      status:
+        typeof error === 'object' &&
+        error !== null &&
+        'status' in error &&
+        typeof error.status === 'number'
+          ? error.status
+          : undefined,
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test('renderBootstrap: waits for an asynchronously started load after llama returns model-limit 500', () => {
+  const result = runBootstrapWithLoadResponse(
+    500,
+    'model limit reached, try again later'
+  );
+
+  assert.match(result.output ?? '', /model loaded: example\/model:Q4/);
+});
+
+test('renderBootstrap: does not hide an unrelated load endpoint error', () => {
+  const result = runBootstrapWithLoadResponse(500, 'failed to open model');
+
+  assert.notEqual(result.status, 0);
 });
 
 test('renderBootstrap: a custom model selection only provisions those models, with the first as default', () => {
