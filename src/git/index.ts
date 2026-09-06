@@ -11,6 +11,9 @@ export interface Git {
   /** The commit SHA that `HEAD` currently points at. */
   headSha(): string;
 
+  /** The short name of the branch `HEAD` is currently on, or '' when detached. */
+  currentBranch(): string;
+
   /**
    * Shortnames of existing run branches matching `<prefix>-*`, across both
    * local heads and remote-tracking refs, so the run counter never reuses a

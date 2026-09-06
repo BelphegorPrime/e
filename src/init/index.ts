@@ -9,7 +9,11 @@ import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
 import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from '../skill/index.js';
 import { MODEL_CATALOG } from '../modelStatus.js';
 import { envFilePath, harnessesBaseDir } from '../store/paths.js';
-import { readConfig, writeConfig } from '../store/config.js';
+import {
+  GIT_PLATFORMS,
+  readConfig,
+  writeConfig,
+} from '../store/config.js';
 import { log } from '../utils/log.js';
 import {
   keysToPrompt,
@@ -83,6 +87,8 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     currentModels: config.models,
     existingEnvContent,
     modelCatalog: MODEL_CATALOG,
+    gitPlatforms: [...GIT_PLATFORMS],
+    currentGitPlatform: config.gitPlatform,
     hardware: detectHardware(),
   };
 
@@ -96,6 +102,8 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     promptKeys: keysToPrompt(requiredEnvKeys(), existingValues),
     modelCatalog: state.modelCatalog,
     currentModels: state.currentModels,
+    gitPlatforms: state.gitPlatforms,
+    currentGitPlatform: config.gitPlatform,
   });
 
   applyPlan(root, planInit(state, answers));
@@ -125,6 +133,11 @@ function applyPlan(root: string | undefined, plan: InitPlan): void {
   writeConfig(plan.config, root);
   log.info(`favorite harness: ${plan.defaultHarness}`);
   log.info(`local models: ${plan.models.join(', ')}`);
+  log.info(
+    plan.gitPlatform
+      ? `PR/MR platform: ${plan.gitPlatform} (created on successful runs)`
+      : 'PR/MR platform: disabled (run `e init` to enable)'
+  );
 
   log.success(
     `\nInitialized ${Object.keys(HARNESSES).length} harnesses in ${harnessesBaseDir(root)}.`

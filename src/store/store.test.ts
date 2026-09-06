@@ -81,6 +81,7 @@ test('resolveConfig: a missing config yields the built-in defaults', () => {
   assert.deepEqual(resolveConfig(undefined), {
     defaultHarness: DEFAULT_HARNESS,
     models: MODELS,
+    gitPlatform: undefined,
   });
 });
 
@@ -88,7 +89,22 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
   assert.deepEqual(resolveConfig({ defaultHarness: 'codex' }), {
     defaultHarness: 'codex',
     models: MODELS,
+    gitPlatform: undefined,
   });
+});
+
+test('resolveConfig: an explicit gitPlatform is kept; malformed ones are dropped', () => {
+  assert.equal(resolveConfig({ gitPlatform: 'gitlab' }).gitPlatform, 'gitlab');
+  assert.equal(
+    resolveConfig({ gitPlatform: 'bitbucket' } as unknown as Record<string, unknown>)
+      .gitPlatform,
+    undefined
+  );
+  assert.equal(
+    resolveConfig({ gitPlatform: 42 } as unknown as Record<string, unknown>)
+      .gitPlatform,
+    undefined
+  );
 });
 
 test('resolveConfig: a blank or non-string defaultHarness falls back to the default', () => {
@@ -125,11 +141,15 @@ test('serializeConfig: pretty JSON with a trailing newline', () => {
 test('config round-trip: writeConfig then readConfig returns the written value', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
   try {
-    writeConfig({ defaultHarness: 'codex', models: ['org/one'] }, root);
+    writeConfig(
+      { defaultHarness: 'codex', models: ['org/one'], gitPlatform: 'gitlab' },
+      root
+    );
     assert.equal(fs.existsSync(configFilePath(root)), true);
     assert.deepEqual(readConfig(root), {
       defaultHarness: 'codex',
       models: ['org/one'],
+      gitPlatform: 'gitlab',
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -142,6 +162,7 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
     assert.deepEqual(readConfig(root), {
       defaultHarness: DEFAULT_HARNESS,
       models: MODELS,
+      gitPlatform: undefined,
     });
     assert.equal(fs.existsSync(configFilePath(root)), false);
   } finally {

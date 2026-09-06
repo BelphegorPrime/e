@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
 import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index.js';
+import type { PullRequest, PullRequestSpec } from '../github/index.js';
 import type { ContainerRunner, RunOptions, SidecarSpec } from '../runtime/index.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
@@ -26,6 +27,8 @@ class FakeGit implements Git {
   addWorktreeError?: string;
   /** When set, `push` throws with this message. */
   pushFails?: string;
+  /** Run-branch log the fake returns (newest first); empty by default. */
+  log: RunCommit[];
 
   calls: string[] = [];
   listedPrefixes: string[] = [];
@@ -43,6 +46,7 @@ class FakeGit implements Git {
       collideBranches?: string[];
       addWorktreeError?: string;
       pushFails?: string;
+      log?: RunCommit[];
     } = {}
   ) {
     this.repo = opts.repo ?? true;
@@ -52,6 +56,7 @@ class FakeGit implements Git {
     this.collideBranches = new Set(opts.collideBranches ?? []);
     this.addWorktreeError = opts.addWorktreeError;
     this.pushFails = opts.pushFails;
+    this.log = opts.log ?? [];
   }
 
   isRepo(): boolean {
@@ -61,6 +66,9 @@ class FakeGit implements Git {
   headSha(): string {
     this.calls.push('headSha');
     return 'basesha';
+  }
+  currentBranch(): string {
+    return 'main';
   }
   listRunBranches(prefix: string): string[] {
     this.calls.push('listRunBranches');
@@ -73,7 +81,7 @@ class FakeGit implements Git {
   }
   runLog(): RunCommit[] {
     this.calls.push('runLog');
-    return [];
+    return this.log;
   }
   branchExists(): boolean {
     this.calls.push('branchExists');
@@ -107,6 +115,24 @@ class FakeGit implements Git {
   removeWorktree(worktreePath: string): void {
     this.calls.push('removeWorktree');
     this.removed.push(worktreePath);
+  }
+}
+
+/** A `PullRequest` fake that records what the orchestrator asked it to open. */
+class FakePullRequest implements PullRequest {
+  url?: string;
+  fails?: string;
+  specs: PullRequestSpec[] = [];
+
+  constructor(opts: { url?: string; fails?: string } = {}) {
+    this.url = opts.url;
+    this.fails = opts.fails;
+  }
+
+  create(spec: PullRequestSpec): string {
+    this.specs.push(spec);
+    if (this.fails) throw new Error(this.fails);
+    return this.url ?? `https://example.com/pr/${spec.head}`;
   }
 }
 
@@ -218,6 +244,7 @@ function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
   const deps: RunSpawnDeps = {
     git,
     runtime,
+    pullRequest: overrides.pullRequest,
     // Instant, recorded sleep so readiness polling never actually waits.
     sleep: overrides.sleep ?? makeSleep(runtime),
   };
@@ -447,6 +474,84 @@ test('a push failure is non-fatal: branch kept, warning surfaced, exit code unch
   assert.equal(git.pushed.length, 0);
   // The worktree is still cleaned up and the branch (locally) preserved.
   assert.deepEqual(git.removed, [git.worktrees[0].path]);
+});
+
+// --- PR/MR creation after a successful push -----------------------------------
+
+test('opens a PR/MR into the spawn-time branch when a platform is configured', async () => {
+  const pr = new FakePullRequest({ url: 'https://github.com/o/r/pull/7' });
+  const { deps, git } = makeDeps({ pullRequest: pr });
+  const result = await runSpawn(
+    deps,
+    makeParams({ gitPlatform: 'github' })
+  );
+
+  assert.equal(result.pullRequestUrl, 'https://github.com/o/r/pull/7');
+  assert.equal(pr.specs.length, 1);
+  const spec = pr.specs[0];
+  assert.equal(spec.platform, 'github');
+  assert.equal(spec.head, result.branch);
+  // The target branch is the branch the host was on when the run spawned.
+  assert.equal(spec.base, 'main');
+  // The title is the run branch's tip commit subject (its commit message).
+  assert.equal(spec.title, `e: run output for ${result.branch}`);
+  // The body is the prompt that drove the run.
+  assert.equal(spec.body, 'Fix the flaky test');
+  assert.deepEqual(git.pushed, [result.branch]);
+});
+
+test('titles the PR/MR with the run git log tip when one exists', async () => {
+  const pr = new FakePullRequest();
+  const git = new FakeGit({
+    log: [
+      { sha: 'c2', subject: 'feat: fix the flaky test', committerDate: 't2' },
+      { sha: 'c1', subject: 'base', committerDate: 't1' },
+    ],
+  });
+  const { deps } = makeDeps({ git, pullRequest: pr });
+  await runSpawn(deps, makeParams({ gitPlatform: 'github' }));
+  assert.equal(pr.specs[0].title, 'feat: fix the flaky test');
+});
+
+test('skips PR/MR creation when no platform is configured', async () => {
+  const pr = new FakePullRequest();
+  const { deps } = makeDeps({ pullRequest: pr });
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(pr.specs.length, 0);
+  assert.equal(result.pullRequestUrl, undefined);
+  assert.equal(result.pullRequestWarning, undefined);
+  // The push still happened as before.
+  assert.equal(result.pushed, true);
+});
+
+test('a PR/MR failure is non-fatal: warning surfaced, push/exit code unchanged', async () => {
+  const pr = new FakePullRequest({ fails: 'no auth found' });
+  const { deps } = makeDeps({ pullRequest: pr });
+  const result = await runSpawn(
+    deps,
+    makeParams({ gitPlatform: 'gitlab' })
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.pushed, true);
+  assert.equal(result.pullRequestUrl, undefined);
+  assert.match(result.pullRequestWarning ?? '', /no auth found/);
+  assert.equal(pr.specs.length, 1);
+  assert.equal(pr.specs[0].platform, 'gitlab');
+});
+
+test('no PR/MR without a push (push failure leaves nothing to open)', async () => {
+  const pr = new FakePullRequest();
+  const { deps } = makeDeps({
+    git: new FakeGit({ pushFails: 'no remote' }),
+    pullRequest: pr,
+  });
+  const result = await runSpawn(
+    deps,
+    makeParams({ gitPlatform: 'github' })
+  );
+  assert.equal(pr.specs.length, 0);
+  assert.equal(result.pullRequestUrl, undefined);
 });
 
 // --- Composed run group (ADR-0005 / issue #13) ---------------------------------

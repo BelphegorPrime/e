@@ -11,6 +11,7 @@ import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
 import { SHIPPED_SKILLS } from '../skill/index.js';
 import type { HardwareVendor } from '../hardware/index.js';
 import type { ModelCatalogEntry } from '../modelStatus.js';
+import type { GitPlatform } from '../store/config.js';
 import {
   agentDir,
   agentFilePath,
@@ -74,6 +75,10 @@ export interface InitState {
   existingEnvContent?: string;
   /** The local-model catalog to select from. */
   modelCatalog: ModelCatalogEntry[];
+  /** All git platforms offered by this init, in prompt order. */
+  gitPlatforms: GitPlatform[];
+  /** The configured git platform, kept when a re-init doesn't change it (`--yes`). */
+  currentGitPlatform?: GitPlatform;
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
 }
@@ -86,6 +91,8 @@ export interface InitAnswers {
   models?: string | string[];
   /** Collected API-key values to fill into blank `.env` lines (blank answers omitted). */
   apiKeys?: Record<string, string>;
+  /** A 1-based index, an exact platform name, or ''/undefined (blank disables PR/MR). */
+  gitPlatform?: string;
 }
 
 /** One filesystem write the plan prescribes, in prescribed order. */
@@ -124,10 +131,16 @@ export interface InitPlan {
     changed: boolean;
   };
   /** The config.json payload the init records (overwrite semantics). */
-  config: { defaultHarness: string; models: string[] };
+  config: {
+    defaultHarness: string;
+    models: string[];
+    gitPlatform?: GitPlatform;
+  };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
   models: string[];
+  /** Configured git platform for PR/MR creation, or undefined to disable. */
+  gitPlatform?: GitPlatform;
   /** Merged env values: existing + collected + seeded stack secrets. */
   envValues: Record<string, string>;
   /** The seeded OmniRoute stack secret additions (never rotates a set key). */
@@ -165,6 +178,11 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       : parseHarnessChoice(answers.harness, harnessNames, currentDefaultHarness) ??
         currentDefaultHarness;
   const models = resolveModels(answers.models, modelCatalog, currentModels);
+  const gitPlatform = resolveGitPlatform(
+    answers.gitPlatform,
+    state.gitPlatforms,
+    state.currentGitPlatform
+  );
 
   // Merge collected API keys, then seed the stack secrets (never rotating what
   // is already set). Agents are rendered with these merged values, as is the
@@ -253,9 +271,10 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
   return {
     steps,
     env: buildEnvWrite(root, state.existingEnvContent, fullEnv),
-    config: { defaultHarness, models },
+    config: { defaultHarness, models, gitPlatform },
     defaultHarness,
     models,
+    gitPlatform,
     envValues: fullEnv,
     secrets,
     hardware,
@@ -275,6 +294,22 @@ function resolveModels(
   if (answer === undefined) return current;
   if (Array.isArray(answer)) return answer;
   return parseModelChoice(answer, catalog, current) ?? current;
+}
+
+/**
+ * Resolves the git-platform answer, purely: an unanswered prompt (a `--yes`
+ * re-init) keeps the configured `current`; a blank answer disables PR/MR
+ * creation (undefined); a named or 1-based-indexed choice selects it.
+ */
+function resolveGitPlatform(
+  answer: InitAnswers['gitPlatform'] | undefined,
+  platforms: GitPlatform[],
+  current: GitPlatform | undefined
+): GitPlatform | undefined {
+  if (answer === undefined) return current;
+  const trimmed = answer.trim();
+  if (trimmed === '') return undefined;
+  return parseGitPlatformChoice(trimmed, platforms) as GitPlatform | undefined;
 }
 
 /**
@@ -341,6 +376,26 @@ export function parseHarnessChoice(
   if (/^\d+$/.test(trimmed)) {
     const idx = Number(trimmed) - 1;
     if (idx >= 0 && idx < names.length) return names[idx];
+  }
+  return undefined;
+}
+
+/**
+ * Resolves a git-platform prompt answer, purely: a blank answer is the
+ * interactive prompt's "disable" sentinel (handled by the caller), an exact
+ * name or a 1-based index selects that platform, and anything else is
+ * unrecognized (`undefined`, so the glue re-prompts).
+ */
+export function parseGitPlatformChoice(
+  input: string,
+  platforms: readonly string[]
+): string | undefined {
+  const trimmed = input.trim();
+  if (trimmed === '') return undefined;
+  if (platforms.includes(trimmed)) return trimmed;
+  if (/^\d+$/.test(trimmed)) {
+    const idx = Number(trimmed) - 1;
+    if (idx >= 0 && idx < platforms.length) return platforms[idx]!;
   }
   return undefined;
 }

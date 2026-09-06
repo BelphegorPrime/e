@@ -267,6 +267,9 @@ class FakeGit implements Git {
   headSha(): string {
     return 'base';
   }
+  currentBranch(): string {
+    return 'main';
+  }
   listRunBranches(): string[] {
     return this.refs.map(ref => ref.name);
   }

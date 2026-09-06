@@ -22,6 +22,9 @@ class StubGit implements Git {
   headSha(): string {
     return 'basesha';
   }
+  currentBranch(): string {
+    return 'main';
+  }
   listRunBranches(): string[] {
     return [];
   }

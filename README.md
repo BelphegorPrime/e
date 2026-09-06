@@ -162,7 +162,9 @@ First run builds the pi base image (slow — it installs the pi CLI), then a thi
 derived image `e-agent-pi-gw` that bakes `models.json`, then runs
 `pi -p "<prompt>" --provider e --model claude-sonnet-4-5` in the container. On
 success a run branch `e/pi-gw/<slug>-1` is created (and pushed if it produced
-commits).
+commits). If `e init` was asked for a git platform, the push is also opened as a
+PR/MR into the branch you were on when you spawned — title is the run branch's
+commit message, body is the prompt, and the URL is printed on success.
 
 **e. Inspect the baked config** — proof the provider was delivered:
 
@@ -203,14 +205,34 @@ Two further layers add skills for a specific agent or run:
 | `agent.json` `skills: ["…"]` | Baked into an agent's derived image (`e-agent-<name>`, layer 2) |
 | `e spawn … --skill <name>`   | Mounted read-only for that run (layer 3)                        |
 
+## Merge requests on a successful run
+
+`e init` asks for a **git platform** — `github`, `gitlab`, `forgejo`, or
+`gitea` — and records it in `.e/config.json`. On a run that pushes, `e` then
+opens a PR/MR automatically:
+
+- **Title**: the run branch's tip commit message.
+- **Body**: the prompt that drove the run.
+- **Base**: the branch you were on when you spawned (the run's natural target),
+  so the agent branch merges back into your `feature/…`/`dev`/`main` branch.
+- **Tool**: the platform's native CLI on the host — `gh` (GitHub, and the
+  GitHub-compatible Forgejo/Gitea, resolving the host from the git remote) or
+  `glab` (GitLab). Needs that CLI installed and authenticated on the host,
+  never in the container (ADR-0002).
+
+Blank the platform prompt to disable PR/MR creation; a re-init with `--yes`
+keeps the configured platform. PR/MR failure is non-fatal — the pushed branch
+is the durable artifact, and a warning reports why the open failed.
+
 ## Cheat sheet
 
 | Command                                        | What it does                                                           |
 | ---------------------------------------------- | ---------------------------------------------------------------------- |
-| `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config  |
+| `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config. Also asks for the git platform (PR/MR on successful runs)                 |
 | `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt                                  |
 | `e spawn <agent-or-harness> --interactive`     | Start the harness TUI for the first message                            |
 | `e spawn … --skill <name>`                     | Add a Skill for this run                                               |
 | `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for pi)                                   |
 | `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model) |
 | `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                         |
+| `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch        |
