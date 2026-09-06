@@ -4,8 +4,7 @@
 
 ## Contexts
 
-- [CLI](./packages/cli/CONTEXT.md) — builds and runs coding-agent harnesses in containers (the `e` command).
-- **UI** (`packages/ui`) — front-end for the orchestrator. Stub today; no `CONTEXT.md` until its language firms up.
+- [CLI](./packages/cli/CONTEXT.md) - builds and runs coding-agent harnesses in containers (the `e` command). Owns the web UI front-end too: the React app lives under `packages/cli/ui/` and is built by webpack straight into `packages/cli/dist/ui`, which `e serve` reads and pkg embeds in the binary.
 - **Docker** (`packages/docker`) — container build scaffolding. Stub today; no `CONTEXT.md` yet.
 
 ## Linting
@@ -14,4 +13,4 @@
 
 ## Relationships
 
-- **UI → CLI**: the UI is intended to drive and observe CLI runs. The contract between them is undecided — see the UI ↔ backend design tree, not yet grilled.
+- **UI → CLI**: the UI is intended to drive and observe CLI runs and ships inside the CLI binary (`packages/cli/ui`, bundled to `dist/ui`). The contract between them is undecided (see the UI ↔ backend design tree, not yet grilled).
