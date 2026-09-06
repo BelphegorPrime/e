@@ -29,7 +29,7 @@ packages, `npx skills@latest` at build time) — noted, not analyzed here.
 
 | Fact | Status |
 | ---- | ------ |
-| Runs as **root** (harness Dockerfile has no `USER`; `node:lts-alpine` default) with full caps, no drops | **Finding** |
+| Runs as a **non-root** runtime user (`USER node`, writable home at `/home/node`) in the shared Dockerfile template; the harness registry can override per harness (`runtimeUser`), and every shipped harness runs non-root | **Fixed** |
 | No `docker.sock` (or any host socket) is mounted | Good |
 | Git credentials never enter the container; all git runs host-side (ADR-0002) | Good |
 | The run worktree is bind-mounted at `/workspace` read-write | By design |
@@ -38,13 +38,26 @@ packages, `npx skills@latest` at build time) — noted, not analyzed here.
 | Full network egress (only the model API is *needed*) | **Finding** (ADR-0002 deferred gap) |
 | `.e/.env` injected whole into every container, unfiltered | Fixed — whitelisted (see Zone 2) |
 
-Root in the container is the highest-value finding: the hardening work is
-relatively mechanical (a non-root user in the Dockerfile template, plus wiring
-the run to use it) and removes an entire class of container-escape
-amplifications. The `USER` decision must be per-harness — some harness CLIs
-write to their config/home dirs at runtime — so the Dockerfile template needs a
-"runtime user" parameter defaulting to a non-root uid, with the harness
-registry able to override where needed.
+Root in the container was the highest-value finding, now fixed: the harness
+Dockerfile template ends with `USER node` (the non-root user `node:lts-alpine`
+ships, home `/home/node` — writable, no extra layers) and sets `ENV HOME`
+before the skills install so build-time `skills add -g` lands under the same
+home the runtime user reads. The runtime-user decision is per-harness, owned by
+the harness registry (`runtimeUser`, default non-root); no shipped harness
+needs a root override today. All in-container config/skills dirs moved under
+`/home/node` (Codex `CODEX_HOME`, pi `PI_CODING_AGENT_DIR`, the shared
+`~/.agents/skills`, Claude's `~/.claude/skills`), and derived agent images build
+their COPY layers as root then hand the trees back to the runtime user
+(`chown` + restore `USER`), so a CLI that writes to its config dir at runtime
+still can. Verification caveat for the run worktree bind-mount: `/workspace` is
+host-owned, and the container's uid 1000 maps back to the host differently per
+engine — rootful Docker maps 1:1 (works when the host user is uid 1000),
+rootless Docker/Podman map uid 1000 into the user's subordinate range (the
+worktree appears owned by an unmapped uid). Verify writability on the target
+deployment: `docker run --rm -v <worktree>:/workspace node:lts-alpine sh -c
+'touch /workspace/.e-uid-probe && rm /workspace/.e-uid-probe'`; rootless
+engines can bridge the gap with `--userns=keep-id` (Podman) or a matching
+`--user`/chown strategy.
 
 Egress hardening (only allow the provider base URL and configured MCP
 endpoints) is the second finding, but it is architecturally significant:

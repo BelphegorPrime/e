@@ -278,7 +278,7 @@ test('planSpawn: a file-MCP harness (codex) renders a config overlay, no mcpArgs
   const plan = planSpawn(f);
   assert.deepEqual(plan.mcpArgs, []);
   assert.ok(plan.configOverlay);
-  assert.equal(plan.configOverlay?.mountTo, '/root/.codex/config.toml');
+  assert.equal(plan.configOverlay?.mountTo, '/home/node/.codex/config.toml');
 });
 
 test('planSpawn: a sidecar credential is rendered from storeEnv', () => {
@@ -345,6 +345,6 @@ test('planSpawn: baked skills go to the derived image; per-run skills become mou
   const plan = planSpawn(f);
   assert.deepEqual(plan.agentImagePlan?.skillNames, ['baked-skill']);
   assert.equal(plan.skillMounts.length, 1);
-  assert.equal(plan.skillMounts[0].container, '/root/.claude/skills/run-skill');
+  assert.equal(plan.skillMounts[0].container, '/home/node/.claude/skills/run-skill');
   assert.equal(plan.skillMounts[0].ro, true);
 });

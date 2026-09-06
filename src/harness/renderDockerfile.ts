@@ -12,6 +12,14 @@ export interface DockerfileParams {
   npmPackage: string;
   /** Extra flags for `npm install -g`, e.g. ["--ignore-scripts"]. Default: []. */
   npmFlags?: string[];
+  /**
+   * The container user the harness CLI runs as. Default: `'node'` — the
+   * non-root user `node:lts-alpine` ships, with a writable home at
+   * `/home/node`, so an agent container never runs as root (attack-surface.md
+   * Zone 1). Set `'root'` only for a harness whose CLI genuinely needs root at
+   * runtime; the harness registry owns that decision.
+   */
+  runtimeUser?: 'node' | 'root';
   /** Base image. Default: "node:lts-alpine". */
   baseImage?: string;
   /** Container workdir. Default: "/workspace". */
@@ -43,11 +51,11 @@ export interface DockerfileParams {
 const TEMPLATE = `FROM {{{baseImage}}}
 
 # {{{label}}}
-RUN apk add --no-cache git && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}
+{{#homeLine}}{{{.}}}{{/homeLine}}RUN apk add --no-cache git && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}
 {{#skillsBlock}}
 {{{.}}}
 {{/skillsBlock}}
-WORKDIR {{{workdir}}}
+WORKDIR {{{workdir}}}{{#userLine}}{{{.}}}{{/userLine}}
 `;
 
 /**
@@ -71,13 +79,28 @@ function renderSkillsBlock(collections: string[], agent: string): string {
   return lines.join('\n');
 }
 
-/** Renders a Dockerfile for a harness from {@link TEMPLATE}. */
+/**
+ * The runtime user's home, used for the non-root default. The `node` user
+ * `node:*-alpine` ships has this home pre-created and owned by it, so it is
+ * writable without extra layers — the "writable home" half of the non-root
+ * baseline.
+ */
+const NODE_HOME = '/home/node';
+
+/**
+ * Renders a Dockerfile for a harness from {@link TEMPLATE}. The build steps
+ * (apk, npm, skills install) run as root; the final `USER` switches to the
+ * runtime user (`node` by default, `root` per-harness override). The build-time
+ * `ENV HOME` makes the skills CLI's `-g` installs land under the runtime
+ * user's home, matching where each harness reads them at runtime.
+ */
 export function renderDockerfile(p: DockerfileParams): string {
   const collections = p.skillCollections ?? [];
   const skillsBlock =
     collections.length > 0 && p.skillsAgent
       ? renderSkillsBlock(collections, p.skillsAgent)
       : undefined;
+  const nonRoot = (p.runtimeUser ?? 'node') !== 'root';
 
   return Mustache.render(TEMPLATE, {
     baseImage: p.baseImage ?? 'node:lts-alpine',
@@ -86,5 +109,7 @@ export function renderDockerfile(p: DockerfileParams): string {
     npmPackage: p.npmPackage,
     skillsBlock,
     workdir: p.workdir ?? '/workspace',
+    homeLine: nonRoot ? `ENV HOME=${NODE_HOME}\n` : '',
+    userLine: nonRoot ? `\nUSER node` : '',
   });
 }
