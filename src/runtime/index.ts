@@ -214,6 +214,23 @@ export function composeWaitArgs(
 }
 
 /**
+ * Restarts a compose service, by default the local `llama` container. The
+ * bootstrap retry uses this to drop a model llama.cpp has loaded: with
+ * `--models-max 1` its download path rejects a registration while any model
+ * is loaded (HTTP 500 "model limit reached"), and a fresh llama process has
+ * no loaded model.
+ */
+export function composeRestartArgs(
+  composeFile: string,
+  envFile?: string,
+  service = 'llama'
+): string[] {
+  const args = ['compose'];
+  if (envFile) args.push('--env-file', envFile);
+  return [...args, '-f', composeFile, 'restart', service];
+}
+
+/**
  * A container runtime (docker, podman, ...).
  *
  * Docker and Podman share the same CLI surface, so a single concrete class
@@ -324,38 +341,61 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Starts a Compose stack in the background, preserving its own lifecycle. */
   composeUp(composeFile: string, envFile?: string): void {
-    const args = composeUpArgs(composeFile, envFile);
-    log.command(`> ${this.command} ${args.join(' ')}`);
-    const result = spawnSync(this.command, args, {
-      stdio: 'inherit',
-      shell: false,
-    });
-    if (result.error) {
-      throw new Error(
-        `Failed to start ${this.command} compose: ${result.error.message}`
-      );
-    }
-    if (result.status !== 0) {
-      throw new Error(
-        `Compose startup failed (exit code ${result.status ?? 1}).`
-      );
-    }
+    // At most one retry. A bootstrap exit 22 means a curl HTTP >= 400 from
+    // llama.cpp: with `--models-max 1` it rejects a model download while a
+    // model is already loaded (500 "model limit reached"; upstream bug, fix
+    // in progress). Restarting llama drops that loaded-model state, so the
+    // retry succeeds — the manual `docker compose restart llama` workaround,
+    // automated. Other exit codes are not transient; fail immediately.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const args = composeUpArgs(composeFile, envFile);
+      log.command(`> ${this.command} ${args.join(' ')}`);
+      const result = spawnSync(this.command, args, {
+        stdio: 'inherit',
+        shell: false,
+      });
+      if (result.error) {
+        throw new Error(
+          `Failed to start ${this.command} compose: ${result.error.message}`
+        );
+      }
+      if (result.status !== 0) {
+        throw new Error(
+          `Compose startup failed (exit code ${result.status ?? 1}).`
+        );
+      }
 
-    const waitArgs = composeWaitArgs(composeFile, envFile);
-    log.command(`> ${this.command} ${waitArgs.join(' ')}`);
-    const waitResult = spawnSync(this.command, waitArgs, {
-      stdio: 'inherit',
-      shell: false,
-    });
-    if (waitResult.error) {
-      throw new Error(
-        `Failed to wait for ${this.command} compose: ${waitResult.error.message}`
+      const waitArgs = composeWaitArgs(composeFile, envFile);
+      log.command(`> ${this.command} ${waitArgs.join(' ')}`);
+      const waitResult = spawnSync(this.command, waitArgs, {
+        stdio: 'inherit',
+        shell: false,
+      });
+      if (waitResult.error) {
+        throw new Error(
+          `Failed to wait for ${this.command} compose: ${waitResult.error.message}`
+        );
+      }
+      if (waitResult.status === 0) return;
+
+      const exitCode = waitResult.status ?? 1;
+      if (attempt === 2 || exitCode !== 22) {
+        throw new Error(`Compose bootstrap failed (exit code ${exitCode}).`);
+      }
+
+      const restartArgs = composeRestartArgs(composeFile, envFile);
+      log.warn(
+        `Bootstrap exited ${exitCode}; restarting llama to clear its loaded-model state, then retrying.`
       );
-    }
-    if (waitResult.status !== 0) {
-      throw new Error(
-        `Compose bootstrap failed (exit code ${waitResult.status ?? 1}).`
-      );
+      log.command(`> ${this.command} ${restartArgs.join(' ')}`);
+      const restartResult = spawnSync(this.command, restartArgs, {
+        stdio: 'inherit',
+        shell: false,
+      });
+      if (restartResult.error || restartResult.status !== 0) {
+        // Keep the original bootstrap failure, not a masking restart error.
+        throw new Error(`Compose bootstrap failed (exit code ${exitCode}).`);
+      }
     }
   }
 

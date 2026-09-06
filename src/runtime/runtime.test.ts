@@ -15,6 +15,7 @@ import {
   runningInspectArgs,
   composeUpArgs,
   composeWaitArgs,
+  composeRestartArgs,
   type RunOptions,
   type SidecarSpec,
 } from './index.js';
@@ -243,6 +244,31 @@ test('composeWaitArgs: passes the store env-file for secret interpolation', () =
       '/project/.e/compose.yaml',
       'wait',
       'bootstrap',
+    ]
+  );
+});
+
+test('composeRestartArgs: restarts the llama service by default', () => {
+  assert.deepEqual(composeRestartArgs('/project/.e/compose.yaml'), [
+    'compose',
+    '-f',
+    '/project/.e/compose.yaml',
+    'restart',
+    'llama',
+  ]);
+});
+
+test('composeRestartArgs: passes the store env-file for secret interpolation', () => {
+  assert.deepEqual(
+    composeRestartArgs('/project/.e/compose.yaml', '/project/.e/.env'),
+    [
+      'compose',
+      '--env-file',
+      '/project/.e/.env',
+      '-f',
+      '/project/.e/compose.yaml',
+      'restart',
+      'llama',
     ]
   );
 });
