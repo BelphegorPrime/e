@@ -36,17 +36,6 @@ import { imageTag } from '../identity/naming.js';
 import { skillMountSpec } from '../skill/index.js';
 import { skillDir } from '../store/paths.js';
 
-const ALLOWED_DOMAINS = [
-  "npmjs.org",
-  "registry.npmjs.org",
-  "registry.yarnpkg.com",
-  "pypi.org",
-  "github.com",
-  "api.github.com",
-  "raw.githubusercontent.com",
-  "objects.githubusercontent.com"
-];
-
 /**
  * The env files a run loads, in precedence order. `--env-file` entries loaded
  * later override earlier ones for the same key, so the shared base `.e/.env`
@@ -397,7 +386,7 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
   // when declared, else the baked `baseUrl`) is what the harness will actually
   // talk to, and every remote MCP server contributes its hosted URL.
   let egressAllowList: EgressEndpoint[] | undefined;
-  const egressUrls: string[] = [...ALLOWED_DOMAINS.map(d => `https://${d}`)];
+  const egressUrls: string[] = [];
   if (agent.provider) {
     egressUrls.push(providerBaseUrl(agent.provider, storeEnv));
   }
