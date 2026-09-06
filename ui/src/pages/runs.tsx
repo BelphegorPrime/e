@@ -1,37 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
 import { GitBranch } from 'lucide-react';
 
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-
-/** One run as served by the BFF `/api/runs` index (branch-backed, ADR-0010). */
-interface Run {
-  branch: string;
-  agent: string;
-  slug: string;
-  counter: number;
-  sha: string;
-  committerDate: string;
-  subject: string;
-  local: boolean;
-  pushed: boolean;
-}
-
-interface RunsResponse {
-  runs: Run[];
-}
-
-type LoadState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; runs: Run[] };
-
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
-}
+import { useRuns, formatDate } from '@/lib/bff';
 
 function StatusBadge({ label, on }: { label: string; on: boolean }) {
   return (
@@ -49,28 +22,7 @@ function StatusBadge({ label, on }: { label: string; on: boolean }) {
 }
 
 export function RunsPage() {
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
-
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
-    try {
-      const response = await fetch('/api/runs');
-      if (!response.ok) {
-        throw new Error(`BFF returned HTTP ${response.status}`);
-      }
-      const body = (await response.json()) as RunsResponse;
-      setState({ status: 'ready', runs: body.runs });
-    } catch (error) {
-      setState({
-        status: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const [state, load] = useRuns();
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">
