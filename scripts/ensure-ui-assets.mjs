@@ -22,7 +22,7 @@ export const uiAssetsDir = path.join(cliRoot, 'dist', 'ui');
 export function ensureUiAssets(dir = uiAssetsDir) {
   if (!fs.existsSync(path.join(dir, 'index.html'))) {
     throw new Error(
-      `UI assets are missing at ${dir}. Run "npm run build:ui" (in packages/cli) before packaging the binary.`
+      `UI assets are missing at ${dir}. Run "npm run build:ui" (from the repo root) before packaging the binary.`
     );
   }
   return dir;

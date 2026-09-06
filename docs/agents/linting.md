@@ -1,22 +1,22 @@
 # Linting Setup
 
-This project uses ESLint and Prettier for code quality and formatting consistency across all packages.
+This project uses ESLint and Prettier for code quality and formatting consistency.
 
 ## Global Configuration
 
 ESLint and Prettier use flat configs at the root:
 
-- `eslint.config.js`: flat ESLint config covering all packages
-- `.prettierrc`: Global Prettier configuration
+- `eslint.config.js`: flat ESLint config
+- `.prettierrc`: Prettier configuration
 
 ## Package-specific scopes
 
 The root flat config applies globally and adds browser globals for the bundled
-UI (which lives inside the CLI package now):
+UI (which lives in the repo root now):
 
-- `packages/cli/ui/**/*` gets `globals.browser` (the React front-end, built by
-  webpack into `packages/cli/dist/ui`)
-- `packages/cli/src/**` (the Node CLI) uses the global config
+- `ui/**/*` gets `globals.browser` (the React front-end, built by
+  webpack into `dist/ui`)
+- `src/**` (the Node CLI) uses the global config
 
 ## Available Scripts
 

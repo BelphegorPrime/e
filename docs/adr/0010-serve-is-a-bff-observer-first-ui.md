@@ -73,7 +73,7 @@ views are an incremental addition to the same namespace.
   No session store, no auth middleware, no UI write path.
 - **Secrets stay server-side by construction.** The gateway key never enters
   bundled UI code; the browser cannot read `.e/.env` or OmniRoute's credentials
-  (see the security analysis, `packages/cli/docs/security/attack-surface.md`,
+  (see the security analysis, `docs/security/attack-surface.md`,
   Zone 4).
 - **The UI cannot mutate state.** Observer-first is a hard boundary; the runs
   list, status, config view, and model views are all reads. This keeps the
