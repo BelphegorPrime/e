@@ -25,6 +25,11 @@ import {
   type DerivedImagePlan,
 } from '../harness/deriveImage.js';
 import { planMcpSelection, type McpServer } from '../mcp/index.js';
+import {
+  deriveEgressAllowList,
+  providerBaseUrl,
+  type EgressEndpoint,
+} from '../egress/index.js';
 import type { Mount } from '../runtime/index.js';
 import type { SidecarPlan } from '../runs/runSpawn.js';
 import { imageTag } from '../identity/naming.js';
@@ -269,6 +274,16 @@ export interface SpawnPlan {
    * unrelated secret never reaches the untrusted harness agent.
    */
   baseEnvWhitelist: string[];
+  /**
+   * The run's egress allow-list (ADR-0011): the `host:port` endpoints the agent
+   * may reach — the effective provider base URL plus every selected remote MCP
+   * server URL. Undefined for a run with neither (a bare default agent keeps
+   * the historical full-egress behavior, since there is nothing to preserve).
+   * The run's private network becomes `--internal` and per-host egress proxies
+   * enforce this list; container sidecar endpoints are absent by design — they
+   * live on the run network already and need no egress.
+   */
+  egressAllowList?: EgressEndpoint[];
 }
 
 /**
@@ -364,6 +379,27 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     }
   }
 
+  // The run's egress allow-list (ADR-0011): the endpoints the agent must reach
+  // are kept reachable and everything else is cut by putting the run network
+  // `--internal` and routing the allow-list through per-host proxies. The
+  // provider's *effective* base URL (the `baseUrlEnv` override from `.e/.env`
+  // when declared, else the baked `baseUrl`) is what the harness will actually
+  // talk to, and every remote MCP server contributes its hosted URL.
+  let egressAllowList: EgressEndpoint[] | undefined;
+  const egressUrls: string[] = [];
+  if (agent.provider) {
+    egressUrls.push(providerBaseUrl(agent.provider, storeEnv));
+  }
+  if (facts.mcpServers.length > 0) {
+    const selection = planMcpSelection(facts.mcpServers);
+    for (const server of selection.remoteServers) {
+      egressUrls.push(server.url);
+    }
+  }
+  if (egressUrls.length > 0) {
+    egressAllowList = deriveEgressAllowList(egressUrls);
+  }
+
   // The derived agent image (baked provider config and/or baked default skills).
   const agentImagePlan = planAgentImage({
     baseImage: harness.imageTag,
@@ -382,6 +418,7 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     delivery,
     providerEnvContent,
     baseEnvWhitelist: [...allowedEnvKeys],
+    egressAllowList,
     sidecars,
     sidecarCredentials,
     remoteCredentials,

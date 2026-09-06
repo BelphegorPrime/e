@@ -348,3 +348,82 @@ test('planSpawn: baked skills go to the derived image; per-run skills become mou
   assert.equal(plan.skillMounts[0].container, '/home/node/.claude/skills/run-skill');
   assert.equal(plan.skillMounts[0].ro, true);
 });
+
+// --- egress allow-list (ADR-0011) ---
+
+test('planSpawn: a bare run (no provider, no MCP) has no egress allow-list', () => {
+  const plan = planSpawn(facts({}));
+  assert.equal(plan.egressAllowList, undefined);
+});
+
+test('planSpawn: a provider run carries the provider base URL in the allow-list', () => {
+  const plan = planSpawn(
+    facts({
+      agent: {
+        name: 'x',
+        harness: 'claudeCode',
+        provider: {
+          baseUrl: 'http://host.docker.internal:20128/v1',
+          model: 'auto',
+          protocol: 'anthropic-messages',
+          apiKeyEnv: 'ANTHROPIC_API_KEY',
+        },
+      },
+      storeEnv: { ANTHROPIC_API_KEY: 'sk' },
+    })
+  );
+  assert.deepEqual(plan.egressAllowList, [
+    { host: 'host.docker.internal', port: 20128 },
+  ]);
+});
+
+test('planSpawn: a baseUrlEnv override wins over the baked baseUrl', () => {
+  const plan = planSpawn(
+    facts({
+      agent: {
+        name: 'x',
+        harness: 'claudeCode',
+        provider: {
+          baseUrl: 'http://host.docker.internal:20128/v1',
+          baseUrlEnv: 'MY_BASE_URL',
+          model: 'auto',
+          protocol: 'anthropic-messages',
+          apiKeyEnv: 'ANTHROPIC_API_KEY',
+        },
+      },
+      storeEnv: {
+        ANTHROPIC_API_KEY: 'sk',
+        MY_BASE_URL: 'https://gateway.example.com/v1',
+      },
+    })
+  );
+  assert.deepEqual(plan.egressAllowList, [
+    { host: 'gateway.example.com', port: 443 },
+  ]);
+});
+
+test('planSpawn: remote MCP endpoints join the allow-list; container sidecar endpoints do not', () => {
+  const plan = planSpawn(
+    facts({
+      agent: {
+        name: 'x',
+        harness: 'claudeCode',
+        provider: {
+          baseUrl: 'http://host.docker.internal:20128/v1',
+          model: 'auto',
+          protocol: 'anthropic-messages',
+          apiKeyEnv: 'ANTHROPIC_API_KEY',
+        },
+      },
+      storeEnv: { ANTHROPIC_API_KEY: 'sk', REMOTE_TOKEN: 'tok' },
+      mcpServers: [
+        containerMcp, // sidecar: needs no egress
+        remoteSecretMcp, // hosted URL: allow-listed
+      ],
+    })
+  );
+  const hosts = (plan.egressAllowList ?? []).map(e => e.host);
+  assert.ok(hosts.includes('mcp.example.com'));
+  assert.ok(hosts.includes('host.docker.internal'));
+  assert.ok(!hosts.includes('everything'));
+});

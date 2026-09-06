@@ -33,3 +33,9 @@ test('runName derives the private network and per-sidecar container name', () =>
     'e-demo-fix-1-mcp-everything'
   );
 });
+
+test('runName derives the per-egress-proxy container name', () => {
+  const run = runName('demo', 'fix', 1);
+  assert.equal(run.egressContainer(0), 'e-demo-fix-1-egress-0');
+  assert.equal(run.egressContainer(2), 'e-demo-fix-1-egress-2');
+});

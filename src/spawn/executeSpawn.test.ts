@@ -165,6 +165,51 @@ test('routes the agent over the compose edge network when the stack is present; 
   }
 });
 
+test('egress lockdown: a provider run plans per-host proxies against the allow-list (ADR-0011)', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-egress-'));
+  const scratch = new RunScratch();
+  try {
+    fs.mkdirSync(path.join(tmp, '.e'), { recursive: true });
+    // A local stack present: host.docker.internal proxies join the edge network.
+    fs.writeFileSync(path.join(tmp, '.e', 'compose.yaml'), 'services: {}\n');
+    const runtime = new RecordingRuntime();
+    const plan: SpawnPlan = {
+      ...emptyPlan,
+      egressAllowList: [{ host: 'host.docker.internal', port: 20128 }],
+    };
+    const result = await executeSpawn(
+      facts({ root: tmp }),
+      plan,
+      { git: new StubGit(true), runtime, scratch }
+    );
+    assert.equal(result.ran, true);
+    const RN = 'e-demo-do-1';
+    // The agent joins only the internal run network; the compose edge network
+    // (normally attached) is dropped, and so is the host-gateway mapping.
+    assert.deepEqual(runtime.options?.networks, [`${RN}-net`]);
+    assert.equal(runtime.options?.extraHosts, undefined);
+  } finally {
+    scratch.dispose();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('egress lockdown: fails loudly when a public upstream cannot be pinned', async () => {
+  const runtime = new RecordingRuntime();
+  const plan: SpawnPlan = {
+    ...emptyPlan,
+    egressAllowList: [{ host: 'definitely-not-a-real-host.invalid', port: 443 }],
+  };
+  await assert.rejects(
+    executeSpawn(facts(), plan, {
+      git: new StubGit(true),
+      runtime,
+      scratch: new RunScratch(),
+    }),
+    /Cannot resolve egress target/
+  );
+});
+
 test('filters the base .e/.env to the plan whitelist before the container gets it (Zone 2)', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-test-'));
   try {

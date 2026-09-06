@@ -54,6 +54,8 @@ export interface RunName {
   network: string;
   /** The per-run container name for a sidecar reached at `alias`: `<name>-mcp-<alias>`. */
   sidecarContainer(alias: string): string;
+  /** The per-run container name for the `index`-th egress proxy: `<name>-egress-<index>`. */
+  egressContainer(index: number): string;
 }
 
 /** Builds the {@link RunName} for a given Agent name, prompt slug, and run counter. */
@@ -65,6 +67,7 @@ export function runName(agent: string, slug: string, counter: number): RunName {
     name,
     network: `${name}-net`,
     sidecarContainer: (alias: string) => `${name}-mcp-${alias}`,
+    egressContainer: (index: number) => `${name}-egress-${index}`,
   };
 }
 
