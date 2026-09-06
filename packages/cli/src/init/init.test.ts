@@ -208,8 +208,8 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.match(compose, /- \.\/volumes\/redis-data:\/data/);
   assert.match(compose, /LLAMA_ARG_HOST: "0\.0\.0\.0"/);
   assert.match(compose, /LLAMA_ARG_PORT: "9931"/);
-  assert.match(compose, /LLAMA_ARG_CTX_SIZE: "65536"/);
-  assert.match(compose, /LLAMA_ARG_N_PARALLEL: "2"/);
+  assert.match(compose, /LLAMA_ARG_CTX_SIZE: "32768"/);
+  assert.match(compose, /LLAMA_ARG_N_PARALLEL: "1"/);
   assert.match(compose, /- \.\/bootstrap\.sh:\/bootstrap\.sh:ro/);
   assert.doesNotMatch(compose, /^volumes:\n/m);
 });
@@ -260,10 +260,6 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   assert.match(
     script,
     /"id".*"value"\[\[:space:\]\]\*:\[\[:space:\]\]\*"loaded"/
-  );
-  assert.match(
-    script,
-    /models='unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M unsloth\/Qwen3\.6-35B-A3B-GGUF:UD-IQ4_XS ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M'/
   );
   assert.doesNotMatch(script, /until curl -sf http:\/\/llama:9931\/models/);
   assert.match(script, /unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M/);

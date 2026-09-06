@@ -88,8 +88,9 @@ services:
     environment:
       LLAMA_ARG_HOST: "0.0.0.0"
       LLAMA_ARG_PORT: "9931"
-      LLAMA_ARG_CTX_SIZE: "65536"
-      LLAMA_ARG_N_PARALLEL: "2"
+      LLAMA_ARG_CTX_SIZE: "32768"
+      LLAMA_ARG_N_PARALLEL: "1"
+      LLAMA_ARG_MODELS_MAX: "1"
     ports:
       - "127.0.0.1:9931:9931"
     networks:
