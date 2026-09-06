@@ -1,12 +1,15 @@
 # Monorepo Structure
 
-This is a monorepo containing multiple subprojects:
+This repo is an npm workspaces monorepo. The `e` command's web UI ships inside
+the CLI binary, so it lives in the CLI package, built straight into the
+directory the CLI serves and pkg embeds.
 
 ## Projects
 
-- `packages/ui` - User Interface project (React-based)
-- `packages/cli` - Command Line Interface tool (Node.js-based) - Includes binary building capabilities
-- `packages/docker` - Docker projects
+- `packages/cli` - the `e` Command Line Interface (Node.js, Commander.js). Owns
+  the web UI (`packages/cli/ui`, a React app) and packages the `e` binary via
+  `pkg`.
+- `packages/docker` - Docker projects (stub).
 
 ## Getting Started
 
@@ -16,38 +19,33 @@ This is a monorepo containing multiple subprojects:
 npm install
 ```
 
-2. Run development servers:
+2. Build the CLI (UI bundle + TypeScript + native binaries):
 
 ```bash
-npm run dev
+npm run build --workspace @e/cli
 ```
 
-3. Build all projects:
+Everything the binary needs - including the UI, served by `e serve` from
+`dist/ui` and embedded by pkg - is produced by this one command.
+
+3. Run tests:
 
 ```bash
-npm run build
+npm run test --workspace @e/cli
 ```
 
-4. Run tests:
+4. Local development without packaging binaries:
 
 ```bash
-npm run test
+npm run build:dev --workspace @e/cli   # UI + TypeScript into packages/cli/dist
+npm run link --workspace @e/cli        # ...plus npm link, putting `e` on PATH
 ```
 
-5. Clean all node_modules:
+## Package Structure
 
-```bash
-npm run clean
-```
+- `packages/cli/ui` - React front-end (webpack entry). Its build output is
+  `packages/cli/dist/ui`, which `e serve` reads and `pkg.assets` embeds in each
+  standalone binary.
+- `packages/cli/src` - the Node CLI (`e` commands: init, spawn, serve).
 
-## Package Management
-
-This monorepo uses npm workspaces to manage multiple packages.
-
-## Project Structure
-
-- `packages/ui` - Contains UI application with React
-- `packages/cli` - Contains CLI tool using Commander.js
-- `packages/docker` - Contains Docker configuration and Dockerfile
-
-Each subproject has its own package.json and can be developed independently.
+Each project has its own package.json and can be developed independently.

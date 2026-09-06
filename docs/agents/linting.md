@@ -4,17 +4,19 @@ This project uses ESLint and Prettier for code quality and formatting consistenc
 
 ## Global Configuration
 
-ESLint and Prettier are configured with global settings in the root directory:
+ESLint and Prettier use flat configs at the root:
 
-- `.eslintrc.js`: Global ESLint configuration
+- `eslint.config.js`: flat ESLint config covering all packages
 - `.prettierrc`: Global Prettier configuration
 
-## Package-specific Configuration
+## Package-specific scopes
 
-Each package extends the global configuration:
+The root flat config applies globally and adds browser globals for the bundled
+UI (which lives inside the CLI package now):
 
-- `packages/cli/.eslintrc.js`
-- `packages/ui/.eslintrc.js`
+- `packages/cli/ui/**/*` gets `globals.browser` (the React front-end, built by
+  webpack into `packages/cli/dist/ui`)
+- `packages/cli/src/**` (the Node CLI) uses the global config
 
 ## Available Scripts
 

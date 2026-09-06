@@ -4,7 +4,7 @@
     "module": "commonjs",
     "lib": ["ES2020", "DOM"],
     "types": ["node", "react", "react-dom"],
-    "declaration": true,
+    "declaration": false,
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,

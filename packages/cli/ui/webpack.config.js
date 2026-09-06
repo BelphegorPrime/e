@@ -2,7 +2,12 @@
 const path = require('node:path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
+// The UI is part of the CLI package (it ships inside the `e` binary, served by
+// `e serve` from dist/ui). Webpack writes straight into the directory the
+// runtime reads (src/serve/assets.ts) and pkg embeds (pkg.assets); no copy
+// step, no cross-workspace handoff.
 module.exports = {
+  context: __dirname,
   entry: './src/index.tsx',
   module: {
     rules: [
@@ -24,7 +29,7 @@ module.exports = {
     },
   },
   output: {
-    path: path.resolve(__dirname, 'dist/ui'),
+    path: path.resolve(__dirname, '..', 'dist', 'ui'),
     filename: 'assets/[name].js',
     clean: true,
   },

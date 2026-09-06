@@ -35,7 +35,7 @@ module.exports = tseslint.config(
     },
   },
   {
-    files: ['packages/ui/**/*.{js,cjs,mjs,ts,tsx}'],
+    files: ['packages/cli/ui/**/*.{js,cjs,mjs,ts,tsx}'],
     languageOptions: {
       globals: {
         ...globals.browser,
