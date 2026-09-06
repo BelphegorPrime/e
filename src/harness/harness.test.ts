@@ -109,7 +109,7 @@ test('planMcpDelivery wires Codex as a file overlay merged onto the baked base c
   // The overlay merges the MCP block onto the base config and mounts at Codex's dir.
   assert.match(delivery.overlay.file.content, /model = "x"/);
   assert.match(delivery.overlay.file.content, /\[mcp_servers\.everything\]/);
-  assert.equal(delivery.overlay.mountTo, '/root/.codex/config.toml');
+  assert.equal(delivery.overlay.mountTo, '/home/node/.codex/config.toml');
 });
 
 test('planMcpDelivery reports no delivery for a harness without an MCP client (pi/opencode)', () => {
@@ -146,13 +146,23 @@ test('interactive commands start each harness without a one-shot prompt', () => 
 });
 
 test('each harness places skills at a path outside /workspace; Claude differs from the shared dir', () => {
-  // Claude reads its own skills dir; the others share ~/.agents/skills.
-  assert.equal(HARNESSES.claudeCode.skillsDir, '/root/.claude/skills');
-  assert.equal(HARNESSES.codex.skillsDir, '/root/.agents/skills');
-  assert.equal(HARNESSES.opencode.skillsDir, '/root/.agents/skills');
-  assert.equal(HARNESSES.pi.skillsDir, '/root/.agents/skills');
+  // Claude reads its own skills dir; the others share ~/.agents/skills — all
+  // under the non-root runtime user's home (/home/node).
+  assert.equal(HARNESSES.claudeCode.skillsDir, '/home/node/.claude/skills');
+  assert.equal(HARNESSES.codex.skillsDir, '/home/node/.agents/skills');
+  assert.equal(HARNESSES.opencode.skillsDir, '/home/node/.agents/skills');
+  assert.equal(HARNESSES.pi.skillsDir, '/home/node/.agents/skills');
   for (const h of Object.values(HARNESSES)) {
     assert.ok(h.skillsDir && !h.skillsDir.startsWith('/workspace'));
+  }
+});
+
+test('every shipped harness runs the container as the non-root node user', () => {
+  // The registry owns the runtime-user decision: nothing ships a root override
+  // today, so the template default (non-root `node`) applies to all four. The
+  // override seam is exercised in renderDockerfile.test.ts.
+  for (const h of Object.values(HARNESSES)) {
+    assert.equal(h.dockerfile.runtimeUser ?? 'node', 'node');
   }
 });
 

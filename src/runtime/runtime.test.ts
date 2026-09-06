@@ -284,8 +284,12 @@ test('formatMount: read-write omits :ro', () => {
 
 test('formatMount: ro appends :ro', () => {
   assert.equal(
-    formatMount({ host: '/s', container: '/root/.claude/skills/x', ro: true }),
-    '/s:/root/.claude/skills/x:ro'
+    formatMount({
+      host: '/s',
+      container: '/home/node/.claude/skills/x',
+      ro: true,
+    }),
+    '/s:/home/node/.claude/skills/x:ro'
   );
 });
 

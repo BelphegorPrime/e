@@ -61,8 +61,8 @@ export interface Harness {
   /**
    * Absolute in-container directory this harness reads Agent Skills from, outside
    * `/workspace` so skills never land in a run's branch (e.g. Claude
-   * `/root/.claude/skills`, the shared `/root/.agents/skills` for the others).
-   * Its presence is the harness's declared skill capability; absent → `--skill`
+   * `/home/node/.claude/skills`, the shared `/home/node/.agents/skills` for the
+   * others). Its presence is the harness's declared skill capability; absent → `--skill`
    * and baked skills are rejected. Grounding: `docs/research/harness-cli-facts.md`.
    */
   skillsDir?: string;
@@ -70,10 +70,11 @@ export interface Harness {
 
 /**
  * The shared in-container Agent-Skills directory read by Codex, opencode, and pi
- * (`~/.agents/skills`, running as root). Claude Code reads its own
- * `~/.claude/skills` instead. Grounding: `docs/research/harness-cli-facts.md`.
+ * (`~/.agents/skills`, under the home of the non-root `node` runtime user). Claude
+ * Code reads its own `~/.claude/skills` instead. Grounding:
+ * `docs/research/harness-cli-facts.md`.
  */
-const AGENTS_SKILLS_DIR = '/root/.agents/skills';
+const AGENTS_SKILLS_DIR = '/home/node/.agents/skills';
 
 const escapePrompt = (prompt: string) => `"${prompt}"`;
 
@@ -125,6 +126,8 @@ export const HARNESSES: Record<string, Harness> = {
       npmPackage: '@anthropic-ai/claude-code',
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'claude-code',
+      // Non-root runtime user (the template default); set `runtimeUser: 'root'`
+      // here only if this CLI ever needs root at runtime (attack-surface.md Zone 1).
     },
     requiredEnv: ['ANTHROPIC_API_KEY'],
     // Claude Code speaks only the Anthropic Messages API and is configured via
@@ -158,7 +161,7 @@ export const HARNESSES: Record<string, Harness> = {
       return ['--mcp-config', JSON.stringify({ mcpServers })];
     },
     // Claude Code reads Agent Skills from `~/.claude/skills` (not `.agents/`).
-    skillsDir: '/root/.claude/skills',
+    skillsDir: '/home/node/.claude/skills',
   },
   codex: {
     name: 'codex',

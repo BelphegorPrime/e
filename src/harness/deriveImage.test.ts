@@ -15,7 +15,7 @@ import {
 
 const providerBlock = {
   configFileName: 'config.toml',
-  configDir: '/root/.codex',
+  configDir: '/home/node/.codex',
   configDirEnv: 'CODEX_HOME',
 };
 
@@ -33,38 +33,72 @@ test('renderDerivedDockerfile: copies the rendered config into the relocated con
     baseImage: 'e-harness-codex',
     provider: providerBlock,
   });
-  assert.match(dockerfile, /^ENV CODEX_HOME=\/root\/\.codex$/m);
+  assert.match(dockerfile, /^ENV CODEX_HOME=\/home\/node\/\.codex$/m);
   assert.match(
     dockerfile,
-    /^COPY config\.toml \/root\/\.codex\/config\.toml$/m
+    /^COPY config\.toml \/home\/node\/\.codex\/config\.toml$/m
+  );
+});
+
+test('renderDerivedDockerfile: builds COPY layers as root, then hands the trees to the non-root user', () => {
+  const dockerfile = renderDerivedDockerfile({
+    baseImage: 'e-harness-codex',
+    provider: providerBlock,
+    skills: { skillsDir: '/home/node/.agents/skills', names: ['a'] },
+  });
+  // The base harness image ends with `USER node`; the derived COPY layers must
+  // escalate (the config dir may not exist yet) and then return ownership.
+  const userRootIdx = dockerfile.indexOf('USER root');
+  const copyIdx = dockerfile.indexOf('COPY ');
+  assert.ok(userRootIdx !== -1 && copyIdx > userRootIdx);
+  assert.match(
+    dockerfile,
+    /^RUN chown -R node:node \/home\/node\/\.codex \/home\/node\/\.agents\/skills$/m
+  );
+  assert.match(dockerfile, /^USER node$/m);
+  // USER node is the final instruction: the container runs non-root.
+  assert.ok(dockerfile.trimEnd().endsWith('USER node'));
+});
+
+test('renderDerivedDockerfile: a root runtime-user harness needs no escalation', () => {
+  const dockerfile = renderDerivedDockerfile({
+    baseImage: 'e-harness-root',
+    provider: providerBlock,
+    runtimeUser: 'root',
+  });
+  assert.doesNotMatch(dockerfile, /USER/);
+  assert.doesNotMatch(dockerfile, /chown/);
+  assert.match(
+    dockerfile,
+    /^COPY config\.toml \/home\/node\/\.codex\/config\.toml$/m
   );
 });
 
 test('renderDerivedDockerfile: copies each baked skill tree into the harness skills dir', () => {
   const dockerfile = renderDerivedDockerfile({
     baseImage: 'e-harness-claudecode',
-    skills: { skillsDir: '/root/.claude/skills', names: ['a', 'b'] },
+    skills: { skillsDir: '/home/node/.claude/skills', names: ['a', 'b'] },
   });
   assert.match(dockerfile, /^FROM e-harness-claudecode$/m);
-  assert.match(dockerfile, /^COPY skills\/a\/ \/root\/\.claude\/skills\/a\/$/m);
-  assert.match(dockerfile, /^COPY skills\/b\/ \/root\/\.claude\/skills\/b\/$/m);
+  assert.match(dockerfile, /^COPY skills\/a\/ \/home\/node\/\.claude\/skills\/a\/$/m);
+  assert.match(dockerfile, /^COPY skills\/b\/ \/home\/node\/\.claude\/skills\/b\/$/m);
 });
 
 test('renderDerivedDockerfile: composes both a provider block and a skills block', () => {
   const dockerfile = renderDerivedDockerfile({
     baseImage: 'e-harness-codex',
     provider: providerBlock,
-    skills: { skillsDir: '/root/.agents/skills', names: ['a'] },
+    skills: { skillsDir: '/home/node/.agents/skills', names: ['a'] },
   });
   assert.match(dockerfile, /^COPY config\.toml /m);
-  assert.match(dockerfile, /^COPY skills\/a\/ \/root\/\.agents\/skills\/a\/$/m);
+  assert.match(dockerfile, /^COPY skills\/a\/ \/home\/node\/\.agents\/skills\/a\/$/m);
 });
 
 test('renderDerivedDockerfile: keeps every COPY target outside /workspace', () => {
   const dockerfile = renderDerivedDockerfile({
     baseImage: 'e-harness-codex',
     provider: providerBlock,
-    skills: { skillsDir: '/root/.agents/skills', names: ['a'] },
+    skills: { skillsDir: '/home/node/.agents/skills', names: ['a'] },
   });
   for (const line of dockerfile.split('\n')) {
     if (line.startsWith('COPY')) assert.ok(!line.includes('/workspace'));
@@ -128,7 +162,7 @@ test('planProviderDelivery: a file harness bakes a concrete model into its confi
   );
   assert.ok(plan.bakedConfig);
   assert.equal(plan.bakedConfig.file.fileName, 'config.toml');
-  assert.equal(plan.bakedConfig.configDir, '/root/.codex');
+  assert.equal(plan.bakedConfig.configDir, '/home/node/.codex');
   assert.equal(plan.bakedConfig.configDirEnv, 'CODEX_HOME');
   assert.match(plan.bakedConfig.file.content, /^model = "gpt-5-codex"$/m);
   assert.equal(plan.runtimeModel, undefined);
@@ -161,7 +195,7 @@ test('planProviderDelivery: pi bakes auto model into models.json and passes it o
   const plan = planProviderDelivery({}, piAdapter, piProvider);
   assert.ok(plan.bakedConfig);
   assert.equal(plan.bakedConfig.file.fileName, 'models.json');
-  assert.equal(plan.bakedConfig.configDir, '/root/.pi/agent');
+  assert.equal(plan.bakedConfig.configDir, '/home/node/.pi/agent');
   assert.equal(plan.bakedConfig.configDirEnv, 'PI_CODING_AGENT_DIR');
   // pi requires the model declared in the file to select it, so auto is baked.
   const cfg = JSON.parse(plan.bakedConfig.file.content);
@@ -212,7 +246,7 @@ test('planAgentImage: skills-only bakes a Dockerfile that copies the skill trees
   const image = planAgentImage({
     baseImage: 'e-harness-claudecode',
     agentName: 'skilled-claude',
-    skills: { skillsDir: '/root/.claude/skills', names: ['helper'] },
+    skills: { skillsDir: '/home/node/.claude/skills', names: ['helper'] },
   });
   assert.ok(image);
   assert.deepEqual(
@@ -224,8 +258,22 @@ test('planAgentImage: skills-only bakes a Dockerfile that copies the skill trees
   assert.match(dockerfile.content, /^FROM e-harness-claudecode$/m);
   assert.match(
     dockerfile.content,
-    /^COPY skills\/helper\/ \/root\/\.claude\/skills\/helper\/$/m
+    /^COPY skills\/helper\/ \/home\/node\/\.claude\/skills\/helper\/$/m
   );
+});
+
+test('planAgentImage: passes the harness runtime user into the derived render', () => {
+  const image = planAgentImage({
+    baseImage: 'e-harness-codex',
+    agentName: 'smart-codex',
+    bakedConfig: planProviderDelivery({}, codexAdapter, fileProvider)
+      .bakedConfig,
+    runtimeUser: 'root',
+  });
+  assert.ok(image);
+  const dockerfile = image.files.find(f => f.fileName === 'Dockerfile')!;
+  assert.doesNotMatch(dockerfile.content, /USER/);
+  assert.doesNotMatch(dockerfile.content, /chown/);
 });
 
 test('planAgentImage: provider + skills compose into one derived image', () => {
@@ -234,7 +282,7 @@ test('planAgentImage: provider + skills compose into one derived image', () => {
     baseImage: 'e-harness-codex',
     agentName: 'smart-codex',
     bakedConfig: delivery.bakedConfig,
-    skills: { skillsDir: '/root/.agents/skills', names: ['helper'] },
+    skills: { skillsDir: '/home/node/.agents/skills', names: ['helper'] },
   });
   assert.ok(image);
   assert.deepEqual(
@@ -245,4 +293,6 @@ test('planAgentImage: provider + skills compose into one derived image', () => {
   const dockerfile = image.files.find(f => f.fileName === 'Dockerfile')!;
   assert.match(dockerfile.content, /^COPY config\.toml /m);
   assert.match(dockerfile.content, /^COPY skills\/helper\/ /m);
+  // Default runtime user: the derived image ends non-root like its base.
+  assert.ok(dockerfile.content.trimEnd().endsWith('USER node'));
 });

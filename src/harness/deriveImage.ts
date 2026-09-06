@@ -43,6 +43,13 @@ export interface DerivedDockerfileParams {
   provider?: DockerfileProviderBlock;
   /** The baked default skills, for an agent that declares them. */
   skills?: DockerfileSkillsBlock;
+  /**
+   * The container user the harness base runs as (the harness's
+   * `DockerfileParams.runtimeUser`, default `'node'`). The derived image must
+   * match it at the end, and must build its COPY layers in a way the runtime
+   * user can then write — see {@link renderDerivedDockerfile}.
+   */
+  runtimeUser?: 'node' | 'root';
 }
 
 /**
@@ -52,30 +59,63 @@ export interface DerivedDockerfileParams {
  * the harness's skills dir). Every `COPY` target lands outside `/workspace`, so
  * `e`-generated config and skills never pollute the Run's branch (ADR-0006). The
  * API key is *not* baked — the config file references it by name.
+ *
+ * The base image ends with the harness's runtime user (`USER node` for the
+ * non-root default — attack-surface.md Zone 1). The COPY layers must therefore
+ * build as root (a non-root build step cannot reliably create root-owned parents
+ * across builders) and then hand the copied trees back to the runtime user, so a
+ * CLI that writes to its config dir at runtime (Codex history/log under
+ * `CODEX_HOME`, pi sessions/trust under `PI_CODING_AGENT_DIR`) can. A `root`
+ * runtime-user harness skips the whole escalation — the base already ends as
+ * root and COPY layers are free to run as root.
  */
 export function renderDerivedDockerfile(p: DerivedDockerfileParams): string {
+  const nonRoot = (p.runtimeUser ?? 'node') !== 'root';
   const lines: string[] = [`FROM ${p.baseImage}`];
+  // Trees the derived image copies in; handed back to the runtime user after
+  // the build step, so their runtime writes (history, sessions, auth) succeed.
+  const ownedDirs: string[] = [];
+  let escalated = false;
+
+  const startBlock = () => {
+    lines.push('');
+    if (nonRoot && !escalated) {
+      lines.push('USER root');
+      escalated = true;
+    }
+  };
 
   if (p.provider) {
+    startBlock();
     lines.push(
-      ``,
       `# Baked agent config (ADR-0004 layer 2): the provider block rendered by`,
       `# the harness adapter, read from a config dir outside /workspace so it`,
       `# never lands in a run's branch.`,
       `ENV ${p.provider.configDirEnv}=${p.provider.configDir}`,
       `COPY ${p.provider.configFileName} ${p.provider.configDir}/${p.provider.configFileName}`
     );
+    ownedDirs.push(p.provider.configDir);
   }
 
   if (p.skills && p.skills.names.length > 0) {
+    startBlock();
     lines.push(
-      ``,
       `# Baked default skills (ADR-0006): each skill tree copied into the harness's`,
       `# skills dir outside /workspace so it never lands in a run's branch.`
     );
     for (const name of p.skills.names) {
       lines.push(`COPY skills/${name}/ ${p.skills.skillsDir}/${name}/`);
     }
+    ownedDirs.push(p.skills.skillsDir);
+  }
+
+  if (nonRoot && ownedDirs.length > 0) {
+    const user = 'node';
+    lines.push(
+      '',
+      `RUN chown -R ${user}:${user} ${ownedDirs.join(' ')}`,
+      `USER ${user}`
+    );
   }
 
   return lines.join('\n') + '\n';
@@ -195,12 +235,16 @@ export interface DerivedImagePlan {
  * config and baked default skills are combined into one thin layer-2 image
  * `FROM` the harness base. Returns `undefined` when there is nothing to bake (no
  * provider config and no skills), so the run uses the harness base directly.
+ * `runtimeUser` is the harness's runtime user (default `'node'`), forwarded to
+ * the derived render so its COPY layers hand ownership back to the user the
+ * base image ends with.
  */
 export function planAgentImage(params: {
   baseImage: string;
   agentName: string;
   bakedConfig?: BakedProviderConfig;
   skills?: { skillsDir: string; names: string[] };
+  runtimeUser?: 'node' | 'root';
 }): DerivedImagePlan | undefined {
   const skillNames = params.skills?.names ?? [];
   if (!params.bakedConfig && skillNames.length === 0) return undefined;
@@ -224,6 +268,7 @@ export function planAgentImage(params: {
         skillNames.length > 0
           ? { skillsDir: params.skills!.skillsDir, names: skillNames }
           : undefined,
+      runtimeUser: params.runtimeUser,
     }),
   });
 

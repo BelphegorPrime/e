@@ -373,6 +373,9 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
       facts.bakedSkills.length > 0 && harness.skillsDir
         ? { skillsDir: harness.skillsDir, names: facts.bakedSkills }
         : undefined,
+    // The derived COPY layers hand ownership back to the user the harness base
+    // image ends with (the non-root default; see renderDerivedDockerfile).
+    runtimeUser: harness.dockerfile.runtimeUser,
   });
 
   return {

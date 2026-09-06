@@ -279,12 +279,13 @@ function tomlBareKey(name: string): string {
  * Codex's adapter. Codex is configured through `config.toml` under its config
  * dir (relocatable via `CODEX_HOME`), so the provider is rendered into a file
  * baked into the derived agent image; only the API key is delivered at runtime,
- * by name. The config dir is a fixed path outside `/workspace`.
+ * by name. The config dir is a fixed path under the non-root runtime user's
+ * home, outside `/workspace`.
  */
 export const codexAdapter: FileHarnessAdapter = {
   kind: 'file',
   configDirEnv: 'CODEX_HOME',
-  configDir: '/root/.codex',
+  configDir: '/home/node/.codex',
   configFileName: 'config.toml',
   // Codex delivers an auto-resolved model on the command line (`codex exec -m`),
   // so it keeps the config model-agnostic rather than baking the model.
@@ -380,12 +381,13 @@ export function renderPiModelsJson(
  * runtime, by name. pi ships **no MCP client** (`docs/usage.md` Design
  * Principles), so it carries no `renderMcpServers`/`planConfigOverlay` — the
  * spawn edge capability-gates `--mcp pi` off (see {@link harnessCapabilities}). pi
- * requires the model declared in the file, so `modelInFile` is `true`.
+ * requires the model declared in the file, so `modelInFile` is `true`. The
+ * config dir lives under the non-root runtime user's home, outside `/workspace`.
  */
 export const piAdapter: FileHarnessAdapter = {
   kind: 'file',
   configDirEnv: 'PI_CODING_AGENT_DIR',
-  configDir: '/root/.pi/agent',
+  configDir: '/home/node/.pi/agent',
   configFileName: 'models.json',
   modelInFile: true,
   renderProviderFile(

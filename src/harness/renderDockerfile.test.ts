@@ -22,6 +22,37 @@ test('renderDockerfile: renders the harness base (label, install, workdir)', () 
   assert.match(dockerfile, /WORKDIR \/workspace/);
 });
 
+test('renderDockerfile: runs the container as the non-root node user by default', () => {
+  const dockerfile = renderDockerfile(pi);
+  assert.match(dockerfile, /^USER node$/m);
+  // USER is the last instruction, so the whole build runs as root and only the
+  // runtime process drops privileges.
+  const userIdx = dockerfile.lastIndexOf('USER node');
+  assert.ok(userIdx > dockerfile.lastIndexOf('COPY'));
+  assert.ok(userIdx > dockerfile.lastIndexOf('WORKDIR'));
+});
+
+test('renderDockerfile: gives the non-root runtime user a writable home', () => {
+  const dockerfile = renderDockerfile(pi);
+  assert.match(dockerfile, /^ENV HOME=\/home\/node$/m);
+  // HOME is set before the skills install RUN, so `npx skills add -g` (which
+  // resolves `~` from HOME) lands under the same home the runtime user reads.
+  const homeIdx = dockerfile.indexOf('ENV HOME=/home/node');
+  const skillsIdx = dockerfile.indexOf('npx -y skills@latest');
+  assert.ok(homeIdx !== -1 && skillsIdx !== -1 && homeIdx < skillsIdx);
+});
+
+test('renderDockerfile: no USER or HOME relocation when the harness needs root', () => {
+  const dockerfile = renderDockerfile({
+    label: 'Root-needing harness.',
+    npmPackage: 'bare-cli',
+    runtimeUser: 'root',
+  });
+  assert.doesNotMatch(dockerfile, /USER/);
+  assert.doesNotMatch(dockerfile, /ENV HOME=/);
+  assert.match(dockerfile, /WORKDIR \/workspace/);
+});
+
 test('renderDockerfile: honors flags and custom base image', () => {
   const dockerfile = renderDockerfile({
     label: 'Claude Code CLI harness.',
