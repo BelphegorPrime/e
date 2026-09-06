@@ -16,6 +16,7 @@ import {
   composeUpArgs,
   composeWaitArgs,
   composeRestartArgs,
+  egressRunArgs,
   type RunOptions,
   type SidecarSpec,
 } from './index.js';
@@ -91,6 +92,20 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
       'omniroute-edge',
       '--network',
       'run-1-net',
+      'img',
+    ],
+  },
+  {
+    name: 'netns: --network container:<name> replaces networks (egress shared netns)',
+    opts: {
+      attach: true,
+      netns: 'e-demo-fix-1-egress',
+      networks: ['omniroute-edge'],
+    },
+    expected: [
+      'run',
+      '--network',
+      'container:e-demo-fix-1-egress',
       'img',
     ],
   },
@@ -403,6 +418,52 @@ test('sidecarRunArgs: env-files precede the image, in order', () => {
     '/b.env',
     'e-mcp-x',
   ]);
+});
+
+test('egressRunArgs: detached, named, NET_ADMIN, loopback DNS, blacklist+log mounts', () => {
+  assert.deepEqual(
+    egressRunArgs({
+      name: 'e-demo-fix-1-egress',
+      image: 'e-egress',
+      blacklistHost: '/run/e/x/dnsmasq.blacklist',
+      iptablesHost: '/run/e/x/iptables.rules',
+      logHost: '/run/e/x/log',
+      networks: [],
+    }),
+    [
+      'run',
+      '-d',
+      '--name',
+      'e-demo-fix-1-egress',
+      '--cap-add',
+      'NET_ADMIN',
+      '--dns',
+      '127.0.0.1',
+      '-v',
+      '/run/e/x/dnsmasq.blacklist:/etc/egress.d/dnsmasq.blacklist',
+      '-v',
+      '/run/e/x/log:/var/log/egress',
+      '-v',
+      '/run/e/x/iptables.rules:/etc/egress.d/iptables.rules:ro',
+      'e-egress',
+    ]
+  );
+});
+
+test('egressRunArgs: joins the run/edge networks plus the bridge WAN face', () => {
+  const args = egressRunArgs({
+    name: 'e-demo-fix-1-egress',
+    image: 'e-egress',
+    blacklistHost: '/run/e/x/dnsmasq.blacklist',
+    logHost: '/run/e/x/log',
+    networks: ['e-demo-fix-1-net', 'omniroute-edge'],
+  });
+  assert.ok(args.includes('--network'));
+  assert.ok(args.includes('e-demo-fix-1-net'));
+  assert.ok(args.includes('omniroute-edge'));
+  assert.ok(args.includes('bridge'));
+  // No iptables mount when the spec omits iptablesHost.
+  assert.ok(!args.some(a => a.includes('iptables.rules')));
 });
 
 test('tcpProbeArgs: throwaway busybox nc on the private network', () => {

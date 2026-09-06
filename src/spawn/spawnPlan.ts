@@ -164,6 +164,8 @@ export interface SpawnFacts {
   rm?: boolean;
   /** The shared `.e/.env` path when it exists on disk, for env-file layering. */
   baseEnvFile?: string;
+  /** The store's `.e/egress-blacklist` path when a store root was found; the egress source (ADR-0011). */
+  egressBlacklistFile?: string;
   /** The user's `--env-file` path, layered over the base. */
   userEnvFile?: string;
   /** The raw `--dir` value, only for the "run `e init` --dir <x>" hint. */
@@ -269,6 +271,14 @@ export interface SpawnPlan {
    * unrelated secret never reaches the untrusted harness agent.
    */
   baseEnvWhitelist: string[];
+  /**
+   * True when the run gets the shared egress monitor (ADR-0011): true for any
+   * spawn with a store root (the egress context ships via `e init`). The
+   * executor builds the `e-egress` image, renders the blacklist/log mounts, and
+   * hands the resulting plan to the run orchestrator, which starts the container
+   * and runs the agent inside its netns.
+   */
+  egressEnabled: boolean;
 }
 
 /**
@@ -382,6 +392,7 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     delivery,
     providerEnvContent,
     baseEnvWhitelist: [...allowedEnvKeys],
+    egressEnabled: root !== undefined,
     sidecars,
     sidecarCredentials,
     remoteCredentials,

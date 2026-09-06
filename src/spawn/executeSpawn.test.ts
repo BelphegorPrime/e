@@ -85,6 +85,7 @@ const emptyPlan: SpawnPlan = {
   skillMounts: [],
   agentEnv: [],
   baseEnvWhitelist: [],
+  egressEnabled: false,
 };
 
 // A runtime that must never be touched by a preflight failure.
@@ -119,9 +120,18 @@ test('refuses a detached run before any build', async () => {
 // path (preflight → build check → env-file composition → runSpawn) is testable.
 class RecordingRuntime extends ContainerRuntime {
   options?: RunOptions;
+  built: string[] = [];
 
   constructor() {
     super('true');
+  }
+
+  imageExists(_imageTag: string): boolean {
+    return false;
+  }
+
+  build(tag: string, _dir: string): void {
+    this.built.push(tag);
   }
 
   async run(
@@ -140,6 +150,8 @@ test('routes the agent over the compose edge network when the stack is present; 
     // Stack present: the run container joins omniroute-edge (where OmniRoute
     // aliases host.docker.internal) and must NOT also get the host-gateway
     // mapping, which would shadow the compose alias in /etc/hosts.
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'), 'FROM alpine\n');
     fs.mkdirSync(path.join(tmp, '.e'), { recursive: true });
     fs.writeFileSync(path.join(tmp, '.e', 'compose.yaml'), 'services: {}\n');
     const withStack = new RecordingRuntime();
@@ -154,7 +166,8 @@ test('routes the agent over the compose edge network when the stack is present; 
 
     // No stack: unchanged default-bridge behavior, host-gateway mapping kept.
     const plain = new RecordingRuntime();
-    await executeSpawn(facts(), emptyPlan, {
+    fs.rmSync(path.join(tmp, '.e', 'compose.yaml'));
+    await executeSpawn(facts({ root: tmp }), emptyPlan, {
       git: new StubGit(true),
       runtime: plain,
       scratch: new RunScratch(),
@@ -185,6 +198,8 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
     );
     const user = path.join(tmp, 'user.env');
     fs.writeFileSync(user, 'USER_EXTRA=1\n');
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'), 'FROM alpine\n');
 
     const runtime = new RecordingRuntime();
     const plan: SpawnPlan = {
@@ -193,7 +208,7 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
     };
     const scratch = new RunScratch();
     const result = await executeSpawn(
-      facts({ baseEnvFile: base, userEnvFile: user }),
+      facts({ root: tmp, baseEnvFile: base, userEnvFile: user }),
       plan,
       { git: new StubGit(true), runtime, scratch }
     );
@@ -216,6 +231,41 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
     // Unknown keys never do.
     assert.doesNotMatch(delivered, /SECRET_TOKEN|UNRELATED/);
     scratch.dispose();
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('egress monitor: builds the shared image and materializes the blacklist + iptables mounts, then joins the agent to its netns', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-egress-'));
+  try {
+    // Seed an initialized harness and egress build context.
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'), 'FROM alpine\n');
+    fs.mkdirSync(path.join(tmp, '.e', 'egress'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.e', 'egress', 'Dockerfile'), 'FROM alpine\n');
+    // Host-editable blacklist source with both a DOMAIN and an ip:port line.
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'egress-blacklist'),
+      '# my blacklist\nexample.com\n203.0.113.9:8443\n'
+    );
+
+    const runtime = new RecordingRuntime();
+    const egressPlan: SpawnPlan = { ...emptyPlan, egressEnabled: true };
+    const scratch = new RunScratch();
+    const result = await executeSpawn(
+      facts({ root: tmp, egressBlacklistFile: path.join(tmp, '.e', 'egress-blacklist') }),
+      egressPlan,
+      { git: new StubGit(true), runtime, scratch }
+    );
+
+    assert.equal(result.ran, true);
+    // The agent runs in the egress netns (netns set, networks dropped).
+    assert.match(runtime.options?.netns ?? '', /-egress$/);
+    assert.equal(runtime.options?.networks, undefined);
+
+    // The egress image was built (after the harness image).
+    assert.deepEqual(runtime.built ?? [], ['e-harness-demo', 'e-egress']);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

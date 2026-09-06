@@ -300,6 +300,16 @@ test('planSpawn: a bare run whitelists only the template global base URLs', () =
   assert.deepEqual(plan.baseEnvWhitelist, [...GLOBAL_BASE_URL_ENV]);
 });
 
+test('planSpawn: a store root enables the egress monitor (ADR-0011)', () => {
+  const plan = planSpawn(facts({ root: '/root' }));
+  assert.equal(plan.egressEnabled, true);
+});
+
+test('planSpawn: no store root disables the egress monitor', () => {
+  const plan = planSpawn(facts({ root: undefined }));
+  assert.equal(plan.egressEnabled, false);
+});
+
 test('planSpawn: whitelist adds the provider key and base-URL env names', () => {
   const plan = planSpawn(
     facts({
