@@ -35,7 +35,7 @@ packages, `npx skills@latest` at build time) — noted, not analyzed here.
 | The run worktree is bind-mounted at `/workspace` read-write | By design |
 | Config overlays (Codex config, skills) are mounted read-only outside `/workspace` | Good |
 | Sidecar MCP servers join a private per-run network; the primary joins it only when sidecars exist | Good |
-| Full network egress (only the model API is *needed*) | **Finding** (ADR-0002 deferred gap) |
+| Full network egress (only the model API is *needed*) | **Fixed** — egress blacklist monitor (ADR-0011) |
 | `.e/.env` injected whole into every container, unfiltered | Fixed — whitelisted (see Zone 2) |
 
 Root in the container was the highest-value finding, now fixed: the harness
@@ -59,12 +59,22 @@ deployment: `docker run --rm -v <worktree>:/workspace node:lts-alpine sh -c
 engines can bridge the gap with `--userns=keep-id` (Podman) or a matching
 `--user`/chown strategy.
 
-Egress hardening (only allow the provider base URL and configured MCP
-endpoints) is the second finding, but it is architecturally significant:
-Docker has no native egress firewall, so it needs a proxy container or network
-policy on the run group. It is the least-urgent of the three because the agent
-must reach its model API anyway and credential exposure is already bounded by
-Zone-2 fixes.
+Egress monitoring with blacklist enforcement is now live (ADR-0011): every run
+starts a shared `<run>-egress` container that runs `dnsmasq` (DNS sinkhole for
+blacklisted domains) + `iptables` (REJECT for blacklisted IP:port pairs) with
+query logging. The harness agent shares the egress container's network namespace
+(`--network container:<run>-egress`), so every socket and DNS query physically
+crosses the egress netns where enforcement happens. The agent has NO `NET_ADMIN`
+(cannot flush rules or disable the monitor); the egress container gets `NET_ADMIN`
+in its own netns only. The blacklist source is host-editable (`.e/egress-blacklist`,
+seeded by `e init`), and the operator can reload it mid-run with `docker kill -s HUP`.
+Direct-IP connections (bypassing DNS) still hit the iptables REJECT on the OUTPUT
+path, so the agent cannot exfiltrate data to a hardcoded IP without crossing the
+firewall. Logs are written to a host-visible mount (`/var/log/egress/dnsmasq.log`);
+the egress container's stderr shows iptables REJECT events. The blacklist is
+"block known-bad destinations" not "allow only known-good" — everything not
+blacklisted is reachable, so the agent can reach new APIs without operator
+intervention. An allowlist mode (zero-trust WAN) is a future extension.
 
 ## Zone 2: Store and secrets
 

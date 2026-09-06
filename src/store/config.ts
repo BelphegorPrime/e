@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { MODELS } from '../modelStatus.js';
-import { configFilePath, dockerfilePath, modelsFilePath } from './paths.js';
+import { configFilePath, dockerfilePath, egressDir, modelsFilePath } from './paths.js';
 
 /**
  * The Store's **state files** (host-only): `config.json` orchestration
@@ -108,4 +108,9 @@ export function writeConfig(config: StoreConfig, root?: string): void {
 /** Returns true if `e init` has written this harness's Dockerfile under `root`. */
 export function isInitialized(name: string, root?: string): boolean {
   return fs.existsSync(dockerfilePath(name, root));
+}
+
+/** Returns true when the shared egress build context has been seeded by `e init` (ADR-0011). */
+export function isEgressInitialized(root?: string): boolean {
+  return fs.existsSync(path.join(egressDir(root), 'Dockerfile'));
 }

@@ -120,7 +120,8 @@ test('planInit: steps are ordered — harnesses, shipped servers, bootstrap, the
   const kinds = plan.steps.map(step => step.kind);
   assert.deepEqual(kinds, [
     ...HARNESS_NAMES.map(() => 'harness'),
-    'writes',
+    'writes', // shipped MCP servers + skills
+    'writes', // egress build context + blacklist template (ADR-0011)
     'bootstrap',
     'compose',
   ]);
@@ -156,4 +157,23 @@ test('planInit: all paths live under the requested root', () => {
     }
   }
   assert.ok(plan.env.file.startsWith('/tmp/fake-e-root'));
+});
+
+test('planInit: seeds the egress build context and blacklist template (never clobbered)', () => {
+  const plan = planInit(state(), {});
+  const egressStep = plan.steps.find(
+    step =>
+      step.kind === 'writes' &&
+      step.writes.some(w => w.file.includes('.e/egress/'))
+  );
+  assert.ok(egressStep, 'expected an egress write step');
+  assert.ok(egressStep.kind === 'writes');
+  const files = egressStep.writes.map(w => w.file);
+  assert.ok(files.some(f => f.endsWith('.e/egress/Dockerfile')));
+  assert.ok(files.some(f => f.endsWith('.e/egress/entrypoint.sh')));
+  assert.ok(files.some(f => f.endsWith('.e/egress/dnsmasq.conf')));
+  assert.ok(files.some(f => f.endsWith('.e/egress-blacklist')));
+  for (const write of egressStep.writes) {
+    assert.equal(write.clobber, 'never');
+  }
 });

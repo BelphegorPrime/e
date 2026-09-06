@@ -112,3 +112,13 @@ export function harnessDir(name: string, root?: string): string {
 export function dockerfilePath(name: string, root?: string): string {
   return path.join(harnessDir(name, root), 'Dockerfile');
 }
+
+/** Directory holding the shared egress container's build context (`Dockerfile` + entrypoint). */
+export function egressDir(root?: string): string {
+  return path.join(eBaseDir(root), 'egress');
+}
+
+/** Absolute path to the store's egress blacklist file (host-editable, never clobbered). */
+export function egressBlacklistPath(root?: string): string {
+  return path.join(eBaseDir(root), 'egress-blacklist');
+}

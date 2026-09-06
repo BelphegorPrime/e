@@ -4,6 +4,7 @@ import { renderDockerfile } from '../harness/renderDockerfile.js';
 import { renderEnvTemplate } from '../harness/renderEnvTemplate.js';
 import { renderCompose } from './renderCompose.js';
 import { renderBootstrap } from './renderBootstrap.js';
+import { renderEgressFiles } from './renderEgress.js';
 import { HARNESSES, envHarnessSections } from '../harness/index.js';
 import { renderDefaultAgent } from '../agent/index.js';
 import { parseDotenv } from '../harness/adapter.js';
@@ -17,6 +18,8 @@ import {
   bootstrapScriptPath,
   dockerComposePath,
   dockerfilePath,
+  egressBlacklistPath,
+  egressDir,
   envFilePath,
   harnessDir,
   mcpDir,
@@ -225,6 +228,29 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
   }
   if (mcpWrites.length > 0 || skillWrites.length > 0) {
     steps.push({ kind: 'writes', writes: [...mcpWrites, ...skillWrites] });
+  }
+
+  // Step 2b — the shared egress container build context + blacklist template
+  // (never clobbered). The image is built once and started per run (ADR-0011).
+  const egressWrites: InitWrite[] = [];
+  const egressCtx = egressDir(root);
+  for (const [fileName, content] of Object.entries(renderEgressFiles())) {
+    egressWrites.push({
+      directory: egressCtx,
+      file: path.join(egressCtx, fileName),
+      content,
+      clobber: 'never',
+    });
+  }
+  const egressBlacklistFile = egressBlacklistPath(root);
+  egressWrites.push({
+    directory: path.dirname(egressBlacklistFile),
+    file: egressBlacklistFile,
+    content: renderEgressFiles()['blacklist.example'],
+    clobber: 'never',
+  });
+  if (egressWrites.length > 0) {
+    steps.push({ kind: 'writes', writes: egressWrites });
   }
 
   // Step 3 — the bootstrap script (overwritten every init; it is derived state).

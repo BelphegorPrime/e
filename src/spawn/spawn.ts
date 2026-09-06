@@ -17,7 +17,7 @@ import { readMcpServer, listMcpServerNames, type McpServer } from '../mcp/index.
 import { RunScratch } from '../runs/runScratch.js';
 import { executeSpawn } from './executeSpawn.js';
 import { findRoot } from '../store/root.js';
-import { envFilePath } from '../store/paths.js';
+import { envFilePath, egressBlacklistPath } from '../store/paths.js';
 import { readConfig } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
 import { log } from '../utils/log.js';
@@ -217,6 +217,12 @@ function gatherSpawnFacts(
       baseEnvPath !== undefined && fs.existsSync(baseEnvPath)
         ? baseEnvPath
         : undefined,
+    // The egress blacklist source is host-editable and lives in the store
+    // (ADR-0011); undefined when there is no store root.
+    egressBlacklistFile:
+      root === undefined
+        ? undefined
+        : egressBlacklistPath(root),
     userEnvFile: opts.envFile,
     dirOpt: opts.dir,
   };
