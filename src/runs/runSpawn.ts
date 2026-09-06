@@ -1,6 +1,8 @@
 import path from 'path';
 import os from 'os';
 import type { Git } from '../git/index.js';
+import type { PullRequest } from '../github/index.js';
+import type { GitPlatform } from '../store/config.js';
 import type {
   ContainerRunner,
   RunOptions,
@@ -74,6 +76,8 @@ export interface EgressPlan {
 export interface RunSpawnDeps {
   git: Git;
   runtime: ContainerRunner;
+  /** Optional PR/MR opener (present only when the store has a platform). */
+  pullRequest?: PullRequest;
   /** Sleep between readiness probes; injected so tests poll without real waits. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -128,6 +132,8 @@ export interface RunSpawnParams {
   configMounts?: Mount[];
   /** Readiness polling overrides (mainly for tests). */
   readiness?: ReadinessPolicy;
+  /** The configured git platform (`github` | `gitlab` | ... ) for PR/MR; absent disables. */
+  gitPlatform?: GitPlatform;
 }
 
 export interface RunSpawnResult {
@@ -143,6 +149,10 @@ export interface RunSpawnResult {
   pushed?: boolean;
   /** A non-fatal push warning: the branch is kept locally despite this. */
   pushWarning?: string;
+  /** The PR/MR web URL, when one was created and the platform succeeded. */
+  pullRequestUrl?: string;
+  /** A non-fatal PR/MR warning: the push succeeded but the PR/MR did not open. */
+  pullRequestWarning?: string;
   /** Non-fatal sidecar warnings (e.g. a sidecar that crashed mid-run). */
   sidecarWarnings?: string[];
   /** A human-readable reason for a pre-run failure (e.g. not a git repo). */
@@ -216,8 +226,10 @@ export async function runSpawn(
 
   // Pin the base to the commit HEAD points at now, so a later push-eligibility
   // check compares against the run's actual starting point even if the host's
-  // HEAD moves while the agent works.
+  // HEAD moves while the agent works. The branch name is the PR/MR target —
+  // the branch the user was on when they spawned.
   const base = git.headSha();
+  const baseBranch = git.currentBranch() || 'main';
   const slug = params.name ?? slugify(prompt);
   const prefix = runBranchPrefix(agent.name, slug);
   const worktreesDir =
@@ -423,6 +435,35 @@ export async function runSpawn(
     }
   }
 
+  // When the store has a git platform and the run pushed, open a PR/MR into
+  // the branch the user was on when they spawned (the run's natural target).
+  // The title is the branch's tip commit subject (the run's commit message);
+  // the body is the prompt that drove the run. Non-fatal: a missing CLI, an
+  // unauthenticated session, or a platform rejection only warn — the pushed
+  // branch remains the durable artifact.
+  let pullRequestUrl: string | undefined;
+  let pullRequestWarning: string | undefined;
+  if (
+    pushed &&
+    params.gitPlatform &&
+    deps.pullRequest
+  ) {
+    const title =
+      git.runLog(branch).find(c => c.subject.trim().length > 0)?.subject ||
+      `e: run output for ${branch}`;
+    try {
+      pullRequestUrl = deps.pullRequest.create({
+        platform: params.gitPlatform,
+        head: branch,
+        base: baseBranch,
+        title,
+        body: prompt,
+      });
+    } catch (err) {
+      pullRequestWarning = `could not open a ${params.gitPlatform} merge request for ${branch}: ${(err as Error).message}`;
+    }
+  }
+
   return {
     ran,
     exitCode,
@@ -430,6 +471,8 @@ export async function runSpawn(
     branch,
     pushed,
     pushWarning,
+    pullRequestUrl,
+    pullRequestWarning,
     sidecarWarnings: warnings,
   };
 }

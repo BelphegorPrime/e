@@ -5,8 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { HARNESSES } from '../harness/index.js';
 import { MODEL_CATALOG } from '../modelStatus.js';
+import { GIT_PLATFORMS } from '../store/config.js';
 import {
   OMNIROUTE_STACK_SECRETS,
+  parseGitPlatformChoice,
   planInit,
   type InitAnswers,
   type InitState,
@@ -23,6 +25,7 @@ function state(overrides: Partial<InitState> = {}): InitState {
     currentModels: [],
     existingEnvContent: undefined,
     modelCatalog: MODEL_CATALOG,
+    gitPlatforms: [...GIT_PLATFORMS],
     hardware: 'cpu',
     ...overrides,
   };
@@ -35,7 +38,11 @@ test('planInit: blank or unanswered answers keep the configured current', () => 
   const plan = planInit(state(), {});
   assert.equal(plan.defaultHarness, 'pi');
   assert.deepEqual(plan.models, []);
-  assert.deepEqual(plan.config, { defaultHarness: 'pi', models: [] });
+  assert.deepEqual(plan.config, {
+    defaultHarness: 'pi',
+    models: [],
+    gitPlatform: undefined,
+  });
 });
 
 test('planInit: answers resolve through the same pure parsers the prompts use', () => {
@@ -45,6 +52,48 @@ test('planInit: answers resolve through the same pure parsers the prompts use', 
   );
   assert.equal(plan.defaultHarness, HARNESS_NAMES[1]);
   assert.deepEqual(plan.models, MODEL_CATALOG.map(m => m.id));
+});
+
+test('planInit: a named git platform is recorded in the config', () => {
+  const plan = planInit(
+    state(),
+    { gitPlatform: 'gitlab' } satisfies InitAnswers
+  );
+  assert.equal(plan.gitPlatform, 'gitlab');
+  assert.deepEqual(plan.config, {
+    defaultHarness: 'pi',
+    models: [],
+    gitPlatform: 'gitlab',
+  });
+});
+
+test('planInit: a blank git-platform answer disables PR/MR creation', () => {
+  const plan = planInit(
+    state({ currentGitPlatform: 'github' }),
+    { gitPlatform: '   ' } satisfies InitAnswers
+  );
+  assert.equal(plan.gitPlatform, undefined);
+});
+
+test('planInit: an unanswered platform keeps the configured current (a --yes re-init)', () => {
+  const plan = planInit(
+    state({ currentGitPlatform: 'gitea' }),
+    {}
+  );
+  assert.equal(plan.gitPlatform, 'gitea');
+});
+
+test('parseGitPlatformChoice: index, exact name, blank, and invalid', () => {
+  const platforms = ['github', 'gitlab', 'forgejo', 'gitea'];
+  assert.equal(parseGitPlatformChoice('2', platforms), 'gitlab');
+  assert.equal(parseGitPlatformChoice('forgejo', platforms), 'forgejo');
+  // A blank answer is the disable sentinel (valid, resolved by the caller).
+  assert.equal(parseGitPlatformChoice('', platforms), undefined);
+  assert.equal(parseGitPlatformChoice('  ', platforms), undefined);
+  // Anything else is unrecognized (re-prompt).
+  assert.equal(parseGitPlatformChoice('bitbucket', platforms), undefined);
+  assert.equal(parseGitPlatformChoice('5', platforms), undefined);
+  assert.equal(parseGitPlatformChoice('-1', platforms), undefined);
 });
 
 test('planInit: a raw-mode id list passes through untouched', () => {

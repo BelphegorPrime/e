@@ -6,6 +6,7 @@ import { log } from '../utils/log.js';
 import {
   parseHarnessChoice,
   parseModelChoice,
+  parseGitPlatformChoice,
   type InitAnswers,
 } from './initPlan.js';
 
@@ -21,6 +22,10 @@ export interface WizardState {
   modelCatalog: ModelCatalogEntry[];
   /** Configured model selection, preselected (a blank answer keeps it). */
   currentModels: string[];
+  /** All git platforms offered, in prompt order. */
+  gitPlatforms: string[];
+  /** Configured git platform, preselected (a blank answer disables PR/MR). */
+  currentGitPlatform?: string;
 }
 
 /**
@@ -61,7 +66,12 @@ export function interactiveWizard(): Wizard {
           state.currentModels
         );
         const apiKeys = await promptApiKeys(rl, state.promptKeys);
-        return { harness, models, apiKeys };
+        const gitPlatform = await promptGitPlatform(
+          rl,
+          state.gitPlatforms,
+          state.currentGitPlatform
+        );
+        return { harness, models, apiKeys, gitPlatform };
       } finally {
         rl.close();
       }
@@ -218,4 +228,35 @@ async function promptApiKeys(
     if (answer) values[key] = answer;
   }
   return values;
+}
+
+/** Prompts for the git platform, re-asking until the answer is valid. */
+async function promptGitPlatform(
+  rl: readline.Interface,
+  platforms: string[],
+  current?: string
+): Promise<string> {
+  log.info(
+    '\nGit platform (creates a PR/MR on a successful run; blank disables):'
+  );
+  platforms.forEach((name, i) => {
+    const marker = name === current ? ' (current)' : '';
+    log.info(`  ${i + 1}) ${name}${marker}`);
+  });
+  for (;;) {
+    const answer = await rl.question(
+      current
+        ? `Choose [${current} or blank to disable]: `
+        : `Choose [blank to disable]: `
+    );
+    // A blank answer always disables PR/MR creation (even on a first init);
+    // anything else must resolve to a known platform.
+    if (
+      answer.trim() === '' ||
+      parseGitPlatformChoice(answer, platforms) !== undefined
+    ) {
+      return answer;
+    }
+    log.warn(`  "${answer.trim()}" is not one of: ${platforms.join(', ')}.`);
+  }
 }

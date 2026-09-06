@@ -14,12 +14,25 @@ import { configFilePath, dockerfilePath, egressDir, modelsFilePath } from './pat
 /** The favorite harness a bare `e spawn` resolves to when none is named. */
 export const DEFAULT_HARNESS = 'pi';
 
+/** Supported git platforms for PR/MR creation. */
+export type GitPlatform = 'github' | 'gitlab' | 'forgejo' | 'gitea';
+
+/** Every platform `e init` offers, in prompt order. */
+export const GIT_PLATFORMS: readonly GitPlatform[] = [
+  'github',
+  'gitlab',
+  'forgejo',
+  'gitea',
+];
+
 /** Host-only orchestration settings, persisted in `config.json`. */
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
   defaultHarness: string;
   /** Local llama.cpp models `e init` provisions; `e spawn` waits for exactly these. */
   models: string[];
+  /** Git platform for PR/MR creation after successful runs. */
+  gitPlatform?: GitPlatform;
 };
 
 export type ModelDataEntry = {
@@ -47,7 +60,12 @@ export function resolveConfig(raw: unknown): StoreConfig {
     parsed.models.every(m => typeof m === 'string')
       ? parsed.models
       : MODELS;
-  return { defaultHarness, models };
+  const gitPlatform =
+    typeof parsed.gitPlatform === 'string' &&
+    GIT_PLATFORMS.includes(parsed.gitPlatform as GitPlatform)
+      ? parsed.gitPlatform
+      : undefined;
+  return { defaultHarness, models, gitPlatform };
 }
 
 /**

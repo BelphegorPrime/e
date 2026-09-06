@@ -3,6 +3,7 @@ import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
 import { ContainerRuntime, type RunOptions } from '../runtime/index.js';
 import { HostGit } from '../git/host.js';
+import { HostPullRequest } from '../github/host.js';
 import {
   resolveSpawnTarget,
   validateSpawn,
@@ -329,10 +330,15 @@ export function registerSpawnCommand(program: Command): void {
           }
 
           const plan = planSpawn(facts);
+          const config = readConfig(facts.root);
           const result = await executeSpawn(facts, plan, {
             git: new HostGit(),
             runtime,
             scratch,
+            pullRequest: config.gitPlatform
+              ? new HostPullRequest()
+              : undefined,
+            gitPlatform: config.gitPlatform,
           });
           // Rendered env-files hold resolved secrets; each container already has
           // its own copy, so drop them before reporting and exiting.
@@ -350,12 +356,18 @@ export function registerSpawnCommand(program: Command): void {
           if (result.pushWarning) {
             log.warn(`Warning: ${result.pushWarning}`);
           }
+          if (result.pushed) {
+            log.success('Pushed to origin. Open a PR or merge when you like.');
+          }
+          if (result.pullRequestUrl) {
+            log.success(`Pull request: ${result.pullRequestUrl}`);
+          }
+          if (result.pullRequestWarning) {
+            log.warn(`Warning: ${result.pullRequestWarning}`);
+          }
           log.success(`\nRun branch: ${result.branch}`);
           if (result.captured) {
             log.success('Captured uncommitted changes in a host commit.');
-          }
-          if (result.pushed) {
-            log.success('Pushed to origin. Open a PR or merge when you like.');
           }
           process.exit(result.exitCode);
         } catch (err) {
