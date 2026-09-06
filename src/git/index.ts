@@ -19,9 +19,11 @@ export interface Git {
   listRunBranches(prefix: string): string[];
 
   /**
-   * Tip metadata for every branch under `refs/heads/<prefix>-*` and under
-   * `refs/remotes/<remote>/<prefix>-*`, newest commit first — the raw
-   * material of the branch-backed runs index (ADR-0010).
+   * Tip metadata for every branch under `refs/heads/<prefix>-*` or nested
+   * under `refs/heads/<prefix>/` (and the remote-tracking twins) — the raw
+   * material of the branch-backed runs index (ADR-0010). Both shapes are
+   * enumerated so a full prefix (`e/<agent>/<slug>`) and the namespace
+   * prefix (`e`) work; newest commit first.
    */
   listRunRefs(prefix: string): RunRef[];
 

@@ -40,17 +40,25 @@ export class HostGit implements Git {
 
   listRunRefs(prefix: string): RunRef[] {
     // NUL-separated fields so subject text can never collide with the other
-    // columns; one `for-each-ref` call covers local heads and remotes.
+    // columns; one `for-each-ref` call covers local heads and remotes. Both
+    // branch shapes are enumerated: the `<prefix>-N` form matches via `-*`,
+    // and every run branch nests under `refs/heads/e/...` (ADR-0003), so the
+    // recursive `/**` form catches a namespace prefix (`e`) whose branches live
+    // several segments deep. The glob shapes are disjoint; a ref matching both
+    // (e.g. `e/agent/slug-1` matching `-*` and `/**`) is still deduped.
     const out = this.capture(
       [
         'for-each-ref',
         '--sort=-committerdate',
         `--format=%(refname:short)%00%(objectname)%00%(committerdate:iso-strict)%00%(subject)`,
         `refs/heads/${prefix}-*`,
+        `refs/heads/${prefix}/**`,
         `refs/remotes/*/${prefix}-*`,
+        `refs/remotes/*/${prefix}/**`,
       ],
       `list run refs for ${prefix}`
     );
+    const seen = new Set<string>();
     return out
       .split('\n')
       .map(line => line.trim())
@@ -58,12 +66,19 @@ export class HostGit implements Git {
       .map(line => {
         const [name, sha, committerDate, subject = ''] = line.split('\0');
         return { name, sha, committerDate, subject };
+      })
+      .filter(ref => {
+        if (seen.has(ref.name)) return false;
+        seen.add(ref.name);
+        return true;
       });
   }
 
   runLog(branch: string): RunCommit[] {
+    // `git log` does not understand `%00` (unlike for-each-ref), so the NUL
+    // separator is `%x00`; otherwise everything lands in the sha column.
     const out = this.capture(
-      ['log', `--format=%H%00%s%00%cI`, branch],
+      ['log', `--format=%H%x00%s%x00%cI`, branch],
       `log ${branch}`
     );
     return out
