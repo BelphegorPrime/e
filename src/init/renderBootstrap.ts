@@ -28,15 +28,23 @@ until curl -sf http://llama:9931/health > /dev/null; do sleep 2; done
 log 'llama.cpp ready; synchronizing models'
 
 for model in $models; do
+  repo=\${model%%:*}
+  # llama.cpp canonicalizes the quant suffix of cached presets: a catalog id
+  # whose quant carries a prefix (e.g. UD-) shows up with the canonical quant
+  # once cached. Exact-quant matching therefore missed known models and
+  # re-registered them, which llama.cpp answers with "model limit reached"
+  # (HTTP 500 -> curl exit 22). Match by repo prefix and use llama's own id.
   model_state=$(curl -sf http://llama:9931/models)
-  if echo "$model_state" | grep -q '"id"[[:space:]]*:[[:space:]]*"'"$model"'"'; then
-    if ! echo "$model_state" | grep -q '"id"[[:space:]]*:[[:space:]]*"'"$model"'".*"value"[[:space:]]*:[[:space:]]*"loaded"'; then
-      log "loading model $model"
+  entry=$(printf '%s\\n' "$model_state" | sed 's/},{/}\\n{/g' | grep '"id"[[:space:]]*:[[:space:]]*"'$repo | head -1)
+  if test -n "$entry"; then
+    llama_id=$(printf '%s\\n' "$entry" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')
+    if printf '%s\\n' "$entry" | grep -q '"value"[[:space:]]*:[[:space:]]*"loaded"'; then
+      log "model already loaded: $llama_id"
+    else
+      log "loading model $llama_id"
       curl -sf -X POST http://llama:9931/models/load \
         -H 'Content-Type: application/json' \
-        -d '{"model":"'"$model"'"}' > /dev/null
-    else
-      log "model already loaded: $model"
+        -d '{"model":"'"$llama_id"'"}' > /dev/null
     fi
   else
     log "registering model $model"
