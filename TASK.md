@@ -1,154 +1,207 @@
-# TASK: Egress blacklist monitor via a shared-network-namespace egress container
+<fixed-error-trace>
+$ e spawn -i
+> docker compose --env-file /home/marcel/projects/private/e/.e/.env -f /home/marcel/projects/private/e/.e/compose.yaml up -d
+[+] up 6/6
+ ✔ Network omniroute-edge    Created                                                               0.1s
+ ✔ Network omniroute-stack   Created                                                               0.1s
+ ✔ Container omniroute-redis Healthy                                                              11.0s
+ ✔ Container llama           Started                                                               1.0s
+ ✔ Container omniroute       Started                                                              10.8s
+ ✔ Container e-bootstrap-1   Started                                                              10.8s
+> docker compose --env-file /home/marcel/projects/private/e/.e/.env -f /home/marcel/projects/private/e/.e/compose.yaml wait bootstrap
+container "0ece93a74e8919c4c5a37ab4fcb2df90b0dedd194d03563afd8ee277830ec7db" exited with status code 0
+up to date /home/marcel/projects/private/e/.e/agents/pi/models.json
+up to date /home/marcel/projects/private/e/.e/agents/pi/Dockerfile
+resolve HEAD
+list run branches for e/pi/run
+create worktree for e/pi/run-50
+> docker run -d --name e-pi-run-50-egress --cap-add NET_ADMIN --dns 127.0.0.1 --network omniroute-edge -v /tmp/e-scratch-5ksxh4/dnsmasq.blacklist:/etc/egress.d/dnsmasq.blacklist -v /tmp/e-egress-log-uz0Qdi:/var/log/egress e-egress
+Using runtime: docker
+> docker run -it --rm --name e-pi-run-50 -w /workspace --network container:e-pi-run-50-egress --env-file /tmp/e-scratch-EjSFcb/base-env.env --env-file /tmp/e-scratch-2vDkgR/provider.env -v /tmp/e-worktrees/e-pi-run-50:/workspace e-agent-pi pi --provider e --model auto
+docker: Error response from daemon: cannot join network namespace of a non running container: container e-pi-run-50-egress is exited
 
-> Invert the shipped ADR-0011 whitelist egress. Replace the per-host whitelist
-> proxies with **one egress container per run whose network namespace the
-> harness agent shares** (`network_mode: "service:egress-proxy"`, CLI form
-> `--network container:<run>-egress`). Blacklist destinations (Pi-hole style
-> DNS sinkhole + optional IP REJECT) and **write full traffic monitoring to a
-> mounted log file**.
+Run 'docker run --help' for more information
+check status of /tmp/e-worktrees/e-pi-run-50
+Warning: Egress monitor exited during the run; the agent lost its network namespace (its egress and DNS were cut off).
 
-## Problem
+Run branch: e/pi/run-50
+</fixed-error-trace>
 
-Agent containers have full network egress (ADR-0002 accepted this as a
-deferred gap). ADR-0011 closed the gap with a whitelist: per-host transparent
-`e-egress` proxy containers on an `--internal` run network, where the agent could
-reach only enumerated `host:port` pairs. That works but is operationally
-brittle:
+the previous error-trace is just for reference and should give a historic insight.
 
-- Every host the agent must reach has to be enumerated up front
-  (`deriveEgressAllowList`). Unexpected destinations — a package mirror, a CDN,
-  a redirect target, a random remote MCP endpoint — fail or hang.
-- The pressure showed: `ALLOWED_DOMAINS` (npmjs, pypi, github, ...) had to be
-  force-added to the allow-list in `spawnPlan.ts`, breaking the allow-list
-  invariants its own tests assert.
-- No traffic observability: when the agent does reach egress, nobody can see
-  what it did.
+<dns-trace>
+Sep  6 21:42:10 dnsmasq[1]: forwarded golem.de to 127.0.0.11
+Sep  6 21:42:10 dnsmasq[1]: query[A] golem.de from 127.0.0.1
+Sep  6 21:42:10 dnsmasq[1]: forwarded golem.de to 127.0.0.11
+Sep  6 21:42:10 dnsmasq[1]: query[AAAA] golem.de from 127.0.0.1
+Sep  6 21:42:10 dnsmasq[1]: forwarded golem.de to 127.0.0.11
+Sep  6 21:42:10 dnsmasq[1]: query[A] golem.de from 127.0.0.1
+Sep  6 21:42:10 dnsmasq[1]: forwarded golem.de to 127.0.0.11
+Sep  6 21:42:10 dnsmasq[1]: query[AAAA] golem.de from 127.0.0.1
+Sep  6 21:42:10 dnsmasq[1]: config error is REFUSED
+Sep  6 21:42:10 dnsmasq[1]: reply error is SERVFAIL
+Sep  6 21:42:10 dnsmasq[1]: query[A] golem.de from 127.0.0.1
+Sep  6 21:42:10 dnsmasq[1]: forwarded golem.de to 127.0.0.11
+Sep  6 21:42:10 dnsmasq[1]: query[A] golem.de from 127.0.0.1
+Sep  6 21:42:10 dnsmasq[1]: forwarded golem.de to 127.0.0.11
+Sep  6 21:42:10 dnsmasq[1]: query[A] golem.de from 127.0.0.1
+Sep  6 21:42:10 dnsmasq[1]: config error is REFUSED
+Sep  6 21:42:10 dnsmasq[1]: reply error is SERVFAIL
+</dns-trace>
 
-The harness agent *needs* its provider base URL and the configured MCP
-endpoints; everything else *may* be reached and should be **logged**, with only
-known-bad destinations **blocked**.
+It starts now but it blocks all requests.
+Just to make shure, all containers should be of interest for 
+the egress container.
+Llamacpp, omniroute, redis are also relevant.
+So the egress container should be more global.
+More like a egress gateway for every part of the app.
 
-## Approach (decision)
+a little bit like this compose.yaml
+<compose.yaml>
+version: "3.3"
+services:
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.3
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=custom
+      - VPN_TYPE=wireguard
+      - FIREWALL_INPUT_PORTS=5800,8080,7878,8989,8686,9191,8081,6767,9696,6969,8999
+    ports:
+      - 5800:5800
+    volumes:
+      - ./wg0.conf:/gluetun/wireguard/wg0.conf:ro
 
-Replace the per-host whitelist proxies with **one egress container per run
-whose network namespace the harness agent shares**:
+  jdownloader:
+    image: jaymoulin/jdownloader:2.3.0
+    container_name: jdownloader
+    user: 0:0
+    depends_on:
+      - gluetun
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /mnt/MainPool/media/Downloads/jdownloader:/opt/JDownloader/Downloads
+      - /mnt/SSDPool/docker/data/vpn/config:/opt/JDownloader/app/cfg
+      - /mnt/SSDPool/docker/data/vpn/jdlogs:/opt/JDownloader/app/logs
+      - /mnt/SSDPool/docker/data/vpn/extensions:/opt/JDownloader/app/extensions
+    network_mode: "service:gluetun"
 
-- Compose form: `network_mode: "service:egress-proxy"`.
-- CLI form (the runtime seam, ADR-0005): `docker run --network container:<egress>`
-  / `podman run --network container:<egress>` — the agent is started with
-  `--network container:<run>-egress` **after** the egress container is up.
+  sabnzbd:
+    image: ghcr.io/linuxserver/sabnzbd:5.1.2
+    container_name: sabnzbd
+    depends_on:
+      - gluetun
+    volumes:
+      - /mnt/SSDPool/docker/data/vpn/sabnzbd/config:/config
+      - /mnt/MainPool/media/Downloads:/config/Downloads
+    network_mode: "service:gluetun"
 
-The agent then has no interfaces of its own: every socket, every DNS query,
-every connection physically crosses the egress container's netns. No client
-cooperation (`HTTP_PROXY` is dead on arrival for these harnesses, ADR-0011
-measured it), no host iptables, no default-route surgery, no
-`NET_ADMIN`/`NET_RAW` on the untrusted agent (the egress container is ours and
-trusted).
+  seerr:
+    image: ghcr.io/seerr-team/seerr:v3.4.1
+    container_name: seerr
+    init: true
+    ports:
+      - 8089:5055
+    volumes:
+      - /mnt/SSDPool/docker/data/vpn/seerr/config:/app/config
 
-### Blacklist — Pi-hole style DNS sinkhole
+  radarr:
+    image: ghcr.io/linuxserver/radarr:6.4.3-nightly
+    container_name: radarr
+    depends_on:
+      - gluetun
+    volumes:
+      - /mnt/SSDPool/docker/data/vpn/radarr/config:/config
+      - /mnt/MainPool/media/Movies:/movies
+      - /mnt/MainPool/media/Downloads:/downloads
+    network_mode: "service:gluetun"
 
-- Egress container runs `dnsmasq` with a **mounted blacklist file**:
-  `address=/blocked.example/0.0.0.0` (matches the domain and its subdomains).
-  A blacklisted name resolves to the sinkhole IP, the agent's connection fails
-  fast, and the attempt is logged. Default sinkhole `0.0.0.0` (Pi-hole
-  default); optionally a local stub HTTP listener returning `404` at the
-  sinkhole IP so blocked HTTP(S) attempts surface a definitive response and a
-  log line.
-- Non-DNS blacklist (direct-IP connections bypass DNS): `iptables` REJECT on
-  the forwarded/output path in the egress netns for blacklisted IP:port pairs.
-- No enumerated allow-list: everything not blacklisted is reachable by default.
+  sonarr:
+    image: ghcr.io/linuxserver/sonarr:4.0.19
+    container_name: sonarr
+    depends_on:
+      - gluetun
+    volumes:
+      - /mnt/SSDPool/docker/data/vpn/sonarr/config:/config
+      - /mnt/MainPool/media/Series:/tv
+      - /mnt/MainPool/media/Animes:/anime
+      - /mnt/MainPool/media/Animation:/animation
+      - /mnt/MainPool/media/Downloads:/downloads
+    network_mode: "service:gluetun"
 
-### Monitoring — mounted log file
+  prowlarr:
+    image: ghcr.io/linuxserver/prowlarr:2.5.2
+    container_name: prowlarr
+    depends_on:
+      - gluetun
+    volumes:
+      - /mnt/SSDPool/docker/data/vpn/prowlarr/config:/config
+    network_mode: "service:gluetun"
 
-- `dnsmasq` logs every query (timestamp, source, qname, action) — this is the
-  "all requests a harness is trying" record, Pi-hole style.
-- `iptables LOG` (or a userspace forwarder) appends non-DNS forwarded
-  connections (src, dst, port, bytes).
-- Both write to a **host-visible bind mount**, planned per run like the
-  worktree mount. Log path and blacklist path come from the spawn plan / store.
+  bookshelf:
+    image: ghcr.io/pennydreadful/bookshelf:hardcover-v0.4.20.91
+    container_name: bookshelf
+    depends_on:
+      - gluetun
+    volumes:
+      - /mnt/SSDPool/docker/data/vpn/bookshelf/config:/config
+      - /mnt/MainPool/media/Ebooks:/books
+      - /mnt/MainPool/media/Manga:/manga
+      - /mnt/MainPool/media/audiobooks:/audiobooks
+      - /mnt/MainPool/media/Downloads:/downloads
+    network_mode: "service:gluetun"
 
-### Network topology
+  shelfarr:
+    image: ghcr.io/pedro-revez-silva/shelfarr:0.39.7
+    container_name: shelfarr
+    volumes:
+      - /mnt/SSDPool/docker/data/vpn/shelfarr/config:/rails/storage
+      - /mnt/SSDPool/docker/data/vpn/shelfarr/tmp:/rails/tmp
+      - /mnt/MainPool/media/Ebooks:/ebooks
+      - /mnt/MainPool/media/audiobooks:/audiobooks
+      - /mnt/MainPool/media/Downloads:/downloads
+    depends_on:
+      - gluetun
+    network_mode: "service:gluetun"
 
-- Egress container joins: the run's private network (sidecar reachability +
-  group teardown), the WAN face (default bridge), and `omniroute-edge` when the
-  local compose stack is present (`host.docker.internal` → OmniRoute via the
-  compose alias, as today — the agent sees it through the shared netns).
-- The agent joins **no** networks of its own; its only route out is the shared
-  netns.
-- Sidecar MCP servers keep the ADR-0005 pattern (run network + bridge WAN
-  face).
+  vpn_nginx:
+    image: nginx:1.31.5
+    container_name: vpn_nginx
+    depends_on:
+      - gluetun
+    volumes:
+      - /mnt/SSDPool/docker/data/git/periphery-root-directory/data/komodo/repos/nas-compose-truenas/active/gluetun/nginx.conf:/etc/nginx/nginx.conf
+      - /mnt/SSDPool/docker/data/git/periphery-root-directory/data/komodo/repos/nas-compose-truenas/active/gluetun/ssl/nginx.crt:/etc/nginx/ssl/nginx.crt
+      - /mnt/SSDPool/docker/data/git/periphery-root-directory/data/komodo/repos/nas-compose-truenas/active/gluetun/ssl/nginx.key:/etc/nginx/ssl/nginx.key
+    ports:
+      - 8705:8705
+      - 8706:8706
+      - 8710:8710
+      - 8711:8711
+      - 8800:8800
+      - 8801:8801
+      - 8900:8900
+      - 8901:8901
+      - 8910:8910
+      - 8911:8911
+      - 8915:8915
+      - 8916:8916
+      - 8920:8920
+      - 8921:8921
+      - 8925:8925
+      - 8926:8926
+      - 8930:8930
+      - 8931:8931
+      - 8940:8940
+      - 8941:8941
+      - 8950:8950
+      - 8951:8951
+</compose.yaml>
 
-## Verify first (the seam's sharp edges)
-
-1. **DNS inheritance.** `--network container:` forbids `--dns`; confirm the
-   agent's `resolv.conf` resolves through the egress container's dnsmasq
-   (embed a probe: from the agent namespace, `getent hosts blacklisted.example`
-   → sinkhole IP; `getent hosts allowed.example` → real IP). If inheritance
-   does not hold, route agent DNS via the egress netns rules instead and
-   document.
-2. **Embedded DNS in a shared netns.** The embedded resolver (`127.0.0.11`)
-   behaviour when two containers share one netns; sidecar name resolution must
-   still work for the agent (via the egress container's run-network membership
-   and its embedded-DNS rules).
-3. **Engine parity.** `--network container:` on docker and podman CLIs; Docker
-   Desktop (Linux containers) OK, Windows containers unsupported — document the
-   floor.
-4. **Egress container liveness.** Agent's netns disappears if the egress
-   container dies mid-run; detect and warn like a crashed sidecar (already
-   warned), never silently.
-
-## Tasks
-
-- [ ] Egress container image: Alpine + `dnsmasq` + `iptables` + logger shim;
-      mounted blacklist file + mounted log file; default sinkhole `0.0.0.0`;
-      optional stub HTTP 404.
-- [ ] Replace `src/egress` whitelist derivation with blacklist planning:
-      blacklist source (store file, e.g. `.e/egress-blacklist`, and/or CLI
-      flag — decide); drop `deriveEgressAllowList`/`planEgressProxies`/socat
-      Dockerfile.
-- [ ] Runtime (`src/runtime`): start single egress container first; agent run
-      args use `--network container:<run>-egress`; remove the per-host proxy
-      and `--internal` code paths for the agent (sidecars unchanged).
-- [ ] Spawn plan (`src/spawn`): plan the log + blacklist mounts; drop
-      `ALLOWED_DOMAINS` forcing.
-- [ ] Tests: plan + runtime + egress symmetry; blacklisted domain blocked and
-      logged; allowed domain resolves; log file written host-side; engine-flag
-      argv assertions.
-- [ ] Docs: rewrite `docs/security/attack-surface.md` Zone 1 item 4; amend
-      ADR-0011 or supersede with a new ADR (netns-shared egress monitor);
-      record the rejections below.
-
-## Considered and rejected
-
-- **Per-host whitelist proxies (status quo).** Enumerated hosts only; breaks on
-  unexpected destinations; the `ALLOWED_DOMAINS` hack proves the pain; no
-  traffic observability.
-- **CONNECT forward proxy (tinyproxy/squid) + `HTTP_PROXY`.** Harnesses do not
-  honor proxy env vars (ADR-0011 measured Node/undici, Rust/reqwest, pi);
-  traffic bypasses the proxy → monitor blind, blacklist moot.
-- **Network policy layer (compose driver, CNI).** Violates the thin runtime
-  seam (ADR-0005); heavier than the gap warrants.
-- **Transparent gateway without netns sharing.** Requires pointing the agent's
-  default route at a container and host iptables — not expressible through the
-  thin CLI seam. Netns sharing (`--network container:`) is what makes the same
-  effect expressible: the agent's interfaces *are* the egress container's.
-
-## Acceptance criteria
-
-- [ ] A blacklisted destination is unreachable from the agent and the attempt
-      appears in the mounted log.
-- [ ] Non-blacklisted egress works without enumeration (provider, MCP, package
-      registries, arbitrary hosts).
-- [ ] Every DNS query and forwarded connection is recorded in the mounted log.
-- [ ] Sidecar MCP servers resolve and are reachable from the agent; the local
-      compose stack (`host.docker.internal`) works.
-- [ ] No new privileges on the agent container; egress container is trusted.
-
-## References
-
-- ADR-0002 (host orchestrates git; accepted egress + whole-file env injection)
-- ADR-0005 (container groups, sidecars, private networks, thin runtime seam)
-- ADR-0011 (whitelist proxies — superseded by this ticket)
-- `docs/security/attack-surface.md`, Zone 1, item 4
-- `src/egress/index.ts`, `src/spawn/spawnPlan.ts` (`ALLOWED_DOMAINS`),
-  `src/runtime/index.ts`, `src/runs/runSpawn.ts`
+Just as some inspiration for you.
+The Egress would be like the gluetun and nginx container in one application,
+the other containers in this stack would be equal to omniroute, llamacpp, redis and harness containers

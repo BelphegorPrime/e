@@ -5,7 +5,12 @@ import type { Git } from '../git/index.js';
 import type { PullRequest } from '../github/index.js';
 import type { GitPlatform } from '../store/config.js';
 import type { ContainerRuntime, Mount, RunOptions } from '../runtime/index.js';
-import { runSpawn, type RunSpawnResult, type SidecarPlan, type EgressPlan } from '../runs/runSpawn.js';
+import {
+  runSpawn,
+  type RunSpawnResult,
+  type SidecarPlan,
+  type EgressPlan,
+} from '../runs/runSpawn.js';
 import { filterEnvContent } from '../harness/adapter.js';
 import {
   decideImageAction,
@@ -105,14 +110,12 @@ function buildImages(
       runtime.build(sc.image, mcpDir(sc.alias, root));
     }
   }
-  // The shared egress monitor (ADR-0011): build once per engine, into a dir.
-  // buildImages runs before any worktree exists, and egress is a shared image so
-  // it is built (cached) even before a run needs it. `isEgressInitialized` gates this
-  // on the egress build context having been seeded by `e init`.
+  // `e-egress` is a generic local tag and may belong to another project or an
+  // older e version. Always build it from this store's initialized context;
+  // Docker's layer cache keeps unchanged builds cheap while preventing a
+  // coincidental/stale tag from silently running incompatible behavior.
   if (plan.egressEnabled && isEgressInitialized(root)) {
-    if (rebuild || !runtime.imageExists(EGRESS_IMAGE)) {
-      runtime.build(EGRESS_IMAGE, egressDir(root));
-    }
+    runtime.build(EGRESS_IMAGE, egressDir(root));
   }
   return tag;
 }
@@ -221,9 +224,10 @@ export async function executeSpawn(
     const egressScratch = scratch.dir();
     const dnsmasqPath = path.join(egressScratch, 'dnsmasq.blacklist');
     fs.writeFileSync(dnsmasqPath, renderDnsmasqConf(parsed.domains));
-    const iptablesPath = parsed.ipPorts.length > 0
-      ? path.join(egressScratch, 'iptables.rules')
-      : undefined;
+    const iptablesPath =
+      parsed.ipPorts.length > 0
+        ? path.join(egressScratch, 'iptables.rules')
+        : undefined;
     if (iptablesPath) {
       fs.writeFileSync(iptablesPath, renderIptablesRules(parsed.ipPorts));
     }

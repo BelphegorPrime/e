@@ -205,11 +205,11 @@ export function egressRunArgs(spec: EgressSpec): string[] {
     '--dns',
     '127.0.0.1',
   ];
+  // Docker cannot combine its built-in `bridge` network mode with user-defined
+  // networks in one `run`. User-defined bridge networks provide outbound NAT,
+  // so they are also the egress path; with no explicit network Docker uses its
+  // built-in bridge automatically.
   for (const net of spec.networks) args.push('--network', net);
-  // The WAN face: the default bridge (docker) / default network (podman) as the
-  // engine keyword `bridge`, alongside any user-defined networks. Without it a
-  // container on only user-defined networks has no external route.
-  if (spec.networks.length > 0) args.push('--network', 'bridge');
   args.push('-v', `${spec.blacklistHost}:${EGRESS_BLACKLIST_MOUNT}`);
   args.push('-v', `${spec.logHost}:${EGRESS_LOG_MOUNT}`);
   if (spec.iptablesHost) {

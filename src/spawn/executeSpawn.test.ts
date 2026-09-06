@@ -150,8 +150,13 @@ test('routes the agent over the compose edge network when the stack is present; 
     // Stack present: the run container joins omniroute-edge (where OmniRoute
     // aliases host.docker.internal) and must NOT also get the host-gateway
     // mapping, which would shadow the compose alias in /etc/hosts.
-    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), { recursive: true });
-    fs.writeFileSync(path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'), 'FROM alpine\n');
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'),
+      'FROM alpine\n'
+    );
     fs.mkdirSync(path.join(tmp, '.e'), { recursive: true });
     fs.writeFileSync(path.join(tmp, '.e', 'compose.yaml'), 'services: {}\n');
     const withStack = new RecordingRuntime();
@@ -198,8 +203,13 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
     );
     const user = path.join(tmp, 'user.env');
     fs.writeFileSync(user, 'USER_EXTRA=1\n');
-    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), { recursive: true });
-    fs.writeFileSync(path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'), 'FROM alpine\n');
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'),
+      'FROM alpine\n'
+    );
 
     const runtime = new RecordingRuntime();
     const plan: SpawnPlan = {
@@ -236,14 +246,61 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
   }
 });
 
+test('egress monitor: rebuilds an existing incompatible e-egress image', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-egress-collision-'));
+  try {
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'),
+      'FROM alpine\n'
+    );
+    fs.mkdirSync(path.join(tmp, '.e', 'egress'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'egress', 'Dockerfile'),
+      'FROM alpine\n'
+    );
+    fs.writeFileSync(path.join(tmp, '.e', 'egress-blacklist'), '');
+
+    class CollidingRuntime extends RecordingRuntime {
+      imageExists(imageTag: string): boolean {
+        return imageTag === 'e-egress';
+      }
+    }
+
+    const runtime = new CollidingRuntime();
+    await executeSpawn(
+      facts({
+        root: tmp,
+        egressBlacklistFile: path.join(tmp, '.e', 'egress-blacklist'),
+      }),
+      { ...emptyPlan, egressEnabled: true },
+      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+    );
+
+    assert.deepEqual(runtime.built, ['e-harness-demo', 'e-egress']);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('egress monitor: builds the shared image and materializes the blacklist + iptables mounts, then joins the agent to its netns', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-egress-'));
   try {
     // Seed an initialized harness and egress build context.
-    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), { recursive: true });
-    fs.writeFileSync(path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'), 'FROM alpine\n');
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'),
+      'FROM alpine\n'
+    );
     fs.mkdirSync(path.join(tmp, '.e', 'egress'), { recursive: true });
-    fs.writeFileSync(path.join(tmp, '.e', 'egress', 'Dockerfile'), 'FROM alpine\n');
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'egress', 'Dockerfile'),
+      'FROM alpine\n'
+    );
     // Host-editable blacklist source with both a DOMAIN and an ip:port line.
     fs.writeFileSync(
       path.join(tmp, '.e', 'egress-blacklist'),
@@ -254,7 +311,10 @@ test('egress monitor: builds the shared image and materializes the blacklist + i
     const egressPlan: SpawnPlan = { ...emptyPlan, egressEnabled: true };
     const scratch = new RunScratch();
     const result = await executeSpawn(
-      facts({ root: tmp, egressBlacklistFile: path.join(tmp, '.e', 'egress-blacklist') }),
+      facts({
+        root: tmp,
+        egressBlacklistFile: path.join(tmp, '.e', 'egress-blacklist'),
+      }),
       egressPlan,
       { git: new StubGit(true), runtime, scratch }
     );
