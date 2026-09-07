@@ -97,15 +97,7 @@ export interface ContainerRunner {
 
   /** Start a sidecar detached on its network (with its alias). Throws if it fails to start. */
   startSidecar(spec: SidecarSpec): void;
-  /** Start the per-run egress monitor container. */
-  startEgress?(spec: {
-    name: string;
-    image: string;
-    blacklistHost: string;
-    iptablesHost?: string;
-    logHost: string;
-    networks: string[];
-  }): void;
+
   /** Stop and remove a container by name. Best-effort: never throws (teardown). */
   removeContainer(name: string): void;
 
@@ -203,34 +195,7 @@ export function logsArgs(name: string): string[] {
   return ['logs', name];
 }
 
-/** Egress monitor run args (stub — feature incomplete). */
-export function egressRunArgs(spec: {
-  name: string;
-  image: string;
-  blacklistHost: string;
-  iptablesHost?: string;
-  logHost: string;
-  networks: string[];
-}): string[] {
-  const args = [
-    'run',
-    '-d',
-    '--name',
-    spec.name,
-    '--cap-add',
-    'NET_ADMIN',
-    '--dns',
-    '127.0.0.1',
-  ];
-  for (const net of spec.networks) args.push('--network', net);
-  args.push('-v', `${spec.blacklistHost}:/etc/egress.d/dnsmasq.blacklist`);
-  args.push('-v', `${spec.logHost}:/var/log/egress`);
-  if (spec.iptablesHost) {
-    args.push('-v', `${spec.iptablesHost}:/etc/egress.d/iptables.rules:ro`);
-  }
-  args.push(spec.image);
-  return args;
-}
+
 
 /**
  * Starts an entire Compose stack (`compose up -d`). `envFile`, when given, is
@@ -525,18 +490,7 @@ export class ContainerRuntime implements ContainerRunner {
     }
   }
 
-  /** Start the per-run egress monitor. */
-  startEgress(spec: Parameters<typeof egressRunArgs>[0]): void {
-    const args = egressRunArgs(spec);
-    log.command(`> ${this.command} ${args.join(' ')}`);
-    const result = spawnSync(this.command, args, {
-      stdio: ['ignore', 'ignore', 'inherit'],
-      shell: false,
-    });
-    if (result.error || result.status !== 0) {
-      throw new Error(`Failed to start egress monitor "${spec.name}".`);
-    }
-  }
+
 
   /** Force-remove a container by name (even if running). Best-effort: never throws (teardown). */
   removeContainer(name: string): void {

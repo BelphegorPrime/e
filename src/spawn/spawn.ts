@@ -26,7 +26,7 @@ import { envFilePath, egressBlacklistPath } from '../store/paths.js';
 import { readConfig } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
 import { STACK_NETWORK } from '../constants.js';
-import { resolveProviderModel } from './modelResolution.js';
+
 import { log } from '../utils/log.js';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
@@ -338,20 +338,7 @@ export function registerSpawnCommand(program: Command): void {
             facts.storeEnv[facts.agent.provider.apiKeyEnv] = key;
           }
 
-          // `auto` is OmniRoute's routing selector, not a model id accepted by
-          // its OpenAI-compatible API. Resolve it before Pi config is rendered;
-          // Pi requires the concrete id to be declared in models.json.
-          if (facts.agent.provider?.model === 'auto') {
-            const provider = facts.agent.provider;
-            const resolvedModel = await resolveProviderModel(
-              provider,
-              facts.storeEnv
-            );
-            provider.model = resolvedModel;
-            // Pi bakes models.json into the derived image. Never reuse an image Never reuse an image
-            // containing yesterday's auto selection.
-            facts.rebuild = true;
-          }
+
 
           const plan = planSpawn(facts);
           const config = readConfig(facts.root);
