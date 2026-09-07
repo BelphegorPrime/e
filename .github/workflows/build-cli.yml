@@ -41,7 +41,7 @@ jobs:
       - name: Build binaries
         run: |
           echo "E_VERSION=$E_VERSION"
-          env | grep '^E_VERSION='
+          echo "export const E_VERSION = '$E_VERSION';" > src/version.ts
           npm run build
 
       # Repackage each raw pkg binary into a per-target archive whose inner
