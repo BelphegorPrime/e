@@ -14,7 +14,7 @@ import {
 } from './initPlan.js';
 import { renderCompose } from './renderCompose.js';
 import { renderBootstrap } from './renderBootstrap.js';
-import { MODEL_CATALOG } from '../modelStatus.js';
+import { RUNTIME_CATALOGS, type LocalRuntime } from './localRuntimes.js';
 
 // parseHarnessChoice is pure: it maps a prompt answer to a harness name, taking
 // the fallback for a blank answer and undefined for anything unrecognized.
@@ -207,6 +207,48 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
     compose,
     /^volumes:\n {2}omniroute-data:\n {4}name: omniroute-data\n {2}llama-data:\n {4}name: llama-data\n {2}redis-data:\n {4}name: redis-data$/m
   );
+  // Only the selected runtime is provisioned: no Ollama or vLLM services.
+  assert.doesNotMatch(compose, /\n  ollama:/);
+  assert.doesNotMatch(compose, /\n  vllm:/);
+});
+
+test('renderCompose: adds the Ollama and vLLM containers when selected', () => {
+  const compose = renderCompose('cpu', ['llamacpp', 'ollama', 'vllm']);
+  assert.match(compose, /\n  llama:/);
+  assert.match(compose, /\n  ollama:/);
+  assert.match(compose, /image: ollama\/ollama:latest/);
+  assert.match(compose, /127\.0\.0\.1:11434:11434/);
+  assert.match(compose, /- ollama-data:\/root\/\.ollama/);
+  assert.match(compose, /\n  vllm:/);
+  assert.match(compose, /image: vllm\/vllm-openai:latest/);
+  assert.match(compose, /127\.0\.0\.1:8000:8000/);
+  assert.match(compose, /- vllm-data:\/root\/\.cache/);
+  assert.match(
+    compose,
+    /^volumes:\n {2}omniroute-data:\n {4}name: omniroute-data\n {2}llama-data:\n {4}name: llama-data\n {2}ollama-data:\n {4}name: ollama-data\n {2}vllm-data:\n {4}name: vllm-data\n {2}redis-data:\n {4}name: redis-data$/m
+  );
+  // A runtime is still selected, so the provider-registration bootstrap exists.
+  assert.match(compose, /bootstrap:/);
+});
+
+test('renderCompose: an Ollama-only stack renders no llama service', () => {
+  const compose = renderCompose('cpu', ['ollama']);
+  assert.doesNotMatch(compose, /\n  llama:/);
+  assert.doesNotMatch(compose, /LLAMA_ARG_/);
+  assert.match(compose, /\n  ollama:/);
+  assert.match(compose, /image: ollama\/ollama:latest/);
+  assert.match(compose, /bootstrap:/);
+});
+
+test('renderCompose: no runtime selection renders no bootstrap service and no runtime containers', () => {
+  const compose = renderCompose('cpu', []);
+  assert.doesNotMatch(compose, /\n  bootstrap:/);
+  assert.doesNotMatch(compose, /\n  llama:/);
+  assert.doesNotMatch(compose, /\n  ollama:/);
+  assert.doesNotMatch(compose, /\n  vllm:/);
+  assert.match(compose, /no local inference runtime selected/);
+  // The gateway itself still renders.
+  assert.match(compose, /image: diegosouzapw\/omniroute:latest/);
 });
 
 test('renderCompose: does not expose ports from services sharing the egress network namespace', () => {
@@ -228,10 +270,7 @@ test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () 
 
   // The compose stack stays isolated from untrusted run containers.
   assert.doesNotMatch(compose, /host\.docker\.internal/);
-  assert.match(
-    compose,
-    /networks:\n\s+e-net:\n\s+name: e-net/
-  );
+  assert.match(compose, /networks:\n\s+e-net:\n\s+name: e-net/);
   assert.doesNotMatch(compose, /omniroute-edge/);
   assert.match(compose, /egress:[\s\S]*?networks:\n\s+e-net:/);
   const namespaceSharers =
@@ -250,63 +289,63 @@ test('renderCompose: no default secrets — every stack var must come from .env'
   assert.match(compose, /INITIAL_PASSWORD: \$\{OMNIROUTE_INITIAL_PASSWORD}/g);
 });
 
-test('renderBootstrap: downloads and registers the configured llama.cpp model', () => {
+test('renderBootstrap: registers each selected runtime as an OmniRoute provider, without downloading models', () => {
   const script = renderBootstrap();
   assert.match(script, /^#!\/bin\/sh/);
-  assert.match(script, /POST http:\/\/localhost:9931\/models/);
-  assert.match(script, /for model in \$models; do/);
-  assert.match(script, /repo=\$\{model%%:\*\}/);
   assert.match(script, /OmniRoute rejected INITIAL_PASSWORD/);
-  assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"'?\$repo/);
-  assert.match(script, /loading model \$llama_id/);
-  assert.match(script, /registering model \$model/);
-  assert.doesNotMatch(script, /until curl -sf http:\/\/localhost:9931\/models/);
-  assert.match(script, /unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M/);
-  assert.match(script, /unsloth\/Qwen3\.6-35B-A3B-GGUF:UD-IQ4_XS/);
-  assert.match(script, /ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M/);
+  // Provider registration for the default llama.cpp runtime.
+  assert.match(script, /waiting for llama\.cpp \(local\)/);
+  assert.match(script, /until curl -sf http:\/\/localhost:9931\/health/);
   assert.match(script, /llama\.cpp \(local\)/);
   assert.match(script, /"provider":"llama-cpp"/);
   assert.match(script, /"apiKey":"sk-no-key-required"/);
+  assert.match(script, /"baseUrl":"http:\/\/localhost:9931\/v1"/);
+  // Model downloads are manual: the script must not touch llama's model API.
+  assert.doesNotMatch(script, /POST http:\/\/localhost:9931\/models/);
+  assert.doesNotMatch(script, /for model in \$models; do/);
+  assert.doesNotMatch(script, /registering model/);
+  assert.doesNotMatch(script, /loading model/);
+  assert.doesNotMatch(script, /\/models\/load/);
 });
 
-test('renderBootstrap: matches cached llama presets by repo prefix, not exact quant id (exit-22 regression)', () => {
-  const script = renderBootstrap();
-  // llama.cpp canonicalizes the quant suffix of cached presets: a catalog id
-  // like unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M appears as ...:Q4_K_M once cached.
-  // Exact-quant matching made bootstrap re-register a known model, which
-  // llama.cpp rejects with "model limit reached" (HTTP 500 -> curl exit 22).
-  //
-  // The existence check must match on the repo prefix only and never embed the
-  // full catalog id (with its quant) in the id grep.
-  assert.match(
-    script,
-    /grep '"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"'"\$repo | head/
-  );
-  assert.doesNotMatch(
-    script,
-    /grep -q '"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"'"\$model/
-  );
-  // The resolved id, not the catalog id, is what gets loaded.
-  assert.match(script, /-d '\{"model":"'"\$llama_id"'"\}'/);
-  // Loading a known model must use the resolved (canonical) id.
-  assert.doesNotMatch(
-    script,
-    /-X POST http:\/\/localhost:9931\/models\/load.*\$model/
-  );
+test('renderBootstrap: a multi-runtime selection registers every provider', () => {
+  const script = renderBootstrap(['llamacpp', 'ollama', 'vllm'], 'org/model');
+  const healthUrls: Record<LocalRuntime, RegExp> = {
+    llamacpp: /until curl -sf http:\/\/localhost:9931\/health/,
+    ollama: /until curl -sf http:\/\/localhost:11434\/api\/version/,
+    vllm: /until curl -sf http:\/\/localhost:8000\/health/,
+  };
+  for (const runtime of ['llamacpp', 'ollama', 'vllm'] as const) {
+    assert.match(script, healthUrls[runtime]);
+  }
+  assert.match(script, /Ollama \(local\)/);
+  assert.match(script, /vLLM \(local\)/);
+  assert.match(script, /"provider":"ollama"/);
+  assert.match(script, /"provider":"vllm"/);
+  assert.match(script, /"baseUrl":"http:\/\/localhost:11434\/v1"/);
+  assert.match(script, /"baseUrl":"http:\/\/localhost:8000\/v1"/);
+  // The default model lands on every provider registration.
+  assert.ok(script.includes('"defaultModel":"llama-cpp/org/model"'));
+  assert.ok(script.includes('"defaultModel":"ollama/org/model"'));
+  assert.ok(script.includes('"defaultModel":"vllm/org/model"'));
 });
 
-function runBootstrapWithLoadResponse(
-  status: number,
-  message: string
+test('renderBootstrap: omits defaultModel when none is configured', () => {
+  const script = renderBootstrap(['ollama']);
+  assert.doesNotMatch(script, /"defaultModel":/);
+});
+
+/** Runs a rendered bootstrap against a stubbed curl, returning output or exit status. */
+function runBootstrapProviderScript(
+  runtimes: readonly LocalRuntime[],
+  providersGetBody: string
 ): { output?: string; status?: number } {
   const directory = mkdtempSync(join(tmpdir(), 'e-bootstrap-test-'));
-  const model = 'example/model:Q4';
-  const stateFile = join(directory, 'load-started');
   const bootstrapPath = join(directory, 'bootstrap.sh');
   const curlPath = join(directory, 'curl');
   const sleepPath = join(directory, 'sleep');
 
-  writeFileSync(bootstrapPath, renderBootstrap([model]), { mode: 0o755 });
+  writeFileSync(bootstrapPath, renderBootstrap(runtimes), { mode: 0o755 });
   writeFileSync(
     curlPath,
     `#!/bin/sh
@@ -314,18 +353,10 @@ case "$*" in
   *localhost:20128/api/auth/login*)
     printf 'HTTP/1.1 200 OK\\r\\nset-cookie: auth_token=test-token; Path=/\\r\\n'
     ;;
-  *localhost:20128/healthz*|*localhost:9931/health*)
-    ;;
-  *localhost:9931/models/load*)
-    touch "$STATE_FILE"
-    printf '{"error":{"code":${status},"message":"${message}","type":"server_error"}}\\n${status}'
-    ;;
-  *localhost:9931/models*)
-    if test -f "$STATE_FILE"; then value=loaded; else value=unloaded; fi
-    printf '{"data":[{"id":"${model}","status":{"value":"%s"}}]}' "$value"
+  *localhost:20128/healthz*|*localhost:9931/health*|*localhost:11434/api/version*|*localhost:8000/health*)
     ;;
   *localhost:20128/api/providers*)
-    printf 'llama.cpp (local)'
+    printf '${providersGetBody}'
     ;;
   *)
     printf 'unexpected curl invocation: %s\\n' "$*" >&2
@@ -347,7 +378,6 @@ esac
           ...process.env,
           INITIAL_PASSWORD: 'test-password',
           PATH: `${directory}:${process.env.PATH ?? ''}`,
-          STATE_FILE: stateFile,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       }),
@@ -367,27 +397,19 @@ esac
   }
 }
 
-test('renderBootstrap: waits for an asynchronously started load after llama returns model-limit 500', () => {
-  const result = runBootstrapWithLoadResponse(
-    500,
-    'model limit reached, try again later'
+test('renderBootstrap: registers a missing provider through the OmniRoute API', () => {
+  const result = runBootstrapProviderScript(['llamacpp', 'ollama'], '[]');
+  assert.match(result.output ?? '', /provider registered/);
+  assert.match(result.output ?? '', /bootstrap complete/);
+});
+
+test('renderBootstrap: skips a provider OmniRoute already knows', () => {
+  const result = runBootstrapProviderScript(
+    ['llamacpp'],
+    'llama.cpp (local)'
   );
-
-  assert.match(result.output ?? '', /model loaded: example\/model:Q4/);
-});
-
-test('renderBootstrap: does not hide an unrelated load endpoint error', () => {
-  const result = runBootstrapWithLoadResponse(500, 'failed to open model');
-
-  assert.notEqual(result.status, 0);
-});
-
-test('renderBootstrap: a custom model selection only provisions those models, with the first as default', () => {
-  const [excluded, included] = MODEL_CATALOG;
-  const script = renderBootstrap([included.id]);
-  assert.ok(script.includes(`models='${included.id}'`));
-  assert.ok(!script.includes(excluded.id));
-  assert.ok(script.includes(`"defaultModel":"llama-cpp/${included.id}"`));
+  assert.match(result.output ?? '', /provider already registered/);
+  assert.match(result.output ?? '', /bootstrap complete/);
 });
 
 test('renderCompose: picks the CUDA image and reserves an nvidia GPU for the nvidia vendor', () => {
@@ -407,4 +429,15 @@ test('renderCompose: picks the SYCL image and passes through /dev/dri for the in
   const compose = renderCompose('intel');
   assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-intel/);
   assert.match(compose, /\/dev\/dri/);
+});
+
+test('runtime model catalogs: each runtime offers its own models for the init selection', () => {
+  // The union drives the wizard's model prompt; llama's catalog stays its own.
+  const llamaIds = RUNTIME_CATALOGS.llamacpp.map(m => m.id);
+  assert.ok(llamaIds.length > 0);
+  assert.ok(RUNTIME_CATALOGS.ollama.every(m => m.id.includes(':')));
+  assert.ok(RUNTIME_CATALOGS.vllm.every(m => m.id.includes('/')));
+  // No id is offered by two runtimes.
+  const all = [...llamaIds, ...RUNTIME_CATALOGS.ollama.map(m => m.id)];
+  assert.equal(new Set(all).size, all.length);
 });

@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { registerSpawnCommand } from './spawn/spawn.js';
 import { registerInitCommand } from './init/index.js';
 import { registerServeCommand } from './serve/serve.js';
+import { registerRuntimeCommands } from './runtime/command.js';
 import {
   registerExportCommand,
   registerImportCommand,
@@ -20,6 +21,7 @@ program
 registerSpawnCommand(program);
 registerInitCommand(program);
 registerServeCommand(program);
+registerRuntimeCommands(program);
 registerExportCommand(program);
 registerImportCommand(program);
 

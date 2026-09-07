@@ -8,18 +8,20 @@ import { STACK_NETWORK } from '../constants.js';
 import type { LocalRuntime } from './localRuntimes.js';
 
 /** Compose template; conditional blocks keep each local runtime self-contained. */
-const TEMPLATE = `# Local OmniRoute gateway{{#llama}} with llama.cpp as a self-hosted provider.{{/llama}}{{^llama}}.{{/llama}}
+const TEMPLATE = `# Local OmniRoute gateway with {{{runtimeSummary}}}.
 # Hardware detected: {{{vendor}}} -> {{{image}}}
 # Start with: docker compose -f .e/compose.yaml up -d
 # OmniRoute secrets (OMNIROUTE_INITIAL_PASSWORD, JWT_SECRET, API_KEY_SECRET) are
 # interpolated from .e/.env — e init seeds random values there; there are no
 # fallback defaults, so an unseeded stack simply has no known password.
-{{#llama}}# The bootstrap service downloads the model from Hugging Face through llama.cpp's API.
-# In OmniRoute Dashboard -> Providers, add llama.cpp with base URL http://localhost:9931/v1.
-#{{/llama}}{{^llama}}# No local inference runtime was selected; add external providers in OmniRoute.{{/llama}}
-# Networking: e-net contains redis{{#llama}}, llama.cpp, bootstrap{{/llama}}, OmniRoute,
+{{#anyRuntime}}# The bootstrap service registers each local runtime as an OmniRoute provider.
+# In OmniRoute Dashboard -> Providers, the registered runtimes point at their
+# host-published base URLs; download models on demand with
+# \`e <runtime> download <model>\`.
+#{{/anyRuntime}}{{^anyRuntime}}# No local inference runtime was selected; add external providers in OmniRoute.{{/anyRuntime}}
+# Networking: e-net contains redis{{#llama}}, llama.cpp{{/llama}}{{#ollama}}, Ollama{{/ollama}}{{#vllm}}, vLLM{{/vllm}}{{#anyRuntime}}, bootstrap{{/anyRuntime}}, OmniRoute,
 # and the egress monitor. The harness run container never joins it, so the
-# untrusted agent cannot reach {{#llama}}Redis or llama.cpp{{/llama}}{{^llama}}Redis{{/llama}} directly.
+# untrusted agent cannot reach Redis{{#llama}}, llama.cpp{{/llama}}{{#ollama}}, Ollama{{/ollama}}{{#vllm}}, vLLM{{/vllm}} directly.
 # The published host ports stay bound to 127.0.0.1: only the host's own browser
 # and CLI (e spawn, e serve) reach the dashboard; untrusted LAN peers cannot.
 
@@ -42,7 +44,9 @@ services:
     ports:
       - "127.0.0.1:20128:20128"
 {{#llama}}      - "127.0.0.1:9931:9931"
-{{/llama}}
+{{/llama}}{{#ollama}}      - "127.0.0.1:11434:11434"
+{{/ollama}}{{#vllm}}      - "127.0.0.1:8000:8000"
+{{/vllm}}
   omniroute:
     image: diegosouzapw/omniroute:latest
     container_name: omniroute
@@ -56,7 +60,11 @@ services:
         condition: service_healthy
 {{#llama}}      llama:
         condition: service_started
-{{/llama}}    environment:
+{{/llama}}{{#ollama}}      ollama:
+        condition: service_started
+{{/ollama}}{{#vllm}}      vllm:
+        condition: service_started
+{{/vllm}}    environment:
       DATA_DIR: /app/data
       PORT: "20128"
       REDIS_URL: redis://localhost:6379
@@ -69,7 +77,7 @@ services:
       REQUIRE_API_KEY: "false"
     volumes:
       - omniroute-data:/app/data
-{{#llama}}
+{{#anyRuntime}}
   bootstrap:
     image: curlimages/curl:latest
     network_mode: "service:egress"
@@ -78,16 +86,20 @@ services:
         condition: service_started
       omniroute:
         condition: service_started
-      llama:
+{{#llama}}      llama:
         condition: service_started
-    environment:
+{{/llama}}{{#ollama}}      ollama:
+        condition: service_started
+{{/ollama}}{{#vllm}}      vllm:
+        condition: service_started
+{{/vllm}}    environment:
       INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD}
     volumes:
       - ./bootstrap.sh:/bootstrap.sh:ro
     entrypoint: ["/bin/sh", "/bootstrap.sh"]
     restart: "no"
-
-  llama:
+{{/anyRuntime}}
+{{#llama}}  llama:
     image: {{{image}}}
     container_name: llama
     restart: unless-stopped
@@ -103,7 +115,33 @@ services:
       LLAMA_ARG_MODELS_MAX: "1"
     volumes:
       - llama-data:/root/.cache
-{{{gpu}}}{{/llama}}
+{{{gpu}}}{{/llama}}{{#ollama}}
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    network_mode: "service:egress"
+    depends_on:
+      egress:
+        condition: service_started
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+    volumes:
+      - ollama-data:/root/.ollama
+{{/ollama}}{{#vllm}}
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    restart: unless-stopped
+    network_mode: "service:egress"
+    depends_on:
+      egress:
+        condition: service_started
+    environment:
+      VLLM_HOST: "0.0.0.0"
+    volumes:
+      - vllm-data:/root/.cache
+{{/vllm}}
   redis:
     image: redis:8-alpine
     container_name: omniroute-redis
@@ -129,13 +167,23 @@ volumes:
     name: omniroute-data
 {{#llama}}  llama-data:
     name: llama-data
-{{/llama}}  redis-data:
+{{/llama}}{{#ollama}}  ollama-data:
+    name: ollama-data
+{{/ollama}}{{#vllm}}  vllm-data:
+    name: vllm-data
+{{/vllm}}  redis-data:
     name: redis-data
   egress-logs:
     name: e-egress-logs
 `;
 
-/** Renders the local OmniRoute + llama.cpp development stack for `vendor`'s GPU. */
+const RUNTIME_LABELS: Readonly<Record<LocalRuntime, string>> = {
+  llamacpp: 'llama.cpp',
+  ollama: 'Ollama',
+  vllm: 'vLLM',
+};
+
+/** Renders the local OmniRoute + selected runtime(s) development stack for `vendor`'s GPU. */
 export function renderCompose(
   vendor: HardwareVendor = 'cpu',
   runtimes: readonly LocalRuntime[] = ['llamacpp']
@@ -143,11 +191,22 @@ export function renderCompose(
   const image = llamaCppImage(vendor);
   const gpu = llamaGpuCompose(vendor);
   const llama = runtimes.includes('llamacpp');
+  const ollama = runtimes.includes('ollama');
+  const vllm = runtimes.includes('vllm');
+  const anyRuntime = runtimes.length > 0;
+  const runtimeSummary =
+    runtimes.length > 0
+      ? runtimes.map(runtime => RUNTIME_LABELS[runtime]).join(', ')
+      : 'no local inference runtime selected';
   return Mustache.render(TEMPLATE, {
     vendor,
     image,
     gpu,
     llama,
+    ollama,
+    vllm,
+    anyRuntime,
+    runtimeSummary,
     stackNetwork: STACK_NETWORK,
   });
 }

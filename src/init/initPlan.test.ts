@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HARNESSES } from '../harness/index.js';
 import { MODEL_CATALOG } from '../modelStatus.js';
+import { RUNTIME_CATALOGS } from './localRuntimes.js';
 import { GIT_PLATFORMS } from '../store/config.js';
 import {
   OMNIROUTE_STACK_SECRETS,
@@ -25,7 +26,7 @@ function state(overrides: Partial<InitState> = {}): InitState {
     currentModels: [],
     currentLocalRuntimes: ['llamacpp'],
     existingEnvContent: undefined,
-    modelCatalog: MODEL_CATALOG,
+    runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
     hardware: 'cpu',
     ...overrides,
@@ -59,7 +60,7 @@ test('planInit: answers resolve through the same pure parsers the prompts use', 
   );
 });
 
-test('planInit: local runtime selection supports none and omits llama provisioning', () => {
+test('planInit: local runtime selection supports none and omits runtime provisioning', () => {
   const plan = planInit(state(), { localRuntimes: 'none' });
   assert.deepEqual(plan.localRuntimes, []);
   assert.deepEqual(plan.config.localRuntimes, []);
@@ -69,11 +70,33 @@ test('planInit: local runtime selection supports none and omits llama provisioni
   );
   const compose = plan.steps.find(step => step.kind === 'compose');
   assert.ok(compose && !compose.write.content.includes('\n  llama:'));
+  assert.ok(compose && !compose.write.content.includes('\n  ollama:'));
+  assert.ok(compose && !compose.write.content.includes('\n  vllm:'));
 });
 
 test('planInit: local runtime selection accepts indexed multi-select', () => {
   assert.deepEqual(planInit(state(), { localRuntimes: '1,1' }).localRuntimes, [
     'llamacpp',
+  ]);
+  // Ollama + vLLM (indices 2 and 3) resolve to both runtimes.
+  const plan = planInit(state(), { localRuntimes: '2,3' });
+  assert.deepEqual(plan.localRuntimes, ['ollama', 'vllm']);
+});
+
+test('planInit: a model answer resolves against the selected runtimes catalog union', () => {
+  // "all" under llamacpp alone selects the llama catalog, not the union.
+  const all = planInit(state(), { localRuntimes: '1', models: 'all' });
+  assert.deepEqual(all.models, RUNTIME_CATALOGS.llamacpp.map(m => m.id));
+
+  // With Ollama selected, "all" covers Ollama's catalog.
+  const ollama = planInit(state(), { localRuntimes: '2', models: 'all' });
+  assert.deepEqual(ollama.models, RUNTIME_CATALOGS.ollama.map(m => m.id));
+
+  // Two runtimes: the union, llama first then ollama (deduplicated).
+  const both = planInit(state(), { localRuntimes: '1,2', models: 'all' });
+  assert.deepEqual(both.models, [
+    ...RUNTIME_CATALOGS.llamacpp.map(m => m.id),
+    ...RUNTIME_CATALOGS.ollama.map(m => m.id),
   ]);
 });
 
