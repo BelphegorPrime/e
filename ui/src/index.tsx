@@ -7,6 +7,7 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { ActivityPage } from '@/pages/activity';
 import { AgentsPage } from '@/pages/agents';
 import { DashboardPage } from '@/pages/dashboard';
+import { OmniRoutePage } from '@/pages/omniroute';
 import { RunsPage } from '@/pages/runs';
 import { SettingsPage } from '@/pages/settings';
 import { TerminalPage } from '@/pages/terminal';
@@ -25,6 +26,7 @@ function App() {
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/terminal" element={<TerminalPage />} />
+            <Route path="/omniroute" element={<OmniRoutePage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
