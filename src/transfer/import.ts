@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import extract from 'extract-zip';
+import AdmZip from 'adm-zip';
 import {
   eBaseDir,
   envFilePath,
@@ -62,7 +62,8 @@ export async function importConfiguration(
   try {
     // Extract zip
     log.info('Extracting archive...');
-    await extract(zipPath, { dir: tempDir });
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(tempDir, true);
 
     // Restore .e files
     const filesToRestore = [
