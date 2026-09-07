@@ -25,6 +25,8 @@ import { findRoot } from '../store/root.js';
 import { envFilePath, egressBlacklistPath } from '../store/paths.js';
 import { readConfig } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
+import { STACK_NETWORK } from '../constants.js';
+import { resolveProviderModel } from './modelResolution.js';
 import { log } from '../utils/log.js';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
@@ -303,8 +305,9 @@ export function registerSpawnCommand(program: Command): void {
           const facts = gatherSpawnFacts(target, prompt, opts);
           validateSpawn(facts);
           const runtime = resolveRuntime(opts.runtime);
-          const localRuntimes = readConfig(facts.root).localRuntimes;
           const stack = localStack(facts.root);
+          facts.localStackPresent = Boolean(stack?.present);
+          const localRuntimes = readConfig(facts.root).localRuntimes;
           if (stack?.present) {
             // The stack is interpolated from `.e/.env` (no fallback secrets), so
             // pass it explicitly — compose does not otherwise look inside `.e/`.
@@ -333,6 +336,21 @@ export function registerSpawnCommand(program: Command): void {
               stackPassword
             );
             facts.storeEnv[facts.agent.provider.apiKeyEnv] = key;
+          }
+
+          // `auto` is OmniRoute's routing selector, not a model id accepted by
+          // its OpenAI-compatible API. Resolve it before Pi config is rendered;
+          // Pi requires the concrete id to be declared in models.json.
+          if (facts.agent.provider?.model === 'auto') {
+            const provider = facts.agent.provider;
+            const resolvedModel = await resolveProviderModel(
+              provider,
+              facts.storeEnv
+            );
+            provider.model = resolvedModel;
+            // Pi bakes models.json into the derived image. Never reuse an image Never reuse an image
+            // containing yesterday's auto selection.
+            facts.rebuild = true;
           }
 
           const plan = planSpawn(facts);

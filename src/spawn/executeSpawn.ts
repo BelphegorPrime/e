@@ -20,6 +20,7 @@ import { RunScratch } from '../runs/runScratch.js';
 import { writeIfAbsent } from '../scaffold.js';
 import { harnessDir, agentDir, mcpDir, skillDir } from '../store/paths.js';
 import { isInitialized } from '../store/config.js';
+import { EGRESS_IMAGE } from '../egress/index.js';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -68,7 +69,20 @@ function buildImages(
   if (agentImagePlan) {
     const dir = agentDir(facts.agent.name, root);
     for (const file of agentImagePlan.files) {
-      writeIfAbsent(dir, path.join(dir, file.fileName), file.content);
+      const filePath = path.join(dir, file.fileName);
+      // `auto` used to be baked into Pi's models.json. Replace that stale
+      // generated config once resolution has produced a concrete id; otherwise
+      // writeIfAbsent's hand-edit protection would keep sending `auto` forever.
+      if (file.fileName === 'models.json' && fs.existsSync(filePath)) {
+        const existing = fs.readFileSync(filePath, 'utf8');
+        if (existing.includes('"id": "auto"') && !file.content.includes('"id": "auto"')) {
+          fs.writeFileSync(filePath, file.content);
+        } else {
+          writeIfAbsent(dir, filePath, file.content);
+        }
+      } else {
+        writeIfAbsent(dir, filePath, file.content);
+      }
     }
     tag = agentImagePlan.imageTag;
     if (rebuild || !runtime.imageExists(tag)) {
@@ -188,6 +202,7 @@ export async function executeSpawn(
     port: facts.port,
     env: plan.agentEnv,
     envFile: envFiles,
+    netns: facts.localStackPresent ? 'e-egress' : undefined,
   };
 
   return runSpawn(

@@ -148,6 +148,8 @@ export interface SpawnFacts {
   bakedSkills: string[];
   /** The prompt, joined into a single string. */
   prompt: string;
+  /** Local OmniRoute stack is running and reachable through e-net. */
+  localStackPresent?: boolean;
   /** `--rebuild`. */
   rebuild: boolean;
   /** `--name` run-name override. */
@@ -164,7 +166,7 @@ export interface SpawnFacts {
   rm?: boolean;
   /** The shared `.e/.env` path when it exists on disk, for env-file layering. */
   baseEnvFile?: string;
-  /** The store's `.e/egress-blacklist` path when a store root was found; the egress source (ADR-0011). */
+  /** Store blacklist source used to materialize the per-run egress monitor. */
   egressBlacklistFile?: string;
   /** The user's `--env-file` path, layered over the base. */
   userEnvFile?: string;
@@ -245,6 +247,9 @@ export interface SpawnPlan {
   delivery?: ProviderDelivery;
   /** Rendered provider runtime env-file content (appended to the run's env-files). */
   providerEnvContent?: string;
+  /** Global egress is active when the local Compose stack is present. */
+  egressEnabled?: boolean;
+
   /** Container MCP sidecars to bring up (without their credential env-file, wired at execute). */
   sidecars: SidecarPlan[];
   /** Rendered credential env-file content per sidecar alias (for sidecars that need it). */
@@ -319,7 +324,11 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
   let mcpArgs: string[] = [];
   let configOverlay: ConfigOverlayDelivery | undefined;
   if (facts.mcpServers.length > 0) {
-    const selection = planMcpSelection(facts.mcpServers);
+    const selection = planMcpSelection(
+      facts.mcpServers,
+      facts.localStackPresent === true,
+      facts.port?.map(value => Number(value.split(':').pop())).filter(Number.isFinite)
+    );
     // Every selected server's required env passes the base filter: a sidecar's
     // via its own env-file, a remote server's via the agent's env-files.
     for (const server of [
@@ -332,7 +341,7 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
       sidecars.push({
         alias: server.name,
         image: imageTag('mcp', server.name),
-        port: server.port,
+        port: selection.ports.get(server.name)!,
         healthcheck: server.healthcheck,
       });
       const creds = renderMcpCredentials(server, envRenderer);
@@ -385,6 +394,7 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     providerEnvContent,
     baseEnvWhitelist: [...allowedEnvKeys],
 
+    egressEnabled: facts.egressBlacklistFile !== undefined,
     sidecars,
     sidecarCredentials,
     remoteCredentials,

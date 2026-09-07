@@ -54,11 +54,7 @@ export interface RunName {
   network: string;
   /** The per-run container name for a sidecar reached at `alias`: `<name>-mcp-<alias>`. */
   sidecarContainer(alias: string): string;
-  /**
-   * The per-run shared egress monitor container: `<name>-egress` (ADR-0011).
-   * The agent shares its network namespace, so the agent's own container name
-   * stays `<name>` while every socket/DNS query crosses the egress netns.
-   */
+  /** Global Compose egress container: `e-egress`. */
   egressContainer: string;
 }
 
@@ -71,7 +67,7 @@ export function runName(agent: string, slug: string, counter: number): RunName {
     name,
     network: `${name}-net`,
     sidecarContainer: (alias: string) => `${name}-mcp-${alias}`,
-    egressContainer: `${name}-egress`,
+    egressContainer: 'e-egress',
   };
 }
 
