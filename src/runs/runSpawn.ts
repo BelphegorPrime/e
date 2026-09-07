@@ -32,12 +32,6 @@ const DEFAULT_READINESS_INTERVAL_MS = 1000;
 export const RUN_GIT_INSTRUCTIONS =
   'You are working in an e-managed Git worktree. Do not run git add, git commit, git push, or git worktree: Git metadata and credentials intentionally remain on the host. Make requested file changes only; e will capture, commit, and push them after the run.';
 
-/** Egress monitoring plan (stub — feature incomplete). */
-export interface EgressPlan {
-  blacklistHost: string;
-  logHost: string;
-}
-
 /** How readiness polling is paced: how many probe attempts, and the wait between them. */
 export interface ReadinessPolicy {
   attempts: number;

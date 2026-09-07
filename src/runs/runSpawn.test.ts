@@ -7,7 +7,6 @@ import type {
   RunOptions,
   SidecarSpec,
 } from '../runtime/index.js';
-import type { EgressSpec } from '../egress/index.js';
 import type { PullRequest, PullRequestSpec } from '../github/index.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
@@ -17,7 +16,6 @@ import {
   type RunSpawnDeps,
   type RunSpawnParams,
   type SidecarPlan,
-  type EgressPlan,
 } from './runSpawn.js';
 import { slugify } from '../identity/slugify.js';
 
@@ -154,7 +152,6 @@ class FakeRuntime implements ContainerRunner {
   networks: string[] = [];
   removedNetworks: string[] = [];
   startedSidecars: SidecarSpec[] = [];
-  startedEgress: EgressSpec[] = [];
   removedContainers: string[] = [];
   sleeps: number[] = [];
 
@@ -202,10 +199,6 @@ class FakeRuntime implements ContainerRunner {
   startSidecar(spec: SidecarSpec): void {
     this.calls.push('startSidecar');
     this.startedSidecars.push(spec);
-  }
-  startEgress(spec: EgressSpec): void {
-    this.calls.push('startEgress');
-    this.startedEgress.push(spec);
   }
   removeContainer(name: string): void {
     this.calls.push('removeContainer');
@@ -783,143 +776,3 @@ test('supports multiple sidecars: both started, both probed, both removed', asyn
   ]);
 });
 
-// --- Egress monitor (ADR-0011, netns-shared) --------------------------------
-
-/** A demo egress plan; the host mounts the executor renders into scratch. */
-const egress: EgressPlan = {
-  blacklistHost: '/run/e/x/dnsmasq.blacklist',
-  logHost: '/run/e/x/log',
-};
-
-test('egress plain run: egress starts first, agent joins its netns, teardown removes it', async () => {
-  const { deps, git, runtime } = makeDeps();
-  const result = await runSpawn(deps, makeParams({ egress }));
-
-  const runName = git.worktrees[0].branch.replace(/\//g, '-');
-  assert.equal(result.ran, true);
-  // Group order: egress (no network, no sidecars) → agent → egress-liveness → teardown.
-  assert.deepEqual(runtime.calls, [
-    'startEgress',
-    'run',
-    'isRunning',
-    'removeContainer',
-  ]);
-  const spec = runtime.startedEgress[0];
-  assert.equal(spec.name, `${runName}-egress`);
-  assert.equal(spec.image, 'e-egress');
-  assert.equal(spec.blacklistHost, egress.blacklistHost);
-  assert.equal(spec.logHost, egress.logHost);
-  assert.deepEqual(spec.networks, []);
-  // The agent shares the egress netns and joins no networks of its own.
-  assert.equal(runtime.options?.netns, `${runName}-egress`);
-  assert.equal(runtime.options?.networks, undefined);
-  assert.deepEqual(runtime.removedContainers, [`${runName}-egress`]);
-});
-
-test('egress with sidecars: network → egress (on run net) → sidecar → probe → agent → teardown', async () => {
-  const { deps, git, runtime } = makeDeps();
-  await runSpawn(
-    deps,
-    makeParams({ sidecars: [sidecar], egress, readiness: fastReadiness })
-  );
-
-  const runName = git.worktrees[0].branch.replace(/\//g, '-');
-  assert.deepEqual(runtime.calls, [
-    'createNetwork',
-    'startEgress',
-    'startSidecar',
-    'probeTcp',
-    'run',
-    'isRunning', // egress liveness
-    'isRunning', // sidecar liveness
-    'removeContainer', // egress
-    'removeContainer', // sidecar
-    'removeNetwork',
-  ]);
-  assert.deepEqual(runtime.startedEgress[0].networks, [`${runName}-net`]);
-  assert.deepEqual(runtime.removedContainers, [
-    `${runName}-egress`,
-    `${runName}-mcp-everything`,
-  ]);
-  // The agent still reaches sidecars through the egress netns, not its own joins.
-  assert.equal(runtime.options?.netns, `${runName}-egress`);
-  assert.equal(runtime.options?.networks, undefined);
-});
-
-test('egress joins pre-wired networks (compose edge) alongside the run network', async () => {
-  const { deps, git, runtime } = makeDeps();
-  await runSpawn(
-    deps,
-    makeParams({
-      sidecars: [sidecar],
-      egress,
-      readiness: fastReadiness,
-      runOptions: {
-        attach: true,
-        rm: true,
-        rmWorktree: true,
-        networks: ['omniroute-edge'],
-      },
-    })
-  );
-  const runName = git.worktrees[0].branch.replace(/\//g, '-');
-  assert.deepEqual(runtime.startedEgress[0].networks, [
-    'omniroute-edge',
-    `${runName}-net`,
-  ]);
-  assert.equal(runtime.options?.netns, `${runName}-egress`);
-});
-
-test('an egress crash mid-run is non-fatal but warned explicitly (netns loss)', async () => {
-  const { deps, git, runtime } = makeDeps();
-  const runName = `e-demo-${slugify('Fix the flaky test')}-1`;
-  runtime.crashed.add(`${runName}-egress`);
-
-  const result = await runSpawn(deps, makeParams({ egress }));
-  assert.equal(result.exitCode, 0);
-  assert.equal(result.ran, true);
-  assert.equal(result.sidecarWarnings?.length, 1);
-  assert.match(result.sidecarWarnings![0], /Egress monitor exited/);
-});
-
-test('a healthy egress monitor produces no egress warning', async () => {
-  const { deps, runtime } = makeDeps();
-  const result = await runSpawn(deps, makeParams({ egress }));
-  assert.equal(result.sidecarWarnings, undefined);
-});
-
-test('egress teardown is best-effort: a removal throw never masks the result', async () => {
-  const { deps, runtime } = makeDeps();
-  runtime.throwOn = { op: 'removeContainer', message: 'rm boom' };
-  const result = await runSpawn(deps, makeParams({ egress }));
-  assert.equal(result.ran, true);
-  assert.equal(result.exitCode, 0);
-});
-
-test('egress start failure is fail-fast: agent never runs, teardown still cleans up', async () => {
-  const { deps, git, runtime } = makeDeps();
-  // Make startEgress throw by scripting a crash on the very first egress start.
-  const failingRuntime: FakeRuntime & { startEgressError?: string } =
-    runtime as FakeRuntime & { startEgressError?: string };
-  failingRuntime.startEgressError = 'image not found';
-  const origStart = runtime.startEgress.bind(runtime);
-  runtime.startEgress = (spec: EgressSpec) => {
-    if (failingRuntime.startEgressError)
-      throw new Error(failingRuntime.startEgressError);
-    origStart(spec);
-  };
-
-  await assert.rejects(runSpawn(deps, makeParams({ egress })), /image not found/);
-  assert.equal(runtime.ran, false);
-  // The worktree existed by then, so it is still removed in the finally.
-  assert.deepEqual(git.removed, [git.worktrees[0].path]);
-});
-
-test('without an egress plan the run keeps the legacy non-egress behavior', async () => {
-  const { deps, runtime } = makeDeps();
-  const result = await runSpawn(deps, makeParams());
-  assert.equal(result.ran, true);
-  assert.equal(runtime.startedEgress.length, 0);
-  assert.equal(runtime.options?.netns, undefined);
-  assert.deepEqual(runtime.calls, ['run']);
-});

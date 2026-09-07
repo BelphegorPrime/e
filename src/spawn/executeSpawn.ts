@@ -1,5 +1,4 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import type { Git } from '../git/index.js';
 import type { PullRequest } from '../github/index.js';
@@ -9,7 +8,6 @@ import {
   runSpawn,
   type RunSpawnResult,
   type SidecarPlan,
-  type EgressPlan,
 } from '../runs/runSpawn.js';
 import { filterEnvContent } from '../harness/adapter.js';
 import {
