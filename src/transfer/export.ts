@@ -12,10 +12,9 @@ import {
 } from '../store/paths.js';
 import { findRoot } from '../store/root.js';
 import { log } from '../utils/log.js';
+import { OMNIROUTE_VOLUME } from '../constants.js';
 
 const execAsync = promisify(exec);
-
-const OMNIROUTE_VOLUME = 'omniroute-data';
 
 export interface ExportOptions {
   output?: string;

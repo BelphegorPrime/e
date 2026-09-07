@@ -11,10 +11,9 @@ import {
   bootstrapScriptPath,
 } from '../store/paths.js';
 import { log } from '../utils/log.js';
+import { OMNIROUTE_VOLUME } from '../constants.js';
 
 const execAsync = promisify(exec);
-
-const OMNIROUTE_VOLUME = 'omniroute-data';
 
 export interface ImportOptions {
   file: string;

@@ -3,8 +3,7 @@ import {
   llamaGpuCompose,
   type HardwareVendor,
 } from '../hardware/index.js';
-/** The stack-internal network: redis, llama, bootstrap, OmniRoute, and egress backplane. */
-const STACK_NETWORK = 'e-net';
+import { STACK_NETWORK } from '../constants.js';
 
 /** Renders the local OmniRoute + llama.cpp development stack for `vendor`'s GPU. */
 export function renderCompose(vendor: HardwareVendor = 'cpu'): string {

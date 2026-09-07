@@ -8,6 +8,7 @@ import { renderEgressFiles } from './renderEgress.js';
 import { HARNESSES, envHarnessSections } from '../harness/index.js';
 import { renderDefaultAgent } from '../agent/index.js';
 import { parseDotenv } from '../harness/adapter.js';
+import { STACK_NETWORK } from '../constants.js';
 import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
 import { SHIPPED_SKILLS } from '../skill/index.js';
 import type { HardwareVendor } from '../hardware/index.js';
@@ -356,7 +357,7 @@ function buildEnvWrite(
     ...envHarnessSections(),
     // The OmniRoute stack section: compose interpolates these from `.e/.env`
     // (no fallbacks), so an old `.e/.env` gains the lines on re-init too.
-    { name: 'e-net', env: [...OMNIROUTE_STACK_SECRETS] },
+    { name: STACK_NETWORK, env: [...OMNIROUTE_STACK_SECRETS] },
   ];
 
   let content: string;
