@@ -140,7 +140,13 @@ export interface RunSpawnResult {
 
 /** True if a sidecar is ready now: its TCP port is open and any healthcheck exits 0. */
 function sidecarReady(runtime: ContainerRunner, spec: SidecarSpec): boolean {
-  if (!runtime.probeTcp(spec.netns ?? spec.network!, 'localhost', spec.port)) return false;
+  // Egress mode (ADR-0011): the sidecar shares e-egress's namespace, so its
+  // address is loopback and the probe container must attach to the shared
+  // namespace too (`container:<netns>`). Otherwise the sidecar is reachable by
+  // its alias on the run's private network.
+  const host = spec.netns ? 'localhost' : spec.alias;
+  const probeNetwork = spec.netns ? `container:${spec.netns}` : spec.network!;
+  if (!runtime.probeTcp(probeNetwork, host, spec.port)) return false;
   if (
     spec.healthcheck &&
     !runtime.probeHealthcheck(spec.name, spec.healthcheck)
@@ -287,19 +293,24 @@ export async function runSpawn(
     }
 
     if (!readinessError) {
-      // Agent joins its run's private network when sidecars exist. Its normal
-      // Docker network remains unchanged for runs without sidecars.
+      // Egress mode takes the shared namespace exclusively (ADR-0011): no Docker
+      // network joins at all. Otherwise the agent joins its run's private
+      // network when sidecars exist; nothing joined stays undefined, so a
+      // sidecar-less run emits no --network flags (exactly as before).
+      const netns = params.runOptions.netns;
+      const joinedNetworks: string[] | undefined = netns
+        ? undefined
+        : (() => {
+            const nets = new Set([
+              ...(params.runOptions.networks ?? []),
+              ...(specs.length > 0 ? [network] : []),
+            ]);
+            return nets.size > 0 ? [...nets] : undefined;
+          })();
       const runOptions: RunOptions = {
         ...params.runOptions,
         name: run.name,
-        networks: params.runOptions.netns
-          ? undefined
-          : [
-              ...new Set([
-                ...(params.runOptions.networks ?? []),
-                ...(specs.length > 0 ? [network] : []),
-              ]),
-            ],
+        networks: joinedNetworks,
         // The worktree is always mounted at /workspace; a file harness's config
         // overlay (if any) is appended as extra read-only mounts outside it.
         volumes: [
