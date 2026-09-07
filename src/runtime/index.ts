@@ -1,12 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
 import { log } from '../utils/log.js';
-import {
-  EGRESS_IMAGE,
-  EGRESS_BLACKLIST_MOUNT,
-  EGRESS_LOG_MOUNT,
-  EGRESS_BLACKLIST_IP_MOUNT,
-  type EgressSpec,
-} from '../egress/index.js';
 
 /**
  * A bind mount as structured data, so callers describe *what* to mount and the
@@ -109,12 +102,6 @@ export interface ContainerRunner {
 
   /** Start a sidecar detached on its network (with its alias). Throws if it fails to start. */
   startSidecar(spec: SidecarSpec): void;
-  /**
-   * Start the run's shared egress monitor container detached (ADR-0011): the
-   * agent will be started with `--network container:<name>`, sharing its netns.
-   * Throws if it fails to start.
-   */
-  startEgress(spec: EgressSpec): void;
   /** Stop and remove a container by name. Best-effort: never throws (teardown). */
   removeContainer(name: string): void;
 
@@ -128,6 +115,11 @@ export interface ContainerRunner {
   probeHealthcheck(container: string, command: string[]): boolean;
   /** True if the named container is still running — used to detect a mid-run crash. */
   isRunning(name: string): boolean;
+  /**
+   * Retrieve a container's stdout/stderr log output. Returns undefined when
+   * the container does not exist or the runtime fails to read the logs.
+   */
+  containerLogs(name: string): string | undefined;
 }
 
 /**
@@ -184,41 +176,6 @@ export function containerRemoveArgs(name: string): string[] {
   return ['rm', '-f', name];
 }
 
-/**
- * Builds the argv that starts a run's shared egress container detached (ADR-0011).
- * The container joins the passed networks (or the default bridge when empty),
- * mounts the run's blacklist + log files in, and gets `NET_ADMIN` so it can
- * apply iptables REJECT rules in its own netns — never on the untrusted agent,
- * which shares this netns without inheriting the capability. It also forces its
- * own resolv.conf through loopback (`--dns 127.0.0.1`) so a netns-sharing agent
- * inherits a resolv.conf that reaches the container's dnsmasq (the blacklist
- * only works if the agent's DNS queries actually cross the egress netns).
- */
-export function egressRunArgs(spec: EgressSpec): string[] {
-  const args = [
-    'run',
-    '-d',
-    '--name',
-    spec.name,
-    '--cap-add',
-    'NET_ADMIN',
-    '--dns',
-    '127.0.0.1',
-  ];
-  // Docker cannot combine its built-in `bridge` network mode with user-defined
-  // networks in one `run`. User-defined bridge networks provide outbound NAT,
-  // so they are also the egress path; with no explicit network Docker uses its
-  // built-in bridge automatically.
-  for (const net of spec.networks) args.push('--network', net);
-  args.push('-v', `${spec.blacklistHost}:${EGRESS_BLACKLIST_MOUNT}`);
-  args.push('-v', `${spec.logHost}:${EGRESS_LOG_MOUNT}`);
-  if (spec.iptablesHost) {
-    args.push('-v', `${spec.iptablesHost}:${EGRESS_BLACKLIST_IP_MOUNT}:ro`);
-  }
-  args.push(EGRESS_IMAGE);
-  return args;
-}
-
 export function tcpProbeArgs(
   network: string,
   host: string,
@@ -243,6 +200,10 @@ export function execArgs(container: string, command: string[]): string[] {
 
 export function runningInspectArgs(name: string): string[] {
   return ['inspect', '-f', '{{.State.Running}}', name];
+}
+
+export function logsArgs(name: string): string[] {
+  return ['logs', name];
 }
 
 /**
@@ -552,27 +513,15 @@ export class ContainerRuntime implements ContainerRunner {
   }
 
   /**
-   * Start a run's shared egress monitor container detached (ADR-0011). The agent
-   * is started afterwards with `--network container:<name>`, so this must be up
-   * first. Throws if the container fails to start.
+   * Retrieve a container's stdout/stderr log output. Returns undefined when
+   * the container does not exist or the runtime fails to read the logs.
    */
-  startEgress(spec: EgressSpec): void {
-    const args = egressRunArgs(spec);
-
-    log.command(`> ${this.command} ${args.join(' ')}`);
-    const result = spawnSync(this.command, args, {
-      stdio: ['ignore', 'ignore', 'inherit'],
+  containerLogs(name: string): string | undefined {
+    const result = spawnSync(this.command, logsArgs(name), {
+      encoding: 'utf8',
       shell: false,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
-    if (result.error) {
-      throw new Error(
-        `Failed to start ${this.command}: ${result.error.message}`
-      );
-    }
-    if (result.status !== 0) {
-      throw new Error(
-        `Failed to start egress container "${spec.name}" (exit code ${result.status ?? 1}).`
-      );
-    }
+    return result.status === 0 ? result.stdout : undefined;
   }
 }

@@ -1,5 +1,6 @@
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 import type { Git } from '../git/index.js';
 import type { PullRequest } from '../github/index.js';
 import type { GitPlatform } from '../store/config.js';
@@ -9,8 +10,7 @@ import type {
   SidecarSpec,
   Mount,
 } from '../runtime/index.js';
-import type { EgressSpec } from '../egress/index.js';
-import { EGRESS_IMAGE } from '../egress/index.js';
+
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
 import {
@@ -56,21 +56,7 @@ export interface SidecarPlan {
   envFile?: string[];
 }
 
-/**
- * The egress monitor a run starts (ADR-0011), as the orchestrator knows it: the
- * host paths of the per-run mounted files (blacklist + optional iptables rules,
- * rendered by the executor into scratch) and the log directory. The orchestrator
- * derives the unique container name and the networks from the run identity and
- * turns this into an {@link EgressSpec}.
- */
-export interface EgressPlan {
-  /** Host path of the rendered dnsmasq blacklist file (mounted into the egress container). */
-  blacklistHost: string;
-  /** Host path of the rendered iptables REJECT script, when the blacklist has IP:port entries. */
-  iptablesHost?: string;
-  /** Host path of the log directory (mounted, host-visible, written by dnsmasq/log shim). */
-  logHost: string;
-}
+
 
 /** Collaborators the orchestrator drives. Injected so tests can fake them. */
 export interface RunSpawnDeps {
@@ -114,14 +100,6 @@ export interface RunSpawnParams {
   worktreesDir?: string;
   /** Container MCP sidecars to bring up for this run (ADR-0005); empty for a plain run. */
   sidecars?: SidecarPlan[];
-  /**
-   * The run's shared egress monitor (ADR-0011): when set, the orchestrator
-   * starts `<run>-egress` first and runs the agent with `--network container:<name>`
-   * so every socket/DNS query crosses the egress netns. When unset, the agent
-   * keeps the legacy network joins (a plain, non-egress run — tests and stores
-   * without an initialized egress context).
-   */
-  egress?: EgressPlan;
   /** Extra argv wiring the sidecars into the harness (e.g. Claude's `--mcp-config`). */
   mcpArgs?: string[];
   /**
@@ -134,6 +112,8 @@ export interface RunSpawnParams {
   readiness?: ReadinessPolicy;
   /** The configured git platform (`github` | `gitlab` | ... ) for PR/MR; absent disables. */
   gitPlatform?: GitPlatform;
+  /** The store root path; when present, egress logs are written per-run. */
+  storeRoot?: string;
 }
 
 export interface RunSpawnResult {
@@ -276,37 +256,13 @@ export async function runSpawn(
   const startedContainers: string[] = [];
   let networkCreated = false;
   try {
-    // Bring up the group (ADR-0005 + ADR-0011): private network (when the run
-    // has sidecars) → the shared egress monitor → sidecars → readiness. The
-    // egress container is started before the agent because the agent must be
-    // launched with `--network container:<run>-egress` after it is up. The
-    // egress joins the networks the agent used to (the run network when there
-    // are sidecars to reach, the compose edge network when the local stack is
-    // present, and always the default bridge WAN face). A sidecar that never
-    // reaches readiness aborts the run before the agent starts (fail-fast);
-    // teardown still runs in the finally.
-    if (params.egress || specs.length > 0) {
-      if (specs.length > 0) {
-        runtime.createNetwork(network);
-        networkCreated = true;
-      }
-      if (params.egress) {
-        const egressSpec: EgressSpec = {
-          name: run.egressContainer,
-          image: EGRESS_IMAGE,
-          blacklistHost: params.egress.blacklistHost,
-          iptablesHost: params.egress.iptablesHost,
-          logHost: params.egress.logHost,
-          networks: [
-            ...new Set([
-              ...(params.runOptions.networks ?? []),
-              ...(specs.length > 0 ? [network] : []),
-            ]),
-          ],
-        };
-        runtime.startEgress(egressSpec);
-        startedContainers.push(run.egressContainer);
-      }
+    // Bring up the group (ADR-0005): private network (when the run has sidecars)
+    // → sidecars → readiness. A sidecar that never reaches readiness aborts the
+    // run before the agent starts (fail-fast); teardown still runs in the finally.
+    if (specs.length > 0) {
+      runtime.createNetwork(network);
+      networkCreated = true;
+
       for (const spec of specs) {
         runtime.startSidecar(spec);
         startedContainers.push(spec.name);
@@ -327,21 +283,16 @@ export async function runSpawn(
     }
 
     if (!readinessError) {
-      // With egress, the agent joins NO networks of its own: it shares the
-      // egress container's netns, so the egress's membership (run network +
-      // edge + bridge) is the only reachable world. Without egress (legacy),
-      // the agent keeps its own joins: the run's private network only when it
-      // has sidecars to reach, plus any pre-wired networks (the compose edge
-      // network, so `host.docker.internal` resolves to the local OmniRoute).
-      const agentNetns = params.egress ? run.egressContainer : undefined;
-      const networks = agentNetns
-        ? undefined
-        : [
-            ...new Set([
-              ...(params.runOptions.networks ?? []),
-              ...(specs.length > 0 ? [network] : []),
-            ]),
-          ];
+      // Agent joins: its run's private network (when sidecars exist) + any
+      // pre-wired networks (the compose edge network when the local stack is
+      // present). All outbound traffic routes through the global e-egress
+      // container (network_mode: service:egress in compose), no per-run netns.
+      const networks = [
+        ...new Set([
+          ...(params.runOptions.networks ?? []),
+          ...(specs.length > 0 ? [network] : []),
+        ]),
+      ];
       const runOptions: RunOptions = {
         ...params.runOptions,
         name: run.name,
@@ -352,8 +303,7 @@ export async function runSpawn(
           ...(params.configMounts ?? []),
         ],
         workdir: '/workspace',
-        netns: agentNetns,
-        networks: networks && networks.length > 0 ? networks : undefined,
+        networks: networks.length > 0 ? networks : undefined,
       };
       const command = params.interactive
         ? harness.buildInteractiveCommand(params.model)
@@ -367,15 +317,19 @@ export async function runSpawn(
       ]);
       ran = true;
 
-      // A sidecar or the egress monitor that crashed mid-run is non-fatal (like
-      // a failed push): the agent may hold uncommitted work, so surface a
-      // warning, never kill it. An egress crash is worse — the agent loses its
-      // only route out — so it is called out explicitly (ADR-0011 verify item 4).
-      if (params.egress && !runtime.isRunning(run.egressContainer)) {
-        sidecarWarnings.push(
-          `Egress monitor exited during the run; the agent lost its network namespace (its egress and DNS were cut off).`
-        );
+      // Capture egress logs per-run when store root is present.
+      if (params.storeRoot) {
+        const egressLogs = runtime.containerLogs('egress');
+        if (egressLogs !== undefined) {
+          const logDir = path.join(params.storeRoot, '.e', 'egress-logs');
+          fs.mkdirSync(logDir, { recursive: true });
+          const logFile = path.join(logDir, `e-${name}.log`);
+          fs.writeFileSync(logFile, egressLogs, 'utf8');
+        }
       }
+
+      // A sidecar that crashed mid-run is non-fatal (like a failed push): the
+      // agent may hold uncommitted work, so surface a warning, never kill it.
       for (const spec of specs) {
         if (!runtime.isRunning(spec.name)) {
           sidecarWarnings.push(

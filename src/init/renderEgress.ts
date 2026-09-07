@@ -1,9 +1,10 @@
 /**
- * Renders the shared **egress container** build context (ADR-0011): a Dockerfile,
+ * Renders the **egress gateway** build context (ADR-0011): a Dockerfile,
  * an entrypoint script, a dnsmasq config, and a blacklist template that `e init`
  * seeds into `.e/egress/` — mirroring how harness/mcp build contexts are seeded
  * (never clobbered, so a user can edit them). The rendered image `e-egress` is
- * built once and started once per run with the run's blacklist and log mounted in.
+ * built once and started once as a global stack service; every stack service and
+ * every run agent joins the egress netns and routes all outbound through it.
  *
  * The three rendered artifacts:
  *
@@ -28,10 +29,10 @@ import {
 /** Renders the `entrypoint.sh` for the egress container. */
 export function renderEgressEntrypoint(): string {
   return `#!/bin/sh
-# Egress monitor entrypoint (ADR-0011). Applies the mounted iptables blacklist
-# to this netns, then runs dnsmasq in the foreground with query logging. The
-# run's harness agent shares this container's network namespace, so everything
-# the agent reaches (DNS + non-DNS) crosses here and is logged / blocked.
+# Egress gateway entrypoint (ADR-0011). Applies the mounted iptables blacklist
+# to this netns, then runs dnsmasq in the foreground with query logging. All
+# stack services and run agents share this container's network namespace,
+# so every DNS query and connection crosses here and is logged / blocked.
 set -eu
 
 IP_BLACKLIST="${EGRESS_BLACKLIST_IP_MOUNT}"
@@ -70,8 +71,8 @@ exec dnsmasq -k -d \\
 
 /** Renders the base `dnsmasq.conf` for the egress container. */
 export function renderDnsmasqBaseConf(): string {
-  return `# Base dnsmasq config for the egress monitor (ADR-0011).
-# The run's mounted blacklist  (address=/domain/0.0.0.0 lines) is read from
+  return `# Base dnsmasq config for the egress gateway (ADR-0011).
+# The mounted blacklist (address=/domain/0.0.0.0 lines) is read from
 # the conf-dir; log-queries records every query to the mounted log. The
 # upstream is the engine's embedded DNS (Docker: 127.0.0.11; Podman: the
 # aardvark resolver in this netns) so sidecar aliases and host.docker.internal
@@ -87,9 +88,9 @@ server=127.0.0.11
 
 /** Renders the `Dockerfile` for the egress container. */
 export function renderEgressDockerfile(): string {
-  return `# The shared egress monitor container (ADR-0011). One per run; the harness
-# agent shares its network namespace, so a blacklist here is enforced and every
-# query / connection is logged host-side.
+  return `# The egress gateway container (ADR-0011). A single global service; all stack
+# services and run agents share its network namespace, so a blacklist here is
+# enforced and every query / connection is logged host-side.
 FROM alpine:3.20
 
 RUN apk add --no-cache dnsmasq iptables ip6tables bash
@@ -98,7 +99,7 @@ COPY entrypoint.sh /egress-entrypoint.sh
 COPY dnsmasq.conf /etc/egress.d/dnsmasq.conf
 RUN chmod +x /egress-entrypoint.sh
 
-# The mount points the orchestrator wires per run:
+# The mount points compose wires:
 #   /etc/egress.d/dnsmasq.blacklist  (host blacklist file, rw)
 #   /etc/egress.d/iptables.blacklist (host iptables rules script, ro)
 #   /var/log/egress                  (host-visible log dir, rw)

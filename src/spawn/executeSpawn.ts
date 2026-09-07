@@ -25,18 +25,11 @@ import {
   agentDir,
   mcpDir,
   skillDir,
-  egressDir,
-} from '../store/paths.js';
+
 import { isInitialized } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
 import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus.js';
-import {
-  EGRESS_IMAGE,
-  parseBlacklist,
-  renderDnsmasqConf,
-  renderIptablesRules,
-} from '../egress/index.js';
-import { isEgressInitialized } from '../store/config.js';
+
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -109,13 +102,6 @@ function buildImages(
     if (rebuild || !runtime.imageExists(sc.image)) {
       runtime.build(sc.image, mcpDir(sc.alias, root));
     }
-  }
-  // `e-egress` is a generic local tag and may belong to another project or an
-  // older e version. Always build it from this store's initialized context;
-  // Docker's layer cache keeps unchanged builds cheap while preventing a
-  // coincidental/stale tag from silently running incompatible behavior.
-  if (plan.egressEnabled && isEgressInitialized(root)) {
-    runtime.build(EGRESS_IMAGE, egressDir(root));
   }
   return tag;
 }
@@ -205,40 +191,6 @@ export async function executeSpawn(
   }
   configMounts.push(...plan.skillMounts);
 
-  // The shared egress monitor (ADR-0011): materialize the host-editable
-  // blacklist (parsed to dnsmasq sinkhole lines; the source is kept on the host
-  // so edits persist across restarts) and the iptables REJECT script (only when
-  // the source has IP:port pairs) into scratch, plus a log dir. The scratch
-  // files are mounted into the egress container; the runThen gets the plan and
-  // starts `<run>-egress` before the agent, which joins its netns.
-  let egress: EgressPlan | undefined;
-  if (plan.egressEnabled) {
-    const blacklistSource =
-      facts.egressBlacklistFile === undefined
-        ? ''
-        : fs.existsSync(facts.egressBlacklistFile)
-          ? fs.readFileSync(facts.egressBlacklistFile, 'utf8')
-          : '';
-    const parsed = parseBlacklist(blacklistSource);
-    // One shared scratch dir for all egress mounts so they live together.
-    const egressScratch = scratch.dir();
-    const dnsmasqPath = path.join(egressScratch, 'dnsmasq.blacklist');
-    fs.writeFileSync(dnsmasqPath, renderDnsmasqConf(parsed.domains));
-    const iptablesPath =
-      parsed.ipPorts.length > 0
-        ? path.join(egressScratch, 'iptables.rules')
-        : undefined;
-    if (iptablesPath) {
-      fs.writeFileSync(iptablesPath, renderIptablesRules(parsed.ipPorts));
-    }
-    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-egress-log-'));
-    egress = {
-      blacklistHost: dnsmasqPath,
-      logHost: logDir,
-      ...(iptablesPath ? { iptablesHost: iptablesPath } : {}),
-    };
-  }
-
   // When the local OmniRoute stack is present, the agent reaches it over the
   // stack's edge network (compose DNS alias host.docker.internal → omniroute),
   // not through the host's loopback-bound published port. The host-gateway
@@ -272,7 +224,7 @@ export async function executeSpawn(
       runOptions,
       sidecars,
       configMounts,
-      egress,
+      storeRoot: facts.root,
     }
   );
 }
