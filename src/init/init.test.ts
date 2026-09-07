@@ -188,11 +188,11 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   const compose = renderCompose('cpu');
   assert.match(compose, /image: diegosouzapw\/omniroute:latest/);
   assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server\n/);
-  assert.match(compose, /LOCAL_HOSTNAMES: llama/);
+  assert.match(compose, /LOCAL_HOSTNAMES: localhost/);
   assert.match(compose, /OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS: "true"/);
   assert.match(compose, /OMNIROUTE_BOOTSTRAPPED: "true"/);
   assert.match(compose, /bootstrap:/);
-  assert.match(compose, /REDIS_URL: redis:\/\/redis:6379/);
+  assert.match(compose, /REDIS_URL: redis:\/\/localhost:6379/);
   assert.match(compose, /127\.0\.0\.1:20128:20128/);
   assert.match(compose, /- omniroute-data:\/app\/data/);
   assert.match(compose, /- llama-data:\/root\/\.cache/);
@@ -261,14 +261,17 @@ test('renderCompose: no default secrets — every stack var must come from .env'
 test('renderBootstrap: downloads and registers the configured llama.cpp model', () => {
   const script = renderBootstrap();
   assert.match(script, /^#!\/bin\/sh/);
-  assert.match(script, /POST http:\/\/llama:9931\/models/);
+  assert.match(script, /POST http:\/\/localhost:9931\/models/);
   assert.match(script, /for model in \$models; do/);
   assert.match(script, /repo=\$\{model%%:\*\}/);
   assert.match(script, /OmniRoute rejected INITIAL_PASSWORD/);
   assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"'?\$repo/);
   assert.match(script, /loading model \$llama_id/);
   assert.match(script, /registering model \$model/);
-  assert.doesNotMatch(script, /until curl -sf http:\/\/llama:9931\/models/);
+  assert.doesNotMatch(
+    script,
+    /until curl -sf http:\/\/localhost:9931\/models/
+  );
   assert.match(script, /unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M/);
   assert.match(script, /unsloth\/Qwen3\.6-35B-A3B-GGUF:UD-IQ4_XS/);
   assert.match(script, /ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M/);
@@ -299,7 +302,7 @@ test('renderBootstrap: matches cached llama presets by repo prefix, not exact qu
   // Loading a known model must use the resolved (canonical) id.
   assert.doesNotMatch(
     script,
-    /-X POST http:\/\/llama:9931\/models\/load.*\$model/
+    /-X POST http:\/\/localhost:9931\/models\/load.*\$model/
   );
 });
 
@@ -319,20 +322,20 @@ function runBootstrapWithLoadResponse(
     curlPath,
     `#!/bin/sh
 case "$*" in
-  *omniroute:20128/api/auth/login*)
+  *localhost:20128/api/auth/login*)
     printf 'HTTP/1.1 200 OK\\r\\nset-cookie: auth_token=test-token; Path=/\\r\\n'
     ;;
-  *omniroute:20128/healthz*|*llama:9931/health*)
+  *localhost:20128/healthz*|*localhost:9931/health*)
     ;;
-  *llama:9931/models/load*)
+  *localhost:9931/models/load*)
     touch "$STATE_FILE"
     printf '{"error":{"code":${status},"message":"${message}","type":"server_error"}}\\n${status}'
     ;;
-  *llama:9931/models*)
+  *localhost:9931/models*)
     if test -f "$STATE_FILE"; then value=loaded; else value=unloaded; fi
     printf '{"data":[{"id":"${model}","status":{"value":"%s"}}]}' "$value"
     ;;
-  *omniroute:20128/api/providers*)
+  *localhost:20128/api/providers*)
     printf 'llama.cpp (local)'
     ;;
   *)

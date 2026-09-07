@@ -17,7 +17,7 @@ export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
 # interpolated from .e/.env — e init seeds random values there; there are no
 # fallback defaults, so an unseeded stack simply has no known password.
 # The bootstrap service downloads the model from Hugging Face through llama.cpp's API.
-# In OmniRoute Dashboard -> Providers, add llama.cpp with base URL http://llama:9931/v1.
+# In OmniRoute Dashboard -> Providers, add llama.cpp with base URL http://localhost:9931/v1.
 #
 # Networking: the stack is split into two networks.
 #   omniroute-stack — redis, llama.cpp, bootstrap, OmniRoute backplane, and egress
@@ -71,8 +71,8 @@ services:
     environment:
       DATA_DIR: /app/data
       PORT: "20128"
-      REDIS_URL: redis://redis:6379
-      LOCAL_HOSTNAMES: llama
+      REDIS_URL: redis://localhost:6379
+      LOCAL_HOSTNAMES: localhost
       OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS: "true"
       JWT_SECRET: \${JWT_SECRET}
       API_KEY_SECRET: \${API_KEY_SECRET}
