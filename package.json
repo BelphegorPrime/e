@@ -11,6 +11,7 @@
   "scripts": {
     "start": "npm run build:ts && node dist/index.js",
     "test": "npm run build:ts && node --test \"dist/**/*.test.js\"",
+    "test:coverage": "npm run build:ts && node --test --experimental-test-coverage \"dist/**/*.test.js\"",
     "build:ui": "cd ui && webpack --config webpack.config.mjs --mode production",
     "dev:ui": "cd ui && webpack serve --config webpack.config.mjs --mode development",
     "build:ts": "tsc",
