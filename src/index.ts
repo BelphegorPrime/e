@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { registerSpawnCommand } from './spawn/spawn.js';
 import { registerInitCommand } from './init/index.js';
 import { registerServeCommand } from './serve/serve.js';
+import { registerExportCommand, registerImportCommand } from './transfer/index.js';
 const program = new Command();
 
 program
@@ -14,5 +15,7 @@ program
 registerSpawnCommand(program);
 registerInitCommand(program);
 registerServeCommand(program);
+registerExportCommand(program);
+registerImportCommand(program);
 
 program.parse();
