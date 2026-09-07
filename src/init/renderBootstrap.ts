@@ -86,9 +86,39 @@ for model in $models; do
     fi
   else
     log "registering model $model"
-    curl -sf -X POST http://localhost:9931/models \
+    if ! reg_response=$(curl -sS -X POST http://localhost:9931/models \
       -H 'Content-Type: application/json' \
-      -d '{"model":"'"$model"'"}' > /dev/null
+      -d '{"model":"'"$model"'"}' \
+      -w '\\n%{http_code}'); then
+      log "llama.cpp register request failed: $model"
+      exit 1
+    fi
+    reg_status=$(printf '%s\\n' "$reg_response" | tail -n 1)
+    reg_body=$(printf '%s\\n' "$reg_response" | sed '$d')
+    case "$reg_status" in
+      2??) ;;
+      500)
+        if ! printf '%s\\n' "$reg_body" | grep -q '"message"[[:space:]]*:[[:space:]]*"model limit reached, try again later"'; then
+          log "llama.cpp rejected model registration (HTTP $reg_status): $model"
+          exit 1
+        fi
+        log "model registration continues after capacity eviction: $model"
+        reg_attempts=0
+        until model_state=$(curl -sf http://localhost:9931/models) && printf '%s\\n' "$model_state" | sed 's/},{/}\\n{/g' | grep -q '"id"[[:space:]]*:[[:space:]]*"'$repo; do
+          reg_attempts=$((reg_attempts + 1))
+          if test "$reg_attempts" -ge 300; then
+            log "timed out waiting for model registration: $model"
+            exit 1
+          fi
+          sleep 2
+        done
+        log "model registered after eviction: $repo"
+        ;;
+      *)
+        log "llama.cpp rejected model registration (HTTP $reg_status): $model"
+        exit 1
+        ;;
+    esac
   fi
 done
 
