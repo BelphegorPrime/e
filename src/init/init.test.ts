@@ -210,15 +210,26 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   );
 });
 
+test('renderCompose: does not expose ports from services sharing the egress network namespace', () => {
+  const compose = renderCompose('cpu');
+  const redis = compose.slice(
+    compose.indexOf('\n  redis:'),
+    compose.indexOf('\nnetworks:')
+  );
+
+  assert.match(redis, /network_mode: "service:egress"/);
+  assert.doesNotMatch(redis, /\n\s+expose:/);
+});
+
 test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () => {
   const compose = renderCompose('cpu');
   // The OmniRoute dashboard is a login surface; only the host itself may reach it.
   assert.doesNotMatch(compose, /\s- "20128:20128"/);
   assert.doesNotMatch(compose, /0\.0\.0\.0:20128/);
 
-  // The stack is split: the harness run container reaches OmniRoute on the edge
-  // network (aliased as host.docker.internal), never joining the stack network
-  // that carries Redis and llama.cpp.
+  // The stack is split: the harness run container reaches the shared egress
+  // network namespace on the edge network (aliased as host.docker.internal),
+  // never joining the private stack network.
   assert.match(
     compose,
     /omniroute-edge:\n\s+aliases:\n\s+- host\.docker\.internal/
@@ -227,11 +238,13 @@ test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () 
     compose,
     /networks:\n\s+omniroute-stack:\n\s+name: omniroute-stack\n\s+omniroute-edge:\n\s+name: omniroute-edge/
   );
-  const stackMembers = compose.match(/- omniroute-stack/g) ?? [];
-  assert.ok(
-    stackMembers.length >= 3,
-    `redis/llama/bootstrap should join the stack network, got ${stackMembers.length}`
+  assert.match(
+    compose,
+    /egress:[\s\S]*?networks:\n\s+omniroute-stack:\n\s+omniroute-edge:/
   );
+  const namespaceSharers =
+    compose.match(/network_mode: "service:egress"/g) ?? [];
+  assert.equal(namespaceSharers.length, 4);
 });
 
 test('renderCompose: no default secrets — every stack var must come from .env', () => {

@@ -3,8 +3,6 @@ import {
   llamaGpuCompose,
   type HardwareVendor,
 } from '../hardware/index.js';
-import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus.js';
-
 /** The stack-internal network: redis, llama, bootstrap, OmniRoute, and egress backplane. */
 const OMNIROUTE_STACK_NETWORK = 'omniroute-stack';
 
@@ -46,8 +44,10 @@ services:
     dns:
       - 127.0.0.1
     networks:
-      - ${OMNIROUTE_STACK_NETWORK}
-      - omniroute-edge
+      ${OMNIROUTE_STACK_NETWORK}:
+      omniroute-edge:
+        aliases:
+          - host.docker.internal
     volumes:
       - ./egress-blacklist:/etc/egress.d/dnsmasq.blacklist:rw
       - egress-logs:/var/log/egress
@@ -124,8 +124,6 @@ ${gpu}
     depends_on:
       egress:
         condition: service_started
-    expose:
-      - "6379"
     volumes:
       - redis-data:/data
     healthcheck:
