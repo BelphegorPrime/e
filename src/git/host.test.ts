@@ -73,6 +73,195 @@ test('HostGit.listRunRefs finds run branches under the e/ namespace', () => {
   }
 });
 
+test('HostGit.isRepo is true inside a repo and false in a plain directory', () => {
+  const repo = seedRepo();
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-plain-'));
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    assert.equal(new HostGit().isRepo(), true);
+    process.chdir(plain);
+    assert.equal(new HostGit().isRepo(), false);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(plain, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.headSha resolves the current commit', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    const sha = new HostGit().headSha();
+    assert.match(sha, /^[0-9a-f]{40}$/);
+    assert.equal(sha, git(repo, 'rev-parse', 'HEAD'));
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.currentBranch is the branch name, empty on a detached HEAD', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    assert.equal(new HostGit().currentBranch(), 'main');
+    git(repo, 'checkout', '-q', '--detach');
+    assert.equal(new HostGit().currentBranch(), '');
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.listRunBranches matches flat run-branch names and nothing else', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    // Create a flat run branch that matches refs/heads/e-*
+    git(repo, 'branch', 'e-run-3');
+    process.chdir(repo);
+    const branches = new HostGit().listRunBranches('e');
+    assert.ok(branches.includes('e-run-3'));
+    // Nested branches do NOT match the flat e-* glob
+    assert.ok(!branches.includes('e/claudeCode/fix-typos-2'));
+    assert.ok(!branches.includes('feature/unrelated'));
+    assert.ok(!branches.includes('main'));
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.branchExists resolves local branches and misses unknown ones', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    const host = new HostGit();
+    assert.equal(host.branchExists('main'), true);
+    assert.equal(host.branchExists('e/cheapCodex/spawn-helper-1'), true);
+    assert.equal(host.branchExists('no/such-branch'), false);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.isDirty reports a clean worktree as clean and a modified one as dirty', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    const host = new HostGit();
+    assert.equal(host.isDirty(repo), false);
+    fs.appendFileSync(path.join(repo, 'base.txt'), '\ndirty');
+    assert.equal(host.isDirty(repo), true);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.commitAll stages and commits every change in the worktree', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    const host = new HostGit();
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'added');
+    assert.equal(host.isDirty(repo), true);
+    host.commitAll(repo, 'test: add new.txt');
+    assert.equal(host.isDirty(repo), false);
+    assert.match(git(repo, 'log', '-1', '--format=%s'), /test: add new.txt/);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.hasCommitsBeyondBase counts the run branch beyond its base', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    const host = new HostGit();
+    assert.equal(
+      host.hasCommitsBeyondBase('e/claudeCode/fix-typos-2', 'main'),
+      true
+    );
+    assert.equal(host.hasCommitsBeyondBase('main', 'main'), false);
+    assert.equal(
+      host.hasCommitsBeyondBase('main', 'e/claudeCode/fix-typos-2'),
+      false
+    );
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.addWorktree creates the branch and the path; a live branch is refused', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  const wt = path.join(repo, '..', 'e-adder-wt');
+  try {
+    process.chdir(repo);
+    const host = new HostGit();
+    host.addWorktree({ branch: 'e/agent/adder-1', path: wt, base: 'main' });
+    assert.equal(host.branchExists('e/agent/adder-1'), true);
+    assert.ok(fs.existsSync(wt));
+    // A duplicate branch must refuse (atomic-create guarantee), not silently overwrite.
+    assert.throws(() =>
+      host.addWorktree({ branch: 'e/agent/adder-1', path: wt, base: 'main' })
+    );
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(wt, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.removeWorktree removes the path and leaves the branch', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  const wt = path.join(repo, '..', 'e-remover-wt');
+  try {
+    process.chdir(repo);
+    const host = new HostGit();
+    host.addWorktree({ branch: 'e/agent/remover-1', path: wt, base: 'main' });
+    assert.ok(fs.existsSync(wt));
+    host.removeWorktree(wt);
+    assert.ok(!fs.existsSync(wt));
+    assert.equal(host.branchExists('e/agent/remover-1'), true);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(wt, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.push sends the branch to a bare origin', () => {
+  const repo = seedRepo();
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-remote-'));
+  const originalCwd = process.cwd();
+  try {
+    git(remote, 'init', '-q', '--bare');
+    git(repo, 'remote', 'add', 'origin', remote);
+    process.chdir(repo);
+    new HostGit().push('main');
+    const remoteBranches = git(remote, 'branch');
+    assert.match(remoteBranches, /\*? ?main/);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
+  }
+});
+
 test('HostGit.listRunRefs with a full prefix only matches its own branches', () => {
   const repo = seedRepo();
   const originalCwd = process.cwd();

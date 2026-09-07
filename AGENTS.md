@@ -33,3 +33,7 @@ When running inside `/workspace` from `e spawn`, Git is host-orchestrated:
 
 - if you want to execute commands be aware that `&amp;` should be replaced with `&`
 - longdashes should never be used
+
+### Tests follow code
+
+Any code change (new feature, fix, refactor) must include corresponding test adjustments: add tests for new functions/branches, update or remove tests for deleted code, and ensure `npm run test:coverage` passes. Never ship a code change without touching the relevant test file.

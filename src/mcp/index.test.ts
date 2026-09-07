@@ -1,8 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {
   parseMcpServer,
   mcpEndpoint,
+  readMcpServer,
+  listMcpServerNames,
+  allocateMcpPorts,
   planMcpSelection,
   renderEverythingFiles,
   renderFilesystemFiles,
@@ -200,4 +206,95 @@ test('shipped filesystem server bridges stdio to streamable HTTP', () => {
   );
   assert.equal(parsed.transport, 'container');
   assert.match(files['Dockerfile'], /supergateway/);
+});
+
+test('readMcpServer returns undefined for a name that was never persisted', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-'));
+  try {
+    assert.equal(readMcpServer('ghost', root), undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readMcpServer round-trips a persisted mcp.json', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-'));
+  try {
+    const dir = path.join(root, '.e', 'mcp', 'everything');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'mcp.json'),
+      JSON.stringify({
+        transport: 'container',
+        port: 3001,
+        requiredEnv: [],
+      })
+    );
+    const server = readMcpServer('everything', root);
+    assert.equal(server?.name, 'everything');
+    assert.equal(server?.transport, 'container');
+    assert.equal(server?.port, 3001);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('listMcpServerNames lists persisted server dirs only', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-'));
+  try {
+    assert.deepEqual(listMcpServerNames(root), []);
+    fs.mkdirSync(path.join(root, '.e', 'mcp', 'everything'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(root, '.e', 'mcp', 'filesystem'), {
+      recursive: true,
+    });
+    fs.writeFileSync(path.join(root, '.e', 'mcp', 'not-a-dir'), 'x');
+    assert.deepEqual(
+      [...listMcpServerNames(root)].sort(),
+      ['everything', 'filesystem']
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('allocateMcpPorts keeps declared ports when they are free', () => {
+  const servers = [
+    { name: 'a', port: 3001 },
+    { name: 'b', port: 3002 },
+  ] as ContainerMcpServer[];
+  assert.deepEqual([...allocateMcpPorts(servers)], [
+    ['a', 3001],
+    ['b', 3002],
+  ]);
+});
+
+test('allocateMcpPorts moves a colliding port into the dynamic range', () => {
+  const servers = [{ name: 'a', port: 3001 }] as ContainerMcpServer[];
+  const result = allocateMcpPorts(servers, [3001]);
+  assert.equal(result.get('a'), 31000);
+});
+
+test('allocateMcpPorts advances past occupied dynamic ports and stays unique', () => {
+  const servers = [
+    { name: 'a', port: 3001, }, // collides -> 31000
+    { name: 'b', port: 31000 + 1 }, // free
+  ] as ContainerMcpServer[];
+  const result = allocateMcpPorts(servers, [3001, 31000]);
+  assert.equal(result.get('a'), 31001);
+  assert.equal(result.get('b'), 31002);
+});
+
+test('allocateMcpPorts throws when the dynamic range is exhausted', () => {
+  const servers = [
+    { name: 'a', port: 3001 },
+    { name: 'b', port: 3002 },
+  ] as ContainerMcpServer[];
+  const occupied = new Set<number>([3001, 3002]);
+  for (let p = 31000; p <= 31999; p++) occupied.add(p);
+  assert.throws(
+    () => allocateMcpPorts(servers, occupied),
+    /No free MCP ports/
+  );
 });

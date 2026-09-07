@@ -8,6 +8,8 @@ import {
   renderDefaultAgent,
   parseAgent,
   isKnownTarget,
+  listAgents,
+  findAgent,
   type Agent,
   type ResolveAgentDeps,
 } from './agent.js';
@@ -217,6 +219,71 @@ test('isKnownTarget: a persisted agent directory counts as a target', () => {
   try {
     fs.mkdirSync(agentDir('smart-codex', root), { recursive: true });
     assert.equal(isKnownTarget('smart-codex', root), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('listAgents: an empty store yields no agents ', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));
+  try {
+    assert.deepEqual(listAgents(root), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('listAgents: reads every persisted agent, skipping non-directory entries', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));
+  try {
+    fs.mkdirSync(agentDir('smart-codex', root), { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir('smart-codex', root), 'agent.json'),
+      JSON.stringify({ name: 'smart-codex', harness: 'codex' })
+    );
+    fs.mkdirSync(agentDir('claude-pr', root), { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir('claude-pr', root), 'agent.json'),
+      JSON.stringify({ name: 'claude-pr', harness: 'claudeCode' })
+    );
+    fs.writeFileSync(path.join(agentDir('smart-codex', root), '.DS_Store'), 'junk');
+    const agents = listAgents(root);
+    assert.deepEqual(
+      agents.map(a => a.name).sort(),
+      ['claude-pr', 'smart-codex']
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('findAgent: resolves a persisted agent by name against the real store', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));
+  try {
+    fs.mkdirSync(agentDir('smart-codex', root), { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir('smart-codex', root), 'agent.json'),
+      JSON.stringify({ name: 'smart-codex', harness: 'codex' })
+    );
+    assert.deepEqual(findAgent('smart-codex', root), {
+      name: 'smart-codex',
+      harness: 'codex',
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('findAgent: an unknown name throws, listing the valid targets', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));
+  try {
+    assert.throws(
+      () => findAgent('nope', root),
+      (error: Error) => {
+        assert.match(error.message, /Unknown agent or harness "nope"/);
+        return true;
+      }
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

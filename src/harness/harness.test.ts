@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HARNESSES, harnessCapabilities, planMcpDelivery } from './index.js';
+import { HARNESSES, harnessCapabilities, planMcpDelivery, resolveHarness, envHarnessSections, requiredEnvKeys } from './index.js';
 import type { McpEndpoint } from '../mcp/index.js';
 
 const claude = HARNESSES.claudeCode;
@@ -176,4 +176,48 @@ test('harnessCapabilities.skills is the declared skillsDir (all real harnesses s
     harnessCapabilities({ ...HARNESSES.pi, skillsDir: undefined }).skills,
     undefined
   );
+});
+
+test('resolveHarness returns the registered harness by name', () => {
+  for (const name of Object.keys(HARNESSES)) {
+    assert.equal(resolveHarness(name), HARNESSES[name]);
+  }
+});
+
+test('resolveHarness throws with the valid names for an unknown harness', () => {
+  assert.throws(
+    () => resolveHarness('no-such-harness'),
+    (error: Error) => {
+      assert.match(error.message, /Unknown harness "no-such-harness"/);
+      for (const name of Object.keys(HARNESSES)) {
+        assert.ok(error.message.includes(name), `lists ${name}`);
+      }
+      return true;
+    }
+  );
+});
+
+test('envHarnessSections emits one section per harness with its requiredEnv verbatim', () => {
+  const sections = envHarnessSections();
+  assert.equal(sections.length, Object.keys(HARNESSES).length);
+  for (const section of sections) {
+    const harness = HARNESSES[section.name];
+    assert.ok(harness, `section names a harness: ${section.name}`);
+    assert.deepEqual(section.env, harness.requiredEnv);
+  }
+});
+
+test('requiredEnvKeys is the deduped union in first-seen order, optional base URLs first', () => {
+  const keys = requiredEnvKeys();
+  // Optional base-URL keys lead the list regardless of harness order.
+  assert.equal(keys[0], 'OPENAI_BASE_URL');
+  assert.equal(keys[1], 'ANTHROPIC_BASE_URL');
+  // Every harness's requiredEnv is present, deduped.
+  const expected = new Set<string>();
+  for (const h of Object.values(HARNESSES)) {
+    for (const key of h.requiredEnv) expected.add(key);
+  }
+  assert.equal(keys.length, expected.size + 2);
+  assert.equal(new Set(keys).size, keys.length, 'no duplicates');
+  for (const key of expected) assert.ok(keys.includes(key), key);
 });
