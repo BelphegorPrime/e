@@ -3,8 +3,9 @@ import {
   llamaGpuCompose,
   type HardwareVendor,
 } from '../hardware/index.js';
+import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus.js';
 
-/** The stack-internal network: redis, llama, bootstrap, and OmniRoute itself. */
+/** The stack-internal network: redis, llama, bootstrap, OmniRoute, and egress backplane. */
 const OMNIROUTE_STACK_NETWORK = 'omniroute-stack';
 
 /** Renders the local OmniRoute + llama.cpp development stack for `vendor`'s GPU. */
@@ -21,25 +22,48 @@ export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
 # In OmniRoute Dashboard -> Providers, add llama.cpp with base URL http://llama:9931/v1.
 #
 # Networking: the stack is split into two networks.
-#   omniroute-stack — redis, llama.cpp, bootstrap, and OmniRoute's backplane.
-#                     Nothing on it publishes a host port except OmniRoute/llama,
+#   omniroute-stack — redis, llama.cpp, bootstrap, OmniRoute backplane, and egress
+#                     monitor. Nothing on it publishes a host port except OmniRoute/llama,
 #                     and the harness run container never joins it, so the
 #                     untrusted agent cannot reach Redis or llama.cpp directly.
-#   omniroute-edge  — OmniRoute only, aliased as host.docker.internal. The run
-#                     container attaches here (e spawn does this when it sees
-#                     .e/compose.yaml), so its baked base URL
-#                     http://host.docker.internal:20128/v1 resolves straight to
+#   omniroute-edge  — OmniRoute + egress WAN gateway + run containers. All outbound
+#                     traffic (stack services + agents) routes through the egress
+#                     container's netns for DNS sinkholing and IP blacklist enforcement.
+#                     OmniRoute aliased as host.docker.internal. The run container attaches
+#                     here (e spawn does this when it sees .e/compose.yaml), so its baked
+#                     base URL http://host.docker.internal:20128/v1 resolves straight to
 #                     OmniRoute's container IP via compose DNS — no host hop.
 # The published host ports stay bound to 127.0.0.1: only the host's own browser
 # and CLI (e spawn, e serve) reach the dashboard; untrusted LAN peers cannot.
 
 services:
+  egress:
+    image: e-egress
+    container_name: e-egress
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    dns:
+      - 127.0.0.1
+    networks:
+      - ${OMNIROUTE_STACK_NETWORK}
+      - omniroute-edge
+    volumes:
+      - ./egress-blacklist:/etc/egress.d/dnsmasq.blacklist:rw
+      - egress-logs:/var/log/egress
+    ports:
+      - "127.0.0.1:20128:20128"
+      - "127.0.0.1:9931:9931"
+
   omniroute:
     image: diegosouzapw/omniroute:latest
     container_name: omniroute
     restart: unless-stopped
     stop_grace_period: 40s
+    network_mode: "service:egress"
     depends_on:
+      egress:
+        condition: service_started
       redis:
         condition: service_healthy
       llama:
@@ -55,27 +79,21 @@ services:
       INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD}
       OMNIROUTE_BOOTSTRAPPED: "true"
       REQUIRE_API_KEY: "false"
-    ports:
-      - "127.0.0.1:20128:20128"
-    networks:
-      ${OMNIROUTE_STACK_NETWORK}: {}
-      omniroute-edge:
-        aliases:
-          - host.docker.internal
     volumes:
       - omniroute-data:/app/data
 
   bootstrap:
     image: curlimages/curl:latest
+    network_mode: "service:egress"
     depends_on:
+      egress:
+        condition: service_started
       omniroute:
         condition: service_started
       llama:
         condition: service_started
     environment:
       INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD}
-    networks:
-      - ${OMNIROUTE_STACK_NETWORK}
     volumes:
       - ./bootstrap.sh:/bootstrap.sh:ro
     entrypoint: ["/bin/sh", "/bootstrap.sh"]
@@ -85,16 +103,16 @@ services:
     image: ${image}
     container_name: llama
     restart: unless-stopped
+    network_mode: "service:egress"
+    depends_on:
+      egress:
+        condition: service_started
     environment:
       LLAMA_ARG_HOST: "0.0.0.0"
       LLAMA_ARG_PORT: "9931"
       LLAMA_ARG_CTX_SIZE: "32768"
       LLAMA_ARG_N_PARALLEL: "1"
       LLAMA_ARG_MODELS_MAX: "1"
-    ports:
-      - "127.0.0.1:9931:9931"
-    networks:
-      - ${OMNIROUTE_STACK_NETWORK}
     volumes:
       - llama-data:/root/.cache
 ${gpu}
@@ -102,10 +120,12 @@ ${gpu}
     image: redis:8-alpine
     container_name: omniroute-redis
     restart: unless-stopped
+    network_mode: "service:egress"
+    depends_on:
+      egress:
+        condition: service_started
     expose:
       - "6379"
-    networks:
-      - ${OMNIROUTE_STACK_NETWORK}
     volumes:
       - redis-data:/data
     healthcheck:
@@ -127,5 +147,7 @@ volumes:
     name: llama-data
   redis-data:
     name: redis-data
+  egress-logs:
+    name: e-egress-logs
 `;
 }

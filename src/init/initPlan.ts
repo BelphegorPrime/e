@@ -248,8 +248,9 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     steps.push({ kind: 'writes', writes: [...mcpWrites, ...skillWrites] });
   }
 
-  // Step 2b — the shared egress container build context + blacklist template
-  // (never clobbered). The image is built once and started per run (ADR-0011).
+  // Step 2b — the shared egress gateway build context + blacklist template
+  // (never clobbered). The image is built once and runs as a global compose
+  // service shared by all stack services and agents (ADR-0011).
   const egressWrites: InitWrite[] = [];
   const egressCtx = egressDir(root);
   for (const [fileName, content] of Object.entries(renderEgressFiles())) {
