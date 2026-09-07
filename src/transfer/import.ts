@@ -52,6 +52,18 @@ export async function importConfiguration(
     );
   }
 
+  // If force is enabled, we should remove existing files before importing
+  if (force) {
+    if (fs.existsSync(envPath)) {
+      fs.unlinkSync(envPath);
+      log.info('Removed existing .env file');
+    }
+    if (fs.existsSync(configPath)) {
+      fs.unlinkSync(configPath);
+      log.info('Removed existing config.json file');
+    }
+  }
+
   // Create temp dir for extraction
   const tempDir = path.join(baseDir, '.import-temp');
   if (fs.existsSync(tempDir)) {

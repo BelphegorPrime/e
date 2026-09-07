@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { exportConfiguration } from './export.js';
 import { importConfiguration } from './import.js';
 import { log } from '../utils/log.js';
+import { findRoot } from '../store/root.js';
 
 export function registerExportCommand(program: Command): void {
   program
@@ -30,13 +31,23 @@ export function registerImportCommand(program: Command): void {
     .description('Import omniroute configuration and .e state from a zip file')
     .argument('<file>', 'path to the zip file to import')
     .option(
+      '--dir <path>',
+      'root directory to import the configuration into (default: home directory)'
+    )
+    .option(
       '-f, --force',
       'overwrite existing configuration without prompting',
       false
     )
     .action(async (file: string, options) => {
       try {
-        await importConfiguration({ file, ...options });
+        // Discover the nearest initialized `.e` store when no root was supplied.
+        // Passing undefined directly to the path helpers would incorrectly default
+        // every path to the user's home directory.
+        const root = findRoot();
+
+        await importConfiguration({ file, ...options, root });
+
         log.info('✓ Configuration imported successfully');
       } catch (error) {
         log.error(
