@@ -19,6 +19,12 @@ export interface WizardState {
   currentHarness: string;
   /** API keys worth prompting for (already-set keys were filtered out). */
   promptKeys: string[];
+  /**
+   * Whether to ask for the OmniRoute dashboard sign-in password, only when
+   * `OMNIROUTE_INITIAL_PASSWORD` is unset/blank in `.e/.env`. A set password
+   * is never re-asked and never rotated.
+   */
+  askOmniroutePassword: boolean;
   /** The local-model catalog to select from. */
   modelCatalog: ModelCatalogEntry[];
   /** Configured model selection, preselected (a blank answer keeps it). */
@@ -73,12 +79,22 @@ export function interactiveWizard(): Wizard {
           state.currentLocalRuntimes
         );
         const apiKeys = await promptApiKeys(rl, state.promptKeys);
+        const omniroutePassword = state.askOmniroutePassword
+          ? await promptOmniroutePassword(rl)
+          : undefined;
         const gitPlatform = await promptGitPlatform(
           rl,
           state.gitPlatforms,
           state.currentGitPlatform
         );
-        return { harness, models, localRuntimes, apiKeys, gitPlatform };
+        return {
+          harness,
+          models,
+          localRuntimes,
+          apiKeys,
+          ...(omniroutePassword ? { omniroutePassword } : {}),
+          gitPlatform,
+        };
       } finally {
         rl.close();
       }
@@ -257,6 +273,20 @@ async function promptApiKeys(
     if (answer) values[key] = answer;
   }
   return values;
+}
+
+/**
+ * Prompts for the OmniRoute dashboard sign-in password (asked only when the
+ * store env has none). A blank answer means "generate a random one": the
+ * answer is omitted, and planInit's seeder fills a fresh random value.
+ */
+async function promptOmniroutePassword(
+  rl: readline.Interface
+): Promise<string> {
+  log.info(
+    '\nOmniRoute dashboard sign-in password (used at http://localhost:20128; a blank answer generates a random one):'
+  );
+  return (await rl.question('  Initial password: ')).trim();
 }
 
 /** Prompts for the git platform, re-asking until the answer is valid. */

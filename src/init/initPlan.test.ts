@@ -150,6 +150,19 @@ test('planInit: a fresh store creates the env with the omniroute section seeded'
   }
 });
 
+test('planInit: a user-provided omniroutePassword is kept and never rotated', () => {
+  const plan = planInit(state(), { omniroutePassword: 'chosen-pass' });
+  assert.equal(plan.envValues.OMNIROUTE_INITIAL_PASSWORD, 'chosen-pass');
+  assert.equal(plan.secrets.OMNIROUTE_INITIAL_PASSWORD, 'chosen-pass');
+  // Other stack secrets are still seeded randomly.
+  assert.match(plan.secrets.JWT_SECRET, /^[0-9a-f]+$/);
+});
+
+test('planInit: a blank omniroutePassword produces a random hex password', () => {
+  const plan = planInit(state(), { omniroutePassword: '' });
+  assert.match(plan.envValues.OMNIROUTE_INITIAL_PASSWORD, /^[0-9a-f]{32}$/);
+});
+
 test('planInit: re-init never rotates a set stack secret and stays up to date', () => {
   // A hand-edited env keeps its own stack values on the next init.
   const handEdited = state({

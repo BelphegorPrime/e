@@ -100,6 +100,13 @@ export interface InitAnswers {
   localRuntimes?: string | LocalRuntime[];
   /** Collected API-key values to fill into blank `.env` lines (blank answers omitted). */
   apiKeys?: Record<string, string>;
+  /**
+   * The OmniRoute dashboard sign-in password, when the interactive wizard
+   * asked for one. Blank (or undefined) leaves the key unset, so planInit's
+   * seeder generates a fresh random value — user input wins over random only
+   * when the user actually typed one.
+   */
+  omniroutePassword?: string;
   /** A 1-based index, an exact platform name, or ''/undefined (blank disables PR/MR). */
   gitPlatform?: string;
 }
@@ -203,10 +210,19 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     state.currentGitPlatform
   );
 
-  // Merge collected API keys, then seed the stack secrets (never rotating what
-  // is already set). Agents are rendered with these merged values, as is the
-  // `.env` body, matching the historic write order.
-  const envValues = { ...existingValues, ...(answers.apiKeys ?? {}) };
+  // Merge collected API keys and the wizard's OmniRoute password, then seed the
+  // stack secrets (never rotating what is already set). Agents are rendered
+  // with these merged values, as is the `.env` body, matching the historic
+  // write order. A user-typed password lands in envValues before seeding, so
+  // seedStackSecrets keeps it; a blank answer leaves the key unset and the
+  // seeder generates a fresh random password.
+  const envValues = {
+    ...existingValues,
+    ...(answers.apiKeys ?? {}),
+    ...(answers.omniroutePassword
+      ? { OMNIROUTE_INITIAL_PASSWORD: answers.omniroutePassword }
+      : {}),
+  };
   const secrets = seedStackSecrets(envValues);
   const fullEnv = { ...envValues, ...secrets };
 
