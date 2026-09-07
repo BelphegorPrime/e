@@ -257,11 +257,12 @@ export async function runSpawn(
   const startedContainers: string[] = [];
   let networkCreated = false;
   try {
-    // Bring up the group (ADR-0005): private network (when the run has sidecars)
-    // → sidecars → readiness. A sidecar that never reaches readiness aborts the
-    // run before the agent starts (fail-fast); teardown still runs in the finally.
-    // Create sidecar network before starting egress, so egress can join it.
-    if (specs.length > 0) {
+    // Bring up the group (ADR-0005): private network (when the run has sidecars
+    // and no shared egress netns) → sidecars → readiness. A sidecar that never
+    // reaches readiness aborts the run before the agent starts (fail-fast);
+    // teardown still runs in the finally. When netns is set (egress mode), all
+    // containers share e-egress network namespace; skip private network creation.
+    if (specs.length > 0 && !params.runOptions.netns) {
       runtime.createNetwork(network);
       networkCreated = true;
     }
