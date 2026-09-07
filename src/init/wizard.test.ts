@@ -10,6 +10,7 @@ const WIZARD_STATE: WizardState = {
   harnessNames: Object.keys(HARNESSES),
   currentHarness: 'pi',
   promptKeys: ['ANTHROPIC_API_KEY'],
+  askOmniroutePassword: true,
   modelCatalog: MODEL_CATALOG,
   currentModels: [],
   currentLocalRuntimes: ['llamacpp'],
@@ -38,12 +39,28 @@ function state(): InitState {
 test('defaultsWizard: --yes and non-interactive runs keep every current value', async () => {
   const answers = await defaultsWizard.ask(WIZARD_STATE);
   assert.deepEqual(answers, {});
+  // No OmniRoute password answer means the plan generates a random one.
   const plan = planInit(state(), answers);
   assert.equal(plan.defaultHarness, 'pi');
   assert.deepEqual(plan.models, []);
   // No answers means no keys to merge; the fresh store's stack secrets are
   // seeded as usual (and recorded as the plan's seeded additions).
   assert.deepEqual(plan.envValues, plan.secrets);
+});
+
+test('a scripted wizard answer with an OmniRoute password carries it into the plan', async () => {
+  const scripted: Wizard = {
+    async ask() {
+      return {
+        harness: 'pi',
+        omniroutePassword: 'chosen-pass',
+      };
+    },
+  };
+  const answers = await scripted.ask(WIZARD_STATE);
+  const plan = planInit(state(), answers);
+  assert.equal(plan.envValues.OMNIROUTE_INITIAL_PASSWORD, 'chosen-pass');
+  assert.equal(plan.secrets.OMNIROUTE_INITIAL_PASSWORD, 'chosen-pass');
 });
 
 test('a scripted wizard answer drives the plan the same way the live one does', async () => {

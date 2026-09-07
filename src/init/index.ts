@@ -95,6 +95,10 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     harnessNames: state.harnessNames,
     currentHarness: state.currentDefaultHarness,
     promptKeys: keysToPrompt(requiredEnvKeys(), existingValues),
+    // Ask for the OmniRoute sign-in password only when the store env has none;
+    // an already-set password is never re-asked and never rotated.
+    askOmniroutePassword:
+      (existingValues.OMNIROUTE_INITIAL_PASSWORD ?? '').trim() === '',
     modelCatalog: state.modelCatalog,
     currentModels: state.currentModels,
     currentLocalRuntimes: state.currentLocalRuntimes,
