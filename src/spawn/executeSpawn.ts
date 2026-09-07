@@ -25,7 +25,7 @@ import {
   agentDir,
   mcpDir,
   skillDir,
-
+} from '../scaffold.js';
 import { isInitialized } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
 import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus.js';
