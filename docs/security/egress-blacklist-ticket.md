@@ -23,8 +23,8 @@ brittle:
 - No traffic observability: when the agent does reach egress, nobody can see
   what it did.
 
-The harness agent *needs* its provider base URL and the configured MCP
-endpoints; everything else *may* be reached and should be **logged**, with only
+The harness agent _needs_ its provider base URL and the configured MCP
+endpoints; everything else _may_ be reached and should be **logged**, with only
 known-bad destinations **blocked**.
 
 ## Approach (decision)
@@ -70,8 +70,8 @@ trusted).
 
 - Egress container joins: the run's private network (sidecar reachability +
   group teardown), the WAN face (default bridge), and `omniroute-edge` when the
-  local compose stack is present (`host.docker.internal` → OmniRoute via the
-  compose alias, as today — the agent sees it through the shared netns).
+  local compose stack is present (the agent reaches OmniRoute through shared
+  network-namespace `localhost`).
 - The agent joins **no** networks of its own; its only route out is the shared
   netns.
 - Sidecar MCP servers keep the ADR-0005 pattern (run network + bridge WAN
@@ -130,7 +130,7 @@ trusted).
 - **Transparent gateway without netns sharing.** Requires pointing the agent's
   default route at a container and host iptables — not expressible through the
   thin CLI seam. Netns sharing (`--network container:`) is what makes the same
-  effect expressible: the agent's interfaces *are* the egress container's.
+  effect expressible: the agent's interfaces _are_ the egress container's.
 
 ## Acceptance criteria
 
@@ -140,7 +140,7 @@ trusted).
       registries, arbitrary hosts).
 - [ ] Every DNS query and forwarded connection is recorded in the mounted log.
 - [ ] Sidecar MCP servers resolve and are reachable from the agent; the local
-      compose stack (`host.docker.internal`) works.
+      compose stack works through `localhost`.
 - [ ] No new privileges on the agent container; egress container is trusted.
 
 ## References

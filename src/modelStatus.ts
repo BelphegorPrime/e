@@ -2,12 +2,10 @@ import { log } from './utils/log.js';
 
 /**
  * The stack edge network the run container joins so it can reach OmniRoute
- * directly by service alias instead of hopping through the host. Fixed name so
- * `e spawn` (executeSpawn) attaches the run container to it. OmniRoute aliases
- * `host.docker.internal` here, so the baked agent default base URL
- * (`http://host.docker.internal:20128/v1`) resolves to the container itself
- * rather than the host bridge gateway, which cannot reach the loopback-bound
- * host port. See docs/security/attack-surface.md, Zone 3.
+ * directly under the egress policy. Fixed name so `e spawn` (executeSpawn)
+ * attaches the run container to it. The agent and OmniRoute share the egress
+ * network namespace, so the baked default base URL (`http://localhost:20128/v1`)
+ * reaches OmniRoute directly.
  */
 export const OMNIROUTE_EDGE_NETWORK = 'omniroute-edge';
 

@@ -42,8 +42,8 @@ export interface RunOptions {
    * Private networks to attach the container to (`--network`, repeatable). The
    * primary agent joins its Run's private network so it can reach sidecars by
    * their alias, and the compose edge network when the local OmniRoute stack
-   * is present (so `host.docker.internal` resolves to OmniRoute itself); a bare
-   * run with neither leaves this unset and uses the default bridge as before.
+   * is present; a bare run with neither leaves this unset and uses the default
+   * bridge as before.
    * Mutually exclusive with {@link RunOptions.netns}.
    */
   networks?: string[];

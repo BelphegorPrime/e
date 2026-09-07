@@ -83,7 +83,7 @@ test('renderDefaultAgent: defaults provider endpoint to local OmniRoute', () => 
   const parsed = JSON.parse(renderDefaultAgent('codex', {})) as Agent;
   const provider = {
     apiKeyEnv: 'OPENAI_API_KEY',
-    baseUrl: 'http://host.docker.internal:20128/v1',
+    baseUrl: 'http://localhost:20128/v1',
     baseUrlEnv: 'OPENAI_BASE_URL',
     model: 'auto',
     protocol: 'openai-responses',
@@ -99,7 +99,7 @@ test('renderDefaultAgent: a default agent carries no provider', () => {
   const parsed = JSON.parse(renderDefaultAgent('codex', {})) as Agent;
   const provider = {
     apiKeyEnv: 'OPENAI_API_KEY',
-    baseUrl: 'http://host.docker.internal:20128/v1',
+    baseUrl: 'http://localhost:20128/v1',
     baseUrlEnv: 'OPENAI_BASE_URL',
     model: 'auto',
     protocol: 'openai-responses',

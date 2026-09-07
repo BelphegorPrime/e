@@ -27,10 +27,8 @@ export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
 #   omniroute-edge  — OmniRoute + egress WAN gateway + run containers. All outbound
 #                     traffic (stack services + agents) routes through the egress
 #                     container's netns for DNS sinkholing and IP blacklist enforcement.
-#                     OmniRoute aliased as host.docker.internal. The run container attaches
-#                     here (e spawn does this when it sees .e/compose.yaml), so its baked
-#                     base URL http://host.docker.internal:20128/v1 resolves straight to
-#                     OmniRoute's container IP via compose DNS — no host hop.
+#                     The agent shares the egress network namespace with OmniRoute, so its
+#                     baked base URL http://localhost:20128/v1 reaches OmniRoute directly.
 # The published host ports stay bound to 127.0.0.1: only the host's own browser
 # and CLI (e spawn, e serve) reach the dashboard; untrusted LAN peers cannot.
 
@@ -48,8 +46,6 @@ services:
     networks:
       ${OMNIROUTE_STACK_NETWORK}:
       omniroute-edge:
-        aliases:
-          - host.docker.internal
     volumes:
       - ./egress-blacklist:/etc/egress.d/dnsmasq.blacklist:rw
       - egress-logs:/var/log/egress

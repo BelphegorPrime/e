@@ -79,7 +79,7 @@ export function renderDefaultAgent(
     harness: harnessName,
     provider: {
       baseUrl:
-        envValues['OPENAI_BASE_URL'] || 'http://host.docker.internal:20128/v1',
+        envValues['OPENAI_BASE_URL'] || 'http://localhost:20128/v1',
       baseUrlEnv: 'OPENAI_BASE_URL',
       model: 'auto',
       protocol: harness.protocols[0],

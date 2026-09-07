@@ -153,7 +153,7 @@ test('filterEnvContent: keeps whitelisted keys verbatim, drops every other key',
     [
       '# a comment',
       '',
-      'ANTHROPIC_BASE_URL=http://host.docker.internal:20128',
+      'ANTHROPIC_BASE_URL=http://localhost:20128',
       'MY_GATEWAY_KEY=  sk-with = spaces',
       'SECRET_TOKEN=hunter2',
       'JUNK=must-not-leak',
@@ -165,7 +165,7 @@ test('filterEnvContent: keeps whitelisted keys verbatim, drops every other key',
   assert.equal(
     filtered,
     [
-      'ANTHROPIC_BASE_URL=http://host.docker.internal:20128',
+      'ANTHROPIC_BASE_URL=http://localhost:20128',
       'MY_GATEWAY_KEY=  sk-with = spaces',
       '',
     ].join('\n')

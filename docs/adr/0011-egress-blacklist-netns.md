@@ -21,7 +21,7 @@ We need **egress monitoring with blacklist enforcement** — log every DNS query
 
 1. **Outbound proxy (Squid, Envoy)**: Requires configuring `HTTP_PROXY`/`HTTPS_PROXY` in the agent, which LLM code can unset. CONNECT tunnels are opaque (no domain visibility after handshake). Direct-IP connections bypass the proxy entirely.
 
-2. **`--network=none` + whitelist**: Removes all connectivity, including sidecar reachability and `host.docker.internal` (the local OmniRoute stack). Whitelisting every allowed destination is brittle — every new API the agent needs breaks the run.
+2. **`--network=none` + whitelist**: Removes all connectivity, including sidecar reachability and local OmniRoute access. Whitelisting every allowed destination is brittle — every new API the agent needs breaks the run.
 
 3. **Host-level iptables rules**: Shared across all containers on the host. A typo in a rule could block the operator's SSH or break other services. Teardown is non-atomic (one failed `iptables -D` leaves the chain half-removed).
 
@@ -36,16 +36,17 @@ Every run starts **one egress container** (`<run>-egress`) with:
 - **Mounted blacklist files**: The store's `.e/egress-blacklist` is parsed into two rendered files at spawn time:
   - `dnsmasq.blacklist` (DNS sinkhole rules: `address=/domain/0.0.0.0`)
   - `iptables.rules` (REJECT script for IP:port pairs, only when present)
-  
+
   Both are mounted read-only (iptables) or read-write (dnsmasq, for `SIGHUP` reloads). The entrypoint applies them and traps `SIGHUP` to re-apply without restarting the netns.
-- **Loopback DNS forced (`--dns 127.0.0.1`)**: The egress container's `resolv.conf` points to its own dnsmasq, and the agent inherits it through the shared netns. The engine's embedded DNS (Docker: `127.0.0.11`, Podman: aardvark) becomes dnsmasq's upstream, so sidecar aliases and `host.docker.internal` still resolve while every query is logged/sinked here first.
+
+- **Loopback DNS forced (`--dns 127.0.0.1`)**: The egress container's `resolv.conf` points to its own dnsmasq, and the agent inherits it through the shared netns. The engine's embedded DNS (Docker: `127.0.0.11`, Podman: aardvark) becomes dnsmasq's upstream, so sidecar aliases still resolve while every query is logged/sinked here first.
 - **Dedicated `EGRESS` iptables chain**: The entrypoint creates `-N EGRESS`, hooks it into `OUTPUT` once, then flushes and re-applies the chain on reload. This preserves the engine's own netns rules (the embedded-DNS path Docker wires in) and never clobbers them with `-F OUTPUT`.
 - **Query and connection logs**: `dnsmasq --log-queries` writes to a mounted `/var/log/egress/dnsmasq.log`; iptables REJECT events appear in the container's stderr (visible in `docker logs <run>-egress`).
 
 ### Runtime Lifecycle
 
 1. **Planning (`planSpawn`)**: `egressEnabled = (root !== undefined)` — any spawn with a store root gets the egress monitor. The executor uses `egressEnabled` to gate the image build and mount materialization.
-   
+
 2. **Image build (`buildImages`)**: When `egressEnabled && isEgressInitialized(root)`, build the `e-egress` image from `.e/egress/`. This happens before the worktree exists (ADR-0005), alongside harness and sidecar images.
 
 3. **Mount materialization (`executeSpawn`)**: Parse `.e/egress-blacklist` into `{ domains, ipPorts }`, render `dnsmasq.blacklist` and (optionally) `iptables.rules` into a scratch dir, and pass the host paths as an `EgressPlan` to the orchestrator.
@@ -78,6 +79,7 @@ example.com
 ```
 
 **Rendering**:
+
 - `parseBlacklist(content)` → `{ domains: string[], ipPorts: string[] }`
 - `renderDnsmasqConf(domains)` → `address=/example.com/0.0.0.0\n...` (Pi-hole semantics: domain + subdomains)
 - `renderIptablesRules(ipPorts)` → `iptables -A EGRESS -d 203.0.113.9 -p tcp --dport 8443 -j REJECT --reject-with icmp-port-unreachable\n...`
@@ -88,7 +90,7 @@ example.com
 
 - **DNS sinkhole**: Queries for `example.com` (and `*.example.com`) resolve to `0.0.0.0`, so the agent's connection attempt fails fast with `ECONNREFUSED`. Dnsmasq logs the query regardless of sinkhole vs. forwarded.
 - **IP REJECT**: Direct-IP connections (bypassing DNS) hit iptables on the OUTPUT path: `iptables -A EGRESS -d 203.0.113.9 -p tcp --dport 8443 -j REJECT --reject-with icmp-port-unreachable`. The agent gets `ICMP port unreachable`, distinct from a silent drop, and the connection fails before any data leaves the netns.
-- **Upstream forwarding**: Non-blacklisted domains are forwarded to the engine's embedded DNS (`server=127.0.0.11` in the dnsmasq base config), which resolves sidecar aliases, `host.docker.internal`, and external names normally.
+- **Upstream forwarding**: Non-blacklisted domains are forwarded to the engine's embedded DNS (`server=127.0.0.11` in the dnsmasq base config), which resolves sidecar aliases and external names normally.
 
 ### Security Properties
 
@@ -100,7 +102,7 @@ example.com
 ### Verify Before Merge (from Ticket)
 
 1. **DNS inheritance**: Agent `cat /etc/resolv.conf` → `nameserver 127.0.0.1`. Agent `dig example.com` → `0.0.0.0` (sinked). Agent `dig google.com` → real IP (forwarded via 127.0.0.11 upstream). ✅
-2. **Embedded DNS still works**: With sidecars, agent `dig everything` (sidecar alias) → `<run-net IP>`. Agent `dig host.docker.internal` → gateway IP. ✅
+2. **Embedded DNS still works**: With sidecars, agent `dig everything` (sidecar alias) → `<run-net IP>`. ✅
 3. **Engine parity (Docker + Podman)**: Both use loopback embedded DNS (Docker: 127.0.0.11, Podman: aardvark at 127.0.0.1 when user networks exist). Dnsmasq's bind-interfaces + loopback-only listen avoids collision. ✅
 4. **Egress liveness**: If the egress container crashes mid-run, the agent loses its network namespace (its interfaces disappear). `runSpawn` checks `isRunning(egressContainer)` after the agent returns and surfaces an explicit warning when it's down. ✅
 
@@ -113,13 +115,13 @@ example.com
 - **Host-editable blacklist**: Operators add `evil.com` to `.e/egress-blacklist` and reload with `SIGHUP`, no rebuild.
 - **Query audit log**: Every DNS query is recorded, regardless of sinkhole vs. forwarded. Direct-IP REJECT events appear in `docker logs`.
 - **Minimal blast radius**: One egress container per run. A crash affects only that run's agent; teardown is idempotent.
-- **Compose stack still works**: `host.docker.internal` and sidecar aliases resolve normally via the embedded-DNS upstream.
+- **Compose stack still works**: OmniRoute is reachable on `localhost`; sidecar aliases resolve normally via the embedded-DNS upstream.
 
 ### Negative
 
 - **Per-run overhead**: Starting `<run>-egress` adds ~100ms to spawn time (Alpine boot + dnsmasq + iptables apply). Mitigated: the image is built once and cached.
 - **Log ephemeral unless tailed**: The egress log dir is a temp dir; it disappears when the container is removed. An operator must `tail -f` or redirect logs during the run to preserve them.
-- **Blacklist not allowlist**: Everything *not* blacklisted is reachable. An operator who wants zero-trust WAN access must list every external destination (brittle). The ticket chose "blacklist known-bad" over "allowlist known-good" because the latter breaks every new API the agent needs.
+- **Blacklist not allowlist**: Everything _not_ blacklisted is reachable. An operator who wants zero-trust WAN access must list every external destination (brittle). The ticket chose "blacklist known-bad" over "allowlist known-good" because the latter breaks every new API the agent needs.
 - **IPv6 unsupported**: The `:` separator is ambiguous in `2001:db8::1:8443` (IP or IP:port?). The parser skips IPv6 lines. IPv6 egress is rare in 2026 dev environments; adding it requires a `[2001:db8::1]:8443` format.
 - **Reload is non-atomic**: `SIGHUP` re-applies dnsmasq + iptables sequentially (~100ms inconsistency). The agent never gains access it didn't have, but a query mid-reload might resolve before the new sinkhole applies.
 

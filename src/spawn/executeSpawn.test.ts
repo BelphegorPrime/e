@@ -143,12 +143,11 @@ class RecordingRuntime extends ContainerRuntime {
   }
 }
 
-test('routes the agent over the compose edge network when the stack is present; keeps host-gateway otherwise', async () => {
+test('routes the agent over the compose edge network when the stack is present', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-net-'));
   try {
-    // Stack present: the run container joins omniroute-edge (where OmniRoute
-    // aliases host.docker.internal) and must NOT also get the host-gateway
-    // mapping, which would shadow the compose alias in /etc/hosts.
+    // The run container joins omniroute-edge while sharing OmniRoute's network
+    // namespace, where it reaches the local gateway over localhost.
     fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), {
       recursive: true,
     });
@@ -168,7 +167,7 @@ test('routes the agent over the compose edge network when the stack is present; 
     assert.deepEqual(withStack.options?.networks, ['omniroute-edge']);
     assert.equal(withStack.options?.extraHosts, undefined);
 
-    // No stack: unchanged default-bridge behavior, host-gateway mapping kept.
+    // No stack: unchanged default-bridge behavior.
     const plain = new RecordingRuntime();
     fs.rmSync(path.join(tmp, '.e', 'compose.yaml'));
     await executeSpawn(facts({ root: tmp }), emptyPlan, {
@@ -177,9 +176,7 @@ test('routes the agent over the compose edge network when the stack is present; 
       scratch: new RunScratch(),
     });
     assert.equal(plain.options?.networks, undefined);
-    assert.deepEqual(plain.options?.extraHosts, [
-      'host.docker.internal:host-gateway',
-    ]);
+    assert.equal(plain.options?.extraHosts, undefined);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -193,7 +190,7 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
       base,
       [
         '# base env',
-        'ANTHROPIC_BASE_URL=http://host.docker.internal:20128',
+        'ANTHROPIC_BASE_URL=http://localhost:20128',
         'MY_GATEWAY_KEY=sk-secret-123',
         'SECRET_TOKEN=hunter2',
         'UNRELATED=must-not-leak',
@@ -233,10 +230,7 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
     const delivered = fs.readFileSync(envFiles[0], 'utf8');
     // Whitelisted keys reach the container, values verbatim.
     assert.match(delivered, /^MY_GATEWAY_KEY=sk-secret-123$/m);
-    assert.match(
-      delivered,
-      /^ANTHROPIC_BASE_URL=http:\/\/host\.docker\.internal:20128$/m
-    );
+    assert.match(delivered, /^ANTHROPIC_BASE_URL=http:\/\/localhost:20128$/m);
     // Unknown keys never do.
     assert.doesNotMatch(delivered, /SECRET_TOKEN|UNRELATED/);
     scratch.dispose();

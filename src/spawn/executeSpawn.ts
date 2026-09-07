@@ -18,16 +18,10 @@ import {
 } from './spawnPlan.js';
 import { RunScratch } from '../runs/runScratch.js';
 import { writeIfAbsent } from '../scaffold.js';
-import {
-  harnessDir,
-  agentDir,
-  mcpDir,
-  skillDir,
-} from '../store/paths.js';
+import { harnessDir, agentDir, mcpDir, skillDir } from '../store/paths.js';
 import { isInitialized } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
 import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus.js';
-
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -189,19 +183,15 @@ export async function executeSpawn(
   }
   configMounts.push(...plan.skillMounts);
 
-  // When the local OmniRoute stack is present, the agent reaches it over the
-  // stack's edge network (compose DNS alias host.docker.internal → omniroute),
-  // not through the host's loopback-bound published port. The host-gateway
-  // mapping must then be dropped: an /etc/hosts entry would shadow the compose
-  // alias, and the gateway IP cannot reach the 127.0.0.1-published port anyway
-  // (attack-surface.md, Zone 3). Without the stack, keep the old behavior.
+  // With the local OmniRoute stack, the agent shares the egress network namespace
+  // with OmniRoute and reaches it on localhost. It also joins the edge network so
+  // the egress policy applies to agent traffic.
   const stackActive = localStack(facts.root)?.present ?? false;
   const runOptions: RunOptions = {
     attach: facts.attach,
     interactive: facts.interactive,
     rm: facts.rm,
     port: facts.port,
-    extraHosts: stackActive ? undefined : ['host.docker.internal:host-gateway'],
     networks: stackActive ? [OMNIROUTE_EDGE_NETWORK] : undefined,
     env: plan.agentEnv,
     envFile: envFiles,

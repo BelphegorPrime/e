@@ -201,11 +201,14 @@ test('buildRunArgs: command args trail the image', () => {
   ]);
 });
 
-test('buildRunArgs: adds host gateway mapping for local Compose services', () => {
-  assert.deepEqual(
-    argsFor({ extraHosts: ['host.docker.internal:host-gateway'] }),
-    ['run', '-d', '--add-host', 'host.docker.internal:host-gateway', 'img']
-  );
+test('buildRunArgs: renders explicit host mappings', () => {
+  assert.deepEqual(argsFor({ extraHosts: ['example.test:192.0.2.1'] }), [
+    'run',
+    '-d',
+    '--add-host',
+    'example.test:192.0.2.1',
+    'img',
+  ]);
 });
 
 test('composeUpArgs: starts the selected Compose file detached', () => {
