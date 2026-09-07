@@ -2,6 +2,7 @@ import {
   Activity,
   Bot,
   LayoutDashboard,
+  Network,
   Play,
   Settings,
   TerminalSquare,
@@ -31,6 +32,7 @@ const mainNav = [
 const systemNav = [
   { title: 'Activity', to: '/activity', icon: Activity },
   { title: 'Terminal', to: '/terminal', icon: TerminalSquare },
+  { title: 'OmniRoute', to: '/omniroute', icon: Network },
   { title: 'Settings', to: '/settings', icon: Settings },
 ];
 
