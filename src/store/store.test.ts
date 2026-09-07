@@ -6,10 +6,16 @@ import path from 'path';
 import {
   resolveRoot,
   resolveConfig,
+  resolveModels,
   serializeConfig,
   readConfig,
   writeConfig,
+  readModelsJson,
+  writeModelsJson,
+  isInitialized,
+  isEgressInitialized,
   configFilePath,
+  modelsFilePath,
   DEFAULT_HARNESS,
 } from './index.js';
 import { MODELS } from '../modelStatus.js';
@@ -173,7 +179,78 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
       localRuntimes: ['llamacpp'],
       gitPlatform: undefined,
     });
-    assert.equal(fs.existsSync(configFilePath(root)), false);
+    assert.ok(!fs.existsSync(configFilePath(root)));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('resolveConfig: an unknown localRunTimes entry is dropped, valid ones kept', () => {
+  const config = resolveConfig({
+    localRuntimes: ['llamacpp', 'bogus', 42],
+  });
+  assert.deepEqual(config.localRuntimes, ['llamacpp']);
+});
+
+test('resolveConfig: missing localRuntimes falls back to llamacpp (legacy store)', () => {
+  assert.deepEqual(resolveConfig({}).localRuntimes, ['llamacpp']);
+});
+
+test('resolveModels: drops nulls, keeps well-formed entries, defaults to empty', () => {
+  const kept = { id: 'org/model', object: 'model', created: 1, owned_by: 'org' };
+  assert.deepEqual(resolveModels([kept, null]), [kept]);
+  assert.deepEqual(resolveModels(undefined as unknown as unknown[]), []);
+  assert.deepEqual(resolveModels({} as unknown as unknown[]), []);
+});
+
+test('readModelsJson: a missing file yields the defaults (empty list), no file written', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
+  try {
+    assert.deepEqual(readModelsJson(root), []);
+    assert.ok(!fs.existsSync(modelsFilePath(root)));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('models round-trip: writeModelsJson then readModelsJson returns the written value', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
+  const entries = [{ id: 'org/model', object: 'model', created: 42, owned_by: 'org' }];
+  try {
+    writeModelsJson(entries, root);
+    assert.deepEqual(readModelsJson(root), entries);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('isInitialized: true only after the harness Dockerfile exists', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
+  try {
+    assert.equal(isInitialized('claude', root), false);
+    fs.mkdirSync(path.join(root, '.e', 'harnesses', 'claude'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(root, '.e', 'harnesses', 'claude', 'Dockerfile'),
+      'FROM node'
+    );
+    assert.equal(isInitialized('claude', root), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('isEgressInitialized: true only after the egress Dockerfile exists', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
+  try {
+    assert.equal(isEgressInitialized(root), false);
+    fs.mkdirSync(path.join(root, '.e', 'egress'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.e', 'egress', 'Dockerfile'),
+      'FROM node'
+    );
+    assert.equal(isEgressInitialized(root), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
