@@ -256,11 +256,13 @@ export function createServeApp(
   });
 
   // Covers `/api/runs/e/<agent>/<slug>-N` (per-run status) and
-  // `/api/runs/e/<agent>/<slug>-N/logs`; the wildcard captures the whole
-  // branch path, which itself contains slashes.
-  app.get('/api/runs/*', (request, response) => {
-    const params = request.params as { [key: string]: string | undefined };
-    const restPath = params['0'];
+  // `/api/runs/e/<agent>/<slug>-N/logs`; Express 5 requires explicit paths.
+  // Handler extracts path from request.path since params can't capture slashes.
+  const handleRunRequest = (
+    request: express.Request,
+    response: express.Response
+  ): void => {
+    const restPath = request.path.replace(/^\/api\/runs\//, '');
     if (!restPath) {
       response.status(404).json({ error: 'Not found' });
       return;
@@ -306,7 +308,10 @@ export function createServeApp(
     } catch (error) {
       response.status(500).json({ error: errorMessage(error) });
     }
-  });
+  };
+
+  // Match both status and logs endpoints
+  app.get('/api/runs/*', handleRunRequest);
 
   app.use('/api', (_request, response) => {
     response.status(404).json({ error: 'Not found' });
