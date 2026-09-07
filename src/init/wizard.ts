@@ -7,9 +7,14 @@ import {
   parseHarnessChoice,
   parseModelChoice,
   parseGitPlatformChoice,
+  resolveLocalRuntimes,
   type InitAnswers,
 } from './initPlan.js';
-import { LOCAL_RUNTIMES, type LocalRuntime } from './localRuntimes.js';
+import {
+  LOCAL_RUNTIMES,
+  composeModelCatalog,
+  type LocalRuntime,
+} from './localRuntimes.js';
 
 /** What the `e init` wizard needs to know to ask its questions. */
 export interface WizardState {
@@ -25,8 +30,8 @@ export interface WizardState {
    * is never re-asked and never rotated.
    */
   askOmniroutePassword: boolean;
-  /** The local-model catalog to select from. */
-  modelCatalog: ModelCatalogEntry[];
+  /** Per-runtime model catalogs; the model prompt only offers the selected runtimes'. */
+  runtimeCatalogs: Readonly<Record<LocalRuntime, readonly ModelCatalogEntry[]>>;
   /** Configured model selection, preselected (a blank answer keeps it). */
   currentModels: string[];
   /** Configured local runtimes, preselected (a blank answer keeps them). */
@@ -69,14 +74,25 @@ export function interactiveWizard(): Wizard {
           state.harnessNames,
           state.currentHarness
         );
-        const models = await promptModels(
-          rl,
-          state.modelCatalog,
-          state.currentModels
-        );
+        // Runtimes come before models: the model prompt is index-aligned with
+        // the union of the selected runtimes' catalogs, so the runtime answer
+        // has to be resolved before the catalog can be built.
         const localRuntimes = await promptLocalRuntimes(
           rl,
           state.currentLocalRuntimes
+        );
+        const selectedRuntimes = resolveLocalRuntimes(
+          localRuntimes,
+          state.currentLocalRuntimes
+        );
+        const modelCatalog = composeModelCatalog(
+          selectedRuntimes,
+          state.runtimeCatalogs
+        );
+        const models = await promptModels(
+          rl,
+          modelCatalog,
+          state.currentModels
         );
         const apiKeys = await promptApiKeys(rl, state.promptKeys);
         const omniroutePassword = state.askOmniroutePassword
@@ -152,7 +168,7 @@ async function promptModels(
     return selectModels(catalog, current);
   }
 
-  log.info('\nLocal models to download (used by `e spawn` via llama.cpp):');
+  log.info('\nLocal models to provision (per selected runtime; downloaded later via `e <runtime> download <model>`):');
   catalog.forEach((model, i) => {
     const marker = current.includes(model.id) ? '*' : ' ';
     log.info(
@@ -185,7 +201,7 @@ async function selectModels(
   const render = (): void => {
     if (renderedLines > 0) output.write(`\x1b[${renderedLines}A`);
     const lines = [
-      'Local models to download (Space toggles, Enter confirms):',
+      'Local models to provision (per selected runtime; Space toggles, Enter confirms):',
       `${cursor === 0 ? '>' : ' '} [${allSelected() ? 'x' : ' '}] All models`,
       ...catalog.map((model, index) => {
         const marker = selected.has(model.id) ? 'x' : ' ';

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HARNESSES } from '../harness/index.js';
-import { MODEL_CATALOG } from '../modelStatus.js';
+import { RUNTIME_CATALOGS } from './localRuntimes.js';
 import { GIT_PLATFORMS } from '../store/config.js';
 import { planInit, type InitState } from './initPlan.js';
 import { defaultsWizard, type Wizard, type WizardState } from './wizard.js';
@@ -11,7 +11,7 @@ const WIZARD_STATE: WizardState = {
   currentHarness: 'pi',
   promptKeys: ['ANTHROPIC_API_KEY'],
   askOmniroutePassword: true,
-  modelCatalog: MODEL_CATALOG,
+  runtimeCatalogs: RUNTIME_CATALOGS,
   currentModels: [],
   currentLocalRuntimes: ['llamacpp'],
   gitPlatforms: [...GIT_PLATFORMS],
@@ -25,7 +25,7 @@ function state(): InitState {
     currentModels: WIZARD_STATE.currentModels,
     currentLocalRuntimes: WIZARD_STATE.currentLocalRuntimes,
     existingEnvContent: undefined,
-    modelCatalog: WIZARD_STATE.modelCatalog,
+    runtimeCatalogs: WIZARD_STATE.runtimeCatalogs,
     gitPlatforms: [...GIT_PLATFORMS] as const,
     hardware: 'cpu',
   };

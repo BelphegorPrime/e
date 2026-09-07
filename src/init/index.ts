@@ -7,7 +7,6 @@ import { HARNESSES, requiredEnvKeys } from '../harness/index.js';
 import { parseDotenv } from '../harness/adapter.js';
 import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
 import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from '../skill/index.js';
-import { MODEL_CATALOG } from '../modelStatus.js';
 import { envFilePath, harnessesBaseDir } from '../store/paths.js';
 import { GIT_PLATFORMS, readConfig, writeConfig } from '../store/config.js';
 import { log } from '../utils/log.js';
@@ -19,6 +18,7 @@ import {
   type InitWrite,
 } from './initPlan.js';
 import { defaultsWizard, interactiveWizard, type Wizard } from './wizard.js';
+import { RUNTIME_CATALOGS } from './localRuntimes.js';
 
 interface InitCommandOptions {
   dir?: string;
@@ -81,7 +81,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     currentModels: config.models,
     currentLocalRuntimes: config.localRuntimes,
     existingEnvContent,
-    modelCatalog: MODEL_CATALOG,
+    runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
     currentGitPlatform: config.gitPlatform,
     hardware: detectHardware(),
@@ -99,7 +99,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     // an already-set password is never re-asked and never rotated.
     askOmniroutePassword:
       (existingValues.OMNIROUTE_INITIAL_PASSWORD ?? '').trim() === '',
-    modelCatalog: state.modelCatalog,
+    runtimeCatalogs: RUNTIME_CATALOGS,
     currentModels: state.currentModels,
     currentLocalRuntimes: state.currentLocalRuntimes,
     gitPlatforms: state.gitPlatforms,

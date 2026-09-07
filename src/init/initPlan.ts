@@ -14,7 +14,11 @@ import { SHIPPED_SKILLS } from '../skill/index.js';
 import type { HardwareVendor } from '../hardware/index.js';
 import type { ModelCatalogEntry } from '../modelStatus.js';
 import type { GitPlatform } from '../store/config.js';
-import { LOCAL_RUNTIMES, type LocalRuntime } from './localRuntimes.js';
+import {
+  LOCAL_RUNTIMES,
+  composeModelCatalog,
+  type LocalRuntime,
+} from './localRuntimes.js';
 import {
   agentDir,
   agentFilePath,
@@ -80,8 +84,8 @@ export interface InitState {
   currentLocalRuntimes: LocalRuntime[];
   /** Existing `.e/.env` raw content, if any (a missing file prompts for every key). */
   existingEnvContent?: string;
-  /** The local-model catalog to select from. */
-  modelCatalog: ModelCatalogEntry[];
+  /** Per-runtime model catalogs; the plan shows the union of the selected runtimes'. */
+  runtimeCatalogs: Readonly<Record<LocalRuntime, readonly ModelCatalogEntry[]>>;
   /** All git platforms offered by this init, in prompt order. */
   gitPlatforms: GitPlatform[];
   /** The configured git platform, kept when a re-init doesn't change it (`--yes`). */
@@ -182,7 +186,6 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     currentDefaultHarness,
     currentModels,
     currentLocalRuntimes,
-    modelCatalog,
     hardware,
   } = state;
   const existingValues = state.existingEnvContent
@@ -199,11 +202,14 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
           harnessNames,
           currentDefaultHarness
         ) ?? currentDefaultHarness);
-  const models = resolveModels(answers.models, modelCatalog, currentModels);
   const localRuntimes = resolveLocalRuntimes(
     answers.localRuntimes,
     currentLocalRuntimes
   );
+  // The model prompt is index-aligned with the union of the selected runtimes'
+  // catalogs, so resolution must use that same merged catalog.
+  const catalog = composeModelCatalog(localRuntimes, state.runtimeCatalogs);
+  const models = resolveModels(answers.models, catalog, currentModels);
   const gitPlatform = resolveGitPlatform(
     answers.gitPlatform,
     state.gitPlatforms,
@@ -304,15 +310,16 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     steps.push({ kind: 'writes', writes: egressWrites });
   }
 
-  // Step 3 — selected runtimes' derived bootstrap state.
-  if (localRuntimes.includes('llamacpp')) {
+  // Step 3 — selected runtimes' derived bootstrap state (provider registration
+  // only; model downloads happen on demand via `e <runtime> download <model>`).
+  if (localRuntimes.length > 0) {
     const bootstrapFile = bootstrapScriptPath(root);
     steps.push({
       kind: 'bootstrap',
       write: {
         directory: path.dirname(bootstrapFile),
         file: bootstrapFile,
-        content: renderBootstrap(models),
+        content: renderBootstrap(localRuntimes, models[0] ?? ''),
         clobber: 'always',
       },
     });
