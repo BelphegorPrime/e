@@ -140,7 +140,11 @@ export interface RunSpawnResult {
 
 /** True if a sidecar is ready now: its TCP port is open and any healthcheck exits 0. */
 function sidecarReady(runtime: ContainerRunner, spec: SidecarSpec): boolean {
-  if (!runtime.probeTcp(spec.netns ?? spec.network!, 'localhost', spec.port)) return false;
+  // In egress/netns mode all containers share a network namespace, so
+  // localhost reaches the sidecar. On a private Docker network the probe
+  // container must address the sidecar by its network alias.
+  const host = spec.netns ? 'localhost' : spec.alias;
+  if (!runtime.probeTcp(spec.netns ?? spec.network!, host, spec.port)) return false;
   if (
     spec.healthcheck &&
     !runtime.probeHealthcheck(spec.name, spec.healthcheck)
@@ -294,12 +298,15 @@ export async function runSpawn(
         name: run.name,
         networks: params.runOptions.netns
           ? undefined
-          : [
-              ...new Set([
-                ...(params.runOptions.networks ?? []),
-                ...(specs.length > 0 ? [network] : []),
-              ]),
-            ],
+          : (() => {
+              const nets = [
+                ...new Set([
+                  ...(params.runOptions.networks ?? []),
+                  ...(specs.length > 0 ? [network] : []),
+                ]),
+              ];
+              return nets.length > 0 ? nets : undefined;
+            })(),
         // The worktree is always mounted at /workspace; a file harness's config
         // overlay (if any) is appended as extra read-only mounts outside it.
         volumes: [
