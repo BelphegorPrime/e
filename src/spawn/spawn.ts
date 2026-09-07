@@ -14,7 +14,11 @@ import { resolveHarness, HARNESSES } from '../harness/index.js';
 import { findAgent, isKnownTarget } from '../agent/index.js';
 import { parseDotenv } from '../harness/adapter.js';
 import { resolveSkill, parseSkillList } from '../skill/index.js';
-import { readMcpServer, listMcpServerNames, type McpServer } from '../mcp/index.js';
+import {
+  readMcpServer,
+  listMcpServerNames,
+  type McpServer,
+} from '../mcp/index.js';
 import { RunScratch } from '../runs/runScratch.js';
 import { executeSpawn } from './executeSpawn.js';
 import { findRoot } from '../store/root.js';
@@ -221,9 +225,7 @@ function gatherSpawnFacts(
     // The egress blacklist source is host-editable and lives in the store
     // (ADR-0011); undefined when there is no store root.
     egressBlacklistFile:
-      root === undefined
-        ? undefined
-        : egressBlacklistPath(root),
+      root === undefined ? undefined : egressBlacklistPath(root),
     userEnvFile: opts.envFile,
     dirOpt: opts.dir,
   };
@@ -301,14 +303,18 @@ export function registerSpawnCommand(program: Command): void {
           const facts = gatherSpawnFacts(target, prompt, opts);
           validateSpawn(facts);
           const runtime = resolveRuntime(opts.runtime);
+          const localRuntimes = readConfig(facts.root).localRuntimes;
           const stack = localStack(facts.root);
           if (stack?.present) {
             // The stack is interpolated from `.e/.env` (no fallback secrets), so
             // pass it explicitly — compose does not otherwise look inside `.e/`.
-            runtime.composeUp(stack.composeFile, stack.envFile);
-            // composeUp blocks on `compose wait bootstrap`; the bootstrap script
-            // registers the models and loads one synchronously before exiting,
-            // so the model is in memory by the time we get here. No extra wait.
+            runtime.composeUp(
+              stack.composeFile,
+              stack.envFile,
+              localRuntimes.length > 0
+            );
+            // Local runtime stacks wait for bootstrap model registration; empty
+            // selections intentionally render no bootstrap service.
           }
 
           const configuredApiKey = facts.agent.provider
@@ -335,9 +341,7 @@ export function registerSpawnCommand(program: Command): void {
             git: new HostGit(),
             runtime,
             scratch,
-            pullRequest: config.gitPlatform
-              ? new HostPullRequest()
-              : undefined,
+            pullRequest: config.gitPlatform ? new HostPullRequest() : undefined,
             gitPlatform: config.gitPlatform,
           });
           // Rendered env-files hold resolved secrets; each container already has

@@ -25,17 +25,16 @@ import {
   EGRESS_BLACKLIST_IP_MOUNT,
   EGRESS_LOG_MOUNT,
 } from '../egress/index.js';
+import Mustache from 'mustache';
 
-/** Renders the `entrypoint.sh` for the egress container. */
-export function renderEgressEntrypoint(): string {
-  return `#!/bin/sh
+const ENTRYPOINT_TEMPLATE = `#!/bin/sh
 # Egress gateway entrypoint (ADR-0011). Applies the mounted iptables blacklist
 # to this netns, then runs dnsmasq in the foreground with query logging. All
 # stack services and run agents share this container's network namespace,
 # so every DNS query and connection crosses here and is logged / blocked.
 set -eu
 
-IP_BLACKLIST="${EGRESS_BLACKLIST_IP_MOUNT}"
+IP_BLACKLIST="{{{blacklistIpMount}}}"
 DNSMASQ_CONF="/etc/egress.d/dnsmasq.conf"
 
 apply_ip_rules() {
@@ -56,7 +55,7 @@ apply_ip_rules
 # blacklist takes effect without restarting the shared netns.
 trap 'apply_ip_rules; kill -HUP $(cat /run/dnsmasq.pid 2>/dev/null) 2>/dev/null || true' HUP
 
-mkdir -p "${EGRESS_LOG_MOUNT}"
+mkdir -p "{{{logMount}}}"
 # -k keep running, -d don't daemonize. --conf-file reads the base config
 # (bind-interfaces + listen-address=127.0.0.1, so it never clashes with the
 # engine's embedded DNS at 127.0.0.11 in the same netns); --conf-dir reads the
@@ -65,13 +64,10 @@ exec dnsmasq -k -d \\
   --conf-file="\${DNSMASQ_CONF}" \\
   --conf-dir=/etc/egress.d/,*.blacklist \\
   --log-queries \\
-  --log-facility="${EGRESS_LOG_MOUNT}/dnsmasq.log"
+  --log-facility="{{{logMount}}}/dnsmasq.log"
 `;
-}
 
-/** Renders the base `dnsmasq.conf` for the egress container. */
-export function renderDnsmasqBaseConf(): string {
-  return `# Base dnsmasq config for the egress gateway (ADR-0011).
+const DNSMASQ_BASE_CONF_TEMPLATE = `# Base dnsmasq config for the egress gateway (ADR-0011).
 # The mounted blacklist (address=/domain/0.0.0.0 lines) is read from
 # the conf-dir; log-queries records every query to the mounted log.
 #
@@ -87,11 +83,8 @@ no-poll
 server=1.1.1.1
 server=8.8.8.8
 `;
-}
 
-/** Renders the `Dockerfile` for the egress container. */
-export function renderEgressDockerfile(): string {
-  return `# The egress gateway container (ADR-0011). A single global service; all stack
+const DOCKERFILE_TEMPLATE = `# The egress gateway container (ADR-0011). A single global service; all stack
 # services and run agents share its network namespace, so a blacklist here is
 # enforced and every query / connection is logged host-side.
 FROM alpine:3.20
@@ -109,11 +102,8 @@ RUN chmod +x /egress-entrypoint.sh
 # iptables needs NET_ADMIN in this container's own netns (added by the runtime).
 ENTRYPOINT ["/egress-entrypoint.sh"]
 `;
-}
 
-/** Renders the user-facing blacklist template seeded as `blacklist.example`. */
-export function renderBlacklistExample(): string {
-  return `# Egress blacklist for e runs (ADR-0011).
+const BLACKLIST_EXAMPLE_TEMPLATE = `# Egress blacklist for e runs (ADR-0011).
 #
 # One entry per line. A domain line is sinkholed by dnsmasq (blocks the domain
 # and all its subdomains, resolves to 0.0.0.0 so the connection fails fast and
@@ -124,12 +114,34 @@ export function renderBlacklistExample(): string {
 # example.com            # blocks example.com and *.example.com
 # 203.0.113.7:8443       # rejects the direct IP:port
 `;
+
+/** Renders the `entrypoint.sh` for the egress container. */
+export function renderEgressEntrypoint(): string {
+  return Mustache.render(ENTRYPOINT_TEMPLATE, {
+    blacklistIpMount: EGRESS_BLACKLIST_IP_MOUNT,
+    logMount: EGRESS_LOG_MOUNT,
+  });
+}
+
+/** Renders the base `dnsmasq.conf` for the egress container. */
+export function renderDnsmasqBaseConf(): string {
+  return Mustache.render(DNSMASQ_BASE_CONF_TEMPLATE, {});
+}
+
+/** Renders the `Dockerfile` for the egress container. */
+export function renderEgressDockerfile(): string {
+  return Mustache.render(DOCKERFILE_TEMPLATE, {});
+}
+
+/** Renders the user-facing blacklist template seeded as `blacklist.example`. */
+export function renderBlacklistExample(): string {
+  return Mustache.render(BLACKLIST_EXAMPLE_TEMPLATE, {});
 }
 
 /** The files `e init` writes into `.e/egress/`, keyed by file name. */
 export function renderEgressFiles(): Record<string, string> {
   return {
-    'Dockerfile': renderEgressDockerfile(),
+    Dockerfile: renderEgressDockerfile(),
     'entrypoint.sh': renderEgressEntrypoint(),
     'dnsmasq.conf': renderDnsmasqBaseConf(),
     'blacklist.example': renderBlacklistExample(),

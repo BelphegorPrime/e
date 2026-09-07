@@ -1,12 +1,11 @@
 import { MODELS } from '../modelStatus.js';
+import Mustache from 'mustache';
 
-/** Renders the one-shot script that provisions llama.cpp and OmniRoute for `models` (default: all). */
-export function renderBootstrap(models: string[] = MODELS): string {
-  const defaultModel = models[0];
-  return `#!/bin/sh
+/** Bootstrap script template. Model values remain raw shell data, as before. */
+const TEMPLATE = `#!/bin/sh
 set -eu
 
-models='${models.join(' ')}'
+models='{{{models}}}'
 
 log() {
   printf '[bootstrap] %s\n' "$1"
@@ -126,7 +125,7 @@ log 'synchronizing OmniRoute provider'
 if ! curl -sf -H "Cookie: auth_token=$token" \
   http://localhost:20128/api/providers | grep -q 'llama.cpp (local)'; then
   curl -sf -H "Cookie: auth_token=$token" -H 'Content-Type: application/json' \
-    -d '{"provider":"llama-cpp","apiKey":"sk-no-key-required","name":"llama.cpp (local)","defaultModel":"llama-cpp/${defaultModel}","providerSpecificData":{"baseUrl":"http://localhost:9931/v1"}}' \
+    -d '{"provider":"llama-cpp","apiKey":"sk-no-key-required","name":"llama.cpp (local)","defaultModel":"llama-cpp/{{{defaultModel}}}","providerSpecificData":{"baseUrl":"http://localhost:9931/v1"}}' \
     http://localhost:20128/api/providers > /dev/null
   log 'OmniRoute provider registered'
 else
@@ -134,4 +133,11 @@ else
 fi
 log 'bootstrap complete'
 `;
+
+/** Renders the one-shot script that provisions llama.cpp and OmniRoute for `models` (default: all). */
+export function renderBootstrap(models: string[] = MODELS): string {
+  return Mustache.render(TEMPLATE, {
+    models: models.join(' '),
+    defaultModel: models[0],
+  });
 }

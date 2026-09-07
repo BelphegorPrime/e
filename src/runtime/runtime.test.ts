@@ -286,6 +286,18 @@ test('composeRestartArgs: passes the store env-file for secret interpolation', (
   );
 });
 
+test('composeUp: no-runtime path uses ordinary compose-up argv', () => {
+  // `composeUp(..., false)` uses this argv and intentionally omits the
+  // bootstrap wait. Process invocation is integration-owned.
+  assert.deepEqual(composeUpArgs('/project/.e/compose.yaml'), [
+    'compose',
+    '-f',
+    '/project/.e/compose.yaml',
+    'up',
+    '-d',
+  ]);
+});
+
 // --- structured mounts ---
 
 test('formatMount: read-write omits :ro', () => {

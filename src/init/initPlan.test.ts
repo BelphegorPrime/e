@@ -23,6 +23,7 @@ function state(overrides: Partial<InitState> = {}): InitState {
     harnessNames: HARNESS_NAMES,
     currentDefaultHarness: 'pi',
     currentModels: [],
+    currentLocalRuntimes: ['llamacpp'],
     existingEnvContent: undefined,
     modelCatalog: MODEL_CATALOG,
     gitPlatforms: [...GIT_PLATFORMS],
@@ -41,45 +42,63 @@ test('planInit: blank or unanswered answers keep the configured current', () => 
   assert.deepEqual(plan.config, {
     defaultHarness: 'pi',
     models: [],
+    localRuntimes: ['llamacpp'],
     gitPlatform: undefined,
   });
 });
 
 test('planInit: answers resolve through the same pure parsers the prompts use', () => {
-  const plan = planInit(
-    state(),
-    { harness: '2', models: 'all' } satisfies InitAnswers
-  );
+  const plan = planInit(state(), {
+    harness: '2',
+    models: 'all',
+  } satisfies InitAnswers);
   assert.equal(plan.defaultHarness, HARNESS_NAMES[1]);
-  assert.deepEqual(plan.models, MODEL_CATALOG.map(m => m.id));
+  assert.deepEqual(
+    plan.models,
+    MODEL_CATALOG.map(m => m.id)
+  );
+});
+
+test('planInit: local runtime selection supports none and omits llama provisioning', () => {
+  const plan = planInit(state(), { localRuntimes: 'none' });
+  assert.deepEqual(plan.localRuntimes, []);
+  assert.deepEqual(plan.config.localRuntimes, []);
+  assert.equal(
+    plan.steps.some(step => step.kind === 'bootstrap'),
+    false
+  );
+  const compose = plan.steps.find(step => step.kind === 'compose');
+  assert.ok(compose && !compose.write.content.includes('\n  llama:'));
+});
+
+test('planInit: local runtime selection accepts indexed multi-select', () => {
+  assert.deepEqual(planInit(state(), { localRuntimes: '1,1' }).localRuntimes, [
+    'llamacpp',
+  ]);
 });
 
 test('planInit: a named git platform is recorded in the config', () => {
-  const plan = planInit(
-    state(),
-    { gitPlatform: 'gitlab' } satisfies InitAnswers
-  );
+  const plan = planInit(state(), {
+    gitPlatform: 'gitlab',
+  } satisfies InitAnswers);
   assert.equal(plan.gitPlatform, 'gitlab');
   assert.deepEqual(plan.config, {
     defaultHarness: 'pi',
     models: [],
+    localRuntimes: ['llamacpp'],
     gitPlatform: 'gitlab',
   });
 });
 
 test('planInit: a blank git-platform answer disables PR/MR creation', () => {
-  const plan = planInit(
-    state({ currentGitPlatform: 'github' }),
-    { gitPlatform: '   ' } satisfies InitAnswers
-  );
+  const plan = planInit(state({ currentGitPlatform: 'github' }), {
+    gitPlatform: '   ',
+  } satisfies InitAnswers);
   assert.equal(plan.gitPlatform, undefined);
 });
 
 test('planInit: an unanswered platform keeps the configured current (a --yes re-init)', () => {
-  const plan = planInit(
-    state({ currentGitPlatform: 'gitea' }),
-    {}
-  );
+  const plan = planInit(state({ currentGitPlatform: 'gitea' }), {});
   assert.equal(plan.gitPlatform, 'gitea');
 });
 
@@ -183,23 +202,22 @@ test('planInit: steps are ordered — harnesses, shipped servers, bootstrap, the
   const [dockerfile, agent] = first.writes;
   assert.equal(dockerfile.clobber, 'never');
   assert.equal(agent.clobber, 'never');
-  assert.ok(dockerfile.file.endsWith('.e/harnesses/' + first.name + '/Dockerfile'));
+  assert.ok(
+    dockerfile.file.endsWith('.e/harnesses/' + first.name + '/Dockerfile')
+  );
   assert.ok(agent.file.endsWith('.e/agents/' + first.name + '/agent.json'));
 
-  // Bootstrap is derived state (always rewritten); compose is never clobbered.
+  // Bootstrap and Compose are derived state (always rewritten).
   const bootstrap = plan.steps.find(s => s.kind === 'bootstrap');
   const compose = plan.steps.find(s => s.kind === 'compose');
   assert.equal(bootstrap?.write.clobber, 'always');
-  assert.equal(compose?.write.clobber, 'never');
+  assert.equal(compose?.write.clobber, 'always');
   assert.ok(bootstrap?.write.file.endsWith('.e/bootstrap.sh'));
   assert.ok(compose?.write.file.endsWith('.e/compose.yaml'));
 });
 
 test('planInit: all paths live under the requested root', () => {
-  const plan = planInit(
-    { ...state(), root: '/tmp/fake-e-root' },
-    {}
-  );
+  const plan = planInit({ ...state(), root: '/tmp/fake-e-root' }, {});
   for (const step of plan.steps) {
     for (const write of 'writes' in step ? step.writes : [step.write]) {
       assert.ok(write.file.startsWith('/tmp/fake-e-root'));

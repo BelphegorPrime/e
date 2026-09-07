@@ -14,6 +14,7 @@ import { SHIPPED_SKILLS } from '../skill/index.js';
 import type { HardwareVendor } from '../hardware/index.js';
 import type { ModelCatalogEntry } from '../modelStatus.js';
 import type { GitPlatform } from '../store/config.js';
+import { LOCAL_RUNTIMES, type LocalRuntime } from './localRuntimes.js';
 import {
   agentDir,
   agentFilePath,
@@ -75,6 +76,8 @@ export interface InitState {
   currentDefaultHarness: string;
   /** The configured model selection, kept when the user answers blank. */
   currentModels: string[];
+  /** Configured local runtime selection, kept when the wizard answer is blank. */
+  currentLocalRuntimes: LocalRuntime[];
   /** Existing `.e/.env` raw content, if any (a missing file prompts for every key). */
   existingEnvContent?: string;
   /** The local-model catalog to select from. */
@@ -93,6 +96,8 @@ export interface InitAnswers {
   harness?: string;
   /** Raw selection text ('', 'all', 'none', '1,3') or a pre-resolved id list from the raw-mode selector. */
   models?: string | string[];
+  /** Raw runtime selection text or ids from a keyboard selector. */
+  localRuntimes?: string | LocalRuntime[];
   /** Collected API-key values to fill into blank `.env` lines (blank answers omitted). */
   apiKeys?: Record<string, string>;
   /** A 1-based index, an exact platform name, or ''/undefined (blank disables PR/MR). */
@@ -138,11 +143,13 @@ export interface InitPlan {
   config: {
     defaultHarness: string;
     models: string[];
+    localRuntimes: LocalRuntime[];
     gitPlatform?: GitPlatform;
   };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
   models: string[];
+  localRuntimes: LocalRuntime[];
   /** Configured git platform for PR/MR creation, or undefined to disable. */
   gitPlatform?: GitPlatform;
   /** Merged env values: existing + collected + seeded stack secrets. */
@@ -167,6 +174,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     harnessNames,
     currentDefaultHarness,
     currentModels,
+    currentLocalRuntimes,
     modelCatalog,
     hardware,
   } = state;
@@ -179,9 +187,16 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
   const defaultHarness =
     answers.harness === undefined
       ? currentDefaultHarness
-      : parseHarnessChoice(answers.harness, harnessNames, currentDefaultHarness) ??
-        currentDefaultHarness;
+      : (parseHarnessChoice(
+          answers.harness,
+          harnessNames,
+          currentDefaultHarness
+        ) ?? currentDefaultHarness);
   const models = resolveModels(answers.models, modelCatalog, currentModels);
+  const localRuntimes = resolveLocalRuntimes(
+    answers.localRuntimes,
+    currentLocalRuntimes
+  );
   const gitPlatform = resolveGitPlatform(
     answers.gitPlatform,
     state.gitPlatforms,
@@ -273,40 +288,69 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     steps.push({ kind: 'writes', writes: egressWrites });
   }
 
-  // Step 3 — the bootstrap script (overwritten every init; it is derived state).
-  const bootstrapFile = bootstrapScriptPath(root);
-  steps.push({
-    kind: 'bootstrap',
-    write: {
-      directory: path.dirname(bootstrapFile),
-      file: bootstrapFile,
-      content: renderBootstrap(models),
-      clobber: 'always',
-    },
-  });
+  // Step 3 — selected runtimes' derived bootstrap state.
+  if (localRuntimes.includes('llamacpp')) {
+    const bootstrapFile = bootstrapScriptPath(root);
+    steps.push({
+      kind: 'bootstrap',
+      write: {
+        directory: path.dirname(bootstrapFile),
+        file: bootstrapFile,
+        content: renderBootstrap(models),
+        clobber: 'always',
+      },
+    });
+  }
 
-  // Step 4 — the Compose file for the detected GPU (never clobbered).
+  // Step 4 — derived Compose state. Re-render so a re-init can change runtime selection.
   steps.push({
     kind: 'compose',
     write: {
       directory: path.dirname(dockerComposePath(root)),
       file: dockerComposePath(root),
-      content: renderCompose(hardware),
-      clobber: 'never',
+      content: renderCompose(hardware, localRuntimes),
+      clobber: 'always',
     },
   });
 
   return {
     steps,
     env: buildEnvWrite(root, state.existingEnvContent, fullEnv),
-    config: { defaultHarness, models, gitPlatform },
+    config: { defaultHarness, models, localRuntimes, gitPlatform },
     defaultHarness,
     models,
+    localRuntimes,
     gitPlatform,
     envValues: fullEnv,
     secrets,
     hardware,
   };
+}
+
+/** Resolves an extensible runtime multi-select; blank keeps the current set. */
+export function resolveLocalRuntimes(
+  answer: InitAnswers['localRuntimes'],
+  current: LocalRuntime[]
+): LocalRuntime[] {
+  if (answer === undefined) return current;
+  if (Array.isArray(answer)) return answer;
+  const trimmed = answer.trim();
+  if (trimmed === '') return current;
+  if (trimmed.toLowerCase() === 'all') return LOCAL_RUNTIMES.map(r => r.id);
+  if (trimmed.toLowerCase() === 'none') return [];
+  const parts = trimmed
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return current;
+  const selected = new Set<LocalRuntime>();
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return current;
+    const runtime = LOCAL_RUNTIMES[Number(part) - 1];
+    if (!runtime) return current;
+    selected.add(runtime.id);
+  }
+  return [...selected];
 }
 
 /**

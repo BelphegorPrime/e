@@ -9,11 +9,7 @@ import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
 import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from '../skill/index.js';
 import { MODEL_CATALOG } from '../modelStatus.js';
 import { envFilePath, harnessesBaseDir } from '../store/paths.js';
-import {
-  GIT_PLATFORMS,
-  readConfig,
-  writeConfig,
-} from '../store/config.js';
+import { GIT_PLATFORMS, readConfig, writeConfig } from '../store/config.js';
 import { log } from '../utils/log.js';
 import {
   keysToPrompt,
@@ -64,9 +60,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
   // stdin/stdout (a pipe or CI), falls back to defaults so the command never
   // hangs.
   const interactive =
-    !opts.yes &&
-    Boolean(process.stdin.isTTY) &&
-    Boolean(process.stdout.isTTY);
+    !opts.yes && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 
   // Seed from any existing config so a re-init preserves the configured
   // favorite instead of silently resetting it — mirrors how the `.env` and
@@ -85,6 +79,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     harnessNames: Object.keys(HARNESSES),
     currentDefaultHarness: config.defaultHarness,
     currentModels: config.models,
+    currentLocalRuntimes: config.localRuntimes,
     existingEnvContent,
     modelCatalog: MODEL_CATALOG,
     gitPlatforms: [...GIT_PLATFORMS],
@@ -102,6 +97,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     promptKeys: keysToPrompt(requiredEnvKeys(), existingValues),
     modelCatalog: state.modelCatalog,
     currentModels: state.currentModels,
+    currentLocalRuntimes: state.currentLocalRuntimes,
     gitPlatforms: state.gitPlatforms,
     currentGitPlatform: config.gitPlatform,
   });
@@ -125,9 +121,11 @@ function applyPlan(root: string | undefined, plan: InitPlan): void {
     }
   }
 
-  log.info(
-    `Detected hardware: ${plan.hardware} -> using ${llamaCppImage(plan.hardware)} for the local llama.cpp provider.`
-  );
+  if (plan.localRuntimes.includes('llamacpp')) {
+    log.info(
+      `Detected hardware: ${plan.hardware} -> using ${llamaCppImage(plan.hardware)} for local llama.cpp.`
+    );
+  } else log.info('Local AI runtime: none selected.');
 
   writeEnv(plan.env);
   writeConfig(plan.config, root);

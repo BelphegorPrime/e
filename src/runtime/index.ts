@@ -388,8 +388,35 @@ export class ContainerRuntime implements ContainerRunner {
     });
   }
 
-  /** Starts a Compose stack in the background, preserving its own lifecycle. */
-  composeUp(composeFile: string, envFile?: string): void {
+  /**
+   * Starts a Compose stack in the background. `waitForBootstrap` is false for
+   * stacks with no local inference runtime, which intentionally omit the
+   * model-registration bootstrap service.
+   */
+  composeUp(
+    composeFile: string,
+    envFile?: string,
+    waitForBootstrap = true
+  ): void {
+    if (!waitForBootstrap) {
+      const args = composeUpArgs(composeFile, envFile);
+      log.command(`> ${this.command} ${args.join(' ')}`);
+      const result = spawnSync(this.command, args, {
+        stdio: 'inherit',
+        shell: false,
+      });
+      if (result.error) {
+        throw new Error(
+          `Failed to start ${this.command} compose: ${result.error.message}`
+        );
+      }
+      if (result.status !== 0) {
+        throw new Error(
+          `Compose startup failed (exit code ${result.status ?? 1}).`
+        );
+      }
+      return;
+    }
     // At most one retry. A bootstrap exit 22 means a curl HTTP >= 400 from
     // llama.cpp: with `--models-max 1` it rejects a model download while a
     // model is already loaded (500 "model limit reached"; upstream bug, fix

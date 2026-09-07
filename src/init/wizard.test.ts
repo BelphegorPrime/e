@@ -12,6 +12,7 @@ const WIZARD_STATE: WizardState = {
   promptKeys: ['ANTHROPIC_API_KEY'],
   modelCatalog: MODEL_CATALOG,
   currentModels: [],
+  currentLocalRuntimes: ['llamacpp'],
   gitPlatforms: [...GIT_PLATFORMS],
 };
 
@@ -21,6 +22,7 @@ function state(): InitState {
     harnessNames: WIZARD_STATE.harnessNames,
     currentDefaultHarness: WIZARD_STATE.currentHarness,
     currentModels: WIZARD_STATE.currentModels,
+    currentLocalRuntimes: WIZARD_STATE.currentLocalRuntimes,
     existingEnvContent: undefined,
     modelCatalog: WIZARD_STATE.modelCatalog,
     gitPlatforms: [...GIT_PLATFORMS] as const,

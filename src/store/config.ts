@@ -1,7 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import { MODELS } from '../modelStatus.js';
-import { configFilePath, dockerfilePath, egressDir, modelsFilePath } from './paths.js';
+import { isLocalRuntime, type LocalRuntime } from '../init/localRuntimes.js';
+import {
+  configFilePath,
+  dockerfilePath,
+  egressDir,
+  modelsFilePath,
+} from './paths.js';
 
 /**
  * The Store's **state files** (host-only): `config.json` orchestration
@@ -31,6 +37,8 @@ export type StoreConfig = {
   defaultHarness: string;
   /** Local llama.cpp models `e init` provisions; `e spawn` waits for exactly these. */
   models: string[];
+  /** Local AI runtimes selected during `e init`. */
+  localRuntimes: LocalRuntime[];
   /** Git platform for PR/MR creation after successful runs. */
   gitPlatform?: GitPlatform;
 };
@@ -60,12 +68,16 @@ export function resolveConfig(raw: unknown): StoreConfig {
     parsed.models.every(m => typeof m === 'string')
       ? parsed.models
       : MODELS;
+  // Older stores predate runtime selection and historically provisioned llama.
+  const localRuntimes = Array.isArray(parsed.localRuntimes)
+    ? parsed.localRuntimes.filter(isLocalRuntime)
+    : (['llamacpp'] as LocalRuntime[]);
   const gitPlatform =
     typeof parsed.gitPlatform === 'string' &&
     GIT_PLATFORMS.includes(parsed.gitPlatform as GitPlatform)
       ? parsed.gitPlatform
       : undefined;
-  return { defaultHarness, models, gitPlatform };
+  return { defaultHarness, models, localRuntimes, gitPlatform };
 }
 
 /**

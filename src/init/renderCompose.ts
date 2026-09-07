@@ -3,24 +3,23 @@ import {
   llamaGpuCompose,
   type HardwareVendor,
 } from '../hardware/index.js';
+import Mustache from 'mustache';
 import { STACK_NETWORK } from '../constants.js';
+import type { LocalRuntime } from './localRuntimes.js';
 
-/** Renders the local OmniRoute + llama.cpp development stack for `vendor`'s GPU. */
-export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
-  const image = llamaCppImage(vendor);
-  const gpu = llamaGpuCompose(vendor);
-  return `# Local OmniRoute gateway with llama.cpp as a self-hosted provider.
-# Hardware detected: ${vendor} -> ${image}
+/** Compose template; conditional blocks keep each local runtime self-contained. */
+const TEMPLATE = `# Local OmniRoute gateway{{#llama}} with llama.cpp as a self-hosted provider.{{/llama}}{{^llama}}.{{/llama}}
+# Hardware detected: {{{vendor}}} -> {{{image}}}
 # Start with: docker compose -f .e/compose.yaml up -d
 # OmniRoute secrets (OMNIROUTE_INITIAL_PASSWORD, JWT_SECRET, API_KEY_SECRET) are
 # interpolated from .e/.env — e init seeds random values there; there are no
 # fallback defaults, so an unseeded stack simply has no known password.
-# The bootstrap service downloads the model from Hugging Face through llama.cpp's API.
+{{#llama}}# The bootstrap service downloads the model from Hugging Face through llama.cpp's API.
 # In OmniRoute Dashboard -> Providers, add llama.cpp with base URL http://localhost:9931/v1.
-#
-# Networking: e-net contains redis, llama.cpp, bootstrap, OmniRoute,
+#{{/llama}}{{^llama}}# No local inference runtime was selected; add external providers in OmniRoute.{{/llama}}
+# Networking: e-net contains redis{{#llama}}, llama.cpp, bootstrap{{/llama}}, OmniRoute,
 # and the egress monitor. The harness run container never joins it, so the
-# untrusted agent cannot reach Redis or llama.cpp directly.
+# untrusted agent cannot reach {{#llama}}Redis or llama.cpp{{/llama}}{{^llama}}Redis{{/llama}} directly.
 # The published host ports stay bound to 127.0.0.1: only the host's own browser
 # and CLI (e spawn, e serve) reach the dashboard; untrusted LAN peers cannot.
 
@@ -36,14 +35,14 @@ services:
     dns:
       - 127.0.0.1
     networks:
-      ${STACK_NETWORK}:
+      {{{stackNetwork}}}:
     volumes:
       - ./egress-blacklist:/etc/egress.d/dnsmasq.blacklist:rw
       - egress-logs:/var/log/egress
     ports:
       - "127.0.0.1:20128:20128"
-      - "127.0.0.1:9931:9931"
-
+{{#llama}}      - "127.0.0.1:9931:9931"
+{{/llama}}
   omniroute:
     image: diegosouzapw/omniroute:latest
     container_name: omniroute
@@ -55,9 +54,9 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
-      llama:
+{{#llama}}      llama:
         condition: service_started
-    environment:
+{{/llama}}    environment:
       DATA_DIR: /app/data
       PORT: "20128"
       REDIS_URL: redis://localhost:6379
@@ -70,7 +69,7 @@ services:
       REQUIRE_API_KEY: "false"
     volumes:
       - omniroute-data:/app/data
-
+{{#llama}}
   bootstrap:
     image: curlimages/curl:latest
     network_mode: "service:egress"
@@ -89,7 +88,7 @@ services:
     restart: "no"
 
   llama:
-    image: ${image}
+    image: {{{image}}}
     container_name: llama
     restart: unless-stopped
     network_mode: "service:egress"
@@ -104,7 +103,7 @@ services:
       LLAMA_ARG_MODELS_MAX: "1"
     volumes:
       - llama-data:/root/.cache
-${gpu}
+{{{gpu}}}{{/llama}}
   redis:
     image: redis:8-alpine
     container_name: omniroute-redis
@@ -122,17 +121,33 @@ ${gpu}
       retries: 5
 
 networks:
-  ${STACK_NETWORK}:
-    name: ${STACK_NETWORK}
+  {{{stackNetwork}}}:
+    name: {{{stackNetwork}}}
 
 volumes:
   omniroute-data:
     name: omniroute-data
-  llama-data:
+{{#llama}}  llama-data:
     name: llama-data
-  redis-data:
+{{/llama}}  redis-data:
     name: redis-data
   egress-logs:
     name: e-egress-logs
 `;
+
+/** Renders the local OmniRoute + llama.cpp development stack for `vendor`'s GPU. */
+export function renderCompose(
+  vendor: HardwareVendor = 'cpu',
+  runtimes: readonly LocalRuntime[] = ['llamacpp']
+): string {
+  const image = llamaCppImage(vendor);
+  const gpu = llamaGpuCompose(vendor);
+  const llama = runtimes.includes('llamacpp');
+  return Mustache.render(TEMPLATE, {
+    vendor,
+    image,
+    gpu,
+    llama,
+    stackNetwork: STACK_NETWORK,
+  });
 }

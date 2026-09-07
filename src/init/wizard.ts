@@ -9,6 +9,7 @@ import {
   parseGitPlatformChoice,
   type InitAnswers,
 } from './initPlan.js';
+import { LOCAL_RUNTIMES, type LocalRuntime } from './localRuntimes.js';
 
 /** What the `e init` wizard needs to know to ask its questions. */
 export interface WizardState {
@@ -22,6 +23,8 @@ export interface WizardState {
   modelCatalog: ModelCatalogEntry[];
   /** Configured model selection, preselected (a blank answer keeps it). */
   currentModels: string[];
+  /** Configured local runtimes, preselected (a blank answer keeps them). */
+  currentLocalRuntimes: LocalRuntime[];
   /** All git platforms offered, in prompt order. */
   gitPlatforms: string[];
   /** Configured git platform, preselected (a blank answer disables PR/MR). */
@@ -65,18 +68,44 @@ export function interactiveWizard(): Wizard {
           state.modelCatalog,
           state.currentModels
         );
+        const localRuntimes = await promptLocalRuntimes(
+          rl,
+          state.currentLocalRuntimes
+        );
         const apiKeys = await promptApiKeys(rl, state.promptKeys);
         const gitPlatform = await promptGitPlatform(
           rl,
           state.gitPlatforms,
           state.currentGitPlatform
         );
-        return { harness, models, apiKeys, gitPlatform };
+        return { harness, models, localRuntimes, apiKeys, gitPlatform };
       } finally {
         rl.close();
       }
     },
   };
+}
+
+async function promptLocalRuntimes(
+  rl: readline.Interface,
+  current: LocalRuntime[]
+): Promise<string> {
+  log.info('\nLocal AI runtimes to include:');
+  LOCAL_RUNTIMES.forEach((runtime, index) => {
+    log.info(
+      `  [${current.includes(runtime.id) ? '*' : ' '}] ${index + 1}) ${runtime.label}`
+    );
+  });
+  for (;;) {
+    const answer = await rl.question(
+      'Choose (comma-separated numbers, "all", "none", or blank to keep current): '
+    );
+    const valid =
+      answer.trim() === '' ||
+      /^(all|none|\d+(\s*,\s*\d+)*)$/i.test(answer.trim());
+    if (valid) return answer;
+    log.warn(`  "${answer.trim()}" is not a valid selection.`);
+  }
 }
 
 /** Prompts for the favorite harness, re-asking until the answer is valid. */

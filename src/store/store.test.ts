@@ -81,6 +81,7 @@ test('resolveConfig: a missing config yields the built-in defaults', () => {
   assert.deepEqual(resolveConfig(undefined), {
     defaultHarness: DEFAULT_HARNESS,
     models: MODELS,
+    localRuntimes: ['llamacpp'],
     gitPlatform: undefined,
   });
 });
@@ -89,6 +90,7 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
   assert.deepEqual(resolveConfig({ defaultHarness: 'codex' }), {
     defaultHarness: 'codex',
     models: MODELS,
+    localRuntimes: ['llamacpp'],
     gitPlatform: undefined,
   });
 });
@@ -96,8 +98,10 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
 test('resolveConfig: an explicit gitPlatform is kept; malformed ones are dropped', () => {
   assert.equal(resolveConfig({ gitPlatform: 'gitlab' }).gitPlatform, 'gitlab');
   assert.equal(
-    resolveConfig({ gitPlatform: 'bitbucket' } as unknown as Record<string, unknown>)
-      .gitPlatform,
+    resolveConfig({ gitPlatform: 'bitbucket' } as unknown as Record<
+      string,
+      unknown
+    >).gitPlatform,
     undefined
   );
   assert.equal(
@@ -120,9 +124,7 @@ test('resolveConfig: a blank or non-string defaultHarness falls back to the defa
 });
 
 test('resolveConfig: an explicit models selection is kept', () => {
-  assert.deepEqual(resolveConfig({ models: ['org/one'] }).models, [
-    'org/one',
-  ]);
+  assert.deepEqual(resolveConfig({ models: ['org/one'] }).models, ['org/one']);
 });
 
 test('resolveConfig: an empty or malformed models list falls back to the default catalog', () => {
@@ -142,13 +144,19 @@ test('config round-trip: writeConfig then readConfig returns the written value',
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
   try {
     writeConfig(
-      { defaultHarness: 'codex', models: ['org/one'], gitPlatform: 'gitlab' },
+      {
+        defaultHarness: 'codex',
+        models: ['org/one'],
+        localRuntimes: ['llamacpp'],
+        gitPlatform: 'gitlab',
+      },
       root
     );
     assert.equal(fs.existsSync(configFilePath(root)), true);
     assert.deepEqual(readConfig(root), {
       defaultHarness: 'codex',
       models: ['org/one'],
+      localRuntimes: ['llamacpp'],
       gitPlatform: 'gitlab',
     });
   } finally {
@@ -162,6 +170,7 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
     assert.deepEqual(readConfig(root), {
       defaultHarness: DEFAULT_HARNESS,
       models: MODELS,
+      localRuntimes: ['llamacpp'],
       gitPlatform: undefined,
     });
     assert.equal(fs.existsSync(configFilePath(root)), false);
