@@ -15,8 +15,8 @@
  *    re-applies it on SIGHUP, then runs `dnsmasq` in the foreground with query
  *    logging to the mounted log dir and its blacklist conf-dir read from the
  *    mounted blacklist file.
- *  - `dnsmasq.conf` — the base dnsmasq config (log-queries, conf-dir, no dnssec
- *    filtering) that `entrypoint.sh` points dnsmasq at.
+ *  - `dnsmasq.conf` — the base dnsmasq config with independent upstream
+ *    resolvers that `entrypoint.sh` points dnsmasq at.
  *  - `blacklist.example` — a commented template documenting the `./e/egress-blacklist`
  *    format, seeded as the user-facing example (not read by the container).
  */
@@ -54,7 +54,7 @@ apply_ip_rules
 
 # Reload dnsmasq + re-apply iptables on SIGHUP so a host edit to the mounted
 # blacklist takes effect without restarting the shared netns.
-trap 'apply_ip_rules; kill -HUP \$(cat /run/dnsmasq.pid 2>/dev/null) 2>/dev/null || true' HUP
+trap 'apply_ip_rules; kill -HUP $(cat /run/dnsmasq.pid 2>/dev/null) 2>/dev/null || true' HUP
 
 mkdir -p "${EGRESS_LOG_MOUNT}"
 # -k keep running, -d don't daemonize. --conf-file reads the base config
@@ -73,16 +73,19 @@ exec dnsmasq -k -d \\
 export function renderDnsmasqBaseConf(): string {
   return `# Base dnsmasq config for the egress gateway (ADR-0011).
 # The mounted blacklist (address=/domain/0.0.0.0 lines) is read from
-# the conf-dir; log-queries records every query to the mounted log. The
-# upstream is the engine's embedded DNS (Docker: 127.0.0.11; Podman: the
-# aardvark resolver in this netns) so sidecar aliases and host.docker.internal
-# still resolve while every query is first sunk / logged here.
+# the conf-dir; log-queries records every query to the mounted log.
+#
+# Containers query the engine's embedded DNS first. It resolves container
+# aliases itself and forwards public names to dnsmasq because compose configures
+# 127.0.0.1 as its external resolver. dnsmasq must therefore use independent
+# upstreams: forwarding back to the embedded resolver creates a DNS loop.
 port=53
 bind-interfaces
 listen-address=127.0.0.1
 no-resolv
 no-poll
-server=127.0.0.11
+server=1.1.1.1
+server=8.8.8.8
 `;
 }
 
@@ -99,11 +102,9 @@ COPY entrypoint.sh /egress-entrypoint.sh
 COPY dnsmasq.conf /etc/egress.d/dnsmasq.conf
 RUN chmod +x /egress-entrypoint.sh
 
-# The mount points compose wires:
-#   /etc/egress.d/dnsmasq.blacklist  (host blacklist file, rw)
-#   /etc/egress.d/iptables.blacklist (host iptables rules script, ro)
-#   /var/log/egress                  (host-visible log dir, rw)
-VOLUME ["/etc/egress.d", "/var/log/egress"]
+# Compose mounts the blacklist file and log directory explicitly. Do not declare
+# /etc/egress.d as a VOLUME: Docker would preserve an anonymous volume across
+# container recreation, masking rebuilt dnsmasq.conf files with stale content.
 
 # iptables needs NET_ADMIN in this container's own netns (added by the runtime).
 ENTRYPOINT ["/egress-entrypoint.sh"]

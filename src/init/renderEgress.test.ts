@@ -12,6 +12,7 @@ test('renderEgressDockerfile: alpine base with dnsmasq + iptables, entrypoint se
   assert.match(df, /FROM alpine:/);
   assert.match(df, /apk add --no-cache dnsmasq iptables/);
   assert.match(df, /ENTRYPOINT \["\/egress-entrypoint.sh"\]/);
+  assert.doesNotMatch(df, /VOLUME.*\/etc\/egress\.d/);
 });
 
 test('renderEgressEntrypoint: wires the mounted iptables script into an EGRESS chain', () => {
@@ -23,11 +24,13 @@ test('renderEgressEntrypoint: wires the mounted iptables script into an EGRESS c
   assert.match(ep, /\/var\/log\/egress\/dnsmasq\.log/);
 });
 
-test('renderDnsmasqBaseConf: binds loopback only and forwards to the embedded DNS', () => {
+test('renderDnsmasqBaseConf: binds loopback and avoids an embedded-DNS forwarding loop', () => {
   const conf = renderDnsmasqBaseConf();
   assert.match(conf, /bind-interfaces/);
   assert.match(conf, /listen-address=127\.0\.0\.1/);
-  assert.match(conf, /server=127\.0\.0\.11/);
+  assert.match(conf, /server=1\.1\.1\.1/);
+  assert.match(conf, /server=8\.8\.8\.8/);
+  assert.doesNotMatch(conf, /server=127\.0\.0\.11/);
 });
 
 test('renderEgressFiles: renders exactly the four build-context files', () => {
