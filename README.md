@@ -4,7 +4,44 @@
 inside containers, one isolated run per git worktree. This README is the
 hands-on guide to building it and trying a harness locally. For the concepts
 (Harness, Agent, Provider, Sidecar, Run, …) see [CONTEXT.md](./CONTEXT.md); for
-the design rationale see [docs/adr/](./docs/adr/).
+the design rationale see [docs/adr/](./docs/adr/); for the agent-facing guide
+to delegating work with `e` and `e spawn` see
+[docs/agents/e.md](./docs/agents/e.md).
+
+## Why `e` exists: the `e` / `pi` relationship
+
+`pi` is the underlying coding-agent harness: the agent that actually thinks and
+edits. `e` is the orchestration layer around the harness: it builds harness
+images, isolates each run in its own git worktree and container, delivers the
+right provider/model configuration, and collects results as git branches and
+PR/MRs. `e` runs harnesses (pi, Claude Code, Codex, opencode), and pi is the
+primary one. `e` is named for Euler's number, the mathematical partner of `pi`:
+`e` stands around the harness and drives it, the same way the constants `e`
+and `π` sit side by side in Euler's identity.
+
+```text
+User
+  │
+  ▼
+pi
+  │
+  ▼
+e
+  │
+  ├── Agent A
+  │     ├── Agent A.1
+  │     └── Agent A.2
+  │
+  ├── Agent B
+  │
+  └── Agent C
+```
+
+The user drives `pi`; `pi` delegates through `e`; each spawned agent runs its
+own isolated run and can itself spawn further agents (`e spawn` is not limited
+to one parent/child level). The docs below are the hands-on build guide; an AI
+agent that needs to know how to delegate, what a spawned run provides, and how
+results flow back should read [docs/agents/e.md](./docs/agents/e.md).
 
 ## Repo layout
 
@@ -147,9 +184,9 @@ echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 ```
 
 `protocol` must be one pi speaks — `anthropic-messages`, `openai-chat`, or
-`openai-responses`. Use a concrete `model` for the first run; `"auto"` resolves
-the best model from the endpoint's `/v1/models` at spawn (see
-[ADR-0007](./docs/adr/0007-tiers-and-auto-model-resolution.md)).
+`openai-responses`. Use a concrete `model` for the first run; `"auto"` is
+resolved by the harness against the endpoint's `/v1/models` at run start (see
+[ADR-0007](./docs/adr/0007-auto-model-delivery.md)).
 
 **d. Spawn it inside any git repo:**
 
@@ -180,11 +217,11 @@ e spawn pi-gw --mcp everything "hi"
 # → Harness "pi" has no MCP client, so it cannot use --mcp.
 ```
 
-> **pi + `auto` model gotcha:** pi selects only models declared in
-> `models.json`, so an `auto`-resolved model is **baked** into the derived image
-> (unlike Codex, which passes it on the command line). A newly-shipped model is
-> not picked up until you rebuild: `e spawn pi-gw --rebuild "…"`. This trade-off
-> is recorded in [ADR-0007](./docs/adr/0007-tiers-and-auto-model-resolution.md).
+> **pi + `auto` model note:** pi selects only models declared in its
+> `models.json`, so `e` declares `auto` there and passes it on the command line
+> (`--provider e --model auto`); pi resolves `auto` at run start against the
+> endpoint's model list. Codex instead carries `-m auto` on the run command with
+> a model-agnostic baked config (ADR-0007).
 
 ## Skills
 
