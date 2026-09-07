@@ -429,8 +429,6 @@ test('sidecarRunArgs: env-files precede the image, in order', () => {
   ]);
 });
 
-
-
 test('tcpProbeArgs: throwaway busybox nc on the private network', () => {
   assert.deepEqual(tcpProbeArgs('run-1-net', 'everything', 3001), [
     'run',
