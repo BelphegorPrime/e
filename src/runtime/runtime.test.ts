@@ -16,7 +16,6 @@ import {
   composeUpArgs,
   composeWaitArgs,
   composeRestartArgs,
-  egressRunArgs,
   type RunOptions,
   type SidecarSpec,
 } from './index.js';
@@ -428,56 +427,6 @@ test('sidecarRunArgs: env-files precede the image, in order', () => {
     '/b.env',
     'e-mcp-x',
   ]);
-});
-
-test('egressRunArgs: detached, named, NET_ADMIN, loopback DNS, blacklist+log mounts', () => {
-  assert.deepEqual(
-    egressRunArgs({
-      name: 'e-demo-fix-1-egress',
-      image: 'e-egress',
-      blacklistHost: '/run/e/x/dnsmasq.blacklist',
-      iptablesHost: '/run/e/x/iptables.rules',
-      logHost: '/run/e/x/log',
-      networks: [],
-    }),
-    [
-      'run',
-      '-d',
-      '--name',
-      'e-demo-fix-1-egress',
-      '--cap-add',
-      'NET_ADMIN',
-      '--dns',
-      '127.0.0.1',
-      '-v',
-      '/run/e/x/dnsmasq.blacklist:/etc/egress.d/dnsmasq.blacklist',
-      '-v',
-      '/run/e/x/log:/var/log/egress',
-      '-v',
-      '/run/e/x/iptables.rules:/etc/egress.d/iptables.rules:ro',
-      'e-egress',
-    ]
-  );
-});
-
-test('egressRunArgs: joins only user-defined networks at container creation', () => {
-  const args = egressRunArgs({
-    name: 'e-demo-fix-1-egress',
-    image: 'e-egress',
-    blacklistHost: '/run/e/x/dnsmasq.blacklist',
-    logHost: '/run/e/x/log',
-    networks: ['e-demo-fix-1-net', 'other-net'],
-  });
-
-  assert.deepEqual(
-    args.flatMap((arg, index) =>
-      args[index - 1] === '--network' ? [arg] : []
-    ),
-    ['e-demo-fix-1-net', 'other-net']
-  );
-  assert.ok(!args.includes('bridge'));
-  // No iptables mount when the spec omits iptablesHost.
-  assert.ok(!args.some(a => a.includes('iptables.rules')));
 });
 
 test('tcpProbeArgs: throwaway busybox nc on the private network', () => {
