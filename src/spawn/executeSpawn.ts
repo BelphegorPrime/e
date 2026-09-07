@@ -20,8 +20,6 @@ import { RunScratch } from '../runs/runScratch.js';
 import { writeIfAbsent } from '../scaffold.js';
 import { harnessDir, agentDir, mcpDir, skillDir } from '../store/paths.js';
 import { isInitialized } from '../store/config.js';
-import { localStack } from '../runtime/stack.js';
-import { OMNIROUTE_EDGE_NETWORK } from '../modelStatus.js';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -183,16 +181,11 @@ export async function executeSpawn(
   }
   configMounts.push(...plan.skillMounts);
 
-  // With the local OmniRoute stack, the agent shares the egress network namespace
-  // with OmniRoute and reaches it on localhost. It also joins the edge network so
-  // the egress policy applies to agent traffic.
-  const stackActive = localStack(facts.root)?.present ?? false;
   const runOptions: RunOptions = {
     attach: facts.attach,
     interactive: facts.interactive,
     rm: facts.rm,
     port: facts.port,
-    networks: stackActive ? [OMNIROUTE_EDGE_NETWORK] : undefined,
     env: plan.agentEnv,
     envFile: envFiles,
   };

@@ -341,7 +341,7 @@ function resolveGitPlatform(
 
 /**
  * Builds the planned `.env` write, purely: a missing file renders the full
- * template (with the omniroute-stack section); an existing file gains only the
+ * template (with the e-net section); an existing file gains only the
  * sections it lacks; collected values fill blank `KEY=` lines only. The
  * `created`/`changed` outcome tells the executor whether to write or report
  * the file up to date.
@@ -356,7 +356,7 @@ function buildEnvWrite(
     ...envHarnessSections(),
     // The OmniRoute stack section: compose interpolates these from `.e/.env`
     // (no fallbacks), so an old `.e/.env` gains the lines on re-init too.
-    { name: 'omniroute-stack', env: [...OMNIROUTE_STACK_SECRETS] },
+    { name: 'e-net', env: [...OMNIROUTE_STACK_SECRETS] },
   ];
 
   let content: string;

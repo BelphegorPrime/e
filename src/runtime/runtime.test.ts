@@ -81,26 +81,26 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
     ],
   },
   {
-    name: 'multi --network keeps order (sidecar net + compose edge net)',
+    name: 'multi --network keeps order',
     opts: {
       attach: true,
-      networks: ['omniroute-edge', 'run-1-net'],
+      networks: ['run-1-net', 'other-net'],
     },
     expected: [
       'run',
       '--network',
-      'omniroute-edge',
-      '--network',
       'run-1-net',
+      '--network',
+      'other-net',
       'img',
     ],
   },
   {
-    name: 'netns: --network container:<name> replaces networks (egress shared netns)',
+    name: 'netns: --network container:<name> replaces networks',
     opts: {
       attach: true,
       netns: 'e-demo-fix-1-egress',
-      networks: ['omniroute-edge'],
+      networks: ['run-1-net'],
     },
     expected: ['run', '--network', 'container:e-demo-fix-1-egress', 'img'],
   },
@@ -454,14 +454,14 @@ test('egressRunArgs: joins only user-defined networks at container creation', ()
     image: 'e-egress',
     blacklistHost: '/run/e/x/dnsmasq.blacklist',
     logHost: '/run/e/x/log',
-    networks: ['e-demo-fix-1-net', 'omniroute-edge'],
+    networks: ['e-demo-fix-1-net', 'other-net'],
   });
 
   assert.deepEqual(
     args.flatMap((arg, index) =>
       args[index - 1] === '--network' ? [arg] : []
     ),
-    ['e-demo-fix-1-net', 'omniroute-edge']
+    ['e-demo-fix-1-net', 'other-net']
   );
   assert.ok(!args.includes('bridge'));
   // No iptables mount when the spec omits iptablesHost.

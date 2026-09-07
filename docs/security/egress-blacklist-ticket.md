@@ -68,10 +68,10 @@ trusted).
 
 ### Network topology
 
-- Egress container joins: the run's private network (sidecar reachability +
-  group teardown), the WAN face (default bridge), and `omniroute-edge` when the
-  local compose stack is present (the agent reaches OmniRoute through shared
-  network-namespace `localhost`).
+- Egress container joins the run's private network when sidecars require it and
+  the WAN face (default bridge). When the local stack is present, OmniRoute,
+  Redis, llama.cpp, and bootstrap share the stack egress network namespace, so
+  the agent reaches OmniRoute through `localhost` without an edge network.
 - The agent joins **no** networks of its own; its only route out is the shared
   netns.
 - Sidecar MCP servers keep the ADR-0005 pattern (run network + bridge WAN

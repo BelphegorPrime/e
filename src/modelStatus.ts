@@ -1,14 +1,5 @@
 import { log } from './utils/log.js';
 
-/**
- * The stack edge network the run container joins so it can reach OmniRoute
- * directly under the egress policy. Fixed name so `e spawn` (executeSpawn)
- * attaches the run container to it. The agent and OmniRoute share the egress
- * network namespace, so the baked default base URL (`http://localhost:20128/v1`)
- * reaches OmniRoute directly.
- */
-export const OMNIROUTE_EDGE_NETWORK = 'omniroute-edge';
-
 /** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
 export const LOCAL_LLAMA_URL =
   process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';

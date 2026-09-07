@@ -120,7 +120,7 @@ test('planInit: a fresh store creates the env with the omniroute section seeded'
   const plan = planInit(state(), {});
   assert.equal(plan.env.created, true);
   assert.equal(plan.env.changed, false);
-  assert.match(plan.env.content, /# --- omniroute-stack ---/);
+  assert.match(plan.env.content, /# --- e-net ---/);
   for (const key of OMNIROUTE_STACK_SECRETS) {
     assert.equal(
       plan.envValues[key],

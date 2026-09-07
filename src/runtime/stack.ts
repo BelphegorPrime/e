@@ -3,8 +3,7 @@ import { dockerComposePath, envFilePath } from '../store/paths.js';
 
 /**
  * The **local OmniRoute stack**: the composed set of sidecar services under
- * `.e/` (compose.yaml + .env) that e brings up before a spawn so the agent
- * reaches OmniRoute itself over the edge network (ADR-0005). Stack presence is
+ * `.e/` (compose.yaml + .env) that e brings up before a spawn. Stack presence is
  * the single predicate every consumer needs — answer it here, once, so
  * `spawn`/`executeSpawn` can never disagree about whether the stack is up.
  */

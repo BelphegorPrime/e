@@ -56,8 +56,6 @@ export interface SidecarPlan {
   envFile?: string[];
 }
 
-
-
 /** Collaborators the orchestrator drives. Injected so tests can fake them. */
 export interface RunSpawnDeps {
   git: Git;
@@ -283,10 +281,8 @@ export async function runSpawn(
     }
 
     if (!readinessError) {
-      // Agent joins: its run's private network (when sidecars exist) + any
-      // pre-wired networks (the compose edge network when the local stack is
-      // present). All outbound traffic routes through the global e-egress
-      // container (network_mode: service:egress in compose), no per-run netns.
+      // Agent joins its run's private network when sidecars exist. Its normal
+      // Docker network remains unchanged for runs without sidecars.
       const networks = [
         ...new Set([
           ...(params.runOptions.networks ?? []),
@@ -397,11 +393,7 @@ export async function runSpawn(
   // branch remains the durable artifact.
   let pullRequestUrl: string | undefined;
   let pullRequestWarning: string | undefined;
-  if (
-    pushed &&
-    params.gitPlatform &&
-    deps.pullRequest
-  ) {
+  if (pushed && params.gitPlatform && deps.pullRequest) {
     const title =
       git.runLog(branch).find(c => c.subject.trim().length > 0)?.subject ||
       `e: run output for ${branch}`;

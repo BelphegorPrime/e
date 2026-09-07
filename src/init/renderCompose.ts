@@ -4,7 +4,7 @@ import {
   type HardwareVendor,
 } from '../hardware/index.js';
 /** The stack-internal network: redis, llama, bootstrap, OmniRoute, and egress backplane. */
-const OMNIROUTE_STACK_NETWORK = 'omniroute-stack';
+const STACK_NETWORK = 'e-net';
 
 /** Renders the local OmniRoute + llama.cpp development stack for `vendor`'s GPU. */
 export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
@@ -19,16 +19,9 @@ export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
 # The bootstrap service downloads the model from Hugging Face through llama.cpp's API.
 # In OmniRoute Dashboard -> Providers, add llama.cpp with base URL http://localhost:9931/v1.
 #
-# Networking: the stack is split into two networks.
-#   omniroute-stack — redis, llama.cpp, bootstrap, OmniRoute backplane, and egress
-#                     monitor. Nothing on it publishes a host port except OmniRoute/llama,
-#                     and the harness run container never joins it, so the
-#                     untrusted agent cannot reach Redis or llama.cpp directly.
-#   omniroute-edge  — OmniRoute + egress WAN gateway + run containers. All outbound
-#                     traffic (stack services + agents) routes through the egress
-#                     container's netns for DNS sinkholing and IP blacklist enforcement.
-#                     The agent shares the egress network namespace with OmniRoute, so its
-#                     baked base URL http://localhost:20128/v1 reaches OmniRoute directly.
+# Networking: e-net contains redis, llama.cpp, bootstrap, OmniRoute,
+# and the egress monitor. The harness run container never joins it, so the
+# untrusted agent cannot reach Redis or llama.cpp directly.
 # The published host ports stay bound to 127.0.0.1: only the host's own browser
 # and CLI (e spawn, e serve) reach the dashboard; untrusted LAN peers cannot.
 
@@ -44,8 +37,7 @@ services:
     dns:
       - 127.0.0.1
     networks:
-      ${OMNIROUTE_STACK_NETWORK}:
-      omniroute-edge:
+      ${STACK_NETWORK}:
     volumes:
       - ./egress-blacklist:/etc/egress.d/dnsmasq.blacklist:rw
       - egress-logs:/var/log/egress
@@ -131,10 +123,8 @@ ${gpu}
       retries: 5
 
 networks:
-  ${OMNIROUTE_STACK_NETWORK}:
-    name: ${OMNIROUTE_STACK_NETWORK}
-  omniroute-edge:
-    name: omniroute-edge
+  ${STACK_NETWORK}:
+    name: ${STACK_NETWORK}
 
 volumes:
   omniroute-data:

@@ -226,17 +226,14 @@ test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () 
   assert.doesNotMatch(compose, /\s- "20128:20128"/);
   assert.doesNotMatch(compose, /0\.0\.0\.0:20128/);
 
-  // The run container shares the egress namespace on the edge network and never
-  // joins the private stack network.
+  // The compose stack stays isolated from untrusted run containers.
   assert.doesNotMatch(compose, /host\.docker\.internal/);
   assert.match(
     compose,
-    /networks:\n\s+omniroute-stack:\n\s+name: omniroute-stack\n\s+omniroute-edge:\n\s+name: omniroute-edge/
+    /networks:\n\s+e-net:\n\s+name: e-net/
   );
-  assert.match(
-    compose,
-    /egress:[\s\S]*?networks:\n\s+omniroute-stack:\n\s+omniroute-edge:/
-  );
+  assert.doesNotMatch(compose, /omniroute-edge/);
+  assert.match(compose, /egress:[\s\S]*?networks:\n\s+e-net:/);
   const namespaceSharers =
     compose.match(/network_mode: "service:egress"/g) ?? [];
   assert.equal(namespaceSharers.length, 4);

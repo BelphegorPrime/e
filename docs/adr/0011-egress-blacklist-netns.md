@@ -53,7 +53,7 @@ Every run starts **one egress container** (`<run>-egress`) with:
 
 4. **Orchestration (`runSpawn`)**:
    - **Group order**: `createNetwork` (when sidecars exist) → `startEgress` → `startSidecar` → `probeTcp` (readiness) → agent (with `--network container:<run>-egress`, no networks of its own).
-   - The egress container joins the networks the agent used to (the run's private network when sidecars exist, the compose edge network `omniroute-edge` when the local stack is present, and always the default `bridge` WAN face).
+   - The egress container joins the run's private network when sidecars exist and always has the default `bridge` WAN face. The local stack shares its egress namespace, so no compose edge network is needed.
    - The agent gets `netns: run.egressContainer`, which replaces `networks` entirely (mutually exclusive, `netns` wins at argv-build time).
    - **Liveness check**: After the agent returns, `runtime.isRunning(run.egressContainer)`. A crash is non-fatal (the agent may hold uncommitted work) but explicitly warned: `"Egress monitor exited during the run; the agent lost its network namespace (its egress and DNS were cut off)."` (Verify item 4 from the ticket).
    - **Teardown**: `removeContainer(<run>-egress)` in the `finally` block, best-effort (a throw never masks the run result). The egress log dir is ephemeral (a temp dir per run); logs disappear when the container is removed unless the operator tails them during the run.

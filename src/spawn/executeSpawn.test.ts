@@ -143,11 +143,9 @@ class RecordingRuntime extends ContainerRuntime {
   }
 }
 
-test('routes the agent over the compose edge network when the stack is present', async () => {
+test('does not attach the agent to a Compose network when the stack is present', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-net-'));
   try {
-    // The run container joins omniroute-edge while sharing OmniRoute's network
-    // namespace, where it reaches the local gateway over localhost.
     fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), {
       recursive: true,
     });
@@ -164,7 +162,7 @@ test('routes the agent over the compose edge network when the stack is present',
       scratch: new RunScratch(),
     });
     assert.equal(result.ran, true);
-    assert.deepEqual(withStack.options?.networks, ['omniroute-edge']);
+    assert.equal(withStack.options?.networks, undefined);
     assert.equal(withStack.options?.extraHosts, undefined);
 
     // No stack: unchanged default-bridge behavior.
