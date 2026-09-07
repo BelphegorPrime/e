@@ -33,7 +33,10 @@ jobs:
 
       - name: Set Version from Tag
         if: startsWith(github.ref, 'refs/tags/v')
-        run: echo "E_VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+        run: |
+          echo "START GITHUB_ENV=$GITHUB_ENV"
+          echo "E_VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+          echo "END GITHUB_ENV=$GITHUB_ENV"
 
       # Compiles TypeScript (build:ts) then cross-compiles standalone binaries
       # for all 6 targets into command/ via @yao-pkg/pkg (build:bin).
