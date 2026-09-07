@@ -1,9 +1,9 @@
 # ADR-0011: Global Egress Blacklist via Shared Network Namespace
 
-**Status:** Accepted  
-**Date:** 2026-09-06  
-**Deciders:** System design  
-**Related:** [ADR-0005 (Sidecar MCP)](./0005-sidecar-mcp.md), [ADR-0006 (Store layout)](./0006-store-layout.md), [Attack Surface](../security/attack-surface.md)
+**Status:** Accepted
+**Date:** 2026-09-06
+
+**Related:** [ADR-0005 (container groups)](./0005-runs-as-composed-container-groups.md), [ADR-0006 (config adapter)](./0006-per-harness-config-adapter.md), [Attack Surface](../security/attack-surface.md)
 
 ## Decision
 
@@ -22,9 +22,9 @@ network_mode: "service:egress"
 ```
 
 The egress container remains trusted and owns `NET_ADMIN`, dnsmasq, iptables,
-blacklist mounts, and host-visible logs. It connects to `e-net`; services sharing
-its namespace inherit that connectivity. There is no per-run egress container,
-per-run egress lifecycle, or per-run egress network namespace.
+blacklist mounts, and host-visible logs. It connects to `e-net`; services
+sharing its namespace inherit that connectivity. There is no per-run egress
+container, per-run egress lifecycle, or per-run egress network namespace.
 
 Container MCP servers listen on dynamically selected loopback ports. Their
 configured port is preferred; if occupied by another selected MCP or requested
@@ -41,10 +41,11 @@ loopback interface.
 
 ## Blacklist and enforcement
 
-`.e/egress-blacklist` remains host-editable. `dnsmasq` sinkholes blocked domains;
-iptables rejects blocked IP:port destinations. The global service is trusted;
-the agent receives no `NET_ADMIN` capability and cannot edit the mounted policy.
-Reload policy through the global egress container, not a run container.
+`.e/egress-blacklist` remains host-editable. `dnsmasq` sinkholes blocked
+domains; iptables rejects blocked IP:port destinations. The global service is
+trusted; the agent receives no `NET_ADMIN` capability and cannot edit the
+mounted policy. Reload policy through the global egress container, not a run
+container.
 
 ## Consequences
 

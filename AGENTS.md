@@ -29,6 +29,15 @@ When running inside `/workspace` from `e spawn`, Git is host-orchestrated:
 - Git metadata and credentials intentionally remain outside the container.
 - Make requested file changes only. `e` captures, commits, and pushes them after the harness exits.
 
+### e and pi: delegating with `e spawn`
+
+`pi` is the underlying agent harness; `e` is the orchestration layer around it.
+`e spawn <agent-or-harness> "<prompt>"` delegates work to a spawned agent, and a
+spawned agent can itself use `e spawn` to delegate further, subject to the
+sandbox limits of its run. The full model: what a spawned agent receives, how
+results return to the parent, and delegation patterns, documented in
+`docs/agents/e.md`.
+
 ### Common things
 
 - if you want to execute commands be aware that `&amp;` should be replaced with `&`

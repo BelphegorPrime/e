@@ -2,6 +2,10 @@
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
+For the agent-facing guide to `e` itself (what `pi` is, what `e` is, how to
+delegate with `e spawn`, what a spawned run provides, recursive spawning) see
+[`e.md`](./e.md).
+
 ## Before exploring, read these
 
 - **`CONTEXT.md`** at the repo root
