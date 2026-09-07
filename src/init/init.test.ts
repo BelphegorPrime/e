@@ -1,12 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import {
-  chmodSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -186,6 +181,10 @@ test('seedStackSecrets: a blank key counts as absent and is generated', () => {
 
 test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networking', () => {
   const compose = renderCompose('cpu');
+  assert.match(
+    compose,
+    /egress:\n\s+build:\n\s+context: \.\/egress\n\s+image: e-egress/
+  );
   assert.match(compose, /image: diegosouzapw\/omniroute:latest/);
   assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server\n/);
   assert.match(compose, /LOCAL_HOSTNAMES: localhost/);
@@ -268,10 +267,7 @@ test('renderBootstrap: downloads and registers the configured llama.cpp model', 
   assert.match(script, /"id"\[\[:space:\]\]\*:\[\[:space:\]\]\*"'?\$repo/);
   assert.match(script, /loading model \$llama_id/);
   assert.match(script, /registering model \$model/);
-  assert.doesNotMatch(
-    script,
-    /until curl -sf http:\/\/localhost:9931\/models/
-  );
+  assert.doesNotMatch(script, /until curl -sf http:\/\/localhost:9931\/models/);
   assert.match(script, /unsloth\/Qwen3\.8-27B-GGUF:UD-Q4_K_M/);
   assert.match(script, /unsloth\/Qwen3\.6-35B-A3B-GGUF:UD-IQ4_XS/);
   assert.match(script, /ornith-ai\/Ornith-1\.5-35B-A3B-GGUF:Q4_K_M/);

@@ -36,6 +36,8 @@ export function renderCompose(vendor: HardwareVendor = 'cpu'): string {
 
 services:
   egress:
+    build:
+      context: ./egress
     image: e-egress
     container_name: e-egress
     restart: unless-stopped
