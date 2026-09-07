@@ -40,15 +40,14 @@ export interface ReadinessPolicy {
 
 /**
  * A sidecar to bring up for this Run, as the spawn edge knows it — before the
- * per-run name exists. `runSpawn` derives the unique container name and the
- * private network from the run name and turns each plan into a {@link SidecarSpec}.
+ * global egress namespace and turns each plan into a sidecar spec.
  */
 export interface SidecarPlan {
   /** The MCP server's short name = network alias = URL host the agent reaches. */
   alias: string;
   /** The sidecar's image tag (built from `.e/mcp/<name>/Dockerfile`). */
   image: string;
-  /** TCP port the server listens on. */
+  /** TCP port allocated for this run's global loopback namespace. */
   port: number;
   /** Optional in-container readiness command; readiness also requires it to exit 0. */
   healthcheck?: string[];
@@ -96,6 +95,8 @@ export interface RunSpawnParams {
   runOptions: RunOptions;
   /** Base directory the run's worktree is created under. */
   worktreesDir?: string;
+  /** The global Compose egress container (`e-egress`). */
+  egress?: string;
   /** Container MCP sidecars to bring up for this run (ADR-0005); empty for a plain run. */
   sidecars?: SidecarPlan[];
   /** Extra argv wiring the sidecars into the harness (e.g. Claude's `--mcp-config`). */
@@ -139,7 +140,7 @@ export interface RunSpawnResult {
 
 /** True if a sidecar is ready now: its TCP port is open and any healthcheck exits 0. */
 function sidecarReady(runtime: ContainerRunner, spec: SidecarSpec): boolean {
-  if (!runtime.probeTcp(spec.network, spec.alias, spec.port)) return false;
+  if (!runtime.probeTcp(spec.netns ?? spec.network!, 'localhost', spec.port)) return false;
   if (
     spec.healthcheck &&
     !runtime.probeHealthcheck(spec.name, spec.healthcheck)
@@ -236,11 +237,13 @@ export async function runSpawn(
   // Turn each sidecar plan into a concrete spec now that the run name (and thus a
   // unique container name and the private network) exists.
   const network = run.network;
+  const egress = params.egress;
   const specs: SidecarSpec[] = sidecarPlans.map(plan => ({
     name: run.sidecarContainer(plan.alias),
     alias: plan.alias,
     image: plan.image,
-    network,
+    netns: params.runOptions.netns,
+    network: params.runOptions.netns ? undefined : network,
     port: plan.port,
     healthcheck: plan.healthcheck,
     envFile: plan.envFile,
@@ -257,10 +260,12 @@ export async function runSpawn(
     // Bring up the group (ADR-0005): private network (when the run has sidecars)
     // → sidecars → readiness. A sidecar that never reaches readiness aborts the
     // run before the agent starts (fail-fast); teardown still runs in the finally.
+    // Create sidecar network before starting egress, so egress can join it.
     if (specs.length > 0) {
       runtime.createNetwork(network);
       networkCreated = true;
-
+    }
+    if (specs.length > 0) {
       for (const spec of specs) {
         runtime.startSidecar(spec);
         startedContainers.push(spec.name);
@@ -283,15 +288,17 @@ export async function runSpawn(
     if (!readinessError) {
       // Agent joins its run's private network when sidecars exist. Its normal
       // Docker network remains unchanged for runs without sidecars.
-      const networks = [
-        ...new Set([
-          ...(params.runOptions.networks ?? []),
-          ...(specs.length > 0 ? [network] : []),
-        ]),
-      ];
       const runOptions: RunOptions = {
         ...params.runOptions,
         name: run.name,
+        networks: params.runOptions.netns
+          ? undefined
+          : [
+              ...new Set([
+                ...(params.runOptions.networks ?? []),
+                ...(specs.length > 0 ? [network] : []),
+              ]),
+            ],
         // The worktree is always mounted at /workspace; a file harness's config
         // overlay (if any) is appended as extra read-only mounts outside it.
         volumes: [
@@ -299,7 +306,6 @@ export async function runSpawn(
           ...(params.configMounts ?? []),
         ],
         workdir: '/workspace',
-        networks: networks.length > 0 ? networks : undefined,
       };
       const command = params.interactive
         ? harness.buildInteractiveCommand(params.model)

@@ -1,14 +1,7 @@
 /**
- * **Egress blacklist planning** for a Run. One egress container per run (ADR-0011)
- * shares its network namespace with the harness agent (`--network container:<run>-egress`),
- * so every socket, DNS query, and connection the agent makes physically crosses the
- * egress container's netns. That container runs `dnsmasq` as a Pi-hole style DNS
- * sinkhole for blacklisted domains plus `iptables` REJECT for blacklisted IP:port
- * pairs, and logs every query and forwarded connection to a host-visible bind mount.
- *
- * This module is purely the configuration renderers — parsing the blacklist source
- * and producing the dnsmasq/iptables config the entrypoint applies. The runtime owns
- * the container spec and argv (`startEgress`).
+ * **Global egress** (ADR-0011) is composed once per local stack. Agent and MCP
+ * containers share its network namespace (`--network container:e-egress`).
+ * This module renders the host-editable blacklist consumed by that service.
  */
 
 /** The image tag the shared egress container is built from (ADR-0011). */
@@ -40,11 +33,9 @@ export interface EgressBlacklist {
 }
 
 /**
- * The shared egress container a run starts, as the runtime knows it. `name` is
- * the unique per-run container name (`<run>-egress`); the agent starts with
- * `--network container:<name>`, so the egress container's networks are the only
- * ones the agent can reach through (its own joins are replaced by the shared
- * netns).
+ * The global egress container a local Compose stack owns. Agent and MCP
+ * containers use `--network container:e-egress`; this spec is retained only for
+ * compatibility with the runtime renderer.
  */
 export interface EgressSpec {
   /** Unique per-run container name, e.g. `<runName>-egress`. */

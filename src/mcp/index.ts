@@ -182,11 +182,7 @@ export interface McpEndpoint {
   headers?: Record<string, string>;
 }
 
-/**
- * The endpoint the agent connects to. A container server is reached at its
- * per-run network alias (`http://<name>:<port>/mcp`); a remote server is reached
- * at its declared URL, carrying any auth headers.
- */
+/** The endpoint the agent connects to. Global-egress container MCPs use loopback. */
 export function mcpEndpoint(server: McpServer): McpEndpoint {
   if (server.transport === 'remote') {
     const endpoint: McpEndpoint = { name: server.name, url: server.url };
@@ -196,16 +192,42 @@ export function mcpEndpoint(server: McpServer): McpEndpoint {
   return { name: server.name, url: `http://${server.name}:${server.port}/mcp` };
 }
 
-/**
- * Splits selected servers by transport and builds every endpoint, purely — the
- * one place the container/remote fork is decided. Container servers become
- * sidecars; remote servers are wired straight to the agent; both contribute an
- * endpoint. Selection order is preserved.
- */
-export function planMcpSelection(servers: McpServer[]): {
+export const MCP_DYNAMIC_PORT_START = 31000;
+export const MCP_DYNAMIC_PORT_END = 31999;
+
+/** Assigns unique ports for sidecars sharing the global egress namespace. */
+export function allocateMcpPorts(
+  servers: ContainerMcpServer[],
+  occupied: Iterable<number> = []
+): Map<string, number> {
+  const used = new Set(occupied);
+  const result = new Map<string, number>();
+  let next = MCP_DYNAMIC_PORT_START;
+  for (const server of servers) {
+    let port = server.port;
+    if (used.has(port)) {
+      while (next <= MCP_DYNAMIC_PORT_END && used.has(next)) next++;
+      if (next > MCP_DYNAMIC_PORT_END) {
+        throw new Error('No free MCP ports remain in the dynamic range 31000-31999.');
+      }
+      port = next++;
+    }
+    used.add(port);
+    result.set(server.name, port);
+  }
+  return result;
+}
+
+/** Splits selected servers and allocates ports for container MCPs. */
+export function planMcpSelection(
+  servers: McpServer[],
+  sharedNetns = false,
+  occupiedPorts: Iterable<number> = []
+): {
   containerServers: ContainerMcpServer[];
   remoteServers: RemoteMcpServer[];
   endpoints: McpEndpoint[];
+  ports: Map<string, number>;
 } {
   const containerServers: ContainerMcpServer[] = [];
   const remoteServers: RemoteMcpServer[] = [];
@@ -213,10 +235,19 @@ export function planMcpSelection(servers: McpServer[]): {
     if (server.transport === 'container') containerServers.push(server);
     else remoteServers.push(server);
   }
+  const ports = allocateMcpPorts(containerServers, occupiedPorts);
   return {
     containerServers,
     remoteServers,
-    endpoints: servers.map(mcpEndpoint),
+    endpoints: servers.map(server => {
+      if (server.transport !== 'container') return mcpEndpoint(server);
+      const port = ports.get(server.name)!;
+      return {
+        name: server.name,
+        url: `${sharedNetns ? 'http://localhost' : `http://${server.name}`}:${port}/mcp`,
+      };
+    }),
+    ports,
   };
 }
 

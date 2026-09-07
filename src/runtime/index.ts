@@ -45,12 +45,7 @@ export interface RunOptions {
    * Mutually exclusive with {@link RunOptions.netns}.
    */
   networks?: string[];
-  /**
-   * Share another container's network namespace (`--network container:<name>`).
-   * The egress agent uses this to route every socket and DNS query through its
-   * run's egress monitor (ADR-0011); taking a shared netns means the agent has
-   * no interfaces of its own and {@link RunOptions.networks} is ignored.
-   */
+  /** Share another container's network namespace (`--network container:<name>`). */
   netns?: string;
   /** Hostname mappings added to the container (`--add-host`). */
   extraHosts?: string[];
@@ -58,9 +53,9 @@ export interface RunOptions {
 
 /**
  * A **Sidecar** to bring up alongside the primary agent (ADR-0005): a
- * container-transport MCP server on the Run's private network. The `name` is
- * unique per run (so concurrent runs never collide); the `alias` is the stable
- * short name the agent reaches it by (`http://<alias>:<port>/mcp`).
+ * container-transport MCP server in the global egress namespace. The `name` is
+ * unique per run; `alias` remains the configuration key, while the agent reaches
+ * the sidecar through `http://localhost:<port>/mcp`.
  */
 export interface SidecarSpec {
   /** Unique per-run container name, e.g. `<runName>-mcp-everything`. */
@@ -69,8 +64,10 @@ export interface SidecarSpec {
   alias: string;
   /** The sidecar's image tag (built from `.e/mcp/<name>/Dockerfile`). */
   image: string;
-  /** Private network the sidecar joins. */
-  network: string;
+  /** Global egress namespace container, normally `e-egress`. */
+  netns?: string;
+  /** Legacy private network when global egress is disabled. */
+  network?: string;
   /** TCP port the sidecar listens on — probed for readiness, reached by the agent. */
   port: number;
   /** Optional in-container readiness command; readiness also requires it to exit 0. */
@@ -100,14 +97,20 @@ export interface ContainerRunner {
 
   /** Start a sidecar detached on its network (with its alias). Throws if it fails to start. */
   startSidecar(spec: SidecarSpec): void;
+  /** Start the per-run egress monitor container. */
+  startEgress?(spec: {
+    name: string;
+    image: string;
+    blacklistHost: string;
+    iptablesHost?: string;
+    logHost: string;
+    networks: string[];
+  }): void;
   /** Stop and remove a container by name. Best-effort: never throws (teardown). */
   removeContainer(name: string): void;
 
   /**
-   * True if a TCP connection to `port` on `host` succeeds, probed from a sibling
-   * container on `network` — the sidecar publishes no host port, so readiness is
-   * checked over the same private-network DNS the agent will use.
-   */
+  /** Probe from a network or shared namespace container. */
   probeTcp(network: string, host: string, port: number): boolean;
   /** Run `command` inside `container` (`exec`); true iff it exits 0. */
   probeHealthcheck(container: string, command: string[]): boolean;
@@ -155,16 +158,12 @@ export function networkRemoveArgs(name: string): string[] {
 }
 
 export function sidecarRunArgs(spec: SidecarSpec): string[] {
-  const args = [
-    'run',
-    '-d',
-    '--name',
-    spec.name,
-    '--network',
-    spec.network,
-    '--network-alias',
-    spec.alias,
-  ];
+  const args = ['run', '-d', '--name', spec.name];
+  if (spec.netns) {
+    args.push('--network', `container:${spec.netns}`);
+  } else if (spec.network) {
+    args.push('--network', spec.network, '--network-alias', spec.alias);
+  }
   for (const f of spec.envFile ?? []) args.push('--env-file', f);
   args.push(spec.image);
   return args;
@@ -523,6 +522,19 @@ export class ContainerRuntime implements ContainerRunner {
       throw new Error(
         `Failed to start sidecar "${spec.name}" (exit code ${result.status ?? 1}).`
       );
+    }
+  }
+
+  /** Start the per-run egress monitor. */
+  startEgress(spec: Parameters<typeof egressRunArgs>[0]): void {
+    const args = egressRunArgs(spec);
+    log.command(`> ${this.command} ${args.join(' ')}`);
+    const result = spawnSync(this.command, args, {
+      stdio: ['ignore', 'ignore', 'inherit'],
+      shell: false,
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error(`Failed to start egress monitor "${spec.name}".`);
     }
   }
 
