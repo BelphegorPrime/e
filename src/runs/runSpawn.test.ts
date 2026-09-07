@@ -227,6 +227,10 @@ class FakeRuntime implements ContainerRunner {
     this.calls.push('isRunning');
     return !this.crashed.has(name);
   }
+  containerLogs(_name: string): string | undefined {
+    this.calls.push('containerLogs');
+    return undefined;
+  }
 }
 
 /** A sleep spy that never actually waits, so readiness polling is instant in tests. */
