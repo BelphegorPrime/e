@@ -206,6 +206,35 @@ export function logsArgs(name: string): string[] {
   return ['logs', name];
 }
 
+/** Egress monitor run args (stub — feature incomplete). */
+export function egressRunArgs(spec: {
+  name: string;
+  image: string;
+  blacklistHost: string;
+  iptablesHost?: string;
+  logHost: string;
+  networks: string[];
+}): string[] {
+  const args = [
+    'run',
+    '-d',
+    '--name',
+    spec.name,
+    '--cap-add',
+    'NET_ADMIN',
+    '--dns',
+    '127.0.0.1',
+  ];
+  for (const net of spec.networks) args.push('--network', net);
+  args.push('-v', `${spec.blacklistHost}:/etc/egress.d/dnsmasq.blacklist`);
+  args.push('-v', `${spec.logHost}:/var/log/egress`);
+  if (spec.iptablesHost) {
+    args.push('-v', `${spec.iptablesHost}:/etc/egress.d/iptables.rules:ro`);
+  }
+  args.push(spec.image);
+  return args;
+}
+
 /**
  * Starts an entire Compose stack (`compose up -d`). `envFile`, when given, is
  * passed as `--env-file` so `${VAR}` interpolation in the compose file sees the
