@@ -10,12 +10,12 @@ import {
   dockerComposePath,
   bootstrapScriptPath,
 } from '../store/paths.js';
+import { findRoot } from '../store/root.js';
 import { log } from '../utils/log.js';
 
 const execAsync = promisify(exec);
 
 const OMNIROUTE_VOLUME = 'omniroute-data';
-const OMNIROUTE_CONTAINER = 'omniroute';
 
 export interface ExportOptions {
   output?: string;
@@ -34,7 +34,10 @@ export interface ExportOptions {
 export async function exportConfiguration(
   options: ExportOptions = {}
 ): Promise<string> {
-  const root = options.root;
+  // Discover the nearest initialized `.e` store when no root was supplied.
+  // Passing undefined directly to the path helpers would incorrectly default
+  // every path to the user's home directory.
+  const root = findRoot(options.root);
   const baseDir = eBaseDir(root);
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const defaultOutput = path.join(baseDir, `e-export-${timestamp}.zip`);
@@ -47,7 +50,8 @@ export async function exportConfiguration(
     await execAsync(`docker volume inspect ${OMNIROUTE_VOLUME}`);
   } catch (error) {
     throw new Error(
-      `Docker volume ${OMNIROUTE_VOLUME} not found. Run 'docker compose -f ${dockerComposePath(root)} up -d' first.`
+      `Docker volume ${OMNIROUTE_VOLUME} not found. Run 'docker compose -f ${dockerComposePath(root)} up -d' first.`,
+      { cause: error }
     );
   }
 
