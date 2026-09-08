@@ -1,8 +1,0 @@
-{
-  "name": "pi-skill-tool-extension",
-  "private": true,
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
-  }
-}
