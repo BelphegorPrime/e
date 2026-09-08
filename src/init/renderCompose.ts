@@ -21,7 +21,7 @@ const TEMPLATE = `# Local OmniRoute gateway with {{{runtimeSummary}}}.
 #{{/anyRuntime}}{{^anyRuntime}}# No local inference runtime was selected; add external providers in OmniRoute.{{/anyRuntime}}
 # Networking: e-net contains redis{{#llama}}, llama.cpp{{/llama}}{{#ollama}}, Ollama{{/ollama}}{{#vllm}}, vLLM{{/vllm}}{{#anyRuntime}}, bootstrap{{/anyRuntime}}, OmniRoute,
 # and the egress monitor. The harness run container never joins it, so the
-# untrusted agent cannot reach Redis{{#llama}}, llama.cpp{{/llama}}{{#ollama}}, Ollama{{/ollama}}{{#vllm}}, vLLM{{/vllm}} directly.
+# untrusted agent cannot reach Redis{{#llama}}, llama.cpp{{/llama}}{{#ollama}}, Ollama{{/ollama}}{{#vllm}}, vLLM{{/vllm}}, Searxng directly.
 # The published host ports stay bound to 127.0.0.1: only the host's own browser
 # and CLI (e spawn, e serve) reach the dashboard; untrusted LAN peers cannot.
 
@@ -158,10 +158,27 @@ services:
       timeout: 5s
       retries: 5
 
+  searxng:
+    image: searxng/searxng:latest
+    container_name: e-searxng
+    restart: unless-stopped
+    network_mode: "service:egress"
+    depends_on:
+      egress:
+        condition: service_started
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8080/
+    volumes:
+      - searxng-data:/etc/searxng
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 networks:
   {{{stackNetwork}}}:
     name: {{{stackNetwork}}}
-
 volumes:
   omniroute-data:
     name: omniroute-data
@@ -173,6 +190,8 @@ volumes:
     name: vllm-data
 {{/vllm}}  redis-data:
     name: redis-data
+  searxng-data:
+    name: e-searxng-data
   egress-logs:
     name: e-egress-logs
 `;

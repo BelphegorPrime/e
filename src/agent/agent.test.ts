@@ -94,6 +94,7 @@ test('renderDefaultAgent: defaults provider endpoint to local OmniRoute', () => 
     name: 'codex',
     harness: 'codex',
     provider: provider,
+    skills: ['web-search'],
   });
 });
 

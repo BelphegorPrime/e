@@ -111,9 +111,74 @@ export function renderConventionalCommitsSkill(): SkillFiles {
   };
 }
 
+/**
+ * A shipped `web-search` skill: guidance the agent can load to use the web
+ * search and fetch tools. Shipped to every harness so web research works out
+ * of the box.
+ */
+export function renderWebSearchSkill(): SkillFiles {
+  return {
+    'SKILL.md':
+      [
+        '---',
+        'name: web-search',
+        'description: Web search and URL fetch tools for research, documentation lookup, and current information retrieval. Use when the task needs external knowledge, library docs, API references, or real-world data.',
+        '---',
+        '',
+        '# Web Search',
+        '',
+        'Search the web and fetch pages for research, docs, and current info.',
+        '',
+        '## Search tool',
+        '',
+        'Use `web_search` when you need external information: library docs, API',
+        'references, news, specifications, or facts not in the codebase.',
+        '',
+        '```',
+        'web_search(query: ""): returns ranked search results: title, snippet, URL.',
+        'Use short focused queries. Apply search operators when helpful.',
+        '```',
+        '',
+        '## Fetch tool',
+        '',
+        'Use `fetch_content` (pi) / `web_fetch` (other harnesses) to retrieve a',
+        'page content when search results give a URL but you need the full text,',
+        'code samples, or structured data.',
+        '',
+        '```',
+        'fetch_content(url: ""): returns extracted page content. Prefer over curl.',
+        '```',
+        '',
+        '## When to search',
+        '',
+        '- Task mentions a library, framework, or API you do not know well.',
+        '- You need current behavior, version, or deprecation info.',
+        '- You must compare alternatives or find a recommended pattern.',
+        '- You need data not present in the repo or local context.',
+        '',
+        '## When NOT to search',
+        '',
+        '- The answer is likely in the repo already.',
+        '- The question is about the user own code or design preference.',
+        '- Search would repeat work the conversation already covered.',
+        '',
+        '## Process',
+        '',
+        '1. Search once with a specific query.',
+        '2. Open only the most promising URL(s) with the fetch tool.',
+        '3. Quote or cite the relevant part in your answer.',
+        '4. Stop searching once the answer is supported.',
+        '',
+        'Do not chain many searches unless the task is explicitly exploratory or the',
+        'earlier results clearly miss the target.',
+      ].join('\n') + '\n',
+  };
+}
+
 /** The skills `e init` ships, keyed by name. */
 export const SHIPPED_SKILLS: Record<string, () => SkillFiles> = {
   'conventional-commits': renderConventionalCommitsSkill,
+  'web-search': renderWebSearchSkill,
 };
 
 /**
