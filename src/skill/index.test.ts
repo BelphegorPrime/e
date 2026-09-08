@@ -9,6 +9,7 @@ import {
   parseSkillList,
   skillMountSpec,
   renderConventionalCommitsSkill,
+  renderWebSearchSkill,
   SHIPPED_SKILLS,
   SKILL_MANIFEST,
 } from './index.js';
@@ -60,6 +61,7 @@ test('the shipped conventional-commits skill has a valid SKILL.md with frontmatt
 test('e init ships at least one skill', () => {
   assert.ok(Object.keys(SHIPPED_SKILLS).length >= 1);
   assert.ok('conventional-commits' in SHIPPED_SKILLS);
+  assert.ok('web-search' in SHIPPED_SKILLS);
 });
 
 test('parseSkillList flattens comma-separated and repeated values, trims, de-dupes, keeps order', () => {
@@ -81,4 +83,13 @@ test('skillMountSpec places a skill read-only at <skillsDir>/<name>, outside /wo
   });
   // The container-side target is outside /workspace, so it never enters the branch.
   assert.ok(!spec.container.startsWith('/workspace'));
+});
+
+test('the shipped web-search skill has a valid SKILL.md with frontmatter', () => {
+  const files = renderWebSearchSkill();
+  assert.ok(files['SKILL.md']);
+  assert.match(files['SKILL.md'], /^---\n/);
+  assert.match(files['SKILL.md'], /^name: web-search$/m);
+  assert.match(files['SKILL.md'], /web_search/);
+  assert.match(files['SKILL.md'], /web_fetch/);
 });

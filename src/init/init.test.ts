@@ -196,6 +196,12 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.match(compose, /- omniroute-data:\/app\/data/);
   assert.match(compose, /- llama-data:\/root\/\.cache/);
   assert.match(compose, /- redis-data:\/data/);
+  assert.match(compose, /image: searxng\/searxng:latest/);
+  assert.match(compose, /container_name: e-searxng/);
+  assert.match(compose, /network_mode: "service:egress"/);
+  assert.match(compose, /SEARXNG_BASE_URL: http:\/\/localhost:8080\//);
+  assert.match(compose, /- searxng-data:\/etc\/searxng/);
+  assert.match(compose, /searxng-data:\n {4}name: e-searxng-data/);
   assert.doesNotMatch(compose, /\.\/volumes\//);
   assert.match(compose, /LLAMA_ARG_HOST: "0\.0\.0\.0"/);
   assert.match(compose, /LLAMA_ARG_PORT: "9931"/);
@@ -275,7 +281,7 @@ test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () 
   assert.match(compose, /egress:[\s\S]*?networks:\n\s+e-net:/);
   const namespaceSharers =
     compose.match(/network_mode: "service:egress"/g) ?? [];
-  assert.equal(namespaceSharers.length, 4);
+  assert.equal(namespaceSharers.length, 5);
 });
 
 test('renderCompose: no default secrets — every stack var must come from .env', () => {

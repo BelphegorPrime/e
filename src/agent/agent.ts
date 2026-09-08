@@ -85,6 +85,7 @@ export function renderDefaultAgent(
       protocol: harness.protocols[0],
       apiKeyEnv: 'OPENAI_API_KEY',
     },
+    skills: ['web-search'],
   };
 
   return JSON.stringify(agent, null, 2) + '\n';
