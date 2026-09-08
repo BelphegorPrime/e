@@ -11,6 +11,7 @@ import {
   renderConventionalCommitsSkill,
   renderWebSearchSkill,
   SHIPPED_SKILLS,
+  SHIPPED_SKILL_COLLECTIONS,
   SKILL_MANIFEST,
 } from './index.js';
 import { skillDir, skillManifestPath } from '../store/paths.js';
@@ -62,6 +63,15 @@ test('e init ships at least one skill', () => {
   assert.ok(Object.keys(SHIPPED_SKILLS).length >= 1);
   assert.ok('conventional-commits' in SHIPPED_SKILLS);
   assert.ok('web-search' in SHIPPED_SKILLS);
+});
+
+test('the shared Caveman collection is a cross-harness image source, not a local Claude path', () => {
+  assert.ok(SHIPPED_SKILL_COLLECTIONS.includes('JuliusBrussee/caveman'));
+  assert.ok(
+    SHIPPED_SKILL_COLLECTIONS.every(
+      collection => !collection.startsWith('.') && !collection.includes('\\')
+    )
+  );
 });
 
 test('parseSkillList flattens comma-separated and repeated values, trims, de-dupes, keeps order', () => {
