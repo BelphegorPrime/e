@@ -29,6 +29,15 @@ When running inside `/workspace` from `e spawn`, Git is host-orchestrated:
 - Git metadata and credentials intentionally remain outside the container.
 - Make requested file changes only. `e` captures, commits, and pushes them after the harness exits.
 
+### Harness extensions in spawned runs
+
+When asked to add a harness-specific skill, tool, plugin, or other extension
+through `e spawn`, do not create a top-level harness-native directory in the
+repository or `/workspace` (for example `.pi/`, `.claude/`, `.opencode/`, or
+`.codex/`). Those locations are not managed by `e` and must not be used for
+e-managed extensions. Use the e-managed Store paths and mechanisms instead;
+see `CONTEXT.md` for the extension vocabulary and relevant upstream ecosystems.
+
 ### e and pi: delegating with `e spawn`
 
 `pi` is the underlying agent harness; `e` is the orchestration layer around it.
