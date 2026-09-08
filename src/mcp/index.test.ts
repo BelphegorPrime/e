@@ -12,11 +12,11 @@ import {
   planMcpSelection,
   renderEverythingFiles,
   renderFilesystemFiles,
-  renderSearxngFiles,
   type McpServer,
   type ContainerMcpServer,
   type RemoteMcpServer,
 } from './index.js';
+import { renderSearxngFiles } from './searxng.js';
 
 test('parseMcpServer accepts a minimal container server', () => {
   const server = parseMcpServer(
@@ -263,10 +263,10 @@ test('listMcpServerNames lists persisted server dirs only', () => {
       recursive: true,
     });
     fs.writeFileSync(path.join(root, '.e', 'mcp', 'not-a-dir'), 'x');
-    assert.deepEqual(
-      [...listMcpServerNames(root)].sort(),
-      ['everything', 'filesystem']
-    );
+    assert.deepEqual([...listMcpServerNames(root)].sort(), [
+      'everything',
+      'filesystem',
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -277,10 +277,13 @@ test('allocateMcpPorts keeps declared ports when they are free', () => {
     { name: 'a', port: 3001 },
     { name: 'b', port: 3002 },
   ] as ContainerMcpServer[];
-  assert.deepEqual([...allocateMcpPorts(servers)], [
-    ['a', 3001],
-    ['b', 3002],
-  ]);
+  assert.deepEqual(
+    [...allocateMcpPorts(servers)],
+    [
+      ['a', 3001],
+      ['b', 3002],
+    ]
+  );
 });
 
 test('allocateMcpPorts moves a colliding port into the dynamic range', () => {
@@ -291,7 +294,7 @@ test('allocateMcpPorts moves a colliding port into the dynamic range', () => {
 
 test('allocateMcpPorts advances past occupied dynamic ports and stays unique', () => {
   const servers = [
-    { name: 'a', port: 3001, }, // collides -> 31000
+    { name: 'a', port: 3001 }, // collides -> 31000
     { name: 'b', port: 31000 + 1 }, // free
   ] as ContainerMcpServer[];
   const result = allocateMcpPorts(servers, [3001, 31000]);
@@ -306,8 +309,5 @@ test('allocateMcpPorts throws when the dynamic range is exhausted', () => {
   ] as ContainerMcpServer[];
   const occupied = new Set<number>([3001, 3002]);
   for (let p = 31000; p <= 31999; p++) occupied.add(p);
-  assert.throws(
-    () => allocateMcpPorts(servers, occupied),
-    /No free MCP ports/
-  );
+  assert.throws(() => allocateMcpPorts(servers, occupied), /No free MCP ports/);
 });
