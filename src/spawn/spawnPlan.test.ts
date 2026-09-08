@@ -202,10 +202,10 @@ test('validateSpawn: rejects a provider on a harness with no config adapter', ()
   assert.throws(() => validateSpawn(f), /no config adapter/);
 });
 
-test('validateSpawn: rejects --mcp against a harness with no MCP client (pi)', () => {
+test('validateSpawn: rejects --mcp against a harness with no MCP wiring (opencode)', () => {
   const f = facts({
-    harness: HARNESSES.pi,
-    agent: { name: 'pi', harness: 'pi' },
+    harness: HARNESSES.opencode,
+    agent: { name: 'opencode', harness: 'opencode' },
     mcpServers: [containerMcp],
   });
   assert.throws(() => validateSpawn(f), /has no MCP client/);
@@ -279,6 +279,19 @@ test('planSpawn: a file-MCP harness (codex) renders a config overlay, no mcpArgs
   assert.deepEqual(plan.mcpArgs, []);
   assert.ok(plan.configOverlay);
   assert.equal(plan.configOverlay?.mountTo, '/home/node/.codex/config.toml');
+});
+test('planSpawn: a file-MCP harness (pi) delivers a mcp.json overlay via its adapter', () => {
+  const f = facts({
+    harness: HARNESSES.pi,
+    agent: { name: 'pi', harness: 'pi' },
+    mcpServers: [containerMcp],
+  });
+  const plan = planSpawn(f);
+  assert.deepEqual(plan.mcpArgs, []);
+  assert.ok(plan.configOverlay);
+  assert.equal(plan.configOverlay?.mountTo, '/home/node/.pi/agent/mcp.json');
+  const parsed = JSON.parse(plan.configOverlay!.file.content);
+  assert.ok(parsed.mcpServers.everything);
 });
 
 test('planSpawn: a sidecar credential is rendered from storeEnv', () => {

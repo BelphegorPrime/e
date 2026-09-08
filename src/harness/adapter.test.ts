@@ -6,6 +6,7 @@ import {
   piAdapter,
   renderCodexConfig,
   renderCodexMcpServers,
+  renderPiMcpServers,
   renderPiModelsJson,
   piApi,
   PI_PROVIDER_ID,
@@ -327,6 +328,38 @@ test('codexAdapter.planConfigOverlay: a default agent (no base) yields an MCP-on
   // No leading blank lines when there is no base config.
   assert.match(overlay.file.content, /^\[mcp_servers\.everything\]/);
 });
+test('renderPiMcpServers: renders a standard mcpServers JSON block with url entries', () => {
+  const json = renderPiMcpServers([
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+    { name: 'filesystem', url: 'http://filesystem:8000/mcp' },
+  ]);
+  const parsed = JSON.parse(json);
+  assert.deepEqual(parsed.mcpServers.everything, { url: 'http://everything:3001/mcp' });
+  assert.deepEqual(parsed.mcpServers.filesystem, { url: 'http://filesystem:8000/mcp' });
+});
+test('renderPiMcpServers: renders remote headers verbatim in the entry', () => {
+  const json = renderPiMcpServers([
+    { name: 'hosted', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer TOKEN' } },
+  ]);
+  const parsed = JSON.parse(json);
+  assert.deepEqual(parsed.mcpServers.hosted, {
+    url: 'https://mcp.example.com/mcp',
+    headers: { Authorization: 'Bearer TOKEN' },
+  });
+});
+test('renderPiMcpServers: an empty selection renders an empty mcpServers map', () => {
+  assert.deepEqual(JSON.parse(renderPiMcpServers([])), { mcpServers: {} });
+});
+test('piAdapter.planConfigOverlay: produces a mcp.json overlay mounted in the pi config dir', () => {
+  const overlay = piAdapter.planConfigOverlay!('', [
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+  ]);
+  assert.equal(overlay.file.fileName, 'mcp.json');
+  assert.equal(overlay.mountTo, '/home/node/.pi/agent/mcp.json');
+  assert.deepEqual(overlay.env, []);
+  const parsed = JSON.parse(overlay.file.content);
+  assert.deepEqual(parsed.mcpServers.everything, { url: 'http://everything:3001/mcp' });
+});
 
 const piProvider: Provider = {
   baseUrl: 'https://gateway.example.com/v1',
@@ -390,7 +423,10 @@ test('piAdapter: the only runtime env is the API key, delivered by name', () => 
   ]);
 });
 
-test('piAdapter: ships no MCP delivery (pi has no MCP client)', () => {
-  assert.equal(piAdapter.planConfigOverlay, undefined);
+test('piAdapter: ships MCP delivery via the pi-mcp-adapter (mcp.json overlay)', () => {
+  assert.equal(typeof piAdapter.planConfigOverlay, 'function');
+  // pi's overlay is self-contained (the provider models.json stays baked); the
+  // adapter does not render MCP into the provider file, so renderMcpServers is
+  // intentionally absent.
   assert.equal(piAdapter.renderMcpServers, undefined);
 });

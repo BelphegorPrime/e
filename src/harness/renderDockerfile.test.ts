@@ -7,11 +7,12 @@ const pi = {
   label: 'Pi Coding Agent CLI harness.',
   npmPackage: '@earendil-works/pi-coding-agent',
   npmFlags: ['--ignore-scripts'],
+  setupSteps: ['pi install npm:pi-mcp-adapter', 'pi install npm:pi-web-access'],
   skillCollections: ['mattpocock/skills', 'JuliusBrussee/caveman'],
   skillsAgent: 'pi',
 };
 
-test('renderDockerfile: renders the harness base (label, install, workdir)', () => {
+test('renderDockerfile: renders the harness base (label, install, setup steps, skills, workdir)', () => {
   const dockerfile = renderDockerfile(pi);
   assert.match(dockerfile, /^FROM node:lts-alpine/);
   assert.match(dockerfile, /# Pi Coding Agent CLI harness\./);
@@ -19,6 +20,8 @@ test('renderDockerfile: renders the harness base (label, install, workdir)', () 
     dockerfile,
     /RUN apk add --no-cache git && npm install -g --ignore-scripts @earendil-works\/pi-coding-agent/
   );
+  assert.match(dockerfile, /^RUN pi install npm:pi-mcp-adapter$/m);
+  assert.match(dockerfile, /^RUN pi install npm:pi-web-access$/m);
   assert.match(dockerfile, /WORKDIR \/workspace/);
 });
 

@@ -179,7 +179,7 @@ export interface SpawnFacts {
  * resolution and any build. Throws with a clear message on the first problem:
  *  - a provider protocol the harness does not speak;
  *  - a provider on a harness with no config adapter;
- *  - `--mcp` against a harness with no MCP client;
+ *  - `--mcp` against a harness with no MCP client (opencode);
  *  - baked or `--skill` skills against a harness that supports none.
  * Server/skill *existence* is checked by the edge during gather (it needs disk).
  */
@@ -198,7 +198,7 @@ export function validateSpawn(facts: SpawnFacts): void {
   if (facts.mcpServers.length > 0 && caps.mcp === 'none') {
     throw new Error(
       `Harness "${harness.name}" has no MCP client, so it cannot use --mcp. ` +
-        `Use a harness that supports MCP (e.g. claudeCode or codex).`
+        `Use a harness that supports MCP (e.g. claudeCode, codex, or pi).`
     );
   }
 

@@ -12,6 +12,7 @@ import {
   planMcpSelection,
   renderEverythingFiles,
   renderFilesystemFiles,
+  renderSearxngFiles,
   type McpServer,
   type ContainerMcpServer,
   type RemoteMcpServer,
@@ -208,6 +209,18 @@ test('shipped filesystem server bridges stdio to streamable HTTP', () => {
   assert.match(files['Dockerfile'], /supergateway/);
 });
 
+test('shipped searxng server proxies web_search and fetch_content to Searxng', () => {
+  const files = renderSearxngFiles();
+  const parsed = parseMcpServer(
+    JSON.parse(files['mcp.json']),
+    'searxng',
+    'mcp.json'
+  ) as ContainerMcpServer;
+  assert.equal(parsed.port, 3000);
+  assert.deepEqual(parsed.requiredEnv, []);
+  assert.match(files['Dockerfile'], /supergateway/);
+  assert.match(files['Dockerfile'], /mcp-server\.mjs/);
+});
 test('readMcpServer returns undefined for a name that was never persisted', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-mcp-'));
   try {

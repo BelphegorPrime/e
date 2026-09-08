@@ -92,4 +92,9 @@ test('the shipped web-search skill has a valid SKILL.md with frontmatter', () =>
   assert.match(files['SKILL.md'], /^name: web-search$/m);
   assert.match(files['SKILL.md'], /web_search/);
   assert.match(files['SKILL.md'], /web_fetch/);
+  // The skill should mention Searxng as the underlying search service
+  assert.match(files['SKILL.md'], /Searxng/);
+  // ... and document the reachable endpoint for direct fallback
+  assert.match(files['SKILL.md'], /localhost:8080/);
+  assert.match(files['SKILL.md'], /format=json/);
 });
