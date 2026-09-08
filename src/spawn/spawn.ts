@@ -25,7 +25,6 @@ import { findRoot } from '../store/root.js';
 import { envFilePath, egressBlacklistPath } from '../store/paths.js';
 import { readConfig } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
-import { STACK_NETWORK } from '../constants.js';
 
 import { log } from '../utils/log.js';
 
@@ -337,8 +336,6 @@ export function registerSpawnCommand(program: Command): void {
             );
             facts.storeEnv[facts.agent.provider.apiKeyEnv] = key;
           }
-
-
 
           const plan = planSpawn(facts);
           const config = readConfig(facts.root);

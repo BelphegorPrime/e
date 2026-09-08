@@ -214,18 +214,18 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
     /^volumes:\n {2}omniroute-data:\n {4}name: omniroute-data\n {2}llama-data:\n {4}name: llama-data\n {2}redis-data:\n {4}name: redis-data$/m
   );
   // Only the selected runtime is provisioned: no Ollama or vLLM services.
-  assert.doesNotMatch(compose, /\n  ollama:/);
-  assert.doesNotMatch(compose, /\n  vllm:/);
+  assert.doesNotMatch(compose, /\n {2}ollama:/);
+  assert.doesNotMatch(compose, /\n {2}vllm:/);
 });
 
 test('renderCompose: adds the Ollama and vLLM containers when selected', () => {
   const compose = renderCompose('cpu', ['llamacpp', 'ollama', 'vllm']);
-  assert.match(compose, /\n  llama:/);
-  assert.match(compose, /\n  ollama:/);
+  assert.match(compose, /\n {2}llama:/);
+  assert.match(compose, /\n {2}ollama:/);
   assert.match(compose, /image: ollama\/ollama:latest/);
   assert.match(compose, /127\.0\.0\.1:11434:11434/);
   assert.match(compose, /- ollama-data:\/root\/\.ollama/);
-  assert.match(compose, /\n  vllm:/);
+  assert.match(compose, /\n {2}vllm:/);
   assert.match(compose, /image: vllm\/vllm-openai:latest/);
   assert.match(compose, /127\.0\.0\.1:8000:8000/);
   assert.match(compose, /- vllm-data:\/root\/\.cache/);
@@ -239,19 +239,19 @@ test('renderCompose: adds the Ollama and vLLM containers when selected', () => {
 
 test('renderCompose: an Ollama-only stack renders no llama service', () => {
   const compose = renderCompose('cpu', ['ollama']);
-  assert.doesNotMatch(compose, /\n  llama:/);
+  assert.doesNotMatch(compose, /\n {2}llama:/);
   assert.doesNotMatch(compose, /LLAMA_ARG_/);
-  assert.match(compose, /\n  ollama:/);
+  assert.match(compose, /\n {2}ollama:/);
   assert.match(compose, /image: ollama\/ollama:latest/);
   assert.match(compose, /bootstrap:/);
 });
 
 test('renderCompose: no runtime selection renders no bootstrap service and no runtime containers', () => {
   const compose = renderCompose('cpu', []);
-  assert.doesNotMatch(compose, /\n  bootstrap:/);
-  assert.doesNotMatch(compose, /\n  llama:/);
-  assert.doesNotMatch(compose, /\n  ollama:/);
-  assert.doesNotMatch(compose, /\n  vllm:/);
+  assert.doesNotMatch(compose, /\n {2}bootstrap:/);
+  assert.doesNotMatch(compose, /\n {2}llama:/);
+  assert.doesNotMatch(compose, /\n {2}ollama:/);
+  assert.doesNotMatch(compose, /\n {2}vllm:/);
   assert.match(compose, /no local inference runtime selected/);
   // The gateway itself still renders.
   assert.match(compose, /image: diegosouzapw\/omniroute:latest/);
@@ -410,10 +410,7 @@ test('renderBootstrap: registers a missing provider through the OmniRoute API', 
 });
 
 test('renderBootstrap: skips a provider OmniRoute already knows', () => {
-  const result = runBootstrapProviderScript(
-    ['llamacpp'],
-    'llama.cpp (local)'
-  );
+  const result = runBootstrapProviderScript(['llamacpp'], 'llama.cpp (local)');
   assert.match(result.output ?? '', /provider already registered/);
   assert.match(result.output ?? '', /bootstrap complete/);
 });

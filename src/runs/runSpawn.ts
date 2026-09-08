@@ -243,7 +243,6 @@ export async function runSpawn(
   // Turn each sidecar plan into a concrete spec now that the run name (and thus a
   // unique container name and the private network) exists.
   const network = run.network;
-  const egress = params.egress;
   const specs: SidecarSpec[] = sidecarPlans.map(plan => ({
     name: run.sidecarContainer(plan.alias),
     alias: plan.alias,

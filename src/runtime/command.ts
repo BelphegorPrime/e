@@ -1,4 +1,5 @@
 import * as cp from 'node:child_process';
+import type { Buffer } from 'node:buffer';
 import type { Command } from 'commander';
 import { LOCAL_RUNTIMES, type LocalRuntime } from '../init/localRuntimes.js';
 import { LOCAL_LLAMA_URL } from '../modelStatus.js';
@@ -17,7 +18,7 @@ export interface SpawnSyncLike {
   ): {
     status: number | null;
     error?: Error;
-    signal: NodeJS.Signals | null;
+    signal: string | null;
     stdout: string | Buffer;
     stderr: string | Buffer;
   };

@@ -11,9 +11,15 @@ import { log } from '../utils/log.js';
 // <model>`) is exercised in main.test.
 
 function stubSpawn(calls: Array<{ file: string; args: string[] }>) {
-  return (file: string, args: readonly string[], options?: unknown) => {
+  return (file: string, args: readonly string[], _options?: unknown) => {
     calls.push({ file, args: [...args] });
-    return { status: 0, error: undefined, signal: null, stdout: '', stderr: '' };
+    return {
+      status: 0,
+      error: undefined,
+      signal: null,
+      stdout: '',
+      stderr: '',
+    };
   };
 }
 
@@ -89,7 +95,13 @@ test('downloadModel vllm: reports the first-load handoff without spawning anythi
     _options?: unknown
   ) => {
     calls.push({ _file, _args });
-    return { status: 0, error: undefined, signal: null, stdout: '', stderr: '' };
+    return {
+      status: 0,
+      error: undefined,
+      signal: null,
+      stdout: '',
+      stderr: '',
+    };
   };
   let infoMessage = '';
   mock.method(log, 'info', (msg: string) => (infoMessage = msg));
