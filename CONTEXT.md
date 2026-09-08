@@ -43,3 +43,12 @@ _Avoid_: launch, create, exec
 **Store**:
 The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/<name>/` (each holding that agent's `agent.json` plus any rendered `models.json`/`Dockerfile`), the MCP server definitions under `mcp/`, the Skills under `skills/`, the host-only orchestration settings in `config.json` (the favorite/default harness, the git platform for PR/MR creation — never injected into containers, unlike `.env`), the shared `.env`, and `model-ids.json` (a cached model registry, currently unused by the run paths) — located by walking up from the working directory (or `--dir`), falling back to home.
 _Avoid_: workspace (the container's mounted checkout is the run's worktree)
+
+## Harness extension resources
+
+When a harness-specific capability is needed, such as a skill, tool, or plugin, these extension ecosystems may help:
+
+- **Pi**: https://pi.dev/packages
+- **Claude Code**: https://claudemarketplaces.com/
+- **opencode**: https://opencode.ai/docs/ecosystem#plugins
+- **Codex**: https://www.codex-marketplace.com/
