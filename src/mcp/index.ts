@@ -1,7 +1,6 @@
 import fs from 'fs';
 import { mcpConfigPath, mcpBaseDir } from '../store/paths.js';
 import { renderSearxngFiles } from './searxng.js';
-export { renderSearxngFiles } from './searxng.js';
 
 /**
  * The **MCP server** context (ADR-0005/0006): a capability the agent connects to
