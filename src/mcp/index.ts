@@ -1,5 +1,6 @@
 import fs from 'fs';
 import { mcpConfigPath, mcpBaseDir } from '../store/paths.js';
+import { renderSearxngFiles } from './searxng.js';
 
 /**
  * The **MCP server** context (ADR-0005/0006): a capability the agent connects to
@@ -314,4 +315,5 @@ export function renderFilesystemFiles(): McpServerFiles {
 export const SHIPPED_MCP_SERVERS: Record<string, () => McpServerFiles> = {
   everything: renderEverythingFiles,
   filesystem: renderFilesystemFiles,
+  searxng: renderSearxngFiles,
 };

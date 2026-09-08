@@ -281,7 +281,10 @@ test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () 
   assert.match(compose, /egress:[\s\S]*?networks:\n\s+e-net:/);
   const namespaceSharers =
     compose.match(/network_mode: "service:egress"/g) ?? [];
-  assert.equal(namespaceSharers.length, 5);
+  // egress shares with omniroute, redis, the bootstrap, and searxng (plus the
+  // egress-adjacent runtimes when present); searxng rides the same namespace so
+  // the run's web-search tools can reach it on loopback.
+  assert.equal(namespaceSharers.length, 6);
 });
 
 test('renderCompose: no default secrets — every stack var must come from .env', () => {

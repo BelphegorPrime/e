@@ -39,6 +39,11 @@ export interface DockerfileParams {
    * is non-empty. Default: undefined.
    */
   skillsAgent?: string;
+  /**
+   * Optional setup steps to run after installing the global npm package and
+   * before installing skills. Each step is a separate `RUN` line. Default: [].
+   */
+  setupSteps?: string[];
 }
 
 /**
@@ -52,6 +57,9 @@ const TEMPLATE = `FROM {{{baseImage}}}
 
 # {{{label}}}
 {{#homeLine}}{{{.}}}{{/homeLine}}RUN apk add --no-cache git && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}
+{{#setupSteps}}
+{{{.}}}
+{{/setupSteps}}
 {{#skillsBlock}}
 {{{.}}}
 {{/skillsBlock}}
@@ -107,6 +115,7 @@ export function renderDockerfile(p: DockerfileParams): string {
     label: p.label,
     flags: p.npmFlags ?? [],
     npmPackage: p.npmPackage,
+    setupSteps: (p.setupSteps ?? []).map((step) => `RUN ${step}`),
     skillsBlock,
     workdir: p.workdir ?? '/workspace',
     homeLine: nonRoot ? `ENV HOME=${NODE_HOME}\n` : '',

@@ -251,6 +251,22 @@ test('planInit: steps are ordered — harnesses, shipped servers, bootstrap, the
   assert.ok(bootstrap?.write.file.endsWith('.e/bootstrap.sh'));
   assert.ok(compose?.write.file.endsWith('.e/compose.yaml'));
 });
+test('planInit: ships the searxng MCP server with the other shipped servers', () => {
+  const plan = planInit(state(), {});
+  const writesStep = plan.steps.find(
+    step =>
+      step.kind === 'writes' &&
+      step.writes.some(w => w.file.includes('.e/mcp/searxng/'))
+  );
+  assert.ok(writesStep, 'expected a writes step containing the searxng MCP server');
+  assert.ok(writesStep.kind === 'writes');
+  const files = writesStep.writes
+    .filter(w => w.file.includes('.e/mcp/searxng/'))
+    .map(w => w.file);
+  assert.ok(files.some(f => f.endsWith('/Dockerfile')));
+  assert.ok(files.some(f => f.endsWith('/mcp.json')));
+  assert.ok(writesStep.writes.every(w => w.clobber === 'never'));
+});
 
 test('planInit: all paths live under the requested root', () => {
   const plan = planInit({ ...state(), root: '/tmp/fake-e-root' }, {});

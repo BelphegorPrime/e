@@ -87,6 +87,7 @@ export const HARNESSES: Record<string, Harness> = {
       label: 'Pi Coding Agent CLI harness.',
       npmPackage: '@earendil-works/pi-coding-agent',
       npmFlags: ['--ignore-scripts'],
+      setupSteps: ['pi install npm:pi-mcp-adapter', 'pi install npm:pi-web-access'],
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'pi',
     },
@@ -224,9 +225,10 @@ export function resolveHarness(name: string): Harness {
  * How a harness accepts MCP server config, its declared MCP capability (ADR-0006):
  *  - `flag` — inline on the command line (Claude Code's `--mcp-config`).
  *  - `file` — rendered into its native config file, delivered as a runtime
- *    overlay via its file adapter (Codex's `config.toml` / `CODEX_HOME`).
- *  - `none` — no MCP client at all (pi, whose file adapter renders no MCP), or no
- *    MCP delivery wired yet; `--mcp` is rejected with a clear error at spawn.
+ *    overlay via its file adapter (Codex's `config.toml` / `CODEX_HOME`; pi's
+ *    `mcp.json` via the pi-mcp-adapter extension).
+ *  - `none` — no MCP client at all or no MCP delivery wired yet (opencode);
+ *    `--mcp` is rejected with a clear error at spawn.
  */
 export type McpDeliveryForm = 'flag' | 'file' | 'none';
 
@@ -238,8 +240,8 @@ export type McpDeliveryForm = 'flag' | 'file' | 'none';
  */
 function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
   if (harness.renderMcpArgs) return 'flag';
-  // A file adapter delivers MCP only if it renders an overlay; pi is a file
-  // harness for its provider but ships no MCP client, so it stays `none`.
+  // A file adapter delivers MCP only if it renders an overlay; opencode has no
+  // file adapter, so it stays `none`.
   if (harness.adapter?.kind === 'file' && harness.adapter.planConfigOverlay) {
     return 'file';
   }

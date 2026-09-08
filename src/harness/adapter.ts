@@ -140,8 +140,9 @@ export interface FileHarnessAdapter {
    * runtime-overlay fragment (ADR-0006 layer 3), to be merged onto the baked
    * base config and delivered outside `/workspace` via {@link configDir}.
    * Container sidecars use streamable HTTP (a `url`); returns an empty string
-   * when nothing is selected. **Optional** — absent for a file harness that ships
-   * no MCP client (pi), which the spawn edge capability-gates off.
+   * when nothing is selected. **Optional** — absent for a file harness whose
+   * MCP config is self-contained (pi renders `mcp.json` standalone in
+   * {@link planConfigOverlay}, so it needs no fragment).
    */
   renderMcpServers?(endpoints: McpEndpoint[]): string;
   /**
@@ -152,8 +153,9 @@ export interface FileHarnessAdapter {
    * env — everything the spawn edge needs without touching this adapter's
    * {@link configDir}/{@link configFileName}/{@link configDirEnv} fields. Pure —
    * the edge writes the file, formats the mount, and appends the env. **Optional**
-   * — its presence is the harness's declared file-MCP capability; absent for pi
-   * (no MCP client). See {@link planMcpDelivery}.
+   * — its presence is the harness's declared file-MCP capability; pi ships one via
+   * the pi-mcp-adapter extension, delivering `mcp.json` beside the baked provider
+   * file. See {@link planMcpDelivery}.
    */
   planConfigOverlay?(
     baseConfig: string,
@@ -327,6 +329,25 @@ export const codexAdapter: FileHarnessAdapter = {
 export const PI_PROVIDER_ID = 'e';
 
 /**
+ * Renders MCP server endpoints into the standard MCP JSON shape that the
+ * `pi-mcp-adapter` extension reads: a top-level `mcpServers` map whose entries
+ * carry a `url` (streamable HTTP) and optional `headers`, matching the
+ * canonical `mcp.json` format pi's own CLI consumes. Grounding: pi-mcp-adapter
+ * `README.md` (MCP file discovery: the pi agent dir `mcp.json`).
+ */
+export function renderPiMcpServers(endpoints: McpEndpoint[]): string {
+  const mcpServers: Record<string, { url: string; headers?: Record<string, string> }> = {};
+  for (const endpoint of endpoints) {
+    const entry: { url: string; headers?: Record<string, string> } = { url: endpoint.url };
+    if (endpoint.headers && Object.keys(endpoint.headers).length > 0) {
+      entry.headers = endpoint.headers;
+    }
+    mcpServers[endpoint.name] = entry;
+  }
+  return JSON.stringify({ mcpServers }, null, 2) + '\n';
+}
+
+/**
  * Maps e's wire {@link Protocol} to pi's `api` field value. Only one name differs
  * from e's: our `openai-chat` is pi's `openai-completions`.
  * Grounding: pi `docs/models.md` "Supported APIs".
@@ -378,9 +399,10 @@ export function renderPiModelsJson(
  * pi's adapter. pi is configured through `models.json` under its config dir
  * (relocatable via `PI_CODING_AGENT_DIR`), so the provider is rendered into a
  * file baked into the derived agent image; only the API key is delivered at
- * runtime, by name. pi ships **no MCP client** (`docs/usage.md` Design
- * Principles), so it carries no `renderMcpServers`/`planConfigOverlay` — the
- * spawn edge capability-gates `--mcp pi` off (see {@link harnessCapabilities}). pi
+ * runtime, by name. The `pi-mcp-adapter` extension (installed into the image)
+ * gives pi an MCP client; it reads a standard `mcp.json` (`mcpServers` with
+ * `url` entries for streamable HTTP) from the same config dir, so `--mcp` is
+ * delivered as a read-only overlay mounted at `~/.pi/agent/mcp.json`. pi
  * requires the model declared in the file, so `modelInFile` is `true`. The
  * config dir lives under the non-root runtime user's home, outside `/workspace`.
  */
@@ -397,6 +419,23 @@ export const piAdapter: FileHarnessAdapter = {
     return {
       fileName: 'models.json',
       content: renderPiModelsJson(provider, storeEnv),
+    };
+  },
+  planConfigOverlay(
+    _baseConfig: string,
+    endpoints: McpEndpoint[]
+  ): ConfigOverlayDelivery {
+    return {
+      file: {
+        // pi-mcp-adapter reads this file for MCP servers; the baked models.json
+        // provider config is untouched (the overlay mounts a sibling file).
+        fileName: 'mcp.json',
+        content: renderPiMcpServers(endpoints),
+      },
+      // Mount next to models.json in pi's config dir. No relocation env: pi's
+      // provider models.json stays exactly where it baked.
+      mountTo: `${this.configDir}/mcp.json`,
+      env: [],
     };
   },
   renderRuntimeEnv(provider: Provider): ContainerEnv[] {

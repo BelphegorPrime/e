@@ -20,8 +20,12 @@ const TEMPLATE = `# Local OmniRoute gateway with {{{runtimeSummary}}}.
 # \`e <runtime> download <model>\`.
 #{{/anyRuntime}}{{^anyRuntime}}# No local inference runtime was selected; add external providers in OmniRoute.{{/anyRuntime}}
 # Networking: e-net contains redis{{#llama}}, llama.cpp{{/llama}}{{#ollama}}, Ollama{{/ollama}}{{#vllm}}, vLLM{{/vllm}}{{#anyRuntime}}, bootstrap{{/anyRuntime}}, OmniRoute,
-# and the egress monitor. The harness run container never joins it, so the
-# untrusted agent cannot reach Redis{{#llama}}, llama.cpp{{/llama}}{{#ollama}}, Ollama{{/ollama}}{{#vllm}}, vLLM{{/vllm}}, Searxng directly.
+# and the egress monitor. Services marked \`network_mode: "service:egress"\` share
+# the egress container's network namespace, so a run that joins the same
+# namespace (\`e spawn\` in local-stack mode) reaches them on loopback: Searxng at
+# http://localhost:8080 (used by the \`web_search\`/\`fetch_content\` tools), the
+# runtimes at their loopback ports, and OmniRoute at localhost:20128. The
+# untrusted agent still cannot reach them by Docker DNS aliases (no e-net join).
 # The published host ports stay bound to 127.0.0.1: only the host's own browser
 # and CLI (e spawn, e serve) reach the dashboard; untrusted LAN peers cannot.
 
