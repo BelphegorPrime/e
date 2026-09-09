@@ -150,6 +150,7 @@ export async function executeSpawn(
             plan.baseEnvWhitelist
           )
         );
+
   const envFiles = orderEnvFiles(baseEnvPath, facts.userEnvFile);
   for (const content of plan.remoteCredentials) {
     envFiles.push(scratch.file('remote-mcp.env', content));
