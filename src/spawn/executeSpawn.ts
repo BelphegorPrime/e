@@ -30,7 +30,6 @@ export interface ExecuteSpawnDeps {
   pullRequest?: PullRequest;
   /** The configured git platform, forwarded to `runSpawn`. */
   gitPlatform?: GitPlatform;
-  keepWorktree?: boolean;
 }
 
 /**
@@ -210,7 +209,6 @@ export async function executeSpawn(
       sidecars,
       configMounts,
       storeRoot: facts.root,
-      keepWorktree: deps.keepWorktree,
     }
   );
 }

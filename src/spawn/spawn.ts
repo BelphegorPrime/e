@@ -340,7 +340,6 @@ export function registerSpawnCommand(program: Command): void {
             scratch,
             pullRequest: config.gitPlatform ? new HostPullRequest() : undefined,
             gitPlatform: config.gitPlatform,
-            keepWorktree: opts.keepWorktree,
           });
 
           // Rendered env-files hold resolved secrets; each container already has
