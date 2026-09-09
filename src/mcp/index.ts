@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import { mcpConfigPath, mcpBaseDir } from '../store/paths.js';
 import { renderSearxngFiles } from './searxng.js';
 
