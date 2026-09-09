@@ -224,11 +224,9 @@ export function renderCodexConfig(provider: Provider): string {
   // custom provider and no id collision to worry about.
   const id = 'e';
   const lines: string[] = [];
-  // `auto` carries no concrete id to bake; it arrives at runtime via `-m`.
-  if (provider.model !== 'auto') {
-    lines.push(`model = ${tomlBasicString(provider.model)}`);
-  }
+
   lines.push(
+    `model = ${tomlBasicString(provider.model)}`,
     `model_provider = ${tomlBasicString(id)}`,
     ``,
     `[model_providers.${id}]`,
@@ -336,9 +334,14 @@ export const PI_PROVIDER_ID = 'e';
  * `README.md` (MCP file discovery: the pi agent dir `mcp.json`).
  */
 export function renderPiMcpServers(endpoints: McpEndpoint[]): string {
-  const mcpServers: Record<string, { url: string; headers?: Record<string, string> }> = {};
+  const mcpServers: Record<
+    string,
+    { url: string; headers?: Record<string, string> }
+  > = {};
   for (const endpoint of endpoints) {
-    const entry: { url: string; headers?: Record<string, string> } = { url: endpoint.url };
+    const entry: { url: string; headers?: Record<string, string> } = {
+      url: endpoint.url,
+    };
     if (endpoint.headers && Object.keys(endpoint.headers).length > 0) {
       entry.headers = endpoint.headers;
     }

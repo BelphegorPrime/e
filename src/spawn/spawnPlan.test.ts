@@ -248,7 +248,7 @@ test('planSpawn: file harness bakes a derived image and passes an auto model on 
       harness: 'codex',
       provider: {
         baseUrl: 'https://h',
-        model: 'auto',
+        model: 'auto/coding',
         protocol: 'openai-responses',
         apiKeyEnv: 'OPENAI_API_KEY',
       },
@@ -258,7 +258,8 @@ test('planSpawn: file harness bakes a derived image and passes an auto model on 
   const plan = planSpawn(f);
   assert.ok(plan.delivery?.bakedConfig);
   assert.equal(plan.agentImagePlan?.imageTag, 'e-agent-smart-codex');
-  assert.equal(plan.runtimeModel, 'auto/coding');
+  assert.match(plan.delivery.bakedConfig.file.content, /auto\/coding/);
+  assert.equal(plan.runtimeModel, undefined);
 });
 
 test('planSpawn: a flag-MCP harness (claude) wires --mcp-config, no overlay', () => {
@@ -313,7 +314,6 @@ test('planSpawn: a bare run whitelists only the template global base URLs', () =
   assert.deepEqual(plan.baseEnvWhitelist, [...GLOBAL_BASE_URL_ENV]);
 });
 
-
 test('planSpawn: whitelist adds the provider key and base-URL env names', () => {
   const plan = planSpawn(
     facts({
@@ -359,6 +359,9 @@ test('planSpawn: baked skills go to the derived image; per-run skills become mou
   const plan = planSpawn(f);
   assert.deepEqual(plan.agentImagePlan?.skillNames, ['baked-skill']);
   assert.equal(plan.skillMounts.length, 1);
-  assert.equal(plan.skillMounts[0].container, '/home/node/.claude/skills/run-skill');
+  assert.equal(
+    plan.skillMounts[0].container,
+    '/home/node/.claude/skills/run-skill'
+  );
   assert.equal(plan.skillMounts[0].ro, true);
 });
