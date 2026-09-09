@@ -1,4 +1,4 @@
-import type { Git } from './git/index.js';
+import type { Git } from '../git/index.js';
 
 /** Clean seam for worktree management in runs. */
 export interface WorktreeManager {
