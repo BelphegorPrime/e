@@ -9,6 +9,7 @@
  */
 
 import type { McpEndpoint } from '../mcp/index.js';
+import { NODE_HOME } from './renderDockerfile.js';
 
 /**
  * Every model wire protocol `e` recognises — the single source of truth. A
@@ -285,7 +286,7 @@ function tomlBareKey(name: string): string {
 export const codexAdapter: FileHarnessAdapter = {
   kind: 'file',
   configDirEnv: 'CODEX_HOME',
-  configDir: '/home/node/.codex',
+  configDir: `${NODE_HOME}/.codex`,
   configFileName: 'config.toml',
   // Codex delivers an auto-resolved model on the command line (`codex exec -m`),
   // so it keeps the config model-agnostic rather than baking the model.
@@ -412,7 +413,7 @@ export function renderPiModelsJson(
 export const piAdapter: FileHarnessAdapter = {
   kind: 'file',
   configDirEnv: 'PI_CODING_AGENT_DIR',
-  configDir: '/home/node/.pi/agent',
+  configDir: `${NODE_HOME}/.pi/agent`,
   configFileName: 'models.json',
   modelInFile: true,
   renderProviderFile(
