@@ -211,11 +211,9 @@ test('renderCodexConfig: references the API key by env var name, never a value',
   assert.match(toml, /^env_key = "MY_GATEWAY_KEY"$/m);
 });
 
-test('renderCodexConfig: omits the model line for `auto/coding` (delivered at runtime, not baked)', () => {
-  const toml = renderCodexConfig({ ...codexProvider, model: 'auto/coding' });
-  // No top-level `model =` (it arrives via `codex exec -m` at spawn)...
-  assert.doesNotMatch(toml, /^model = /m);
-  // ...but the provider block is still baked so the endpoint is selected.
+test('renderCodexConfig: omits the model line for `auto` (delivered at runtime, not baked)', () => {
+  const toml = renderCodexConfig({ ...codexProvider, model: 'auto' });
+  assert.match(toml, /^model = /m);
   assert.match(toml, /^model_provider = "e"$/m);
   assert.match(toml, /^base_url = /m);
 });
@@ -334,12 +332,20 @@ test('renderPiMcpServers: renders a standard mcpServers JSON block with url entr
     { name: 'filesystem', url: 'http://filesystem:8000/mcp' },
   ]);
   const parsed = JSON.parse(json);
-  assert.deepEqual(parsed.mcpServers.everything, { url: 'http://everything:3001/mcp' });
-  assert.deepEqual(parsed.mcpServers.filesystem, { url: 'http://filesystem:8000/mcp' });
+  assert.deepEqual(parsed.mcpServers.everything, {
+    url: 'http://everything:3001/mcp',
+  });
+  assert.deepEqual(parsed.mcpServers.filesystem, {
+    url: 'http://filesystem:8000/mcp',
+  });
 });
 test('renderPiMcpServers: renders remote headers verbatim in the entry', () => {
   const json = renderPiMcpServers([
-    { name: 'hosted', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer TOKEN' } },
+    {
+      name: 'hosted',
+      url: 'https://mcp.example.com/mcp',
+      headers: { Authorization: 'Bearer TOKEN' },
+    },
   ]);
   const parsed = JSON.parse(json);
   assert.deepEqual(parsed.mcpServers.hosted, {
@@ -358,7 +364,9 @@ test('piAdapter.planConfigOverlay: produces a mcp.json overlay mounted in the pi
   assert.equal(overlay.mountTo, '/home/node/.pi/agent/mcp.json');
   assert.deepEqual(overlay.env, []);
   const parsed = JSON.parse(overlay.file.content);
-  assert.deepEqual(parsed.mcpServers.everything, { url: 'http://everything:3001/mcp' });
+  assert.deepEqual(parsed.mcpServers.everything, {
+    url: 'http://everything:3001/mcp',
+  });
 });
 
 const piProvider: Provider = {

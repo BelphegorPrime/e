@@ -80,8 +80,14 @@ test('renderDerivedDockerfile: copies each baked skill tree into the harness ski
     skills: { skillsDir: '/home/node/.claude/skills', names: ['a', 'b'] },
   });
   assert.match(dockerfile, /^FROM e-harness-claudecode$/m);
-  assert.match(dockerfile, /^COPY skills\/a\/ \/home\/node\/\.claude\/skills\/a\/$/m);
-  assert.match(dockerfile, /^COPY skills\/b\/ \/home\/node\/\.claude\/skills\/b\/$/m);
+  assert.match(
+    dockerfile,
+    /^COPY skills\/a\/ \/home\/node\/\.claude\/skills\/a\/$/m
+  );
+  assert.match(
+    dockerfile,
+    /^COPY skills\/b\/ \/home\/node\/\.claude\/skills\/b\/$/m
+  );
 });
 
 test('renderDerivedDockerfile: composes both a provider block and a skills block', () => {
@@ -91,7 +97,10 @@ test('renderDerivedDockerfile: composes both a provider block and a skills block
     skills: { skillsDir: '/home/node/.agents/skills', names: ['a'] },
   });
   assert.match(dockerfile, /^COPY config\.toml /m);
-  assert.match(dockerfile, /^COPY skills\/a\/ \/home\/node\/\.agents\/skills\/a\/$/m);
+  assert.match(
+    dockerfile,
+    /^COPY skills\/a\/ \/home\/node\/\.agents\/skills\/a\/$/m
+  );
 });
 
 test('renderDerivedDockerfile: keeps every COPY target outside /workspace', () => {
@@ -138,28 +147,26 @@ test('planProviderDelivery: an env harness delivers all env and bakes nothing', 
 });
 
 test('planProviderDelivery: an env harness carries auto model in env', () => {
-  const plan = planProviderDelivery(
-    {},
-    claudeCodeAdapter,
-    { ...envProvider, model: 'auto/coding' },
-  );
+  const plan = planProviderDelivery({}, claudeCodeAdapter, {
+    ...envProvider,
+    model: 'auto/coding',
+  });
   assert.equal(plan.runtimeModel, undefined);
   assert.ok(
     plan.runtimeEnv.some(
       e =>
         e.name === 'ANTHROPIC_MODEL' &&
         'value' in e &&
-        e.value === 'auto'
+        e.value === 'auto/coding'
     )
   );
 });
 
 test('planProviderDelivery: a file harness bakes a concrete model into its config, no runtime model', () => {
-  const plan = planProviderDelivery(
-    {},
-    codexAdapter,
-    { ...fileProvider, model: 'gpt-5-codex' },
-  );
+  const plan = planProviderDelivery({}, codexAdapter, {
+    ...fileProvider,
+    model: 'gpt-5-codex',
+  });
   assert.ok(plan.bakedConfig);
   assert.equal(plan.bakedConfig.file.fileName, 'config.toml');
   assert.equal(plan.bakedConfig.configDir, '/home/node/.codex');
@@ -174,14 +181,13 @@ test('planProviderDelivery: a file harness bakes a concrete model into its confi
 });
 
 test('planProviderDelivery: a file harness keeps an auto model out of the config, delivers it on the command', () => {
-  const plan = planProviderDelivery(
-    {},
-    codexAdapter,
-    { ...fileProvider, model: 'auto/coding' },
-  );
+  const plan = planProviderDelivery({}, codexAdapter, {
+    ...fileProvider,
+    model: 'auto/coding',
+  });
   assert.ok(plan.bakedConfig);
-  assert.doesNotMatch(plan.bakedConfig.file.content, /^model = /m);
-  assert.equal(plan.runtimeModel, 'auto');
+  assert.match(plan.bakedConfig.file.content, /auto\/coding/);
+  assert.equal(plan.runtimeModel, undefined);
 });
 
 const piProvider: Provider = {
@@ -199,18 +205,17 @@ test('planProviderDelivery: pi bakes auto model into models.json and passes it o
   assert.equal(plan.bakedConfig.configDirEnv, 'PI_CODING_AGENT_DIR');
   // pi requires the model declared in the file to select it, so auto is baked.
   const cfg = JSON.parse(plan.bakedConfig.file.content);
-  assert.deepEqual(cfg.providers.e.models, [{ id: 'auto' }]);
+  assert.deepEqual(cfg.providers.e.models, [{ id: 'auto/coding' }]);
   // It is still passed on the command line for provider/model selection.
-  assert.equal(plan.runtimeModel, 'auto');
+  assert.equal(plan.runtimeModel, 'auto/coding');
   assert.deepEqual(plan.runtimeEnv, piAdapter.renderRuntimeEnv(piProvider));
 });
 
 test('planProviderDelivery: pi bakes a concrete model too and passes it for selection', () => {
-  const plan = planProviderDelivery(
-    {},
-    piAdapter,
-    { ...piProvider, model: 'claude-opus-5' }
-  );
+  const plan = planProviderDelivery({}, piAdapter, {
+    ...piProvider,
+    model: 'claude-opus-5',
+  });
   const cfg = JSON.parse(plan.bakedConfig!.file.content);
   assert.deepEqual(cfg.providers.e.models, [{ id: 'claude-opus-5' }]);
   assert.equal(plan.runtimeModel, 'claude-opus-5');

@@ -104,7 +104,7 @@ test('renderDefaultAgent: a default agent carries no provider', () => {
     apiKeyEnv: 'OPENAI_API_KEY',
     baseUrl: 'http://localhost:20128/v1',
     baseUrlEnv: 'OPENAI_BASE_URL',
-    model: 'auto',
+    model: 'auto/coding',
     protocol: 'openai-responses',
   };
   assert.deepStrictEqual(parsed.provider, provider);
@@ -152,8 +152,7 @@ test('parseAgent: an empty skills array is treated as no baked skills', () => {
 
 test('parseAgent: a non-string-array skills field throws', () => {
   assert.throws(
-    () =>
-      parseAgent({ name: 'x', harness: 'pi', skills: 'a' }, 'test.json'),
+    () => parseAgent({ name: 'x', harness: 'pi', skills: 'a' }, 'test.json'),
     /"skills" must be an array of strings/
   );
 });
@@ -247,12 +246,15 @@ test('listAgents: reads every persisted agent, skipping non-directory entries', 
       path.join(agentDir('claude-pr', root), 'agent.json'),
       JSON.stringify({ name: 'claude-pr', harness: 'claudeCode' })
     );
-    fs.writeFileSync(path.join(agentDir('smart-codex', root), '.DS_Store'), 'junk');
-    const agents = listAgents(root);
-    assert.deepEqual(
-      agents.map(a => a.name).sort(),
-      ['claude-pr', 'smart-codex']
+    fs.writeFileSync(
+      path.join(agentDir('smart-codex', root), '.DS_Store'),
+      'junk'
     );
+    const agents = listAgents(root);
+    assert.deepEqual(agents.map(a => a.name).sort(), [
+      'claude-pr',
+      'smart-codex',
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
