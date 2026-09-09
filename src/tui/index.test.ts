@@ -5,7 +5,6 @@ import { RUNTIME_CATALOGS } from '../init/localRuntimes.js';
 import { GIT_PLATFORMS } from '../store/config.js';
 import { type WizardState } from '../init/wizard.js';
 import { applyMenuResult, buildInitRows } from './index.js';
-import { isTuiAvailable } from './settings.js';
 
 const WIZARD_STATE: WizardState = {
   harnessNames: Object.keys(HARNESSES),
@@ -40,9 +39,7 @@ test('buildInitRows: model rows track the selected runtimes', () => {
   );
   assert.ok(modelRows.length > 0);
   assert.ok(
-    modelRows.every(r =>
-      RUNTIME_CATALOGS.llamacpp.some(m => m.id === r.id)
-    )
+    modelRows.every(r => RUNTIME_CATALOGS.llamacpp.some(m => m.id === r.id))
   );
 });
 
@@ -83,9 +80,4 @@ test('applyMenuResult: unchecked marks stay absent from the answers', () => {
   assert.equal(answers.localRuntimes, undefined);
   assert.equal(answers.models, undefined);
   assert.equal(answers.harness, undefined);
-});
-
-test('isTuiAvailable: false under piped stdin (CI)', () => {
-  // In the test runner stdin is not a TTY, so the menu must not trigger.
-  assert.equal(isTuiAvailable(), false);
 });

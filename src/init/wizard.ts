@@ -214,7 +214,9 @@ async function promptModels(
     return selectModels(catalog, current);
   }
 
-  log.info('\nLocal models to provision (per selected runtime; downloaded later via `e <runtime> download <model>`):');
+  log.info(
+    '\nLocal models to provision (per selected runtime; downloaded later via `e <runtime> download <model>`):'
+  );
   catalog.forEach((model, i) => {
     const marker = current.includes(model.id) ? '*' : ' ';
     log.info(

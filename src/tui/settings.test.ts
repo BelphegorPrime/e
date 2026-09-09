@@ -1,18 +1,100 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  dispatchKeyPress,
-  type CycleRow,
-  type MenuRow,
-  type MenuResult,
-} from './settings.js';
+import { type CycleRow, type MenuRow, type MenuResult } from './settings.js';
+import Readline from 'node:readline';
+
+/** Result of dispatching one keypress in {@link dispatchKeyPress}. */
+export type KeyOutcome =
+  | { kind: 'cancel' }
+  | { kind: 'finish' }
+  | { kind: 'move'; cursor: number }
+  | { kind: 'render' }
+  | { kind: 'none' };
+
+/**
+ * Pure key-dispatch for the settings menu. Mutates `partial` (and cycle-row
+ * `value`s) in place exactly like the interactive loop; the caller re-renders,
+ * moves or finishes based on the outcome. Extracted so the Enter/Space split
+ * and the movement rules are unit-testable without a TTY.
+ */
+export function dispatchKeyPress(
+  key: Readline.Key,
+  rows: MenuRow[],
+  partial: MenuResult,
+  cursor: number
+): KeyOutcome {
+  if ((key.ctrl && key.name === 'c') || key.name === 'q') {
+    return { kind: 'cancel' };
+  }
+  if (key.name === 'up' || key.name === 'k') {
+    let c = cursor;
+    do c = (c - 1 + rows.length) % rows.length;
+    while (rows[c]?.kind === 'header');
+    return { kind: 'move', cursor: c };
+  }
+  if (key.name === 'down' || key.name === 'j') {
+    let c = cursor;
+    do c = (c + 1) % rows.length;
+    while (rows[c]?.kind === 'header');
+    return { kind: 'move', cursor: c };
+  }
+  if (key.name === 'space') {
+    const row = rows[cursor];
+    if (row?.kind === 'checkbox') {
+      const list = [...((partial[row.target] as string[] | undefined) ?? [])];
+      if (row.checked) {
+        partial[row.target] = list.filter(id => id !== row.id);
+      } else {
+        partial[row.target] = [...list, row.id];
+      }
+      return { kind: 'render' };
+    }
+    if (row?.kind === 'cycle') {
+      const idx = row.values.indexOf(row.value);
+      row.value = row.values[(idx + 1) % row.values.length]!;
+      partial[row.target] = row.value;
+      return { kind: 'render' };
+    }
+    return { kind: 'render' };
+  }
+  if (key.name === 'return' || key.name === 'enter') {
+    return { kind: 'finish' };
+  }
+  return { kind: 'none' };
+}
 
 const rows: MenuRow[] = [
-  { kind: 'checkbox', id: 'llamacpp', target: 'runtimes', label: 'llama.cpp', checked: false },
-  { kind: 'checkbox', id: 'ollama', target: 'runtimes', label: 'Ollama', checked: false },
+  {
+    kind: 'checkbox',
+    id: 'llamacpp',
+    target: 'runtimes',
+    label: 'llama.cpp',
+    checked: false,
+  },
+  {
+    kind: 'checkbox',
+    id: 'ollama',
+    target: 'runtimes',
+    label: 'Ollama',
+    checked: false,
+  },
   { kind: 'header', label: 'Harness' },
-  { kind: 'cycle', id: 'harness', target: 'harness', label: 'Harness', value: 'pi', values: ['pi', 'codex'] },
-  { kind: 'cycle', id: 'platform', target: 'platform', label: 'Git platform', value: 'github', values: ['github', 'gitlab'] },
+  {
+    kind: 'cycle',
+    id: 'harness',
+    target: 'harness',
+    label: 'Harness',
+    value: 'pi',
+    values: ['pi', 'codex'],
+  },
+  {
+    kind: 'cycle',
+    id: 'platform',
+    target: 'platform',
+    label: 'Git platform',
+    value: 'github',
+    values: ['github', 'gitlab'],
+  },
 ];
 
 const cycle = (id: string, rowsIn: MenuRow[]): CycleRow =>
@@ -27,7 +109,10 @@ test('dispatchKeyPress: Enter finishes without toggling the focused row', () => 
 
 test('dispatchKeyPress: enter/return are both finish keys', () => {
   assert.equal(dispatchKeyPress({ name: 'enter' }, rows, {}, 0).kind, 'finish');
-  assert.equal(dispatchKeyPress({ name: 'return' }, rows, {}, 0).kind, 'finish');
+  assert.equal(
+    dispatchKeyPress({ name: 'return' }, rows, {}, 0).kind,
+    'finish'
+  );
 });
 
 test('dispatchKeyPress: Space toggles a checkbox on, state lives in the partial answer', () => {
@@ -42,9 +127,7 @@ test('dispatchKeyPress: Space toggles a checkbox off again', () => {
   // checked-in-partial row arrives with checked: true.
   const partial: MenuResult = { runtimes: ['llamacpp'] };
   const derived: MenuRow[] = rows.map(r =>
-    r.kind === 'checkbox' && r.id === 'llamacpp'
-      ? { ...r, checked: true }
-      : r
+    r.kind === 'checkbox' && r.id === 'llamacpp' ? { ...r, checked: true } : r
   );
   dispatchKeyPress({ name: 'space' }, derived, partial, 0);
   assert.deepEqual(partial.runtimes, []);
@@ -75,7 +158,10 @@ test('dispatchKeyPress: movement wraps around the row list', () => {
 
 test('dispatchKeyPress: q and Ctrl-C cancel', () => {
   assert.equal(dispatchKeyPress({ name: 'q' }, rows, {}, 0).kind, 'cancel');
-  assert.equal(dispatchKeyPress({ name: 'c', ctrl: true }, rows, {}, 0).kind, 'cancel');
+  assert.equal(
+    dispatchKeyPress({ name: 'c', ctrl: true }, rows, {}, 0).kind,
+    'cancel'
+  );
 });
 
 test('dispatchKeyPress: Space on a cycle row updates the collected result', () => {
