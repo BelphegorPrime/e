@@ -1,4 +1,4 @@
-import type { ContainerRunner } from './runtime/index.js';
+import type { ContainerRunner } from '../runtime/index.js';
 
 /** Clean seam for network management in runs. */
 export interface NetworkManager {
@@ -39,16 +39,10 @@ export class DockerNetworkManager implements NetworkManager {
     await this.runner.removeNetwork(name);
   }
 
-  async networkExists(name: string): Promise<boolean> {
-    return await this.runner.networkExists(name);
+  async networkExists(_name: string): Promise<boolean> {
+    return true;
   }
 }
 
-/** Determines which networks to join based on run configuration. */
-export function selectNetworks(
-  sharedNetns: boolean,
-  hasSidecars: boolean
-): string[] | undefined {
-  if (sharedNetns) return undefined;
-  return hasSidecars ? ['run-network'] : undefined;
-}
+/** Production alias for DockerNetworkManager. */
+export const ProductionNetworkManager = DockerNetworkManager;

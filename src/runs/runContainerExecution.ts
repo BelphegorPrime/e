@@ -1,4 +1,4 @@
-import type { ContainerRunner, RunOptions } from './runtime/index.js';
+import type { ContainerRunner, RunOptions } from '../runtime/index.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
 

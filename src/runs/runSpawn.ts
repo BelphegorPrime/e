@@ -1,15 +1,17 @@
+import type { Git } from '../git/index.js';
+import type { PullRequest } from '../github/index.js';
+import type { GitPlatform } from '../store/config.js';
+import type { ContainerRunner, RunOptions, SidecarSpec, Mount } from '../runtime/index.js';
+import type { Harness } from '../harness/index.js';
+import type { Agent } from '../agent/index.js';
 import { slugify } from '../identity/slugify.js';
-import type { RunBranchNamer } from './runBranchNamer.ts';
-import type { WorktreeManager } from './runWorktree.ts';
-import type { NetworkManager } from './runNetworks.ts';
-import type { SidecarOrchestrator } from './runSidecarOrchestrator.ts';
-import type { ContainerExecutor } from './runContainerExecution.ts';
-import type { PullRequestManager } from './runPrManager.ts';
-import type { LogCapture } from './runLogCapture.ts';
-import type { RunResult } from './runResult.ts';
-
-/** How many counter collisions to absorb before giving up (a runaway guard). */
-const MAX_COUNTER_ATTEMPTS = 50;
+import { ProductionBranchNamer } from './runBranchNamer.js';
+import { ProductionWorktreeManager } from './runWorktree.js';
+import { ProductionNetworkManager } from './runNetworks.js';
+import { DockerSidecarOrchestrator } from './runSidecarOrchestrator.js';
+import { ProductionContainerExecutor } from './runContainerExecution.js';
+import { ProductionPullRequestManager } from './runPrManager.js';
+import { ProductionLogCapture } from './runLogCapture.js';
 
 /** Readiness polling defaults: up to 30 tries, 1s apart (~30s), overridable per run. */
 const DEFAULT_READINESS_ATTEMPTS = 30;
@@ -25,50 +27,31 @@ export interface ReadinessPolicy {
   intervalMs: number;
 }
 
-/**
- * A sidecar to bring up for this Run, as the spawn edge knows it — before the
- * global egress namespace and turns each plan into a sidecar spec.
- */
+/** A sidecar to bring up before the agent runs. */
 export interface SidecarPlan {
-  /** The MCP server's short name = network alias = URL host the agent reaches. */
   alias: string;
-  /** The sidecar's image tag (built from `.e/mcp/<name>/Dockerfile`). */
   image: string;
-  /** TCP port allocated for this run's global loopback namespace. */
   port: number;
-  /** Optional in-container readiness command; readiness also requires it to exit 0. */
   healthcheck?: string[];
-  /** Env vars this server's wiring needs, resolved from `.e/.env` at runtime. */
-  requiredEnv?: string[];
-  /** Optional HTTP headers for the sidecar. */
-  headers?: Record<string, string>;
 }
 
-/** Run spawn dependencies with all extracted modules. */
+/** What the orchestrator needs to build a run. */
 export interface RunSpawnDeps {
   git: Git;
   runtime: ContainerRunner;
-  harness: Harness;
-  agent: Agent;
-  pullRequest: PullRequest;
-  worktreeManager: WorktreeManager;
-  networkManager: NetworkManager;
-  sidecarOrchestrator: SidecarOrchestrator;
-  containerExecutor: ContainerExecutor;
-  pullRequestManager: PullRequestManager;
-  logCapture: LogCapture;
-  runResult: RunResult;
-  branchNamer: RunBranchNamer;
+  pullRequest?: PullRequest;
+  sleep?: (ms: number) => Promise<void>;
 }
 
-/** Run spawn parameters interface. */
+/** Full parameters for a runSpawn call. */
 export interface RunSpawnParams {
   name?: string;
   prompt: string;
   imageTag: string;
-  interactive: boolean;
-  model: string;
+  interactive?: boolean;
+  model?: string;
   agent: Agent;
+  harness: Harness;
   runOptions: RunOptions;
   sidecars?: SidecarPlan[];
   mcpArgs?: string[];
@@ -79,7 +62,7 @@ export interface RunSpawnParams {
   worktreesDir?: string;
 }
 
-/** Run spawn result interface. */
+/** Orchestrated run output. */
 export interface RunSpawnResult {
   ran: boolean;
   exitCode: number;
@@ -93,75 +76,103 @@ export interface RunSpawnResult {
   error?: string;
 }
 
-/** Main run spawn orchestrator using extracted modules. */
+/** Main run spawn orchestrator. Builds production managers from primitives. */
 export async function runSpawn(
   deps: RunSpawnDeps,
   params: RunSpawnParams
 ): Promise<RunSpawnResult> {
-  const {
-    sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms)),
-  } = deps;
-
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
   const readinessAttempts = params.readiness?.attempts ?? DEFAULT_READINESS_ATTEMPTS;
   const readinessIntervalMs = params.readiness?.intervalMs ?? DEFAULT_READINESS_INTERVAL_MS;
+  const worktreesDir = params.worktreesDir ?? '/tmp/e-worktrees';
+
+  // Construct production managers from the primitive deps.
+  const branchNamer = new ProductionBranchNamer(deps.git, worktreesDir);
+  const worktreeManager = new ProductionWorktreeManager(deps.git);
+  const networkManager = new ProductionNetworkManager(deps.runtime);
+  const sidecarOrchestrator = new DockerSidecarOrchestrator(deps.runtime);
+  const containerExecutor = new ProductionContainerExecutor(deps.runtime);
+  const logCapture = new ProductionLogCapture();
+
+  // Track what was started so best-effort teardown never touches
+  // resources that were never created (e.g. when createNetwork fails).
+  let branch: string | undefined;
+  let worktreePath: string | undefined;
+  let network: string | undefined;
+  let openedNetwork = false;
+  let startedSpecs: SidecarSpec[] = [];
 
   try {
-    // Generate branch name using extracted branch namer
-    const { branch } = await deps.branchNamer.nextBranch(params.agent, params.prompt);
-    const branchName = `e/${params.agent.name}/${branch}`;
+    // Pin the base to the commit HEAD points at now, before creating the worktree.
+    const base = deps.git.headSha();
+    const baseBranch = deps.git.currentBranch() || 'main';
+    const slug = params.name ?? slugify(params.prompt);
 
-    // Create worktree using extracted worktree manager
-    const worktreePath = `/tmp/e-worktrees/${branchName}`;
-    await deps.worktreeManager.createWorktree(worktreePath, branchName, 'HEAD');
+    // Generate branch name and create worktree atomically (collision-retry inside the namer).
+    ({ branch } = await branchNamer.nextBranch(params.agent, slug));
+    worktreePath = `${worktreesDir}/${branch}`;
+    const runName = branch.replace(/\//g, '-');
 
-    // Prepare sidecar specs using extracted sidecar orchestrator
-    const sidecarSpecs = (params.sidecars ?? []).map(plan => ({
-      name: plan.alias,
+    // Prepare sidecar specs.
+    const sidecarPlans = params.sidecars ?? [];
+    const specs: SidecarSpec[] = sidecarPlans.map(plan => ({
+      name: `${runName}-mcp-${plan.alias}`,
       alias: plan.alias,
       image: plan.image,
       port: plan.port,
       healthcheck: plan.healthcheck,
-      envFile: `${worktreePath}/mcp.json`,
+      network: `${runName}-net`,
+      envFile: [`${worktreePath}/mcp.json`],
     }));
 
-    // Create network if needed using extracted network manager
-    const network = sidecarSpecs.length > 0 && !params.runOptions.netns ? `run-network-${branch}` : undefined;
+    // Create the run network when the agent needs to reach sidecars.
+    network = specs.length > 0 && !params.runOptions.netns
+      ? `${runName}-net`
+      : undefined;
     if (network) {
-      await deps.networkManager.createNetwork(network);
+      await networkManager.createNetwork(network);
+      openedNetwork = true;
     }
 
-    // Start sidecars using extracted sidecar orchestrator
-    if (sidecarSpecs.length > 0) {
-      await deps.sidecarOrchestrator.startAll(sidecarSpecs);
+    // Start sidecars and wait for each to be ready (probe first, sleep on miss).
+    if (specs.length > 0) {
+      await sidecarOrchestrator.startAll(specs);
+      startedSpecs = specs;
 
-      // Wait for sidecars to be ready
-      const readinessResult = await deps.sidecarOrchestrator.waitForAllReady(sidecarSpecs, {
-        attempts: readinessAttempts,
-        intervalMs: readinessIntervalMs,
-        sleep,
-      });
-
-      if (readinessResult.notReady.length > 0) {
-        return deps.runResult.failure({
-          error: `MCP sidecar "${readinessResult.notReady[0].alias}" did not become ready in time`
-        });
+      for (const spec of specs) {
+        let ready = false;
+        for (let attempt = 0; attempt < readinessAttempts && !ready; attempt++) {
+          if (sidecarOrchestrator.isSidecarReady(spec)) {
+            ready = true;
+          } else {
+            await sleep(readinessIntervalMs);
+          }
+        }
+        if (!ready) {
+          // Teardown happens in the finally block.
+          return {
+            ran: false,
+            exitCode: 1,
+            error: `MCP sidecar "${spec.alias}" did not become ready in time`,
+          };
+        }
       }
     }
 
-    // Prepare run options
+    // Build run options.
     const joinedNetworks: string[] | undefined = params.runOptions.netns
       ? undefined
       : (() => {
-          const nets = new Set([
+          const nets = new Set<string>([
             ...(params.runOptions.networks ?? []),
-            ...(sidecarSpecs.length > 0 ? [network] : []),
+            ...(network ? [network] : []),
           ]);
           return nets.size > 0 ? [...nets] : undefined;
         })();
 
     const runOptions: RunOptions = {
       ...params.runOptions,
-      name: branchName,
+      name: branch,
       networks: joinedNetworks,
       volumes: [
         { host: worktreePath, container: '/workspace' },
@@ -170,59 +181,92 @@ export async function runSpawn(
       workdir: '/workspace',
     };
 
-    // Build command using harness
+    // Build command.
     const command = params.interactive
       ? params.harness.buildInteractiveCommand(params.model)
       : params.harness.buildCommand(
-          `${RUN_GIT_INSTRUCTIONS}\n\n${params.prompt}`, params.model
+          `${RUN_GIT_INSTRUCTIONS}\n\n${params.prompt}`,
+          params.model
         );
 
-    // Execute container using extracted container executor
-    const executionResult = await deps.containerExecutor.execute(
+    // Execute the agent container in the foreground.
+    const executionResult = await containerExecutor.execute(
       params.imageTag,
       runOptions,
       [...command, ...(params.mcpArgs ?? [])]
     );
 
-    // Capture egress logs using extracted log capture
-    if (params.storeRoot) {
-      await deps.logCapture.captureEgressLogs(deps.runtime, params.storeRoot, branchName);
+    // Commit and push only when the run exited 0 and produced changes.
+    let captured = false;
+    let pushed = false;
+    let pushWarning: string | undefined;
+    if (executionResult.exitCode === 0) {
+      if (deps.git.isDirty(worktreePath)) {
+        deps.git.commitAll(worktreePath, `e: run output for ${branch}`);
+        captured = true;
+      }
+      if (captured || deps.git.hasCommitsBeyondBase(branch, base)) {
+        try {
+          deps.git.push(branch);
+          pushed = true;
+        } catch (err) {
+          pushWarning = `could not push ${branch}: ${(err as Error).message}`;
+        }
+      }
     }
 
-    // Check sidecar status and collect warnings
+    // Capture egress logs when a store is configured.
+    if (params.storeRoot) {
+      await logCapture.captureEgressLogs(deps.runtime, params.storeRoot, branch);
+    }
+
+    // Detect sidecars that crashed mid-run (non-fatal warnings).
     const sidecarWarnings: string[] = [];
-    for (const spec of sidecarSpecs) {
-      if (!await deps.sidecarOrchestrator.isSidecarReady(spec)) {
+    for (const spec of startedSpecs) {
+      if (!deps.runtime.isRunning(spec.name)) {
         sidecarWarnings.push(
           `MCP sidecar "${spec.alias}" exited during the run (its tools may have stopped working).`
         );
       }
     }
 
-    // Clean up using extracted modules
-    if (sidecarSpecs.length > 0) {
-      await deps.sidecarOrchestrator.stopAll(sidecarSpecs);
+    // Open a PR/MR when a platform is configured and the branch was pushed.
+    let pullRequestUrl: string | undefined;
+    let pullRequestWarning: string | undefined;
+    if (params.gitPlatform && pushed && deps.pullRequest) {
+      const log = deps.git.runLog(branch);
+      const title =
+        log.length > 0 ? log[0].subject : `e: run output for ${branch}`;
+      const prResult = await new ProductionPullRequestManager(deps.git, deps.pullRequest).create({
+        platform: params.gitPlatform,
+        head: branch,
+        base: baseBranch,
+        title,
+        body: params.prompt,
+      });
+      pullRequestUrl = prResult.url || undefined;
+      pullRequestWarning = prResult.warning;
     }
-    if (network) {
-      await deps.networkManager.removeNetwork(network);
-    }
-    await deps.worktreeManager.removeWorktree(worktreePath);
 
-    return deps.runResult.success({
+    return {
       ran: true,
       exitCode: executionResult.exitCode,
-      captured: false,
-      branch: branchName,
-      pushed: false,
-      pushWarning: undefined,
-      pullRequestUrl: undefined,
-      pullRequestWarning: undefined,
-      sidecarWarnings,
-    });
-
-  } catch (error) {
-    return deps.runResult.failure({
-      error: (error as Error).message
-    });
+      captured,
+      branch,
+      pushed,
+      pushWarning,
+      pullRequestUrl,
+      pullRequestWarning,
+      sidecarWarnings: sidecarWarnings.length > 0 ? sidecarWarnings : undefined,
+    };
+  } finally {
+    // Best-effort teardown: never mask a result or an aborting error.
+    try {
+      if (startedSpecs.length > 0) await sidecarOrchestrator.stopAll(startedSpecs);
+      if (openedNetwork) await networkManager.removeNetwork(network as string);
+      if (worktreePath) await worktreeManager.removeWorktree(worktreePath);
+    } catch {
+      // Teardown is best-effort.
+    }
   }
 }

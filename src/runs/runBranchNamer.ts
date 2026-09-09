@@ -1,28 +1,28 @@
 import type { Agent } from '../agent/index.js';
 import type { Git } from '../git/index.js';
-import { slugify } from '../identity/slugify.js';
 
 /** Clean seam for run branch naming and collision resolution. */
 export interface BranchNamer {
   /** Generate the next available branch name for a run. */
-  nextBranch(agent: Agent, prompt: string, maxAttempts?: number): Promise<{ branch: string; counter: number }>;
+  nextBranch(agent: Agent, slug: string, maxAttempts?: number): Promise<{ branch: string; counter: number }>;
 }
+
+export type RunBranchNamer = BranchNamer;
 
 /** Production branch namer using actual git operations. */
 export class ProductionBranchNamer implements BranchNamer {
-  constructor(private readonly git: Git) {}
+  constructor(private readonly git: Git, private readonly worktreesDir = '/tmp/e-worktrees') {}
 
-  async nextBranch(agent: Agent, prompt: string, maxAttempts = 50): Promise<{ branch: string; counter: number }> {
-    const slug = agent.name ?? slugify(prompt);
+  async nextBranch(agent: Agent, slug: string, maxAttempts = 50): Promise<{ branch: string; counter: number }> {
     const prefix = `e/${agent.name}/${slug}`;
-    let counter = await this.maxRunCounter(prefix) + 1;
+    let counter = this.maxRunCounter(prefix) + 1;
     let attempt = 0;
-    
+
     while (true) {
       const branch = `${prefix}-${counter}`;
       try {
-        await this.git.addWorktree({
-          path: `/some/path/${branch}`, // Path will be resolved by caller
+        this.git.addWorktree({
+          path: `${this.worktreesDir}/${branch}`,
           branch,
           base: this.git.headSha(),
         });
@@ -38,9 +38,11 @@ export class ProductionBranchNamer implements BranchNamer {
     }
   }
 
-  private async maxRunCounter(prefix: string): Promise<number> {
-    const existing = await this.git.runBranches();
-    const matches = existing.filter((b: string) => b.startsWith(prefix));
+  private maxRunCounter(prefix: string): number {
+    const existing = this.git.listRunBranches(prefix);
+    const matches = existing.filter((b: string) =>
+      b.startsWith(prefix) || b.startsWith(`origin/${prefix}`)
+    );
     const counters = matches.map((b: string) => {
       const match = b.match(/-?(\d+)$/);
       return match ? parseInt(match[1], 10) : 0;
@@ -52,23 +54,30 @@ export class ProductionBranchNamer implements BranchNamer {
 /** In-memory branch namer for testing. */
 export class InMemoryBranchNamer implements BranchNamer {
   private branches = new Set<string>();
-  private counters = new Map<string, number>();
+  private base: string;
 
-  async nextBranch(agent: Agent, prompt: string, maxAttempts = 50): Promise<{ branch: string; counter: number }> {
-    const slug = agent.name ?? slugify(prompt);
-    const prefix = `e/${agent.name}/${slug}`;
-    
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const counter = (this.counters.get(prefix) || 0) + 1;
-      this.counters.set(prefix, counter);
-      const branch = `${prefix}-${counter}`;
-      
+  constructor(base = 'main') {
+    this.base = base;
+  }
+
+  async nextBranch(agent: Agent, slug: string, maxAttempts = 50): Promise<{ branch: string; counter: number }> {
+    let attempt = 0;
+    let counter = 1;
+
+    while (true) {
+      const branch = `e/${agent.name}/${slug}-${counter}`;
+
       if (!this.branches.has(branch)) {
         this.branches.add(branch);
         return { branch, counter };
       }
+
+      if (attempt >= maxAttempts) {
+        throw new Error(`Could not find unique branch name after ${maxAttempts} attempts`);
+      }
+
+      counter++;
+      attempt++;
     }
-    
-    throw new Error(`Failed to generate unique branch after ${maxAttempts} attempts`);
   }
 }

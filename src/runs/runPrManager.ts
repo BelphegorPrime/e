@@ -1,5 +1,6 @@
-import type { Git } from './git/index.js';
-import type { PullRequest, GitPlatform } from './store/config.js';
+import type { Git } from '../git/index.js';
+import type { PullRequest } from '../github/index.js';
+import { GitPlatform } from '../store/config.js';
 
 /** Clean seam for PR/MR management in runs. */
 export interface PullRequestManager {
