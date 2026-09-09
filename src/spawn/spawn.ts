@@ -275,12 +275,7 @@ export function registerSpawnCommand(program: Command): void {
     )
     .option('--rm', 'automatically remove the container when it exits', true)
     .option('--no-rm', 'keep the container after it exits')
-    .option(
-      '--rm-worktree',
-      'automatically remove the worktree when it exits',
-      true
-    )
-    .option('--no-rm-worktree', 'keep the worktree after container exits')
+    .option('--keep-worktree', 'keep the worktree after container exits')
     .option(
       '-p, --port <port...>',
       'publish a container port, e.g. 8080:80 (repeatable)'
