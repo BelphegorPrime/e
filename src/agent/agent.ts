@@ -81,7 +81,7 @@ export function renderDefaultAgent(
       baseUrl:
         envValues['OPENAI_BASE_URL'] || 'http://localhost:20128/v1',
       baseUrlEnv: 'OPENAI_BASE_URL',
-      model: 'auto',
+      model: 'auto/coding',
       protocol: harness.protocols[0],
       apiKeyEnv: 'OPENAI_API_KEY',
     },
