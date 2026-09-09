@@ -28,7 +28,7 @@ export interface RunOptions {
   port?: string[];
   env?: string[];
   rm?: boolean;
-  rmWorktree?: boolean;
+  keepWorktree?: boolean;
   /** Bind mounts. */
   volumes?: Mount[];
   /** Working directory inside the container (-w). */
@@ -194,8 +194,6 @@ export function runningInspectArgs(name: string): string[] {
 export function logsArgs(name: string): string[] {
   return ['logs', name];
 }
-
-
 
 /**
  * Starts an entire Compose stack (`compose up -d`). `envFile`, when given, is
@@ -489,8 +487,6 @@ export class ContainerRuntime implements ContainerRunner {
       );
     }
   }
-
-
 
   /** Force-remove a container by name (even if running). Best-effort: never throws (teardown). */
   removeContainer(name: string): void {

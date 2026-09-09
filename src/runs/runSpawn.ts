@@ -370,7 +370,7 @@ export async function runSpawn(
       bestEffort(() => runtime.removeNetwork(network));
     }
 
-    if (params.runOptions.rmWorktree === true) {
+    if (!params.runOptions.keepWorktree) {
       git.removeWorktree(worktreePath);
     }
   }
