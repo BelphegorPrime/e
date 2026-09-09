@@ -65,9 +65,20 @@ export function isTuiAvailable(): boolean {
 }
 
 /**
+ * Thrown by {@link runSettingsMenu} when the user quits with `q` or Ctrl-C.
+ * Callers treat this as a clean abort — nothing was written, no stack dump.
+ */
+export class MenuCancelledError extends Error {
+  constructor() {
+    super('Settings menu cancelled.');
+    this.name = 'MenuCancelledError';
+  }
+}
+
+/**
  * Runs the settings menu on the alternate screen. `rowsFor` derives the rows
  * from the partial result on every render. Resolves to the final result when
- * the user presses Enter; rejects on Ctrl-C / `q`.
+ * the user presses Enter; rejects with {@link MenuCancelledError} on Ctrl-C / `q`.
  */
 export function runSettingsMenu(
   rowsFor: (partial: MenuResult) => MenuRow[],
@@ -140,7 +151,7 @@ export function runSettingsMenu(
   const onKeypress = (_: string, key: readline.Key): void => {
     if ((key.ctrl && key.name === 'c') || key.name === 'q') {
       cleanup();
-      reject(new Error('Settings menu cancelled.'));
+      reject(new MenuCancelledError());
       return;
     }
     const rows = rowsFor(partial);
