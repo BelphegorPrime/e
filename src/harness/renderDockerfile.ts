@@ -93,7 +93,7 @@ function renderSkillsBlock(collections: string[], agent: string): string {
  * writable without extra layers — the "writable home" half of the non-root
  * baseline.
  */
-const NODE_HOME = '/home/node';
+export const NODE_HOME = '/home/node';
 
 /**
  * Renders a Dockerfile for a harness from {@link TEMPLATE}. The build steps

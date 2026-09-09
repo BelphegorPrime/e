@@ -1,4 +1,4 @@
-import type { DockerfileParams } from './renderDockerfile.js';
+import { NODE_HOME, type DockerfileParams } from './renderDockerfile.js';
 import type { EnvHarnessSection } from './renderEnvTemplate.js';
 import type {
   Protocol,
@@ -74,7 +74,7 @@ export interface Harness {
  * Code reads its own `~/.claude/skills` instead. Grounding:
  * `docs/research/harness-cli-facts.md`.
  */
-const AGENTS_SKILLS_DIR = '/home/node/.agents/skills';
+const AGENTS_SKILLS_DIR = `${NODE_HOME}/.agents/skills`;
 
 const escapePrompt = (prompt: string) => `"${prompt}"`;
 
@@ -87,7 +87,10 @@ export const HARNESSES: Record<string, Harness> = {
       label: 'Pi Coding Agent CLI harness.',
       npmPackage: '@earendil-works/pi-coding-agent',
       npmFlags: ['--ignore-scripts'],
-      setupSteps: ['pi install npm:pi-mcp-adapter', 'pi install npm:pi-web-access'],
+      setupSteps: [
+        'pi install npm:pi-mcp-adapter',
+        'pi install npm:pi-web-access',
+      ],
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'pi',
     },
@@ -162,7 +165,7 @@ export const HARNESSES: Record<string, Harness> = {
       return ['--mcp-config', JSON.stringify({ mcpServers })];
     },
     // Claude Code reads Agent Skills from `~/.claude/skills` (not `.agents/`).
-    skillsDir: '/home/node/.claude/skills',
+    skillsDir: `${NODE_HOME}/.claude/skills`,
   },
   codex: {
     name: 'codex',

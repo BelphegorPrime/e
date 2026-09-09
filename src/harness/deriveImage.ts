@@ -16,6 +16,7 @@ import type {
   RenderedConfigFile,
 } from './adapter.js';
 import { imageTag } from '../identity/naming.js';
+import { NODE_HOME } from './renderDockerfile.js';
 
 /** The baked provider config block of a derived Dockerfile (a file harness). */
 export interface DockerfileProviderBlock {
@@ -74,7 +75,7 @@ export function renderDerivedDockerfile(p: DerivedDockerfileParams): string {
   const lines: string[] = [`FROM ${p.baseImage}`];
   // Trees the derived image copies in; handed back to the runtime user after
   // the build step, so their runtime writes (history, sessions, auth) succeed.
-  const ownedDirs: string[] = [];
+  const ownedDirs: string[] = [NODE_HOME];
   let escalated = false;
 
   const startBlock = () => {
