@@ -87,6 +87,10 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     hardware: detectHardware(),
   };
 
+  log.info(
+    `init interactive=${interactive} stdinTTY=${process.stdin.isTTY} stdoutTTY=${process.stdout.isTTY}`
+  );
+
   // Only prompt for keys not already set in `.e/.env`; a re-init never re-asks
   // for one the user has filled in (and which `applyEnvValues` would refuse to
   // clobber anyway).
