@@ -1,6 +1,9 @@
 # CLI
+
 The `e` command: builds and runs coding-agent harnesses inside containers, one isolated run at a time. This context owns the vocabulary of harnesses, runtimes, and runs.
+
 ## Language
+
 **Harness**:
 A coding-agent CLI (e.g. Claude Code, Codex, opencode, Pi) packaged to run inside a container built from its own Dockerfile. The _packaging_ only — the model and configuration it runs with belong to an Agent.
 _Avoid_: tool, model (a Harness is packaging; the configured capability is an Agent)
@@ -27,6 +30,7 @@ _Avoid_: plugin, addon
 
 **Run**:
 A RunScratch + primary container + sidecars over private network — the unit that executes an Agent. Includes mount structure: host -> container -> ro? boolean and container configuration options:
+
 - `attach`: boolean
 - `interactive`: boolean
 - `networks`: object
@@ -42,8 +46,9 @@ The container engine — docker or podman — that builds and runs harness image
 **Spawn**:
 To start a run — includes planning phase with container configuration.
 
-**Store** (*Workspace*):
-The `.e` directory holding e's on-disk state — **also called "Workspace" because it's the mountpoint for code in the harness docker container**
+**Store** (_eBaseDir_):
+The `.e` directory holding e's on-disk state — **also called "eBaseDir" because it's the mountpoint for code in the harness docker container**
+
 - Per-harness Dockerfiles under `harnesses/`
 - Agent definitions under `agents/<name>/` (each holding agent's `agent.json` plus any rendered `models.json`/`Dockerfile`)
 - MCP server definitions under `mcp/`
@@ -61,6 +66,7 @@ Bind mount structure: host -> container -> ro? boolean
 
 **RunOptions**:
 Container configuration options:
+
 - `attach`: boolean
 - `interactive`: boolean
 - `networks`: object
