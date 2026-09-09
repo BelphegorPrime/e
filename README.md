@@ -19,6 +19,8 @@ primary one. `e` is named for Euler's number, the mathematical partner of `pi`:
 `e` stands around the harness and drives it, the same way the constants `e`
 and `π` sit side by side in Euler's identity.
 
+Euler's identity links five fundamental constants: e^(iπ)+1 = 0. Constants: e, π, i (imaginary unit), 1, and 0. Geometric meaning: from Euler's formula eⁱˣ = cos(x) + i sin(x); at x = π radians (180°), half-rotation around unit circle lands exactly at -1. Both numbers are transcendental (non-repeating infinite decimals, not roots of rational polynomials). Would you like step-by-step breakdown of half-circle rotation leading to this formula, or explore other equations where e and π appear together?
+
 ```text
 User
   │
