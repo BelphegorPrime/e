@@ -1,3 +1,5 @@
+import { isTuiAvailable, runSettingsMenu } from '../tui/settings.js';
+import { applyMenuResult, buildInitRows } from '../tui/index.js';
 import * as readline from 'node:readline/promises';
 import * as readlineSync from 'node:readline';
 import { setImmediate } from 'node:timers';
@@ -60,10 +62,39 @@ export const defaultsWizard: Wizard = {
   },
 };
 
-/** The live wizard: readline prompts, plus the raw-mode model selector. */
+/** The live wizard: readline prompts, plus the raw-mode settings menu. */
 export function interactiveWizard(): Wizard {
   return {
     async ask(state: WizardState): Promise<InitAnswers> {
+      // Interactive path: a single "mark what you want" settings menu for the
+      // selection questions, then plain readline for the free-text values
+      // (API keys, the OmniRoute password) that a menu cannot capture.
+      if (isTuiAvailable()) {
+        const result = await runSettingsMenu(
+          partial => buildInitRows(state, partial),
+          {
+            title: 'e init — settings',
+            instructions:
+              'Space toggles a checkbox and cycles a choice · Enter finishes · q quits',
+          }
+        );
+        const answers = applyMenuResult(result, state);
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        try {
+          answers.apiKeys = await promptApiKeys(rl, state.promptKeys);
+          if (state.askOmniroutePassword) {
+            const pwd = await promptOmniroutePassword(rl);
+            if (pwd) answers.omniroutePassword = pwd;
+          }
+        } finally {
+          rl.close();
+        }
+        return answers;
+      }
+
       const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
