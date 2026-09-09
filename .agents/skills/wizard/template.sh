@@ -50,45 +50,48 @@ banner() {
 # Clearing keeps only the current step on screen.
 stage() {
   _clear
-  _STAGE_INDEX=$((_STAGE_INDEX + 1))
-  printf '\n%s%s▸ Stage %s/%s · %s%s\n' \
-    "$BOLD" "$BLUE" "$_STAGE_INDEX" "$TOTAL_STAGES" "$1" "$RESET"
+  ((_STAGE_INDEX++))
+  printf '%s%s  %s%s\n' "$BOLD" "$BLUE" "$1" "$RESET"
+  printf '%s  Stage %d of %d%s\n\n' "$DIM" "$_STAGE_INDEX" "$TOTAL_STAGES" "$RESET"
 }
 
-# say "..." — a plain instruction line.
-say()  { printf '  %s\n' "$1"; }
-# step "..." — a numbered-feeling action the human takes in the browser.
-step() { printf '  %s•%s %s\n' "$BLUE" "$RESET" "$1"; }
-note() { printf '  %s%s%s\n' "$DIM" "$1" "$RESET"; }
-warn() { printf '  %s⚠ %s%s\n' "$YELLOW" "$1" "$RESET"; }
-
-# open_url URL — open in the human's browser, cross-platform incl. WSL.
-open_url() {
-  local url="$1"
-  printf '  %s↗ opening%s %s\n' "$GREEN" "$RESET" "$url"
-  { if   command -v wslview     >/dev/null 2>&1; then wslview "$url"
-    elif command -v explorer.exe >/dev/null 2>&1; then explorer.exe "$url"
-    elif command -v xdg-open    >/dev/null 2>&1; then xdg-open "$url"
-    elif command -v open        >/dev/null 2>&1; then open "$url"
-    else warn "couldn't open a browser — visit it manually: $url"; fi
-  } >/dev/null 2>&1 || warn "couldn't open a browser — visit it manually: $url"
+# step "Instruction" — print a step in the procedure.
+step() {
+  printf '  %s%s%s\n' "$BOLD" "$1" "$RESET"
 }
 
-# pause "msg" — wait for the human to confirm they've done the manual part.
+# say "Message" — print a helpful note.
+say() {
+  printf '  %s%s%s\n' "$DIM" "$1" "$RESET"
+}
+
+# warn "Message" — print a warning.
+warn() {
+  printf '  %s%s%s\n' "$YELLOW" "$1" "$RESET"
+}
+
+# note "Message" — print a formatted note.
+note() {
+  printf '  %s%s%s\n' "$DIM" "$1" "$RESET"
+}
+
+# pause "Message" — wait for user to press Enter.
 pause() {
-  printf '  %s%s%s ' "$DIM" "${1:-Press Enter to continue}" "$RESET"
-  read -r _ || true
+  printf '\n  %s%s%s ' "$BOLD" "$1" "$RESET"
+  read -r _
 }
 
-# confirm "question" — y/N gate; returns success on yes.
-confirm() {
-  local reply=""
-  printf '  %s? %s [y/N] ' "$YELLOW" "$1"
-  read -r reply || true
-  [[ "$reply" =~ ^[Yy] ]]
+# open_url "URL" — open URL in default browser (supports WSL).
+open_url() {
+  say "Opening $1"
+  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"
+  elif command -v open >/dev/null 2>&1; then open "$1"
+  elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -Command "start $1"
+  else warn "Could not open browser; please visit $1 manually."; fi
+  printf '\n'
 }
 
-# _existing KEY — current value of KEY in ENV_FILE, if any.
+# _existing KEY — get the current value of KEY from ENV_FILE.
 _existing() {
   [[ -f "$ENV_FILE" ]] || return 1
   local line; line=$(grep -E "^${1}=" "$ENV_FILE" | tail -n1) || return 1
