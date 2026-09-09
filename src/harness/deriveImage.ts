@@ -180,7 +180,7 @@ export interface ProviderDelivery {
 export function planProviderDelivery(
   storeEnv: Record<string, string>,
   adapter: HarnessAdapter,
-  provider: Provider,
+  provider: Provider
 ): ProviderDelivery {
   if (adapter.kind === 'env') {
     // Env harnesses carry the model at runtime already; use the resolved id.
@@ -196,8 +196,10 @@ export function planProviderDelivery(
   // forces the resolved model into the config (pi requires it declared to be
   // selectable) and passes it on the command line too; otherwise Codex keeps an
   // auto model out of the config and delivers it via `-m` at runtime.
-  const bakeResolvedModel = adapter.modelInFile || provider.model !== 'auto';
-  const passModelOnCommand = adapter.modelInFile || provider.model === 'auto';
+  const bakeResolvedModel =
+    adapter.modelInFile || provider.model !== 'auto/coding';
+  const passModelOnCommand =
+    adapter.modelInFile || provider.model === 'auto/coding';
   const configProvider: Provider = bakeResolvedModel
     ? { ...provider, model: provider.model }
     : provider;

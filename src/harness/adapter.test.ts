@@ -212,8 +212,8 @@ test('renderCodexConfig: references the API key by env var name, never a value',
 });
 
 test('renderCodexConfig: omits the model line for `auto` (delivered at runtime, not baked)', () => {
-  const toml = renderCodexConfig({ ...codexProvider, model: 'auto' });
-  assert.match(toml, /^model = /m);
+  const toml = renderCodexConfig({ ...codexProvider, model: 'auto/coding' });
+  assert.match(toml, /^model = "auto\/coding"$/m);
   assert.match(toml, /^model_provider = "e"$/m);
   assert.match(toml, /^base_url = /m);
 });

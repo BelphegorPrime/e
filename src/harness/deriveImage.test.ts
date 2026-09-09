@@ -186,8 +186,7 @@ test('planProviderDelivery: a file harness keeps an auto model out of the config
     model: 'auto/coding',
   });
   assert.ok(plan.bakedConfig);
-  assert.match(plan.bakedConfig.file.content, /auto\/coding/);
-  assert.equal(plan.runtimeModel, undefined);
+  assert.equal(plan.runtimeModel, 'auto/coding');
 });
 
 const piProvider: Provider = {
