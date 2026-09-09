@@ -24,6 +24,17 @@ jobs:
           node-version: 24
           cache: npm
 
+      - name: Setup Homebrew
+        uses: Homebrew/actions/setup-homebrew@main
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Verify ldid
+        run: |
+          which ldid
+          ldid --version
+
       - name: Install dependencies
         run: npm ci
 

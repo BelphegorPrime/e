@@ -16,7 +16,7 @@
     "dev:ui": "cd ui && webpack serve --config webpack.config.mjs --mode development",
     "build:ts": "tsc",
     "prebuild:bin": "node scripts/ensure-ui-assets.mjs",
-    "build:bin": "pkg -c ./package.json ./dist/index.js -t node24-linux-x64,node24-macos-x64,node24-win-x64,node24-linux-arm64,node24-macos-arm64,node24-win-arm64 --output ./command/e --fallback-to-source",
+    "build:bin": "pkg . --sea --fallback-to-source",
     "build:dev": "npm run build:ui && npm run build:ts",
     "build": "npm run build:dev && npm run build:bin",
     "link": "npm run build:dev && npm link",
@@ -29,7 +29,17 @@
   "pkg": {
     "assets": [
       "dist/ui/**/*"
-    ]
+    ],
+    "targets": [
+      "node24-linux-x64",
+      "node24-linux-arm64",
+      "node24-macos-x64",
+      "node24-macos-arm64",
+      "node24-win-x64",
+      "node24-win-arm64"
+    ],
+    "outputPath": "command",
+    "signature": true
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.85.1",
