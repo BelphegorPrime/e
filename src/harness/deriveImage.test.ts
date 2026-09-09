@@ -53,7 +53,7 @@ test('renderDerivedDockerfile: builds COPY layers as root, then hands the trees 
   assert.ok(userRootIdx !== -1 && copyIdx > userRootIdx);
   assert.match(
     dockerfile,
-    /^RUN chown -R node:node \/home\/node\/\.codex \/home\/node\/\.agents\/skills$/m
+    /^RUN chown -R node:node \/home\/node \/home\/node\/\.codex \/home\/node\/\.agents\/skills$/m
   );
   assert.match(dockerfile, /^USER node$/m);
   // USER node is the final instruction: the container runs non-root.
