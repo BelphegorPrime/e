@@ -345,10 +345,12 @@ export function registerSpawnCommand(program: Command): void {
             scratch,
             pullRequest: config.gitPlatform ? new HostPullRequest() : undefined,
             gitPlatform: config.gitPlatform,
+            keepWorktree: opts.keepWorktree,
           });
+
           // Rendered env-files hold resolved secrets; each container already has
           // its own copy, so drop them before reporting and exiting.
-          if (opts.rmWorktree === true) {
+          if (!opts.keepWorktree) {
             scratch.dispose();
           }
 

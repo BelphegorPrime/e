@@ -50,8 +50,7 @@ export class InMemoryWorktreeManager implements WorktreeManager {
   async createWorktree(
     path: string,
     branch: string,
-    base: string,
-    maxAttempts = 50
+    base: string
   ): Promise<void> {
     if (this.worktrees.has(path)) {
       const error = new Error('already exists');

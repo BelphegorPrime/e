@@ -265,7 +265,7 @@ function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
     harness,
     prompt: 'Fix the flaky test',
     imageTag: 'e-harness-demo',
-    runOptions: { attach: true, rm: true, rmWorktree: true },
+    runOptions: { attach: true, rm: true },
     worktreesDir: '/tmp/e-worktrees',
     ...overrides,
   };
@@ -489,10 +489,7 @@ test('a push failure is non-fatal: branch kept, warning surfaced, exit code unch
 test('opens a PR/MR into the spawn-time branch when a platform is configured', async () => {
   const pr = new FakePullRequest({ url: 'https://github.com/o/r/pull/7' });
   const { deps, git } = makeDeps({ pullRequest: pr });
-  const result = await runSpawn(
-    deps,
-    makeParams({ gitPlatform: 'github' })
-  );
+  const result = await runSpawn(deps, makeParams({ gitPlatform: 'github' }));
 
   assert.equal(result.pullRequestUrl, 'https://github.com/o/r/pull/7');
   assert.equal(pr.specs.length, 1);
@@ -535,10 +532,7 @@ test('skips PR/MR creation when no platform is configured', async () => {
 test('a PR/MR failure is non-fatal: warning surfaced, push/exit code unchanged', async () => {
   const pr = new FakePullRequest({ fails: 'no auth found' });
   const { deps } = makeDeps({ pullRequest: pr });
-  const result = await runSpawn(
-    deps,
-    makeParams({ gitPlatform: 'gitlab' })
-  );
+  const result = await runSpawn(deps, makeParams({ gitPlatform: 'gitlab' }));
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.pushed, true);
@@ -554,10 +548,7 @@ test('no PR/MR without a push (push failure leaves nothing to open)', async () =
     git: new FakeGit({ pushFails: 'no remote' }),
     pullRequest: pr,
   });
-  const result = await runSpawn(
-    deps,
-    makeParams({ gitPlatform: 'github' })
-  );
+  const result = await runSpawn(deps, makeParams({ gitPlatform: 'github' }));
   assert.equal(pr.specs.length, 0);
   assert.equal(result.pullRequestUrl, undefined);
 });
@@ -775,4 +766,3 @@ test('supports multiple sidecars: both started, both probed, both removed', asyn
     `${runName}-mcp-filesystem`,
   ]);
 });
-

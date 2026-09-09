@@ -30,6 +30,7 @@ export interface ExecuteSpawnDeps {
   pullRequest?: PullRequest;
   /** The configured git platform, forwarded to `runSpawn`. */
   gitPlatform?: GitPlatform;
+  keepWorktree?: boolean;
 }
 
 /**
@@ -165,6 +166,7 @@ export async function executeSpawn(
             plan.baseEnvWhitelist
           )
         );
+
   const envFiles = orderEnvFiles(baseEnvPath, facts.userEnvFile);
   for (const content of plan.remoteCredentials) {
     envFiles.push(scratch.file('remote-mcp.env', content));
@@ -223,6 +225,7 @@ export async function executeSpawn(
       sidecars,
       configMounts,
       storeRoot: facts.root,
+      keepWorktree: deps.keepWorktree,
     }
   );
 }

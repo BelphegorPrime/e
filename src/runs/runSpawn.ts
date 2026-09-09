@@ -1,7 +1,12 @@
 import type { Git } from '../git/index.js';
 import type { PullRequest } from '../github/index.js';
 import type { GitPlatform } from '../store/config.js';
-import type { ContainerRunner, RunOptions, SidecarSpec, Mount } from '../runtime/index.js';
+import type {
+  ContainerRunner,
+  RunOptions,
+  SidecarSpec,
+  Mount,
+} from '../runtime/index.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
 import { slugify } from '../identity/slugify.js';
@@ -60,6 +65,7 @@ export interface RunSpawnParams {
   gitPlatform?: GitPlatform;
   storeRoot?: string;
   worktreesDir?: string;
+  keepWorktree?: boolean;
 }
 
 /** Orchestrated run output. */
@@ -81,9 +87,15 @@ export async function runSpawn(
   deps: RunSpawnDeps,
   params: RunSpawnParams
 ): Promise<RunSpawnResult> {
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
-  const readinessAttempts = params.readiness?.attempts ?? DEFAULT_READINESS_ATTEMPTS;
-  const readinessIntervalMs = params.readiness?.intervalMs ?? DEFAULT_READINESS_INTERVAL_MS;
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
+
+  const readinessAttempts =
+    params.readiness?.attempts ?? DEFAULT_READINESS_ATTEMPTS;
+
+  const readinessIntervalMs =
+    params.readiness?.intervalMs ?? DEFAULT_READINESS_INTERVAL_MS;
+
   const worktreesDir = params.worktreesDir ?? '/tmp/e-worktrees';
 
   // Construct production managers from the primitive deps.
@@ -126,9 +138,10 @@ export async function runSpawn(
     }));
 
     // Create the run network when the agent needs to reach sidecars.
-    network = specs.length > 0 && !params.runOptions.netns
-      ? `${runName}-net`
-      : undefined;
+    network =
+      specs.length > 0 && !params.runOptions.netns
+        ? `${runName}-net`
+        : undefined;
     if (network) {
       await networkManager.createNetwork(network);
       openedNetwork = true;
@@ -141,7 +154,11 @@ export async function runSpawn(
 
       for (const spec of specs) {
         let ready = false;
-        for (let attempt = 0; attempt < readinessAttempts && !ready; attempt++) {
+        for (
+          let attempt = 0;
+          attempt < readinessAttempts && !ready;
+          attempt++
+        ) {
           if (sidecarOrchestrator.isSidecarReady(spec)) {
             ready = true;
           } else {
@@ -217,7 +234,11 @@ export async function runSpawn(
 
     // Capture egress logs when a store is configured.
     if (params.storeRoot) {
-      await logCapture.captureEgressLogs(deps.runtime, params.storeRoot, branch);
+      await logCapture.captureEgressLogs(
+        deps.runtime,
+        params.storeRoot,
+        branch
+      );
     }
 
     // Detect sidecars that crashed mid-run (non-fatal warnings).
@@ -237,7 +258,10 @@ export async function runSpawn(
       const log = deps.git.runLog(branch);
       const title =
         log.length > 0 ? log[0].subject : `e: run output for ${branch}`;
-      const prResult = await new ProductionPullRequestManager(deps.git, deps.pullRequest).create({
+      const prResult = await new ProductionPullRequestManager(
+        deps.git,
+        deps.pullRequest
+      ).create({
         platform: params.gitPlatform,
         head: branch,
         base: baseBranch,
@@ -262,9 +286,15 @@ export async function runSpawn(
   } finally {
     // Best-effort teardown: never mask a result or an aborting error.
     try {
-      if (startedSpecs.length > 0) await sidecarOrchestrator.stopAll(startedSpecs);
-      if (openedNetwork) await networkManager.removeNetwork(network as string);
-      if (worktreePath) await worktreeManager.removeWorktree(worktreePath);
+      if (startedSpecs.length > 0) {
+        await sidecarOrchestrator.stopAll(startedSpecs);
+      }
+      if (openedNetwork) {
+        await networkManager.removeNetwork(network as string);
+      }
+      if (worktreePath && !params.keepWorktree) {
+        await worktreeManager.removeWorktree(worktreePath);
+      }
     } catch {
       // Teardown is best-effort.
     }
