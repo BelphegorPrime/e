@@ -115,13 +115,17 @@ function applyPlan(root: string | undefined, plan: InitPlan): void {
     if (step.kind === 'harness') {
       log.info('');
       log.info(`writing files for harness [${step.name}]`);
-      for (const write of step.writes) applyWrite(write);
+      for (const write of step.writes) {
+        applyWrite(write);
+      }
     } else if (step.kind === 'bootstrap') {
       applyWrite(step.write);
     } else if (step.kind === 'compose') {
       applyWrite(step.write);
     } else {
-      for (const write of step.writes) applyWrite(write);
+      for (const write of step.writes) {
+        applyWrite(write);
+      }
     }
   }
 
@@ -129,7 +133,9 @@ function applyPlan(root: string | undefined, plan: InitPlan): void {
     log.info(
       `Detected hardware: ${plan.hardware} -> using ${llamaCppImage(plan.hardware)} for local llama.cpp.`
     );
-  } else log.info('Local AI runtime: none selected.');
+  } else {
+    log.info('Local AI runtime: none selected.');
+  }
 
   writeEnv(plan.env);
   writeConfig(plan.config, root);
