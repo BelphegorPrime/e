@@ -184,7 +184,7 @@ echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 ```
 
 `protocol` must be one pi speaks — `anthropic-messages`, `openai-chat`, or
-`openai-responses`. Use a concrete `model` for the first run; `"auto"` is
+`openai-responses`. Use a concrete `model` for the first run; `"auto/coding"` is
 resolved by the harness against the endpoint's `/v1/models` at run start (see
 [ADR-0007](./docs/adr/0007-auto-model-delivery.md)).
 
@@ -263,13 +263,13 @@ is the durable artifact, and a warning reports why the open failed.
 
 ## Cheat sheet
 
-| Command                                        | What it does                                                           |
-| ---------------------------------------------- | ---------------------------------------------------------------------- |
-| `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config. Also asks for the git platform (PR/MR on successful runs)                 |
-| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt                                  |
-| `e spawn <agent-or-harness> --interactive`     | Start the harness TUI for the first message                            |
-| `e spawn … --skill <name>`                     | Add a Skill for this run                                               |
-| `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for pi)                                   |
-| `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model) |
-| `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                         |
-| `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch        |
+| Command                                        | What it does                                                                                                                     |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config. Also asks for the git platform (PR/MR on successful runs) |
+| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt                                                                                            |
+| `e spawn <agent-or-harness> --interactive`     | Start the harness TUI for the first message                                                                                      |
+| `e spawn … --skill <name>`                     | Add a Skill for this run                                                                                                         |
+| `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for pi)                                                                                             |
+| `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model)                                                           |
+| `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                                                                                   |
+| `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                  |

@@ -3,7 +3,7 @@
 ## Decision
 
 An Agent's Provider `model` is either a concrete id or `auto` (the value
-seeded defaults carry: `agent.ts` seeds `model: 'auto'`). For `auto`, `e` does
+seeded defaults carry: `agent.ts` seeds `model: 'auto/coding'`). For `auto`, `e` does
 **not** resolve a concrete id itself and ships **no curated model catalog**.
 `auto` travels through the Provider delivery form (ADR-0006) to the harness,
 and the harness resolves a concrete model against the endpoint's model list at
@@ -13,7 +13,7 @@ run start:
   env, so `ANTHROPIC_MODEL=auto` is delivered and Claude picks at run start.
 - **file harness, `modelInFile: false` (Codex):** the baked `config.toml`
   stays model-agnostic and the run command carries the model: `codex exec -m
-  auto` resolves against the endpoint.
+auto` resolves against the endpoint.
 - **file harness, `modelInFile: true` (pi):** pi selects only models
   **declared** in its `models.json`, so `e` declares `auto` there (the custom
   provider block baked into the derived image) and passes it on the command
