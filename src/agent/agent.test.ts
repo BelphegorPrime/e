@@ -87,7 +87,7 @@ test('renderDefaultAgent: defaults provider endpoint to local OmniRoute', () => 
     apiKeyEnv: 'OPENAI_API_KEY',
     baseUrl: 'http://localhost:20128/v1',
     baseUrlEnv: 'OPENAI_BASE_URL',
-    model: 'auto',
+    model: 'auto/coding',
     protocol: 'openai-responses',
   };
   assert.deepEqual(parsed, {
