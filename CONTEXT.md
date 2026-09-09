@@ -1,9 +1,6 @@
 # CLI
-
 The `e` command: builds and runs coding-agent harnesses inside containers, one isolated run at a time. This context owns the vocabulary of harnesses, runtimes, and runs.
-
 ## Language
-
 **Harness**:
 A coding-agent CLI (e.g. Claude Code, Codex, opencode, Pi) packaged to run inside a container built from its own Dockerfile. The _packaging_ only — the model and configuration it runs with belong to an Agent.
 _Avoid_: tool, model (a Harness is packaging; the configured capability is an Agent)
@@ -21,34 +18,78 @@ An auxiliary container composed alongside the agent container in a Run and chose
 _Avoid_: service, plugin, addon
 
 **MCP server**:
-A capability the agent connects to over the Model Context Protocol, chosen per-Run. It has a transport: `container` (built from its own Dockerfile under the Store's `mcp/`, run as a Sidecar on the private per-run network) or `remote` (an already-hosted URL, no container). `e` ships some and users can add their own.
-_Avoid_: tool (an MCP server _exposes_ tools; it is not itself a tool)
+A capability the agent connects to over the Model Context Protocol, chosen per-Run. It has a transport: `container` (built from its own Dockerfile under the Store's `mcp/` directory). Located by walking up from the working directory (or `--dir`), falling back to home.
+_Avoid_: service, plugin
 
 **Skill**:
-A packaged capability (a `SKILL.md` plus resources) an Agent can load, stored under the Store's `skills/`. Selected three ways: every harness image installs skill collections at build time via the skills CLI (layer 1), an Agent may bake a default set into its image (layer 2), and a Run may add more at spawn time (`--skill`, layer 3). The shared Caveman collection is a layer-1 `SHIPPED_SKILL_COLLECTIONS` source (`JuliusBrussee/caveman`), not branch-owned `.claude/skills` links. Delivered by the per-harness adapter into the path its CLI reads, outside `/workspace`; only harnesses that support skills receive them.
-_Avoid_: tool, command, plugin
+A capability directory with `SKILL.md` manifest and resources. Located by walking up from the working directory (or `--dir`), falling back to home.
+_Avoid_: plugin, addon
 
 **Run**:
-One execution of an Agent against a prompt, isolated in its own git worktree and branch and identified by a prompt-derived slug. A Run may attach Sidecars chosen at spawn time; it brings up the resulting group — the primary agent container plus those Sidecars — on a private network, and tears it down as a group. On a successful run that pushes, `e` opens a PullRequest/MR (when the Store's `config.json` records a git platform) into the branch the user spawned from, titled by the run branch's tip commit and bodied by the prompt.
-_Avoid_: job, task, session
+A RunScratch + primary container + sidecars over private network — the unit that executes an Agent. Includes mount structure: host -> container -> ro? boolean and container configuration options:
+- `attach`: boolean
+- `interactive`: boolean
+- `networks`: object
+- `netns`: string?
+- `ports`: Record<string, string>
+- `env`: Record<string, string>
+- `volumes`: Mount[]
+- `workDir`: string
 
 **Runtime**:
-The container engine — docker or podman — that builds and runs harness images.
-_Avoid_: engine, backend, driver
+The container engine — docker or podman — that builds and runs harness images. Runtime instance with docker/podman commands.
 
 **Spawn**:
-To start a run.
-_Avoid_: launch, create, exec
+To start a run — includes planning phase with container configuration.
 
-**Store**:
-The `.e` directory holding e's on-disk state — the per-harness Dockerfiles under `harnesses/`, the Agent definitions under `agents/<name>/` (each holding that agent's `agent.json` plus any rendered `models.json`/`Dockerfile`), the MCP server definitions under `mcp/`, the Skills under `skills/`, the host-only orchestration settings in `config.json` (the favorite/default harness, the git platform for PR/MR creation — never injected into containers, unlike `.env`), the shared `.env`, and `model-ids.json` (a cached model registry, currently unused by the run paths) — located by walking up from the working directory (or `--dir`), falling back to home.
-_Avoid_: workspace (the container's mounted checkout is the run's worktree)
+**Store** (*Workspace*):
+The `.e` directory holding e's on-disk state — **also called "Workspace" because it's the mountpoint for code in the harness docker container**
+- Per-harness Dockerfiles under `harnesses/`
+- Agent definitions under `agents/<name>/` (each holding agent's `agent.json` plus any rendered `models.json`/`Dockerfile`)
+- MCP server definitions under `mcp/`
+- Skills under `skills/`
+- Host-only orchestration settings in `config.json` (the favorite/default harness, the git platform for PR/MR creation — never injected into containers, unlike `.env`)
+- The shared `.env`
+- `model-ids.json` (a cached model registry, currently unused by the run paths)
+- Located by walking up from the working directory (or `--dir`), falling back to home
+- Avoid: calling it "workspace" in the Store context (the container's mounted checkout is the run's worktree)
 
-## Harness extension resources
+## Additional Implementation Concepts
 
-When a harness-specific capability is needed, such as a skill, tool, or plugin, these extension ecosystems may help:
+**Mount**:
+Bind mount structure: host -> container -> ro? boolean
 
-- **Pi**: https://pi.dev/packages
-- **Claude Code**: https://claudemarketplaces.com/
-- **opencode**: https://opencode.ai/docs/ecosystem#plugins
-- **Codex**: https://www.codex-marketplace.com/
+**RunOptions**:
+Container configuration options:
+- `attach`: boolean
+- `interactive`: boolean
+- `networks`: object
+- `netns`: string?
+- `ports`: Record<string, string>
+- `env`: Record<string, string>
+- `volumes`: Mount[]
+- `workDir`: string
+
+**ContainerRuntime**:
+Runtime instance with docker/podman commands
+
+**RunScratch**:
+Temporary workspace
+
+**ConfigAdapter**:
+Per-harness config translation
+
+**Protocol**:
+'openai-chat', 'anthropic-messages', 'openai-responses'
+
+**Harbors**:
+HostGit, HostPullRequest interfaces
+
+**Egress**:
+Network egress management
+
+**ModelStatus**:
+Model status tracking
+
+**Serve**:
+Server management and observation
