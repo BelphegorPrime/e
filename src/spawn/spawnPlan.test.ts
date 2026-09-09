@@ -258,8 +258,7 @@ test('planSpawn: file harness bakes a derived image and passes an auto model on 
   const plan = planSpawn(f);
   assert.ok(plan.delivery?.bakedConfig);
   assert.equal(plan.agentImagePlan?.imageTag, 'e-agent-smart-codex');
-  assert.match(plan.delivery.bakedConfig.file.content, /auto\/coding/);
-  assert.equal(plan.runtimeModel, undefined);
+  assert.equal(plan.runtimeModel, 'auto/coding');
 });
 
 test('planSpawn: a flag-MCP harness (claude) wires --mcp-config, no overlay', () => {
