@@ -141,7 +141,7 @@ test('planProviderDelivery: an env harness carries auto model in env', () => {
   const plan = planProviderDelivery(
     {},
     claudeCodeAdapter,
-    { ...envProvider, model: 'auto' },
+    { ...envProvider, model: 'auto/coding' },
   );
   assert.equal(plan.runtimeModel, undefined);
   assert.ok(
@@ -177,7 +177,7 @@ test('planProviderDelivery: a file harness keeps an auto model out of the config
   const plan = planProviderDelivery(
     {},
     codexAdapter,
-    { ...fileProvider, model: 'auto' },
+    { ...fileProvider, model: 'auto/coding' },
   );
   assert.ok(plan.bakedConfig);
   assert.doesNotMatch(plan.bakedConfig.file.content, /^model = /m);
@@ -186,7 +186,7 @@ test('planProviderDelivery: a file harness keeps an auto model out of the config
 
 const piProvider: Provider = {
   baseUrl: 'https://gateway.example.com/v1',
-  model: 'auto',
+  model: 'auto/coding',
   protocol: 'anthropic-messages',
   apiKeyEnv: 'MY_GATEWAY_KEY',
 };
