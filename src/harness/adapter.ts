@@ -225,7 +225,8 @@ export function renderCodexConfig(provider: Provider): string {
   const id = 'e';
   const lines: string[] = [];
   // `auto` carries no concrete id to bake; it arrives at runtime via `-m`.
-  if (provider.model !== 'auto') {
+  // Same for `auto/coding`.
+  if (provider.model !== 'auto' && provider.model !== 'auto/coding') {
     lines.push(`model = ${tomlBasicString(provider.model)}`);
   }
   lines.push(
