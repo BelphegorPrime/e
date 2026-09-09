@@ -189,7 +189,7 @@ export async function runSpawn(
 
     const runOptions: RunOptions = {
       ...params.runOptions,
-      name: branch,
+      name: runName,
       networks: joinedNetworks,
       volumes: [
         { host: worktreePath, container: '/workspace' },
