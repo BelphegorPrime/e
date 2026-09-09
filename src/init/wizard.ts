@@ -1,4 +1,9 @@
-import { isTuiAvailable, runSettingsMenu } from '../tui/settings.js';
+import {
+  isTuiAvailable,
+  MenuCancelledError,
+  runSettingsMenu,
+  type MenuResult,
+} from '../tui/settings.js';
 import { applyMenuResult, buildInitRows } from '../tui/index.js';
 import * as readline from 'node:readline/promises';
 import * as readlineSync from 'node:readline';
@@ -70,14 +75,24 @@ export function interactiveWizard(): Wizard {
       // selection questions, then plain readline for the free-text values
       // (API keys, the OmniRoute password) that a menu cannot capture.
       if (isTuiAvailable()) {
-        const result = await runSettingsMenu(
-          partial => buildInitRows(state, partial),
-          {
-            title: 'e init — settings',
-            instructions:
-              'Space toggles a checkbox and cycles a choice · Enter finishes · q quits',
+        let result: MenuResult;
+        try {
+          result = await runSettingsMenu(
+            partial => buildInitRows(state, partial),
+            {
+              title: 'e init — settings',
+              instructions:
+                'Space toggles a checkbox and cycles a choice · Enter finishes · q quits',
+            }
+          );
+        } catch (err) {
+          if (err instanceof MenuCancelledError) {
+            // Quitting the menu is a deliberate abort, not a failure: exit
+            // cleanly instead of surfacing a stack trace.
+            process.exit(0);
           }
-        );
+          throw err;
+        }
         const answers = applyMenuResult(result, state);
         const rl = readline.createInterface({
           input: process.stdin,
