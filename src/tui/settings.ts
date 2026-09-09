@@ -24,7 +24,7 @@ export interface CheckboxRow {
   checked: boolean;
 }
 
-/** A single-choice row; Space/Enter cycles through `values`. */
+/** A single-choice row; Space cycles through `values`. */
 export interface CycleRow {
   kind: 'cycle';
   id: string;
@@ -45,6 +45,64 @@ export type MenuRow = CheckboxRow | CycleRow | HeaderRow;
 
 /** Collected answers: checkbox targets map to id arrays, cycle targets to a string. */
 export type MenuResult = Record<string, string | string[]>;
+
+/** Result of dispatching one keypress in {@link dispatchKeyPress}. */
+export type KeyOutcome =
+  | { kind: 'cancel' }
+  | { kind: 'finish' }
+  | { kind: 'move'; cursor: number }
+  | { kind: 'render' }
+  | { kind: 'none' };
+
+/**
+ * Pure key-dispatch for the settings menu. Mutates `partial` (and cycle-row
+ * `value`s) in place exactly like the interactive loop; the caller re-renders,
+ * moves or finishes based on the outcome. Extracted so the Enter/Space split
+ * and the movement rules are unit-testable without a TTY.
+ */
+export function dispatchKeyPress(
+  key: readline.Key,
+  rows: MenuRow[],
+  partial: MenuResult,
+  cursor: number
+): KeyOutcome {
+  if ((key.ctrl && key.name === 'c') || key.name === 'q') {
+    return { kind: 'cancel' };
+  }
+  if (key.name === 'up' || key.name === 'k') {
+    let c = cursor;
+    do c = (c - 1 + rows.length) % rows.length; while (rows[c]?.kind === 'header');
+    return { kind: 'move', cursor: c };
+  }
+  if (key.name === 'down' || key.name === 'j') {
+    let c = cursor;
+    do c = (c + 1) % rows.length; while (rows[c]?.kind === 'header');
+    return { kind: 'move', cursor: c };
+  }
+  if (key.name === 'space') {
+    const row = rows[cursor];
+    if (row?.kind === 'checkbox') {
+      const list = [...((partial[row.target] as string[] | undefined) ?? [])];
+      if (row.checked) {
+        partial[row.target] = list.filter(id => id !== row.id);
+      } else {
+        partial[row.target] = [...list, row.id];
+      }
+      return { kind: 'render' };
+    }
+    if (row?.kind === 'cycle') {
+      const idx = row.values.indexOf(row.value);
+      row.value = row.values[(idx + 1) % row.values.length]!;
+      partial[row.target] = row.value;
+      return { kind: 'render' };
+    }
+    return { kind: 'render' };
+  }
+  if (key.name === 'return' || key.name === 'enter') {
+    return { kind: 'finish' };
+  }
+  return { kind: 'none' };
+}
 
 export interface SettingsMenuOptions {
   title: string;
@@ -132,7 +190,7 @@ export function runSettingsMenu(
       // Truncate to the terminal width; leave the last column free.
       output.write(`${line.slice(0, Math.max(1, output.columns - 1))}\n`);
     }
-    output.write('\n\x1b[2mSpace/Enter toggle or cycle · ↑/↓ move · q/Ctrl-C quit\x1b[22m\n');
+    output.write('\n\x1b[2mSpace toggle/cycle · Enter finish · ↑/↓ move · q/Ctrl-C quit\x1b[22m\n');
   };
 
   const cleanup = (): void => {
@@ -149,40 +207,25 @@ export function runSettingsMenu(
   });
 
   const onKeypress = (_: string, key: readline.Key): void => {
-    if ((key.ctrl && key.name === 'c') || key.name === 'q') {
-      cleanup();
-      reject(new MenuCancelledError());
-      return;
-    }
-    const rows = rowsFor(partial);
-    if (key.name === 'up' || key.name === 'k') {
-      do cursor = (cursor - 1 + rows.length) % rows.length; while (rows[cursor]?.kind === 'header');
-      render();
-    } else if (key.name === 'down' || key.name === 'j') {
-      do cursor = (cursor + 1) % rows.length; while (rows[cursor]?.kind === 'header');
-      render();
-    } else if (key.name === 'space' || key.name === 'return' || key.name === 'enter') {
-      const row = rows[cursor];
-      if (row?.kind === 'checkbox') {
-        const list = [
-          ...((partial[row.target] as string[] | undefined) ?? []),
-        ];
-        if (row.checked) {
-          partial[row.target] = list.filter(id => id !== row.id);
-        } else {
-          partial[row.target] = [...list, row.id];
-        }
-        render();
-      } else if (row?.kind === 'cycle') {
-        const idx = row.values.indexOf(row.value);
-        row.value = row.values[(idx + 1) % row.values.length]!;
-        partial[row.target] = row.value;
-        render();
-      } else if (key.name === 'return' || key.name === 'enter') {
-        // Enter on the empty space below the rows finishes.
+    const outcome = dispatchKeyPress(key, rowsFor(partial), partial, cursor);
+    switch (outcome.kind) {
+      case 'cancel':
         cleanup();
-        resolve(collect(rows));
-      }
+        reject(new MenuCancelledError());
+        break;
+      case 'finish':
+        cleanup();
+        resolve(collect(rowsFor(partial)));
+        break;
+      case 'move':
+        cursor = outcome.cursor;
+        render();
+        break;
+      case 'render':
+        render();
+        break;
+      case 'none':
+        break;
     }
   };
 
