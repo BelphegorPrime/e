@@ -27,6 +27,8 @@ registerRuntimeCommands(program);
 registerExportCommand(program);
 registerImportCommand(program);
 registerLintCommand(program);
+
+// {@link registerCompletion} has to be the last thing to register before parse
 registerCompletion(program);
 
 program.parse();
