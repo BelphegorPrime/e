@@ -292,7 +292,11 @@ export async function runSpawn(
       if (openedNetwork) {
         await networkManager.removeNetwork(network as string);
       }
-      if (worktreePath && !params.keepWorktree) {
+      if (
+        worktreePath &&
+        !params.keepWorktree &&
+        !deps.git.isDirty(worktreePath)
+      ) {
         await worktreeManager.removeWorktree(worktreePath);
       }
     } catch {

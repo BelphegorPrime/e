@@ -183,6 +183,67 @@ test('HostGit.commitAll stages and commits every change in the worktree', () => 
   }
 });
 
+test('HostGit.commitAll retries once when a pre-commit hook rewrites the staged files', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    // Simulates prettier --write: rewrites the file and fails the first
+    // attempt so a human reviews the diff; the second attempt (files
+    // already fixed) has nothing left to change and passes.
+    fs.writeFileSync(
+      path.join(repo, '.git', 'hooks', 'pre-commit'),
+      [
+        '#!/bin/sh',
+        'if grep -q unformatted new.txt 2>/dev/null; then',
+        '  sed -i "s/unformatted/formatted/" new.txt',
+        '  git add -A',
+        '  exit 1',
+        'fi',
+        'exit 0',
+        '',
+      ].join('\n')
+    );
+    fs.chmodSync(path.join(repo, '.git', 'hooks', 'pre-commit'), 0o755);
+
+    const host = new HostGit();
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'unformatted');
+    host.commitAll(repo, 'test: add new.txt');
+
+    assert.equal(host.isDirty(repo), false);
+    assert.equal(
+      fs.readFileSync(path.join(repo, 'new.txt'), 'utf8'),
+      'formatted'
+    );
+    assert.match(git(repo, 'log', '-1', '--format=%s'), /test: add new.txt/);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.commitAll rethrows when the hook still fails on the retry, leaving changes staged', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    fs.writeFileSync(
+      path.join(repo, '.git', 'hooks', 'pre-commit'),
+      '#!/bin/sh\nexit 1\n'
+    );
+    fs.chmodSync(path.join(repo, '.git', 'hooks', 'pre-commit'), 0o755);
+
+    const host = new HostGit();
+    fs.writeFileSync(path.join(repo, 'new.txt'), 'added');
+    assert.throws(() => host.commitAll(repo, 'test: add new.txt'));
+    // The failed commit must not have discarded the staged work.
+    assert.equal(host.isDirty(repo), true);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('HostGit.hasCommitsBeyondBase counts the run branch beyond its base', () => {
   const repo = seedRepo();
   const originalCwd = process.cwd();
