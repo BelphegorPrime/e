@@ -100,8 +100,8 @@ The commands an agent (or user) actually uses:
 
 | Command                                      | What it does                                          |
 | -------------------------------------------- | ----------------------------------------------------- |
-| `e spawn <agent-or-harness> "<prompt>"`      | Run an agent/harness against a prompt                 |
-| `e spawn <agent-or-harness> --interactive`   | Start the harness TUI for the first message           |
+| `e spawn <agent-or-harness> "<prompt>"`      | Run an agent/harness against a prompt (one-shot detached)|
+| `e spawn <agent-or-harness>`                 | Start the harness TUI (interactive by default)         |
 | `e spawn <agent-or-harness> --skill <name>`  | Add a Skill for this run                              |
 | `e spawn <agent-or-harness> --mcp <name>`    | Wire an MCP server (rejected for pi)                  |
 | `e init`                                     | Write the store (`~/.e`); usually done on the host    |

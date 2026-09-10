@@ -36,34 +36,23 @@ function argsFor(
 
 const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
   {
-    name: 'attached: no -d',
-    opts: { attach: true },
+    name: 'plain: run in the foreground with no extra flags',
+    opts: {},
     expected: ['run', 'img'],
   },
   {
     name: 'interactive: keeps stdin open and allocates a TTY',
-    opts: { attach: true, interactive: true },
+    opts: { interactive: true },
     expected: ['run', '-it', 'img'],
   },
   {
-    name: 'detached: -d is added',
-    opts: { attach: false },
-    expected: ['run', '-d', 'img'],
-  },
-  {
-    name: 'attach undefined defaults to detached (-d present)',
-    opts: {},
-    expected: ['run', '-d', 'img'],
-  },
-  {
     name: '--rm / --name / -w in order',
-    opts: { attach: true, rm: true, name: 'run-1', workdir: '/workspace' },
+    opts: { rm: true, name: 'run-1', workdir: '/workspace' },
     expected: ['run', '--rm', '--name', 'run-1', '-w', '/workspace', 'img'],
   },
   {
     name: '--network follows -w, before env-files',
     opts: {
-      attach: true,
       name: 'run-1',
       workdir: '/workspace',
       networks: ['run-1-net'],
@@ -82,7 +71,6 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
   {
     name: 'multi --network keeps order',
     opts: {
-      attach: true,
       networks: ['run-1-net', 'other-net'],
     },
     expected: [
@@ -97,7 +85,6 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
   {
     name: 'netns: --network container:<name> replaces networks',
     opts: {
-      attach: true,
       netns: 'e-demo-fix-1-egress',
       networks: ['run-1-net'],
     },
@@ -105,7 +92,7 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
   },
   {
     name: '--env-file entries keep their order',
-    opts: { attach: true, envFile: ['/base.env', '/user.env'] },
+    opts: { envFile: ['/base.env', '/user.env'] },
     expected: [
       'run',
       '--env-file',
@@ -118,7 +105,6 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
   {
     name: 'volumes, ports, env vars follow env-files, each repeated in order',
     opts: {
-      attach: true,
       volumes: [
         { host: '/wt', container: '/workspace' },
         { host: '/cache', container: '/cache' },
@@ -154,7 +140,6 @@ for (const { name, opts, expected } of cases) {
 test('buildRunArgs: full ordering — flags, env-files, v/p/e, image, then command args', () => {
   const args = argsFor(
     {
-      attach: false,
       rm: true,
       name: 'run-1',
       workdir: '/workspace',
@@ -167,7 +152,6 @@ test('buildRunArgs: full ordering — flags, env-files, v/p/e, image, then comma
   );
   assert.deepEqual(args, [
     'run',
-    '-d',
     '--rm',
     '--name',
     'run-1',
@@ -191,7 +175,7 @@ test('buildRunArgs: full ordering — flags, env-files, v/p/e, image, then comma
 });
 
 test('buildRunArgs: command args trail the image', () => {
-  assert.deepEqual(argsFor({ attach: true }, ['sh', '-c', 'echo hi']), [
+  assert.deepEqual(argsFor({}, ['sh', '-c', 'echo hi']), [
     'run',
     'img',
     'sh',
@@ -203,7 +187,6 @@ test('buildRunArgs: command args trail the image', () => {
 test('buildRunArgs: renders explicit host mappings', () => {
   assert.deepEqual(argsFor({ extraHosts: ['example.test:192.0.2.1'] }), [
     'run',
-    '-d',
     '--add-host',
     'example.test:192.0.2.1',
     'img',
@@ -320,7 +303,6 @@ test('formatMount: ro appends :ro', () => {
 test('buildRunArgs: a read-only mount renders host:container:ro', () => {
   assert.deepEqual(
     argsFor({
-      attach: true,
       volumes: [{ host: '/s', container: '/skills/x', ro: true }],
     }),
     ['run', '-v', '/s:/skills/x:ro', 'img']

@@ -24,7 +24,6 @@ function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
     prompt: 'do it',
     rebuild: false,
     env: [],
-    attach: true,
     ...overrides,
   };
 }
