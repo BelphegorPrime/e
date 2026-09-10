@@ -17,7 +17,13 @@ const program = new Command();
 program
   .name('e')
   .description('CLI tool for my AI Orchestrator')
-  .version(E_VERSION);
+  .version(E_VERSION)
+  .option('-v, --verbose', 'enable verbose logging', false)
+  .hook('preAction', (thisCommand) => {
+    if (thisCommand.opts().verbose) {
+      process.env.VERBOSE = 'true';
+    }
+  });
 
 registerSpawnCommand(program);
 registerInitCommand(program);

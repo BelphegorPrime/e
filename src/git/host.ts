@@ -13,6 +13,7 @@ export class HostGit implements Git {
       stdio: 'ignore',
       shell: false,
     });
+    log.debug(`Inside git work tree: ${result.status === 0}`);
     return result.status === 0;
   }
 
@@ -116,6 +117,7 @@ export class HostGit implements Git {
   addWorktree(spec: WorktreeSpec): void {
     // `-b <branch>` makes the branch; git refuses if it already exists, and
     // refuses if `path` is non-empty — giving us atomic create for free.
+    log.debug(`Creating worktree: ${spec.path} -> branch ${spec.branch} at ${spec.base}`);
     this.run(
       ['worktree', 'add', '-b', spec.branch, spec.path, spec.base],
       `create worktree for ${spec.branch}`
@@ -146,7 +148,9 @@ export class HostGit implements Git {
       ['rev-list', '--count', `${base}..${branch}`],
       `count commits on ${branch} beyond ${base}`
     );
-    return Number(out.trim()) > 0;
+    const count = Number(out.trim());
+    log.debug(`Commits on ${branch} beyond ${base}: ${count}`);
+    return count > 0;
   }
 
   push(branch: string): void {

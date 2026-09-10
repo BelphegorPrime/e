@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import { stripVTControlCharacters } from 'node:util';
 import assert from 'node:assert/strict';
 import { log } from './log.js';
+import { env } from './env.js';
 
 // Capture each stream's writes. Color availability varies with test runner
 // environment, so stream-routing assertions strip ANSI escape sequences.
@@ -52,7 +53,52 @@ test('rest args format like console (specifiers and joins)', () => {
   assert.deepEqual(out, ['count=3\n', 'a b c\n']);
 });
 
-test('no args writes just a blank line', () => {
-  log.info();
-  assert.deepEqual(out, ['\n']);
+test('debug writes to stdout only if verbose enabled', () => {
+  const origVerbose = process.env.VERBOSE;
+  process.env.VERBOSE = 'true';
+  try {
+    log.debug('hidden');
+    assert.deepEqual(out, ['hidden\n']);
+  } finally {
+    process.env.VERBOSE = origVerbose;
+  }
+});
+
+test('debug silent when verbose disabled', () => {
+  const origVerbose = process.env.VERBOSE;
+  process.env.VERBOSE = 'false';
+  try {
+    log.debug('hidden');
+    assert.deepEqual(out, []);
+  } finally {
+    process.env.VERBOSE = origVerbose;
+  }
+});
+
+test('debug is hidden unless VERBOSE is set', () => {
+  delete process.env.VERBOSE;
+  log.debug('hidden detail');
+  assert.deepEqual(out, []);
+
+  process.env.VERBOSE = 'true';
+  log.debug('visible detail');
+  assert.deepEqual(out, ['visible detail\n']);
+
+  delete process.env.VERBOSE;
+});
+
+test('debug writes nothing unless verbose is enabled', () => {
+  const previous = process.env.VERBOSE;
+  try {
+    delete process.env.VERBOSE;
+    log.debug('secret');
+    assert.deepEqual(out, []);
+
+    process.env.VERBOSE = 'true';
+    log.debug('secret');
+    assert.deepEqual(out, ['secret\n']);
+  } finally {
+    if (previous === undefined) delete process.env.VERBOSE;
+    else process.env.VERBOSE = previous;
+  }
 });

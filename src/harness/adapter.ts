@@ -10,6 +10,7 @@
 
 import type { McpEndpoint } from '../mcp/index.js';
 import { NODE_HOME } from './renderDockerfile.js';
+import { log } from '../utils/log.js';
 
 /**
  * Every model wire protocol `e` recognises — the single source of truth. A
@@ -229,7 +230,7 @@ export function renderCodexConfig(provider: Provider): string {
   lines.push(
     `model = ${tomlBasicString(provider.model)}`,
     `model_provider = ${tomlBasicString(id)}`,
-    ``,
+    `,
     `[model_providers.${id}]`,
     `name = ${tomlBasicString(id)}`,
     `base_url = ${tomlBasicString(provider.baseUrl)}`,
@@ -500,6 +501,7 @@ export class EnvFileRenderer {
       }
       return `${entry.name}=${value}`;
     });
+    log.debug(`Rendered ${lines.length} env lines for ${subject}`);
     return lines.join('\n') + '\n';
   }
 }

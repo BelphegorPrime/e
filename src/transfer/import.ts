@@ -55,11 +55,11 @@ export async function importConfiguration(
   if (force) {
     if (fs.existsSync(envPath)) {
       fs.unlinkSync(envPath);
-      log.info('Removed existing .env file');
+      log.debug('Removed existing .env file');
     }
     if (fs.existsSync(configPath)) {
       fs.unlinkSync(configPath);
-      log.info('Removed existing config.json file');
+      log.debug('Removed existing config.json file');
     }
   }
 
@@ -72,7 +72,7 @@ export async function importConfiguration(
 
   try {
     // Extract zip
-    log.info('Extracting archive...');
+    log.debug('Extracting archive...');
     const zip = new AdmZip(zipPath);
     zip.extractAllTo(tempDir, true);
 
@@ -89,24 +89,24 @@ export async function importConfiguration(
     for (const file of filesToRestore) {
       const sourcePath = path.join(tempDir, file.arcPath);
       if (fs.existsSync(sourcePath)) {
-        log.info(`Restoring ${file.arcPath}...`);
+        log.debug(`Restoring ${file.arcPath}...`);
         fs.copyFileSync(sourcePath, file.targetPath);
       } else {
-        log.warn(`Missing in archive: ${file.arcPath}`);
+        log.debug(`Missing in archive: ${file.arcPath}`);
       }
     }
 
     // Restore volume data
     const volumeDataDir = path.join(tempDir, 'omniroute-data');
     if (fs.existsSync(volumeDataDir)) {
-      log.info('Restoring omniroute volume...');
+      log.debug('Restoring omniroute volume...');
 
       // Check if volume exists; create if not
       try {
         await execAsync(`docker volume inspect ${OMNIROUTE_VOLUME}`);
-        log.info(`Volume ${OMNIROUTE_VOLUME} exists, will overwrite...`);
+        log.debug(`Volume ${OMNIROUTE_VOLUME} exists, will overwrite...`);
       } catch {
-        log.info(`Creating volume ${OMNIROUTE_VOLUME}...`);
+        log.debug(`Creating volume ${OMNIROUTE_VOLUME}...`);
         await execAsync(`docker volume create ${OMNIROUTE_VOLUME}`);
       }
 

@@ -18,6 +18,11 @@ export class Env {
     return process.env.SHOULD_WRITE_LOG_FILE === 'true';
   }
 
+  /** Whether verbose logging is enabled. */
+  get verbose(): boolean {
+    return process.env.VERBOSE === 'true';
+  }
+
   /** True when running inside the detached `serve` child spawned by `startDetachedServe`. */
   get serveDetached(): boolean {
     return process.env[Env.SERVE_DETACHED_VAR] === '1';

@@ -253,6 +253,7 @@ export class ContainerRuntime implements ContainerRunner {
       stdio: 'ignore',
       shell: false,
     });
+    log.debug(`Runtime ${this.command} available: ${result.status === 0}`);
     return result.status === 0;
   }
 
@@ -262,6 +263,7 @@ export class ContainerRuntime implements ContainerRunner {
       stdio: 'ignore',
       shell: false,
     });
+    log.debug(`Image ${imageTag} exists locally: ${result.status === 0}`);
     return result.status === 0;
   }
 
@@ -274,6 +276,7 @@ export class ContainerRuntime implements ContainerRunner {
     const args = buildImageArgs(imageTag, contextDir, dockerfile);
 
     log.command(`> ${this.command} ${args.join(' ')}`);
+    log.debug(`Context: ${contextDir}, Dockerfile: ${dockerfile ?? 'default'}`);
     const result = spawnSync(this.command, args, {
       stdio: 'inherit',
       shell: false,
@@ -287,6 +290,7 @@ export class ContainerRuntime implements ContainerRunner {
     if (result.status !== 0) {
       throw new Error(`Image build failed (exit code ${result.status ?? 1}).`);
     }
+    log.debug(`Built image ${imageTag} from ${contextDir}`);
   }
 
   /** Builds the argument list passed to the runtime. */
@@ -439,6 +443,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */
   createNetwork(name: string): void {
+    log.debug(`Creating network: ${name}`);
     const result = spawnSync(this.command, networkCreateArgs(name), {
       stdio: 'ignore',
       shell: false,
@@ -453,14 +458,17 @@ export class ContainerRuntime implements ContainerRunner {
         `Failed to create network "${name}" (exit code ${result.status ?? 1}).`
       );
     }
+    log.debug(`Created network ${name}`);
   }
 
   /** Remove a network. Best-effort: swallows every failure so teardown never masks the run result. */
   removeNetwork(name: string): void {
+    log.debug(`Removing network: ${name}`);
     spawnSync(this.command, networkRemoveArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
+    log.debug(`Removed network ${name}`);
   }
 
   /**
@@ -494,6 +502,7 @@ export class ContainerRuntime implements ContainerRunner {
       stdio: 'ignore',
       shell: false,
     });
+    log.debug(`Removed container ${name}`);
   }
 
   /**
@@ -507,7 +516,9 @@ export class ContainerRuntime implements ContainerRunner {
       stdio: 'ignore',
       shell: false,
     });
-    return result.status === 0;
+    const ok = result.status === 0;
+    log.debug(`TCP probe ${host}:${port} on ${network}: ${ok ? 'open' : 'closed'}`);
+    return ok;
   }
 
   /** Run a readiness command inside the sidecar (`exec`); true iff it exits 0. */
@@ -516,7 +527,9 @@ export class ContainerRuntime implements ContainerRunner {
       stdio: 'ignore',
       shell: false,
     });
-    return result.status === 0;
+    const ok = result.status === 0;
+    log.debug(`Healthcheck ${container} ${command.join(' ')}: ${ok ? 'ready' : 'not ready'}`);
+    return ok;
   }
 
   /** True if the named container is still running (`inspect` reports `Running: true`). */
