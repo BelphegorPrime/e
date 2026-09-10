@@ -13,9 +13,6 @@ import {
   tcpProbeArgs,
   execArgs,
   runningInspectArgs,
-  composeUpArgs,
-  composeWaitArgs,
-  composeRestartArgs,
   volumeInspectArgs,
   volumeCreateArgs,
   volumeCopyOutArgs,
@@ -23,6 +20,11 @@ import {
   type RunOptions,
   type SidecarSpec,
 } from './index.js';
+import {
+  composeUpArgs,
+  composeWaitArgs,
+  composeRestartArgs,
+} from './compose.js';
 
 // buildRunArgs is pure argv construction — no child process is spawned — so we
 // exercise it directly on a concrete ContainerRuntime and assert the exact
