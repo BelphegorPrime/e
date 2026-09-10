@@ -134,14 +134,24 @@ export class HostGit implements Git {
   }
 
   commitAll(worktreePath: string, message: string): void {
-    this.run(
-      ['-C', worktreePath, 'add', '-A'],
-      `stage changes in ${worktreePath}`
-    );
-    this.run(
-      ['-C', worktreePath, 'commit', '-m', message],
-      `commit changes in ${worktreePath}`
-    );
+    const addParams = ['-C', worktreePath, 'add', '-A'];
+    const commitParams = ['-C', worktreePath, 'commit', '-m', message];
+
+    this.run(addParams, `stage changes in ${worktreePath}`);
+    try {
+      this.run(commitParams, `commit changes in ${worktreePath}`);
+    } catch {
+      // A pre-commit hook (e.g. prettier --write) may have reformatted the
+      // staged files in place and aborted the commit so a human reviews the
+      // diff. Since here that diff is machine-generated run output, restage
+      // and retry once: if the hook only rewrote files, this second attempt
+      // has nothing left to fix and succeeds. A real hook failure (lint
+      // error, test failure) fails the same way again and rethrows — the
+      // original error's message would be stale after the restage, so let
+      // this second failure speak for itself.
+      this.run(addParams, `restage hook-modified changes in ${worktreePath}`);
+      this.run(commitParams, `retry commit changes in ${worktreePath}`);
+    }
   }
 
   hasCommitsBeyondBase(branch: string, base: string): boolean {

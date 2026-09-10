@@ -31,6 +31,8 @@ class FakeGit implements Git {
   addWorktreeError?: string;
   /** When set, `push` throws with this message. */
   pushFails?: string;
+  /** When set, `commitAll` throws this instead of committing (e.g. a hook that never passes). */
+  commitFails?: string;
   /** Run-branch log the fake returns (newest first); empty by default. */
   log: RunCommit[];
 
@@ -50,6 +52,7 @@ class FakeGit implements Git {
       collideBranches?: string[];
       addWorktreeError?: string;
       pushFails?: string;
+      commitFails?: string;
       log?: RunCommit[];
     } = {}
   ) {
@@ -60,6 +63,7 @@ class FakeGit implements Git {
     this.collideBranches = new Set(opts.collideBranches ?? []);
     this.addWorktreeError = opts.addWorktreeError;
     this.pushFails = opts.pushFails;
+    this.commitFails = opts.commitFails;
     this.log = opts.log ?? [];
   }
 
@@ -105,7 +109,9 @@ class FakeGit implements Git {
   }
   commitAll(worktreePath: string, message: string): void {
     this.calls.push('commitAll');
+    if (this.commitFails) throw new Error(this.commitFails);
     this.commits.push({ path: worktreePath, message });
+    this.dirty = false;
   }
   hasCommitsBeyondBase(): boolean {
     this.calls.push('hasCommitsBeyondBase');
@@ -405,6 +411,15 @@ test('removes the worktree even when the agent exits non-zero, and preserves the
   assert.equal(result.exitCode, 2);
   assert.deepEqual(git.removed, [git.worktrees[0].path]);
   assert.equal(git.commits.length, 0);
+});
+
+test('never force-removes a worktree that is still dirty: a commit failure leaves the work in place', async () => {
+  const { deps, git } = makeDeps({
+    git: new FakeGit({ dirty: true, commitFails: 'pre-commit hook failed' }),
+  });
+  await assert.rejects(runSpawn(deps, makeParams()), /pre-commit hook failed/);
+  assert.deepEqual(git.removed, []);
+  assert.equal(git.dirty, true);
 });
 
 test('--name overrides the slug and flows into the branch', async () => {
