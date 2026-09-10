@@ -28,7 +28,12 @@ export class ProductionContainerExecutor implements ContainerExecutor {
 
 /** In-memory container executor for testing. */
 export class InMemoryContainerExecutor implements ContainerExecutor {
-  private executionHistory: Array<{ imageTag: string; runOptions: RunOptions; command: string[]; exitCode: number }> = [];
+  private executionHistory: Array<{
+    imageTag: string;
+    runOptions: RunOptions;
+    command: string[];
+    exitCode: number;
+  }> = [];
 
   async execute(
     imageTag: string,
@@ -41,7 +46,12 @@ export class InMemoryContainerExecutor implements ContainerExecutor {
     return { exitCode };
   }
 
-  getExecutionHistory(): Array<{ imageTag: string; runOptions: RunOptions; command: string[]; exitCode: number }> {
+  getExecutionHistory(): Array<{
+    imageTag: string;
+    runOptions: RunOptions;
+    command: string[];
+    exitCode: number;
+  }> {
     return [...this.executionHistory];
   }
 }

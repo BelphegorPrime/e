@@ -55,8 +55,9 @@ export const RUNTIME_CATALOGS: Readonly<
  */
 export function composeModelCatalog(
   runtimes: readonly LocalRuntime[],
-  catalogs: Readonly<Record<LocalRuntime, readonly ModelCatalogEntry[]>> =
-    RUNTIME_CATALOGS
+  catalogs: Readonly<
+    Record<LocalRuntime, readonly ModelCatalogEntry[]>
+  > = RUNTIME_CATALOGS
 ): ModelCatalogEntry[] {
   const seen = new Set<string>();
   const merged: ModelCatalogEntry[] = [];

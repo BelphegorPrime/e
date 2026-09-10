@@ -86,11 +86,17 @@ test('planInit: local runtime selection accepts indexed multi-select', () => {
 test('planInit: a model answer resolves against the selected runtimes catalog union', () => {
   // "all" under llamacpp alone selects the llama catalog, not the union.
   const all = planInit(state(), { localRuntimes: '1', models: 'all' });
-  assert.deepEqual(all.models, RUNTIME_CATALOGS.llamacpp.map(m => m.id));
+  assert.deepEqual(
+    all.models,
+    RUNTIME_CATALOGS.llamacpp.map(m => m.id)
+  );
 
   // With Ollama selected, "all" covers Ollama's catalog.
   const ollama = planInit(state(), { localRuntimes: '2', models: 'all' });
-  assert.deepEqual(ollama.models, RUNTIME_CATALOGS.ollama.map(m => m.id));
+  assert.deepEqual(
+    ollama.models,
+    RUNTIME_CATALOGS.ollama.map(m => m.id)
+  );
 
   // Two runtimes: the union, llama first then ollama (deduplicated).
   const both = planInit(state(), { localRuntimes: '1,2', models: 'all' });
@@ -258,7 +264,10 @@ test('planInit: ships the searxng MCP server with the other shipped servers', ()
       step.kind === 'writes' &&
       step.writes.some(w => w.file.includes('.e/mcp/searxng/'))
   );
-  assert.ok(writesStep, 'expected a writes step containing the searxng MCP server');
+  assert.ok(
+    writesStep,
+    'expected a writes step containing the searxng MCP server'
+  );
   assert.ok(writesStep.kind === 'writes');
   const files = writesStep.writes
     .filter(w => w.file.includes('.e/mcp/searxng/'))

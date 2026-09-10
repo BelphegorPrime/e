@@ -70,7 +70,11 @@ export class DockerSidecarOrchestrator implements SidecarOrchestrator {
   }
 
   isSidecarReady(spec: SidecarSpec): boolean {
-    const portOpen = this.runner.probeTcp(spec.network ?? '', spec.alias, spec.port);
+    const portOpen = this.runner.probeTcp(
+      spec.network ?? '',
+      spec.alias,
+      spec.port
+    );
     if (!portOpen) return false;
     if (spec.healthcheck && spec.healthcheck.length > 0) {
       return this.runner.probeHealthcheck(spec.name, spec.healthcheck);

@@ -115,7 +115,7 @@ export function renderDockerfile(p: DockerfileParams): string {
     label: p.label,
     flags: p.npmFlags ?? [],
     npmPackage: p.npmPackage,
-    setupSteps: (p.setupSteps ?? []).map((step) => `RUN ${step}`),
+    setupSteps: (p.setupSteps ?? []).map(step => `RUN ${step}`),
     skillsBlock,
     workdir: p.workdir ?? '/workspace',
     homeLine: nonRoot ? `ENV HOME=${NODE_HOME}\n` : '',

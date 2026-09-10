@@ -514,7 +514,9 @@ export class ContainerRuntime implements ContainerRunner {
       shell: false,
     });
     const ok = result.status === 0;
-    log.debug(`TCP probe ${host}:${port} on ${network}: ${ok ? 'open' : 'closed'}`);
+    log.debug(
+      `TCP probe ${host}:${port} on ${network}: ${ok ? 'open' : 'closed'}`
+    );
     return ok;
   }
 
@@ -525,7 +527,9 @@ export class ContainerRuntime implements ContainerRunner {
       shell: false,
     });
     const ok = result.status === 0;
-    log.debug(`Healthcheck ${container} ${command.join(' ')}: ${ok ? 'ready' : 'not ready'}`);
+    log.debug(
+      `Healthcheck ${container} ${command.join(' ')}: ${ok ? 'ready' : 'not ready'}`
+    );
     return ok;
   }
 

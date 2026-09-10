@@ -1,0 +1,9 @@
+# Prek/pre-commit configuration
+repos:
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier
+        entry: npx prettier --write
+        language: system
+        files: '\.(js|ts|json|md|yaml)$'

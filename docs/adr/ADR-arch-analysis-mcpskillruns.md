@@ -1,12 +1,15 @@
 # ADR-arch-analysis-mcpskillruns: Architecture Analysis of mcp, skill, and runs Directories
 
 ## Summary
+
 Architecture analysis of the mcp, skill, and runs directories to identify architectural friction and shallow modules using codebase-design principles.
 
 ## Problem Statement
+
 The mcp, skill, and runs directories contain architectural friction and shallow modules that limit maintainability, testability, and extensibility. Several modules have interfaces that match their implementation complexity rather than providing leverage through hidden behavior.
 
 ## Context
+
 The analyzed codebase follows a harness-based architecture with clear separation between the agent harness and its capabilities:
 
 - **Harness**: packaging of coding-agent CLI
@@ -18,13 +21,16 @@ The analyzed codebase follows a harness-based architecture with clear separation
 ### Current State Analysis
 
 #### 1. MCP Module (`src/mcp/index.ts`) - SHALLOW
+
 **Issues:**
+
 - Mixed responsibilities: parsing + validation + derivation + rendering
 - Transport coupling: container and remote logic intertwined
 - Complex interface: multiple export types, validation functions embedded
 - Validation logic mixed with business logic
 
 **Current Component Tree:**
+
 ```
 interface McpServerBase { name: string; requiredEnv: string[] }
 ├── ContainerMcpServer (transport: 'container')
@@ -36,27 +42,33 @@ interface McpServerBase { name: string; requiredEnv: string[] }
 ```
 
 #### 2. Skill Module (`src/skill/index.ts`) - DEEP
+
 **Strengths:**
+
 - Thin edge pattern: imports paths FROM store, never reverse
 - Clear seam: skill-specific concerns concentrated
 - Hidden complexity: file system operations abstracted behind small interface
 
 **Interface:**
+
 ```typescript
 interface SkillModule {
-  resolveSkill(name: string, root?: string): string
-  listSkillNames(root?: string): string[]
+  resolveSkill(name: string, root?: string): string;
+  listSkillNames(root?: string): string[];
 }
 ```
 
 #### 3. Runs Module (`src/runs/runSpawn.ts`) - MIXED/NEEDS EXTRACTION
+
 **Issues:**
+
 - Single module handles 7+ concerns
 - Poor locality: related concerns scattered
 - Complex dependencies: circular import potential
 - Interface too wide for single responsibility
 
 **Current Component Tree:**
+
 ```
 export async function runSpawn(deps, params) {
 ├── Network Management (creation/removal)
@@ -70,15 +82,18 @@ export async function runSpawn(deps, params) {
 ```
 
 ## Decision
+
 Extract the Runs module into focused, deep modules following the Single Responsibility Principle. Each module should have a clear interface with significant hidden behavior.
 
 ### Strategy
+
 1. **Separate concerns** into individual modules
 2. **Maintain interfaces** as thin edges over implementation
 3. **Create clean seams** between modules
 4. **Preserve existing functionality** while improving architecture
 
 ### Implementation
+
 The following modules were extracted from `runSpawn.ts`:
 
 1. **runNetworks.ts** - Network management
@@ -93,6 +108,7 @@ The following modules were extracted from `runSpawn.ts`:
 10. **runOrchestrator.ts** - Main orchestration
 
 Each module follows the codebase-design principles:
+
 - **Module**: clear interface and implementation
 - **Interface**: small, focused contract
 - **Depth**: large behavior behind small interface
@@ -122,24 +138,25 @@ Each module follows the codebase-design principles:
 ## Implementation Details
 
 ### Interface Design Principles
+
 - Each module provides a minimal interface that hides complex implementation details
 - Interfaces are focused on one specific responsibility
 - Module boundaries are clear and well-documented
 
 ### Module Responsibilities
 
-| Module | Primary Responsibility | Interface Complexity | Implementation Depth |
-|--------|-----------------------|---------------------|---------------------|
-| runNetworks | Network creation/removal | Simple | Complex |
-| runSidecarOrchestrator | Sidecar lifecycle management | Medium | Complex |
-| runGit | Git operations coordination | Simple | Complex |
-| runPrManager | PR/MR management and resource cleanup | Medium | Complex |
-| runBranchNamer | Run branch naming and collision resolution | Simple | Complex |
-| runLogCapture | Egress log capture and storage | Simple | Complex |
-| runContainerExecution | Container execution orchestration | Simple | Complex |
-| runWorktree | Worktree lifecycle management | Simple | Complex |
-| runResult | Run result aggregation and error handling | Simple | Complex |
-| runOrchestrator | High-level run coordination | Medium | Medium |
+| Module                 | Primary Responsibility                     | Interface Complexity | Implementation Depth |
+| ---------------------- | ------------------------------------------ | -------------------- | -------------------- |
+| runNetworks            | Network creation/removal                   | Simple               | Complex              |
+| runSidecarOrchestrator | Sidecar lifecycle management               | Medium               | Complex              |
+| runGit                 | Git operations coordination                | Simple               | Complex              |
+| runPrManager           | PR/MR management and resource cleanup      | Medium               | Complex              |
+| runBranchNamer         | Run branch naming and collision resolution | Simple               | Complex              |
+| runLogCapture          | Egress log capture and storage             | Simple               | Complex              |
+| runContainerExecution  | Container execution orchestration          | Simple               | Complex              |
+| runWorktree            | Worktree lifecycle management              | Simple               | Complex              |
+| runResult              | Run result aggregation and error handling  | Simple               | Complex              |
+| runOrchestrator        | High-level run coordination                | Medium               | Medium               |
 
 ### Migration Strategy
 
@@ -165,27 +182,30 @@ Each module follows the codebase-design principles:
 ## Testing Considerations
 
 ### Unit Testing
+
 - Each extracted module can be unit tested independently
 - Mock implementations available for testing
 - Clear interfaces make dependency injection easier
 
 ### Integration Testing
+
 - Test module interactions through well-defined interfaces
 - Ensure orchestration logic works correctly
 - Verify end-to-end functionality is preserved
 
 ### Test Structure
+
 ```
 // Example unit test structure
 import { InMemoryNetworkManager } from './runNetworks.js';
 
 describe('NetworkManager', () => {
   let manager: NetworkManager;
-  
+
   beforeEach(() => {
     manager = new InMemoryNetworkManager();
   });
-  
+
   describe('createNetwork', () => {
     it('should create a network', async () => {
       await manager.createNetwork('test-network');
@@ -198,11 +218,13 @@ describe('NetworkManager', () => {
 ## Dependencies
 
 ### Positive Dependencies
+
 - **Reduced Coupling**: Modules have focused, single responsibilities
 - **Clear Boundaries**: Well-defined interfaces between modules
 - **Testability**: Each module can be tested in isolation
 
 ### Potential Drawbacks
+
 - **Initial Development Cost**: More files to manage and coordinate
 - **Runtime Overhead**: Slightly more complex module initialization
 - **Interface Refinement**: Need to iterate on interfaces based on usage
@@ -233,13 +255,13 @@ This ADR aligns with the following codebase-design principles:
 
 ## Decision Log
 
-| Date | Change | Description |
-|------|--------|-------------|
+| Date       | Change           | Description                                           |
+| ---------- | ---------------- | ----------------------------------------------------- |
 | 2025-06-17 | Initial Analysis | Identified shallow modules and architectural friction |
-| 2025-06-17 | Design | Created extraction strategy and module interfaces |
-| 2025-06-17 | Implementation | Created all extracted modules |
-| 2025-06-17 | Integration | Refactored runSpawn.ts to use extracted modules |
-| 2025-06-17 | Testing | Verified functionality and updated tests |
+| 2025-06-17 | Design           | Created extraction strategy and module interfaces     |
+| 2025-06-17 | Implementation   | Created all extracted modules                         |
+| 2025-06-17 | Integration      | Refactored runSpawn.ts to use extracted modules       |
+| 2025-06-17 | Testing          | Verified functionality and updated tests              |
 
 ## Conclusion
 

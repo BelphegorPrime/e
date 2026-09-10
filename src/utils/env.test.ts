@@ -2,7 +2,11 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { Env, env } from './env.js';
 
-const VARS = ['LOCAL_LLAMA_URL', 'SHOULD_WRITE_LOG_FILE', Env.SERVE_DETACHED_VAR] as const;
+const VARS = [
+  'LOCAL_LLAMA_URL',
+  'SHOULD_WRITE_LOG_FILE',
+  Env.SERVE_DETACHED_VAR,
+] as const;
 let saved: Record<string, string | undefined>;
 
 beforeEach(() => {

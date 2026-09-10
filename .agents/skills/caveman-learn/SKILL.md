@@ -19,7 +19,8 @@ Read the plan first:
 Then, only for the sinks the user chooses to act on, run the consent loop by class.
 
 REDUCIBLE (a heavy CLAUDE.md, a never-invoked skill):
-- Run: caveman learn apply <sink_id> --dry-run   (this materializes a candidate; it
+
+- Run: caveman learn apply <sink_id> --dry-run (this materializes a candidate; it
   does not edit anything).
 - Propose a concrete diff and show before -> after tokens/turn.
 - Ask the user yes or no. On yes, apply the edit with your own file tools.
@@ -30,7 +31,8 @@ REDUCIBLE (a heavy CLAUDE.md, a never-invoked skill):
 RECURRING_CONTEXT (a heavy block re-established across sessions; fix kind
 cavemem_offload): move it into cavemem so it is recalled compactly instead of
 re-pasted every turn. The candidate carries only a LOCATOR — never the block body.
-- Run: caveman learn apply <sink_id>   and read the candidate JSON it writes under
+
+- Run: caveman learn apply <sink_id> and read the candidate JSON it writes under
   ~/.caveman/candidates/. Take only the locator, the numbers, and the proposed pointer
   text. Do not trust any body from the candidate; there is none.
 - Re-read the real block locally yourself: open the locator's rel_path, go to its
@@ -38,7 +40,7 @@ re-pasted every turn. The candidate carries only a LOCATOR — never the block b
   order), pick block_index, and verify that sha256 of the raw block equals the
   locator's content_sha256. If it does not match, the file changed since the scan —
   abort this item.
-- Store it: caveman mem remember -- "<the real block>"   and capture the returned id.
+- Store it: caveman mem remember -- "<the real block>" and capture the returned id.
   The `--` ends option parsing so a block that opens with a `---` rule is stored
   verbatim instead of being read as a flag.
 - Measure the gate honestly. before = the block's tokens/turn (it loaded every turn).
@@ -61,6 +63,7 @@ re-pasted every turn. The candidate carries only a LOCATOR — never the block b
 LOAD_BEARING: never touch. It appears in the report only so the score stays honest.
 
 Binding rules:
+
 - Consent per edit. No "apply all" that hides the individual diffs.
 - Every edit is reversible: report exactly what you changed. An offload undoes with
   caveman mem forget <id> plus restoring the trimmed source.

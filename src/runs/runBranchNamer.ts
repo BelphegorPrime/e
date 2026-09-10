@@ -4,16 +4,27 @@ import type { Git } from '../git/index.js';
 /** Clean seam for run branch naming and collision resolution. */
 export interface BranchNamer {
   /** Generate the next available branch name for a run. */
-  nextBranch(agent: Agent, slug: string, maxAttempts?: number): Promise<{ branch: string; counter: number }>;
+  nextBranch(
+    agent: Agent,
+    slug: string,
+    maxAttempts?: number
+  ): Promise<{ branch: string; counter: number }>;
 }
 
 export type RunBranchNamer = BranchNamer;
 
 /** Production branch namer using actual git operations. */
 export class ProductionBranchNamer implements BranchNamer {
-  constructor(private readonly git: Git, private readonly worktreesDir = '/tmp/e-worktrees') {}
+  constructor(
+    private readonly git: Git,
+    private readonly worktreesDir = '/tmp/e-worktrees'
+  ) {}
 
-  async nextBranch(agent: Agent, slug: string, maxAttempts = 50): Promise<{ branch: string; counter: number }> {
+  async nextBranch(
+    agent: Agent,
+    slug: string,
+    maxAttempts = 50
+  ): Promise<{ branch: string; counter: number }> {
     const prefix = `e/${agent.name}/${slug}`;
     let counter = this.maxRunCounter(prefix) + 1;
     let attempt = 0;
@@ -40,8 +51,8 @@ export class ProductionBranchNamer implements BranchNamer {
 
   private maxRunCounter(prefix: string): number {
     const existing = this.git.listRunBranches(prefix);
-    const matches = existing.filter((b: string) =>
-      b.startsWith(prefix) || b.startsWith(`origin/${prefix}`)
+    const matches = existing.filter(
+      (b: string) => b.startsWith(prefix) || b.startsWith(`origin/${prefix}`)
     );
     const counters = matches.map((b: string) => {
       const match = b.match(/-?(\d+)$/);
@@ -60,7 +71,11 @@ export class InMemoryBranchNamer implements BranchNamer {
     this.base = base;
   }
 
-  async nextBranch(agent: Agent, slug: string, maxAttempts = 50): Promise<{ branch: string; counter: number }> {
+  async nextBranch(
+    agent: Agent,
+    slug: string,
+    maxAttempts = 50
+  ): Promise<{ branch: string; counter: number }> {
     let attempt = 0;
     let counter = 1;
 
@@ -73,7 +88,9 @@ export class InMemoryBranchNamer implements BranchNamer {
       }
 
       if (attempt >= maxAttempts) {
-        throw new Error(`Could not find unique branch name after ${maxAttempts} attempts`);
+        throw new Error(
+          `Could not find unique branch name after ${maxAttempts} attempts`
+        );
       }
 
       counter++;

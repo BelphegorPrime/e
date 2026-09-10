@@ -13,7 +13,11 @@ import {
 } from '../store/paths.js';
 
 /** Writes `files` under `root` and zips them to `out` (flat archive). */
-function zipFiles(root: string, out: string, files: Record<string, string>): string {
+function zipFiles(
+  root: string,
+  out: string,
+  files: Record<string, string>
+): string {
   for (const [name, content] of Object.entries(files)) {
     fs.writeFileSync(path.join(root, name), content);
   }

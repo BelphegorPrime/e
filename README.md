@@ -266,8 +266,8 @@ is the durable artifact, and a warning reports why the open failed.
 | Command                                        | What it does                                                                                                                     |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config. Also asks for the git platform (PR/MR on successful runs) |
-| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt (one-shot detached)                               |
-| `e spawn <agent-or-harness>`                   | Start the harness TUI (interactive by default)                                          |
+| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt (one-shot detached)                                                                        |
+| `e spawn <agent-or-harness>`                   | Start the harness TUI (interactive by default)                                                                                   |
 | `e spawn … --skill <name>`                     | Add a Skill for this run                                                                                                         |
 | `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for pi)                                                                                             |
 | `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model)                                                           |

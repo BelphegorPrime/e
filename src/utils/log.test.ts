@@ -43,7 +43,10 @@ test('success and command go to stdout; error and warn go to stderr', () => {
   log.command('> docker run');
   log.error('boom');
   log.warn('careful');
-  assert.deepEqual(out.map(stripVTControlCharacters), ['done\n', '> docker run\n']);
+  assert.deepEqual(out.map(stripVTControlCharacters), [
+    'done\n',
+    '> docker run\n',
+  ]);
   assert.deepEqual(err.map(stripVTControlCharacters), ['boom\n', 'careful\n']);
 });
 

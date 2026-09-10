@@ -197,7 +197,12 @@ test('resolveConfig: missing localRuntimes falls back to llamacpp (legacy store)
 });
 
 test('resolveModels: drops nulls, keeps well-formed entries, defaults to empty', () => {
-  const kept = { id: 'org/model', object: 'model', created: 1, owned_by: 'org' };
+  const kept = {
+    id: 'org/model',
+    object: 'model',
+    created: 1,
+    owned_by: 'org',
+  };
   assert.deepEqual(resolveModels([kept, null]), [kept]);
   assert.deepEqual(resolveModels(undefined as unknown as unknown[]), []);
   assert.deepEqual(resolveModels({} as unknown as unknown[]), []);
@@ -215,7 +220,9 @@ test('readModelsJson: a missing file yields the defaults (empty list), no file w
 
 test('models round-trip: writeModelsJson then readModelsJson returns the written value', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-store-'));
-  const entries = [{ id: 'org/model', object: 'model', created: 42, owned_by: 'org' }];
+  const entries = [
+    { id: 'org/model', object: 'model', created: 42, owned_by: 'org' },
+  ];
   try {
     writeModelsJson(entries, root);
     assert.deepEqual(readModelsJson(root), entries);

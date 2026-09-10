@@ -15,7 +15,7 @@ export function registerCompletion(program: Command): void {
   const spawnCommand = completion.commands.get('spawn');
   const runtimeOption = spawnCommand?.options.get('runtime');
   if (runtimeOption) {
-    runtimeOption.handler = (complete) => {
+    runtimeOption.handler = complete => {
       complete('docker', 'Use Docker runtime');
       complete('podman', 'Use Podman runtime');
     };
@@ -25,7 +25,7 @@ export function registerCompletion(program: Command): void {
   const serveCommand = completion.commands.get('serve');
   const portOption = serveCommand?.options.get('port');
   if (portOption) {
-    portOption.handler = (complete) => {
+    portOption.handler = complete => {
       complete('3000', 'Default UI port');
       complete('8080', 'Alternative port');
     };

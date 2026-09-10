@@ -98,15 +98,15 @@ building takes time and may be unwanted.
 
 The commands an agent (or user) actually uses:
 
-| Command                                      | What it does                                          |
-| -------------------------------------------- | ----------------------------------------------------- |
-| `e spawn <agent-or-harness> "<prompt>"`      | Run an agent/harness against a prompt (one-shot detached)|
-| `e spawn <agent-or-harness>`                 | Start the harness TUI (interactive by default)         |
-| `e spawn <agent-or-harness> --skill <name>`  | Add a Skill for this run                              |
-| `e spawn <agent-or-harness> --mcp <name>`    | Wire an MCP server (rejected for pi)                  |
-| `e init`                                     | Write the store (`~/.e`); usually done on the host    |
-| `e serve`                                    | Local web UI / BFF (observer-first, read-only)        |
-| `e --help`                                   | The full CLI                                          |
+| Command                                     | What it does                                              |
+| ------------------------------------------- | --------------------------------------------------------- |
+| `e spawn <agent-or-harness> "<prompt>"`     | Run an agent/harness against a prompt (one-shot detached) |
+| `e spawn <agent-or-harness>`                | Start the harness TUI (interactive by default)            |
+| `e spawn <agent-or-harness> --skill <name>` | Add a Skill for this run                                  |
+| `e spawn <agent-or-harness> --mcp <name>`   | Wire an MCP server (rejected for pi)                      |
+| `e init`                                    | Write the store (`~/.e`); usually done on the host        |
+| `e serve`                                   | Local web UI / BFF (observer-first, read-only)            |
+| `e --help`                                  | The full CLI                                              |
 
 `e` finds its store by walking up from the working directory for a `.e`
 directory, falling back to `~/.e`; `--dir <path>` overrides either.
@@ -134,17 +134,17 @@ Details:
 
 ## What a spawned agent receives (the contract)
 
-| Aspect                  | What the child agent gets                                             |
-| ----------------------- | -------------------------------------------------------------------- |
-| Working directory       | `/workspace`: a disposable git worktree on branch `e/<agent>/<slug>-N`, cut from the host's HEAD. Only committed state carries over. |
-| Environment             | Provider keys and base URLs injected from `.e/.env` (filtered to the run's needs, referenced by name). Harness variables such as pi's `PI_*`. Never host git credentials (ADR-0002). |
-| Agent instructions      | The launch prompt, prefixed with `e`'s worktree rules ("Do not run git add, git commit, git push, or git worktree: Git metadata and credentials intentionally remain on the host"). Project `AGENTS.md` / `CLAUDE.md` in `/workspace` if present. |
-| Model / provider        | From the agent definition: baked into the image where the harness needs a file (pi's `models.json`, Codex's `config.toml`) or delivered via env / CLI flag (Claude Code). Keys resolve by name; only pi bakes the key value (its CLI forces it). |
-| Tools                   | The harness CLI's native tools (pi: shell, file editing, ...), Agent Skills installed outside the worktree (`~/.agents/skills`, pi also reads `~/.pi/agent/skills`), plus any MCP sidecars chosen at spawn (pi has none). |
-| `e` CLI                 | Only if the environment provides it. Check with `command -v e`. Do not assume it is installed, and do not install it yourself unless asked. |
-| Permissions             | Non-root runtime user; full network egress to reach the model (some deployments route through the `e-egress` gatekeeper); no docker socket, no `NET_ADMIN`, no host git credentials (ADR-0002). |
-| Parent task / context   | The prompt text, plus whatever the worktree already contains. No mid-run channel to the parent; the worktree is the shared artifact. |
-| Result / reporting      | File changes in `/workspace`; see the next section.                   |
+| Aspect                | What the child agent gets                                                                                                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Working directory     | `/workspace`: a disposable git worktree on branch `e/<agent>/<slug>-N`, cut from the host's HEAD. Only committed state carries over.                                                                                                              |
+| Environment           | Provider keys and base URLs injected from `.e/.env` (filtered to the run's needs, referenced by name). Harness variables such as pi's `PI_*`. Never host git credentials (ADR-0002).                                                              |
+| Agent instructions    | The launch prompt, prefixed with `e`'s worktree rules ("Do not run git add, git commit, git push, or git worktree: Git metadata and credentials intentionally remain on the host"). Project `AGENTS.md` / `CLAUDE.md` in `/workspace` if present. |
+| Model / provider      | From the agent definition: baked into the image where the harness needs a file (pi's `models.json`, Codex's `config.toml`) or delivered via env / CLI flag (Claude Code). Keys resolve by name; only pi bakes the key value (its CLI forces it).  |
+| Tools                 | The harness CLI's native tools (pi: shell, file editing, ...), Agent Skills installed outside the worktree (`~/.agents/skills`, pi also reads `~/.pi/agent/skills`), plus any MCP sidecars chosen at spawn (pi has none).                         |
+| `e` CLI               | Only if the environment provides it. Check with `command -v e`. Do not assume it is installed, and do not install it yourself unless asked.                                                                                                       |
+| Permissions           | Non-root runtime user; full network egress to reach the model (some deployments route through the `e-egress` gatekeeper); no docker socket, no `NET_ADMIN`, no host git credentials (ADR-0002).                                                   |
+| Parent task / context | The prompt text, plus whatever the worktree already contains. No mid-run channel to the parent; the worktree is the shared artifact.                                                                                                              |
+| Result / reporting    | File changes in `/workspace`; see the next section.                                                                                                                                                                                               |
 
 ## How results return to the parent
 

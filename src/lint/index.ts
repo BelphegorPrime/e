@@ -30,7 +30,7 @@ repos:
         name: prettier
         entry: npx prettier --write
         language: system
-        files: "\\.(js|ts|json|md|yaml)$"
+        files: '\\.(js|ts|json|md|yaml)$'
 `;
   writeIfAbsent(
     process.cwd(),

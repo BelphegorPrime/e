@@ -20,7 +20,7 @@ program
   .description('CLI tool for my AI Orchestrator')
   .version(E_VERSION)
   .option('-v, --verbose', 'enable verbose logging', false)
-  .hook('preAction', (thisCommand) => {
+  .hook('preAction', thisCommand => {
     if (thisCommand.opts().verbose) {
       process.env.VERBOSE = 'true';
     }

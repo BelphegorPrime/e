@@ -148,7 +148,10 @@ test('HostPullRequest: GitLab uses glab with --source-branch/--target-branch', (
 });
 
 test('HostPullRequest: Forgejo routes through plain gh (host resolved from remote)', () => {
-  const stub = stubCli({ gh: 'https://codeberg.org/acme/app/pulls/9', glab: '' });
+  const stub = stubCli({
+    gh: 'https://codeberg.org/acme/app/pulls/9',
+    glab: '',
+  });
   try {
     const url = new HostPullRequest().create({
       platform: 'forgejo',
@@ -158,10 +161,7 @@ test('HostPullRequest: Forgejo routes through plain gh (host resolved from remot
       body: 'Fix the typo in the parser.',
     });
     assert.equal(url, 'https://codeberg.org/acme/app/pulls/9');
-    const call = fs
-      .readFileSync(stub.log, 'utf8')
-      .split('\0')
-      .filter(Boolean);
+    const call = fs.readFileSync(stub.log, 'utf8').split('\0').filter(Boolean);
     // Identical argv to a GitHub PR: gh finds the host from the git remote.
     assert.deepEqual(call, [
       'pr',

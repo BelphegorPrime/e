@@ -10,7 +10,10 @@ import { localStack } from './stack.js';
 
 function tmpStore(): { root: string; cleanup: () => void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-stack-'));
-  return { root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return {
+    root,
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
 }
 
 test('localStack: an unknown root is not a stack at all', () => {

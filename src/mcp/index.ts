@@ -209,7 +209,9 @@ export function allocateMcpPorts(
     if (used.has(port)) {
       while (next <= MCP_DYNAMIC_PORT_END && used.has(next)) next++;
       if (next > MCP_DYNAMIC_PORT_END) {
-        throw new Error('No free MCP ports remain in the dynamic range 31000-31999.');
+        throw new Error(
+          'No free MCP ports remain in the dynamic range 31000-31999.'
+        );
       }
       port = next++;
     }

@@ -18,7 +18,7 @@ network namespace where required. The agent and MCP sidecars are launched with:
 Compose services use:
 
 ```yaml
-network_mode: "service:egress"
+network_mode: 'service:egress'
 ```
 
 The egress container remains trusted and owns `NET_ADMIN`, dnsmasq, iptables,

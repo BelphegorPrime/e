@@ -22,11 +22,10 @@ export class HostGit implements Git {
   }
 
   currentBranch(): string {
-    const result = spawnSync(
-      'git',
-      ['rev-parse', '--abbrev-ref', 'HEAD'],
-      { encoding: 'utf8', shell: false }
-    );
+    const result = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      encoding: 'utf8',
+      shell: false,
+    });
     if (result.status !== 0) return '';
     const name = (result.stdout ?? '').trim();
     return name === 'HEAD' ? '' : name;
@@ -117,7 +116,9 @@ export class HostGit implements Git {
   addWorktree(spec: WorktreeSpec): void {
     // `-b <branch>` makes the branch; git refuses if it already exists, and
     // refuses if `path` is non-empty — giving us atomic create for free.
-    log.debug(`Creating worktree: ${spec.path} -> branch ${spec.branch} at ${spec.base}`);
+    log.debug(
+      `Creating worktree: ${spec.path} -> branch ${spec.branch} at ${spec.base}`
+    );
     this.run(
       ['worktree', 'add', '-b', spec.branch, spec.path, spec.base],
       `create worktree for ${spec.branch}`

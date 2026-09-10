@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HARNESSES, harnessCapabilities, planMcpDelivery, resolveHarness, envHarnessSections, requiredEnvKeys } from './index.js';
+import {
+  HARNESSES,
+  harnessCapabilities,
+  planMcpDelivery,
+  resolveHarness,
+  envHarnessSections,
+  requiredEnvKeys,
+} from './index.js';
 import type { McpEndpoint } from '../mcp/index.js';
 
 const claude = HARNESSES.claudeCode;

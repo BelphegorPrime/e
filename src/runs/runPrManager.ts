@@ -16,7 +16,10 @@ export interface PullRequestManager {
 
 /** Production PR manager using actual GitHub/GitLab clients. */
 export class ProductionPullRequestManager implements PullRequestManager {
-  constructor(private readonly git: Git, private readonly pullRequest: PullRequest) {}
+  constructor(
+    private readonly git: Git,
+    private readonly pullRequest: PullRequest
+  ) {}
 
   async create(params: {
     platform: GitPlatform;
@@ -37,7 +40,8 @@ export class ProductionPullRequestManager implements PullRequestManager {
     } catch (error) {
       return {
         url: '',
-        warning: `could not open a ${params.platform} merge request for ${params.head}: ${(error as Error).message}`,      };
+        warning: `could not open a ${params.platform} merge request for ${params.head}: ${(error as Error).message}`,
+      };
     }
   }
 }
@@ -63,7 +67,11 @@ export interface ResourceCleanupManager {
   /** Create a temporary directory for build context. */
   createTempDir(): string;
   /** Write content as a file with proper permissions. */
-  writeFile(fileName: string, content: string, opts?: { mode?: number }): string;
+  writeFile(
+    fileName: string,
+    content: string,
+    opts?: { mode?: number }
+  ): string;
   /** Clean up all tracked resources. */
   cleanup(): void;
 }
@@ -81,7 +89,11 @@ export class FileSystemResourceCleanupManager implements ResourceCleanupManager 
     return tempDir;
   }
 
-  writeFile(fileName: string, content: string, opts?: { mode?: number }): string {
+  writeFile(
+    fileName: string,
+    content: string,
+    opts?: { mode?: number }
+  ): string {
     const fs = require('fs');
     const path = require('path');
     const filePath = path.join(this.createTempDir(), fileName);
@@ -113,7 +125,11 @@ export class InMemoryResourceCleanupManager implements ResourceCleanupManager {
     return tempDir;
   }
 
-  writeFile(fileName: string, content: string, opts?: { mode?: number }): string {
+  writeFile(
+    fileName: string,
+    content: string,
+    opts?: { mode?: number }
+  ): string {
     return `${this.createTempDir()}/${fileName}`;
   }
 

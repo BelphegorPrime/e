@@ -44,9 +44,15 @@ test('chooseVendor: no signals falls back to cpu', () => {
 
 test('llamaCppImage: maps each vendor to its upstream llama.cpp server image', () => {
   assert.equal(llamaCppImage('cpu'), 'ghcr.io/ggml-org/llama.cpp:server');
-  assert.equal(llamaCppImage('nvidia'), 'ghcr.io/ggml-org/llama.cpp:server-cuda');
+  assert.equal(
+    llamaCppImage('nvidia'),
+    'ghcr.io/ggml-org/llama.cpp:server-cuda'
+  );
   assert.equal(llamaCppImage('amd'), 'ghcr.io/ggml-org/llama.cpp:server-rocm');
-  assert.equal(llamaCppImage('intel'), 'ghcr.io/ggml-org/llama.cpp:server-intel');
+  assert.equal(
+    llamaCppImage('intel'),
+    'ghcr.io/ggml-org/llama.cpp:server-intel'
+  );
 });
 
 test('llamaGpuCompose: cpu needs no device passthrough', () => {

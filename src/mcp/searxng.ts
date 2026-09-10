@@ -1,4 +1,4 @@
-import { type McpServerFiles } from "./index.js";
+import { type McpServerFiles } from './index.js';
 
 /**
  * Container MCP server: searxng web search and fetch tools.
@@ -35,7 +35,7 @@ export function renderSearxngFiles(): McpServerFiles {
         `  },`,
         `  async ({ query }) => {`,
         `    try {`,
-        `      const url = \`${"${SEARXNG}"}/search?format=json&q=${"${encodeURIComponent(query)}"}\`;`,
+        `      const url = \`${'${SEARXNG}'}/search?format=json&q=${'${encodeURIComponent(query)}'}\`;`,
         `      const response = await fetch(url);`,
         `      if (!response.ok) {`,
         `        return { content: [{ type: "text", text: "Searxng error: " + response.status }], isError: true };`,
@@ -94,13 +94,14 @@ export function renderSearxngFiles(): McpServerFiles {
         `# Serves streamable HTTP on PORT 3000 at /mcp.`,
         `CMD ["supergateway", "--stdio", "node /app/mcp-server.mjs", "--outputTransport", "streamableHttp", "--port", "3000"]`,
       ].join('\n') + '\n',
-    'mcp.json': JSON.stringify(
-      {
-        transport: 'container',
-        port: 3000,
-      },
-      null,
-      2
-    ) + '\n',
+    'mcp.json':
+      JSON.stringify(
+        {
+          transport: 'container',
+          port: 3000,
+        },
+        null,
+        2
+      ) + '\n',
   };
 }

@@ -76,8 +76,7 @@ export class HostPullRequest implements PullRequest {
       );
     }
     if (result.status !== 0) {
-      const detail =
-        result.stderr?.trim() || result.stdout?.trim() || '';
+      const detail = result.stderr?.trim() || result.stdout?.trim() || '';
       throw new Error(`${args[0]} failed (${description}): ${detail}`);
     }
     log.command(description);

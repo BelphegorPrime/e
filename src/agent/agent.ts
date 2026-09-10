@@ -78,8 +78,7 @@ export function renderDefaultAgent(
     name: harnessName,
     harness: harnessName,
     provider: {
-      baseUrl:
-        envValues['OPENAI_BASE_URL'] || 'http://localhost:20128/v1',
+      baseUrl: envValues['OPENAI_BASE_URL'] || 'http://localhost:20128/v1',
       baseUrlEnv: 'OPENAI_BASE_URL',
       model: 'auto/coding',
       protocol: harness.protocols[0],

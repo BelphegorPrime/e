@@ -15,8 +15,14 @@
 import type { Agent } from '../agent/index.js';
 import type { Harness } from '../harness/index.js';
 import { harnessCapabilities, planMcpDelivery } from '../harness/index.js';
-import { validateProviderProtocol, EnvFileRenderer } from '../harness/adapter.js';
-import type { ConfigOverlayDelivery, ContainerEnv } from '../harness/adapter.js';
+import {
+  validateProviderProtocol,
+  EnvFileRenderer,
+} from '../harness/adapter.js';
+import type {
+  ConfigOverlayDelivery,
+  ContainerEnv,
+} from '../harness/adapter.js';
 import { GLOBAL_BASE_URL_ENV } from '../harness/renderEnvTemplate.js';
 import {
   planProviderDelivery,
@@ -325,7 +331,9 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     const selection = planMcpSelection(
       facts.mcpServers,
       facts.localStackPresent === true,
-      facts.port?.map(value => Number(value.split(':').pop())).filter(Number.isFinite)
+      facts.port
+        ?.map(value => Number(value.split(':').pop()))
+        .filter(Number.isFinite)
     );
     // Every selected server's required env passes the base filter: a sidecar's
     // via its own env-file, a remote server's via the agent's env-files.
