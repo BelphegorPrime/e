@@ -107,11 +107,29 @@ export interface ContainerRunner {
   probeHealthcheck(container: string, command: string[]): boolean;
   /** True if the named container is still running — used to detect a mid-run crash. */
   isRunning(name: string): boolean;
+
   /**
-   * Retrieve a container's stdout/stderr log output. Returns undefined when
-   * the container does not exist or the runtime fails to read the logs.
+   * Return `true` when the named Docker volume exists.
    */
-  containerLogs(name: string): string | undefined;
+  volumeExists(volumeName: string): boolean;
+
+  /**
+   * Create a Docker volume. No-op if it already exists.
+   */
+  createVolume(volumeName: string): void;
+
+  /**
+   * Copy the contents of a Docker volume into a host directory using a
+   * temporary Alpine container (`cp -a /source/. /dest/`).
+   */
+  copyVolumeToDir(volumeName: string, hostDir: string): void;
+
+  /**
+   * Copy the contents of a host directory into a Docker volume. When
+   * `wipe` is `true`, the volume is cleaned before the copy (`rm -rf /dest/*`)
+   * to match the import restore path.
+   */
+  copyDirToVolume(hostDir: string, volumeName: string, wipe?: boolean): void;
 }
 
 /**
@@ -190,8 +208,48 @@ export function runningInspectArgs(name: string): string[] {
   return ['inspect', '-f', '{{.State.Running}}', name];
 }
 
-export function logsArgs(name: string): string[] {
-  return ['logs', name];
+export function volumeInspectArgs(volumeName: string): string[] {
+  return ['volume', 'inspect', volumeName];
+}
+export function volumeCreateArgs(volumeName: string): string[] {
+  return ['volume', 'create', volumeName];
+}
+/** `alpine` copy run: volume -> host dir (`cp -a /source/. /dest/`). */
+export function volumeCopyOutArgs(volumeName: string, hostDir: string): string[] {
+  return [
+    'run',
+    '--rm',
+    '-v',
+    `${volumeName}:/source`,
+    '-v',
+    `${hostDir}:/dest`,
+    'alpine',
+    'sh',
+    '-c',
+    'cp -a /source/. /dest/',
+  ];
+}
+/** `alpine` copy run: host dir -> volume; `wipe` first clears the volume. */
+export function volumeCopyInArgs(
+  hostDir: string,
+  volumeName: string,
+  wipe?: boolean
+): string[] {
+  const rmGuard = wipe
+    ? 'rm -rf /dest/* /dest/..?* /dest/.[!.]* 2>/dev/null || true && '
+    : '';
+  return [
+    'run',
+    '--rm',
+    '-v',
+    `${hostDir}:/source`,
+    '-v',
+    `${volumeName}:/dest`,
+    'alpine',
+    'sh',
+    '-c',
+    `${rmGuard}cp -a /source/. /dest/`,
+  ];
 }
 
 /**
@@ -542,16 +600,32 @@ export class ContainerRuntime implements ContainerRunner {
     return result.status === 0 && result.stdout.trim() === 'true';
   }
 
-  /**
-   * Retrieve a container's stdout/stderr log output. Returns undefined when
-   * the container does not exist or the runtime fails to read the logs.
-   */
-  containerLogs(name: string): string | undefined {
-    const result = spawnSync(this.command, logsArgs(name), {
-      encoding: 'utf8',
+  volumeExists(volumeName: string): boolean {
+    const result = spawnSync(this.command, volumeInspectArgs(volumeName), {
+      stdio: 'ignore',
       shell: false,
-      stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return result.status === 0 ? result.stdout : undefined;
+    return result.status === 0;
+  }
+
+  createVolume(volumeName: string): void {
+    spawnSync(this.command, volumeCreateArgs(volumeName), {
+      stdio: 'ignore',
+      shell: false,
+    });
+  }
+
+  copyVolumeToDir(volumeName: string, hostDir: string): void {
+    spawnSync(this.command, volumeCopyOutArgs(volumeName, hostDir), {
+      stdio: 'ignore',
+      shell: false
+    });
+  }
+
+  copyDirToVolume(hostDir: string, volumeName: string, wipe?: boolean): void {
+    spawnSync(this.command, volumeCopyInArgs(hostDir, volumeName, wipe), {
+      stdio: 'ignore',
+      shell: false
+    });
   }
 }

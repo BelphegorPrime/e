@@ -16,6 +16,10 @@ import {
   composeUpArgs,
   composeWaitArgs,
   composeRestartArgs,
+  volumeInspectArgs,
+  volumeCreateArgs,
+  volumeCopyOutArgs,
+  volumeCopyInArgs,
   type RunOptions,
   type SidecarSpec,
 } from './index.js';
@@ -440,5 +444,66 @@ test('runningInspectArgs: inspect the Running state', () => {
     '-f',
     '{{.State.Running}}',
     'run-1-mcp-x',
+  ]);
+});
+
+test('volumeInspectArgs: inspect a docker volume', () => {
+  assert.deepEqual(volumeInspectArgs('omniroute-data'), [
+    'volume',
+    'inspect',
+    'omniroute-data',
+  ]);
+});
+
+test('volumeCreateArgs: create a docker volume', () => {
+  assert.deepEqual(volumeCreateArgs('omniroute-data'), [
+    'volume',
+    'create',
+    'omniroute-data',
+  ]);
+});
+
+test('volumeCopyOutArgs: volume -> host dir via alpine cp', () => {
+  assert.deepEqual(volumeCopyOutArgs('omniroute-data', '/tmp/out'), [
+    'run',
+    '--rm',
+    '-v',
+    'omniroute-data:/source',
+    '-v',
+    '/tmp/out:/dest',
+    'alpine',
+    'sh',
+    '-c',
+    'cp -a /source/. /dest/',
+  ]);
+});
+
+test('volumeCopyInArgs: host dir -> volume without a wipe guard', () => {
+  assert.deepEqual(volumeCopyInArgs('/tmp/in', 'omniroute-data'), [
+    'run',
+    '--rm',
+    '-v',
+    '/tmp/in:/source',
+    '-v',
+    'omniroute-data:/dest',
+    'alpine',
+    'sh',
+    '-c',
+    'cp -a /source/. /dest/',
+  ]);
+});
+
+test('volumeCopyInArgs: wipe=true prepends the destructive rm guard', () => {
+  assert.deepEqual(volumeCopyInArgs('/tmp/in', 'omniroute-data', true), [
+    'run',
+    '--rm',
+    '-v',
+    '/tmp/in:/source',
+    '-v',
+    'omniroute-data:/dest',
+    'alpine',
+    'sh',
+    '-c',
+    'rm -rf /dest/* /dest/..?* /dest/.[!.]* 2>/dev/null || true && cp -a /source/. /dest/',
   ]);
 });

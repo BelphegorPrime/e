@@ -7,7 +7,7 @@ import { renderBootstrap } from './renderBootstrap.js';
 import { renderEgressFiles } from './renderEgress.js';
 import { HARNESSES, envHarnessSections } from '../harness/index.js';
 import { renderDefaultAgent } from '../agent/index.js';
-import { parseDotenv } from '../harness/adapter.js';
+import { parseDotenv } from '../utils/dotenv.js';
 import { STACK_NETWORK } from '../constants.js';
 import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
 import { SHIPPED_SKILLS } from '../skill/index.js';

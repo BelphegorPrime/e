@@ -16,7 +16,6 @@ import { ProductionNetworkManager } from './runNetworks.js';
 import { DockerSidecarOrchestrator } from './runSidecarOrchestrator.js';
 import { ProductionContainerExecutor } from './runContainerExecution.js';
 import { ProductionPullRequestManager } from './runPrManager.js';
-import { ProductionLogCapture } from './runLogCapture.js';
 
 /** Readiness polling defaults: up to 30 tries, 1s apart (~30s), overridable per run. */
 const DEFAULT_READINESS_ATTEMPTS = 30;
@@ -78,7 +77,6 @@ export interface RunSpawnResult {
   pushWarning?: string;
   pullRequestUrl?: string;
   pullRequestWarning?: string;
-  sidecarWarnings?: string[];
   error?: string;
 }
 
@@ -104,7 +102,6 @@ export async function runSpawn(
   const networkManager = new ProductionNetworkManager(deps.runtime);
   const sidecarOrchestrator = new DockerSidecarOrchestrator(deps.runtime);
   const containerExecutor = new ProductionContainerExecutor(deps.runtime);
-  const logCapture = new ProductionLogCapture();
 
   // Track what was started so best-effort teardown never touches
   // resources that were never created (e.g. when createNetwork fails).
@@ -232,25 +229,6 @@ export async function runSpawn(
       }
     }
 
-    // Capture egress logs when a store is configured.
-    if (params.storeRoot) {
-      await logCapture.captureEgressLogs(
-        deps.runtime,
-        params.storeRoot,
-        branch
-      );
-    }
-
-    // Detect sidecars that crashed mid-run (non-fatal warnings).
-    const sidecarWarnings: string[] = [];
-    for (const spec of startedSpecs) {
-      if (!deps.runtime.isRunning(spec.name)) {
-        sidecarWarnings.push(
-          `MCP sidecar "${spec.alias}" exited during the run (its tools may have stopped working).`
-        );
-      }
-    }
-
     // Open a PR/MR when a platform is configured and the branch was pushed.
     let pullRequestUrl: string | undefined;
     let pullRequestWarning: string | undefined;
@@ -281,7 +259,6 @@ export async function runSpawn(
       pushWarning,
       pullRequestUrl,
       pullRequestWarning,
-      sidecarWarnings: sidecarWarnings.length > 0 ? sidecarWarnings : undefined,
     };
   } finally {
     // Best-effort teardown: never mask a result or an aborting error.

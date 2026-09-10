@@ -6,6 +6,40 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import AdmZip from 'adm-zip';
+import { exportConfiguration } from './export.js';
+import { RecordingRunner } from './runnerStub.js';
+import { OMNIROUTE_VOLUME } from '../constants.js';
+
+test('export: missing volume fails with a compose hint', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-export-'));
+  const runner = new RecordingRunner();
+  runner.volumeExistsResult = false;
+  try {
+    fs.mkdirSync(path.join(root, '.e'), { recursive: true });
+    await assert.rejects(
+      () => exportConfiguration({ root, runner }),
+      /docker compose.*up -d/
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('export: copies the omniroute volume through the runtime seam', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-export-'));
+  const runner = new RecordingRunner();
+  try {
+    fs.mkdirSync(path.join(root, '.e'), { recursive: true });
+    const out = path.join(root, 'out.zip');
+    await exportConfiguration({ root, runner, output: out });
+    assert.ok(runner.calls.includes('volumeExists'));
+    assert.equal(runner.copied[0]?.source, OMNIROUTE_VOLUME);
+    assert.ok(runner.copied[0]?.target.endsWith('omniroute-data'));
+    assert.ok(fs.existsSync(out));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('export discovers the initialized .e store in the current directory', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-export-'));

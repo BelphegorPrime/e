@@ -5,6 +5,8 @@ import os from 'os';
 import path from 'path';
 import AdmZip from 'adm-zip';
 import { importConfiguration } from './import.js';
+import { RecordingRunner } from './runnerStub.js';
+import { OMNIROUTE_VOLUME } from '../constants.js';
 import {
   envFilePath,
   configFilePath,
@@ -112,6 +114,52 @@ test('importConfiguration: --force deletes existing files before restoring', asy
       fs.readFileSync(configFilePath(root), 'utf8'),
       '{"fresh":true}\n'
     );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importConfiguration: creates a missing volume then restores with wipe', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-import-'));
+  const zipPath = path.join(root, 'import.zip');
+  fs.mkdirSync(path.join(root, '.e'), { recursive: true });
+  // Archive carries omniroute-data so the volume restore path runs.
+  const dataDir = path.join(root, 'omniroute-data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'state.json'), '{}');
+  const zip = new AdmZip();
+  zip.addLocalFolder(dataDir, 'omniroute-data');
+  zip.writeZip(zipPath);
+  const runner = new RecordingRunner();
+  runner.volumeExistsResult = false;
+  try {
+    await importConfiguration({ file: zipPath, root, runner });
+    assert.ok(runner.calls.includes('volumeExists'));
+    assert.deepEqual(runner.volumesCreated, [OMNIROUTE_VOLUME]);
+    assert.equal(runner.copied[0]?.target, OMNIROUTE_VOLUME);
+    assert.equal(runner.copied[0]?.wipe, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importConfiguration: existing volume restores with wipe but no create', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-import-'));
+  const zipPath = path.join(root, 'import.zip');
+  fs.mkdirSync(path.join(root, '.e'), { recursive: true });
+  const dataDir = path.join(root, 'omniroute-data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'state.json'), '{}');
+  const zip = new AdmZip();
+  zip.addLocalFolder(dataDir, 'omniroute-data');
+  zip.writeZip(zipPath);
+  const runner = new RecordingRunner();
+  try {
+    await importConfiguration({ file: zipPath, root, runner });
+    assert.ok(runner.calls.includes('volumeExists'));
+    assert.deepEqual(runner.volumesCreated, []);
+    assert.equal(runner.copied[0]?.target, OMNIROUTE_VOLUME);
+    assert.equal(runner.copied[0]?.wipe, true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

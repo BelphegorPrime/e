@@ -9,7 +9,7 @@ import {
   type RunSpawnResult,
   type SidecarPlan,
 } from '../runs/runSpawn.js';
-import { filterEnvContent } from '../harness/adapter.js';
+import { filterEnvContent } from '../utils/dotenv.js';
 import {
   decideImageAction,
   orderEnvFiles,
