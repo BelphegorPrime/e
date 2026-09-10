@@ -79,6 +79,7 @@ services:
       INITIAL_PASSWORD: \${OMNIROUTE_INITIAL_PASSWORD}
       OMNIROUTE_BOOTSTRAPPED: "true"
       REQUIRE_API_KEY: "false"
+      OMNIROUTE_CHAT_MAX_HEAVY_IN_FLIGHT: "4"
     volumes:
       - omniroute-data:/app/data
 {{#anyRuntime}}
