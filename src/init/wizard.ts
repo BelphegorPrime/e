@@ -45,8 +45,6 @@ export interface WizardState {
   currentLocalRuntimes: LocalRuntime[];
   /** All git platforms offered, in prompt order. */
   gitPlatforms: string[];
-  /** Supported shells for completion. */
-  readonly shells: readonly string[];
   /** Configured git platform, preselected (a blank answer disables PR/MR). */
   currentGitPlatform?: string;
   /** Supported shells. */
@@ -154,6 +152,7 @@ export function interactiveWizard(): Wizard {
           state.currentGitPlatform
         );
         const shell = await promptShell(rl, state.shells);
+
         return {
           harness,
           models,
@@ -189,6 +188,8 @@ async function promptShell(
     log.warn(`  "${choice}" is not one of: ${shells.join(', ')}.`);
   }
 }
+
+async function promptLocalRuntimes(
   rl: readline.Interface,
   current: LocalRuntime[]
 ): Promise<string> {

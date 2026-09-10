@@ -15,6 +15,7 @@ const WIZARD_STATE: WizardState = {
   currentModels: [],
   currentLocalRuntimes: ['llamacpp'],
   gitPlatforms: [...GIT_PLATFORMS],
+  shells: ['bash', 'zsh', 'fish', 'powershell'],
 };
 
 function state(): InitState {

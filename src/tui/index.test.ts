@@ -15,6 +15,7 @@ const WIZARD_STATE: WizardState = {
   currentModels: ['llama3.1-8b'],
   currentLocalRuntimes: ['llamacpp'],
   gitPlatforms: [...GIT_PLATFORMS],
+  shells: ['bash', 'zsh', 'fish', 'powershell'],
 };
 
 // buildInitRows / applyMenuResult are the testable seam of the raw-mode menu:
@@ -65,6 +66,22 @@ test('applyMenuResult: marks flow into planInit answer slots', () => {
   assert.deepEqual(answers.models, ['llama3.1-8b']);
   assert.equal(answers.harness, 'claude-code');
   assert.equal(answers.gitPlatform, 'github');
+});
+
+test('buildInitRows: shell cycle row defaults to the first shell', () => {
+  const rows = buildInitRows(WIZARD_STATE, {});
+  const shellRow = rows.find(
+    (r): r is Extract<typeof r, { kind: 'cycle' }> =>
+      r.kind === 'cycle' && r.target === 'shell'
+  );
+  assert.ok(shellRow);
+  assert.equal(shellRow.value, 'bash');
+  assert.deepEqual(shellRow.values, WIZARD_STATE.shells);
+});
+
+test('applyMenuResult: shell flows into the answer', () => {
+  const answers = applyMenuResult({ shell: 'fish' }, WIZARD_STATE);
+  assert.equal(answers.shell, 'fish');
 });
 
 test("applyMenuResult: disabled git platform maps to the '' answer", () => {

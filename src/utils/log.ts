@@ -1,5 +1,7 @@
 import { format, styleText } from 'node:util';
 import type { WriteStream } from 'node:tty';
+import fs from 'node:fs';
+import { env } from './env.js';
 
 /**
  * Semantic, color-coded line logging for the `e` CLI.
@@ -28,7 +30,26 @@ import type { WriteStream } from 'node:tty';
 
 type Color = 'red' | 'yellow' | 'green' | 'blue';
 
-function write(
+const LOG_FILE = 'log.txt';
+const LOG_OPTIONS = { flag: 'a' };
+
+function write(stream: WriteStream, color: Color | undefined, args: unknown[]) {
+  writeLog(stream, color, args);
+  if (env.shouldWriteLogFile) {
+    writeFile(LOG_FILE, format(...args) + '\n', LOG_OPTIONS, () => {});
+  }
+}
+
+function writeFile(
+  path: string,
+  data: string,
+  options: { flag: string },
+  callback: (err: Error | null) => void
+): void {
+  fs.writeFile(path, data, options, callback);
+}
+
+function writeLog(
   stream: WriteStream,
   color: Color | undefined,
   args: unknown[]

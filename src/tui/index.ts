@@ -82,6 +82,17 @@ export function buildInitRows(
         GIT_DISABLED,
       values: [...state.gitPlatforms, GIT_DISABLED],
     },
+
+    { kind: 'header', label: 'Shell (used for completion setup)' },
+
+    {
+      kind: 'cycle' as const,
+      id: 'shell',
+      target: 'shell',
+      label: 'Shell',
+      value: (partial.shell as string | undefined) ?? state.shells[0],
+      values: state.shells,
+    },
   ];
 
   return rows;
@@ -107,6 +118,7 @@ export function applyMenuResult(
   const models = result.models as string[] | undefined;
   const harness = result.harness as string | undefined;
   const gitPlatform = result.gitPlatform as string | undefined;
+  const shell = result.shell as string | undefined;
 
   if (runtimes !== undefined) {
     answers.localRuntimes = runtimes as LocalRuntime[];
@@ -125,6 +137,10 @@ export function applyMenuResult(
   } else if (gitPlatform === GIT_DISABLED && state.currentGitPlatform) {
     // Explicitly disabling PR/MR; planInit maps '' to undefined.
     answers.gitPlatform = '';
+  }
+
+  if (shell !== undefined && shell.length > 0) {
+    answers.shell = shell;
   }
 
   return answers;

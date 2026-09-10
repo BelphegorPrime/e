@@ -8,12 +8,16 @@ import type { Command } from 'commander';
 import { resolveUiDirectory } from './assets.js';
 import type { Git } from '../git/index.js';
 import { HostGit } from '../git/host.js';
-import { buildRunIndex, parseRunBranch, resolveRunRef } from '../runs/runIndex.js';
+import {
+  buildRunIndex,
+  parseRunBranch,
+  resolveRunRef,
+} from '../runs/runIndex.js';
 import { eBaseDir } from '../store/paths.js';
 import { log } from '../utils/log.js';
-import { LOCAL_LLAMA_URL, type ModelsResponse } from '../modelStatus.js';
+import { env } from '../utils/env.js';
+import { type ModelsResponse } from '../modelStatus.js';
 
-const SERVE_STATE_ENV = 'E_SERVE_DETACHED';
 const serveStatePath = path.join(eBaseDir(), 'serve.json');
 
 export interface ServeState {
@@ -61,7 +65,7 @@ function startDetachedServe(): Promise<void> {
   const child = spawn(process.execPath, detachedServeArguments(process.argv), {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, [SERVE_STATE_ENV]: '1' },
+    env: env.withServeDetached(),
   });
   child.unref();
   return new Promise((resolve, reject) => {
@@ -210,7 +214,7 @@ export function createServeApp(
   deps: ServeAppDeps = {}
 ): Express {
   const {
-    llamaBaseUrl = LOCAL_LLAMA_URL,
+    llamaBaseUrl = env.localLlamaUrl,
     fetchImpl = fetch,
     git = new HostGit(),
   } = deps;
@@ -376,7 +380,7 @@ export function registerServeCommand(program: Command): void {
       const app = createServeApp(resolveUiDirectory());
       const server = await startServeServer(app, host, port);
       const address = server.address() as AddressInfo;
-      if (process.env[SERVE_STATE_ENV] === '1') {
+      if (env.serveDetached) {
         trackDetachedServer(server, host, address.port);
       }
       log.info(`UI serving at http://${host}:${address.port}`);

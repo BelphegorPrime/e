@@ -1,9 +1,5 @@
 import { log } from './utils/log.js';
 
-/** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
-export const LOCAL_LLAMA_URL =
-  process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
-
 /** A locally-provisionable llama.cpp model, with its approximate download size. */
 export interface ModelCatalogEntry {
   id: string;

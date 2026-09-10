@@ -81,10 +81,10 @@ export async function runSettingsMenu(
    */
   const titleText = new Text(options.title);
   const instructionsText = options.instructions
-    ? new Text(options.instructions)
+    ? new Text(options.instructions, 1, 0)
     : undefined;
 
-  let rowTexts: Text[] = [];
+  const rowTexts: Text[] = [];
 
   tui.addChild(titleText);
 
@@ -115,7 +115,9 @@ export async function runSettingsMenu(
 
   const ensureRowComponents = (rows: MenuRow[]) => {
     while (rowTexts.length < rows.length) {
-      const text = new Text('');
+      // Zero vertical padding: rows sit directly under each other. Headers
+      // add their own leading blank line below to group sections instead.
+      const text = new Text('', 1, 0);
       rowTexts.push(text);
       tui.addChild(text);
     }
@@ -144,7 +146,7 @@ export async function runSettingsMenu(
           label += ` (${row.hint})`;
         }
 
-        text.setText(`─ ${label}`);
+        text.setText(`\n─ ${label}`);
         continue;
       }
 

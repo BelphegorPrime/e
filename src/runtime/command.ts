@@ -2,8 +2,8 @@ import * as cp from 'node:child_process';
 import type { Buffer } from 'node:buffer';
 import type { Command } from 'commander';
 import { LOCAL_RUNTIMES, type LocalRuntime } from '../init/localRuntimes.js';
-import { LOCAL_LLAMA_URL } from '../modelStatus.js';
 import { log } from '../utils/log.js';
+import { env } from '../utils/env.js';
 
 /**
  * The minimal spawn surface these commands use. Abstracted from
@@ -75,7 +75,7 @@ export function downloadModel(
 
 function downloadLlamacpp(model: string, spawn: SpawnSyncLike): void {
   log.info(
-    `Registering "${model}" with llama.cpp at ${LOCAL_LLAMA_URL} (starts its download)...`
+    `Registering "${model}" with llama.cpp at ${env.localLlamaUrl} (starts its download)...`
   );
   const result = spawn(
     'curl',
@@ -83,7 +83,7 @@ function downloadLlamacpp(model: string, spawn: SpawnSyncLike): void {
       '-sf',
       '-X',
       'POST',
-      `${LOCAL_LLAMA_URL}/models`,
+      `${env.localLlamaUrl}/models`,
       '-H',
       'Content-Type: application/json',
       '-d',

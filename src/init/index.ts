@@ -19,6 +19,7 @@ import {
 } from './initPlan.js';
 import { defaultsWizard, interactiveWizard, type Wizard } from './wizard.js';
 import { RUNTIME_CATALOGS } from './localRuntimes.js';
+import { completionSourceCommand, ensureShellRcEntry } from './shellRc.js';
 
 interface InitCommandOptions {
   dir?: string;
@@ -115,17 +116,23 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
 }
 
 /** Applies an {@link InitPlan} to disk — the only layer that touches the filesystem. */
-function applyPlan(root: string | undefined, plan: InitPlan, shell?: string): void {
+function applyPlan(
+  root: string | undefined,
+  plan: InitPlan,
+  shell?: string
+): void {
   for (const step of plan.steps) {
+    log.info('');
     if (step.kind === 'harness') {
-      log.info('');
       log.info(`writing files for harness [${step.name}]`);
       for (const write of step.writes) {
         applyWrite(write);
       }
     } else if (step.kind === 'bootstrap') {
+      log.info(`writing files for bootstrap configuration`);
       applyWrite(step.write);
     } else if (step.kind === 'compose') {
+      log.info(`writing files for compose configuration`);
       applyWrite(step.write);
     } else {
       for (const write of step.writes) {
@@ -155,17 +162,28 @@ function applyPlan(root: string | undefined, plan: InitPlan, shell?: string): vo
   log.success(
     `\nInitialized ${Object.keys(HARNESSES).length} harnesses in ${harnessesBaseDir(root)}.`
   );
+  log.info(
+    `Container MCP servers ready: ${Object.keys(SHIPPED_MCP_SERVERS).join(', ')} (compose with \`--mcp <name>\`).`
+  );
+  log.info(
+    `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent); collections ${SHIPPED_SKILL_COLLECTIONS.join(', ')} install into every harness image at build time.`
+  );
+  log.info('\n\n');
   log.info('\n--- Next Steps ---');
   log.info('1. Enable shell completions:');
-  const completionCmd = shell === 'zsh'
-    ? 'source <(e completion zsh)'
-    : shell === 'fish'
-    ? 'source <(e completion fish)'
-    : shell === 'powershell'
-    ? 'e completion powershell | Out-String | Invoke-Expression'
-    : 'source <(e completion bash)';
-  log.command(`   # Add to ~/.${shell ?? 'bash'}rc or similar`);
-  log.command(`   ${completionCmd}`);
+  // A shell answer only comes from the wizard when the user actually went
+  // through the interactive prompt, so this never touches a rc file during
+  // `--yes`/non-interactive runs (e.g. CI).
+  const rcResult = shell !== undefined ? ensureShellRcEntry(shell) : undefined;
+  if (rcResult?.status === 'added') {
+    log.success(`   added completion setup to ${rcResult.file}`);
+    log.command(`   # Restart your shell, or: source ${rcResult.file}`);
+  } else if (rcResult?.status === 'already-configured') {
+    log.info(`   already configured in ${rcResult.file}`);
+  } else {
+    log.command(`   # Add to ~/.${shell ?? 'bash'}rc or similar`);
+    log.command(`   ${completionSourceCommand(shell ?? 'bash')}`);
+  }
   log.info('\n2. Run your favorite harness:');
   log.command('   e spawn "<prompt>"');
   log.info('\n3. Explore more commands:');
