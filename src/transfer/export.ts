@@ -1,7 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import archiver from 'archiver';
 import {
   eBaseDir,
@@ -12,13 +10,17 @@ import {
 } from '../store/paths.js';
 import { findRoot } from '../store/root.js';
 import { log } from '../utils/log.js';
+import { ContainerRuntime, type ContainerRunner } from '../runtime/index.js';
 import { OMNIROUTE_VOLUME } from '../constants.js';
-
-const execAsync = promisify(exec);
 
 export interface ExportOptions {
   output?: string;
   root?: string;
+  /**
+   * Runtime used for docker volume operations; defaults to the production
+   * `ContainerRuntime` (and is injected by tests as a recording fake).
+   */
+  runner?: ContainerRunner;
 }
 
 /**
@@ -38,6 +40,7 @@ export async function exportConfiguration(
   // every path to the user's home directory.
   const root = findRoot(options.root);
   const baseDir = eBaseDir(root);
+  const runner = options.runner ?? new ContainerRuntime('docker');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const defaultOutput = path.join(baseDir, `e-export-${timestamp}.zip`);
   const outputPath = options.output ?? defaultOutput;
@@ -45,12 +48,9 @@ export async function exportConfiguration(
   log.info('Starting configuration export...');
 
   // Check volume exists
-  try {
-    await execAsync(`docker volume inspect ${OMNIROUTE_VOLUME}`);
-  } catch (error) {
+  if (!runner.volumeExists(OMNIROUTE_VOLUME)) {
     throw new Error(
-      `Docker volume ${OMNIROUTE_VOLUME} not found. Run 'docker compose -f ${dockerComposePath(root)} up -d' first.`,
-      { cause: error }
+      `Docker volume ${OMNIROUTE_VOLUME} not found. Run 'docker compose -f ${dockerComposePath(root)} up -d' first.`
     );
   }
 
@@ -65,9 +65,7 @@ export async function exportConfiguration(
     fs.mkdirSync(volumeExportDir, { recursive: true });
 
     // Create temp container to access volume
-    await execAsync(
-      `docker run --rm -v ${OMNIROUTE_VOLUME}:/source -v "${volumeExportDir}:/dest" alpine sh -c "cp -a /source/. /dest/"`
-    );
+    runner.copyVolumeToDir(OMNIROUTE_VOLUME, volumeExportDir);
 
     // Create zip archive
     log.info(`Creating archive: ${outputPath}`);

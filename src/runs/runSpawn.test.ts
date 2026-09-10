@@ -220,9 +220,18 @@ class FakeRuntime implements ContainerRunner {
     this.calls.push('isRunning');
     return !this.crashed.has(name);
   }
-  containerLogs(_name: string): string | undefined {
-    this.calls.push('containerLogs');
-    return undefined;
+  volumeExists(_volumeName: string): boolean {
+    this.calls.push('volumeExists');
+    return true;
+  }
+  createVolume(_volumeName: string): void {
+    this.calls.push('createVolume');
+  }
+  copyVolumeToDir(_volumeName: string, _hostDir: string): void {
+    this.calls.push('copyVolumeToDir');
+  }
+  copyDirToVolume(_hostDir: string, _volumeName: string, _wipe?: boolean): void {
+    this.calls.push('copyDirToVolume');
   }
 }
 
@@ -566,7 +575,6 @@ test('regression: with no sidecars the run behaves exactly as before (no group c
   assert.deepEqual(runtime.calls, ['run']);
   assert.equal(runtime.networks.length, 0);
   assert.equal(runtime.startedSidecars.length, 0);
-  assert.equal(result.sidecarWarnings, undefined);
 });
 
 test('brings up the group in order: network → sidecar → probe → agent → teardown', async () => {
@@ -581,7 +589,6 @@ test('brings up the group in order: network → sidecar → probe → agent → 
     'startSidecar',
     'probeTcp',
     'run',
-    'isRunning',
     'removeContainer',
     'removeNetwork',
   ]);
@@ -691,33 +698,6 @@ test('createNetwork failure aborts fail-fast: no sidecar started, no agent, work
   assert.equal(runtime.ran, false);
   // The worktree existed by then, so it is still removed in the finally.
   assert.deepEqual(git.removed, [git.worktrees[0].path]);
-});
-
-test('a mid-run sidecar crash is non-fatal: warning surfaced, run still succeeds and pushes', async () => {
-  const { deps, runtime } = makeDeps();
-  const runName = `e-demo-${slugify('Fix the flaky test')}-1`;
-  runtime.crashed.add(`${runName}-mcp-everything`);
-
-  const result = await runSpawn(
-    deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
-  );
-
-  assert.equal(result.exitCode, 0);
-  assert.equal(result.ran, true);
-  assert.equal(result.sidecarWarnings?.length, 1);
-  assert.match(result.sidecarWarnings![0], /everything/);
-  assert.equal(result.pushed, true);
-});
-
-test('a healthy sidecar produces no warning', async () => {
-  const { deps, runtime } = makeDeps();
-  const result = await runSpawn(
-    deps,
-    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
-  );
-  assert.equal(runtime.calls.includes('isRunning'), true);
-  assert.equal(result.sidecarWarnings, undefined);
 });
 
 test('tears the group down even when the agent exits non-zero', async () => {

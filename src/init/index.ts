@@ -4,7 +4,7 @@ import type { Command } from 'commander';
 import { detectHardware, llamaCppImage } from '../hardware/index.js';
 import { writeIfAbsent } from '../scaffold.js';
 import { HARNESSES, requiredEnvKeys } from '../harness/index.js';
-import { parseDotenv } from '../harness/adapter.js';
+import { parseDotenv } from '../utils/dotenv.js';
 import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
 import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from '../skill/index.js';
 import { envFilePath, harnessesBaseDir } from '../store/paths.js';

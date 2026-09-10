@@ -1,7 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import AdmZip from 'adm-zip';
 import {
   eBaseDir,
@@ -11,14 +9,18 @@ import {
   bootstrapScriptPath,
 } from '../store/paths.js';
 import { log } from '../utils/log.js';
+import { ContainerRuntime, type ContainerRunner } from '../runtime/index.js';
 import { OMNIROUTE_VOLUME } from '../constants.js';
-
-const execAsync = promisify(exec);
 
 export interface ImportOptions {
   file: string;
   root?: string;
   force?: boolean;
+  /**
+   * Runtime used for docker volume operations; defaults to the production
+   * `ContainerRuntime` (and is injected by tests as a recording fake).
+   */
+  runner?: ContainerRunner;
 }
 
 /**
@@ -35,6 +37,7 @@ export async function importConfiguration(
 ): Promise<void> {
   const { file: zipPath, root, force = false } = options;
   const baseDir = eBaseDir(root);
+  const runner = options.runner ?? new ContainerRuntime('docker');
 
   if (!fs.existsSync(zipPath)) {
     throw new Error(`Import file not found: ${zipPath}`);
@@ -102,18 +105,15 @@ export async function importConfiguration(
       log.info('Restoring omniroute volume...');
 
       // Check if volume exists; create if not
-      try {
-        await execAsync(`docker volume inspect ${OMNIROUTE_VOLUME}`);
-        log.info(`Volume ${OMNIROUTE_VOLUME} exists, will overwrite...`);
-      } catch {
+      if (!runner.volumeExists(OMNIROUTE_VOLUME)) {
         log.info(`Creating volume ${OMNIROUTE_VOLUME}...`);
-        await execAsync(`docker volume create ${OMNIROUTE_VOLUME}`);
+        runner.createVolume(OMNIROUTE_VOLUME);
+      } else {
+        log.info(`Volume ${OMNIROUTE_VOLUME} exists, will overwrite...`);
       }
 
-      // Copy data into volume via temp container
-      await execAsync(
-        `docker run --rm -v "${volumeDataDir}:/source" -v ${OMNIROUTE_VOLUME}:/dest alpine sh -c "rm -rf /dest/* /dest/..?* /dest/.[!.]* 2>/dev/null || true && cp -a /source/. /dest/"`
-      );
+      // Copy data into volume via temp container (wipe=destructive overwrite)
+      runner.copyDirToVolume(volumeDataDir, OMNIROUTE_VOLUME, true);
 
       log.info('Volume data restored.');
     } else {

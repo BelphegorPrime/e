@@ -12,7 +12,7 @@ import {
 } from './spawnPlan.js';
 import { resolveHarness, HARNESSES } from '../harness/index.js';
 import { findAgent, isKnownTarget } from '../agent/index.js';
-import { parseDotenv } from '../harness/adapter.js';
+import { parseDotenv } from '../utils/dotenv.js';
 import { resolveSkill, parseSkillList } from '../skill/index.js';
 import {
   readMcpServer,
@@ -349,9 +349,6 @@ export function registerSpawnCommand(program: Command): void {
           if (result.error) {
             log.error(result.error);
             process.exit(result.exitCode);
-          }
-          for (const warning of result.sidecarWarnings ?? []) {
-            log.warn(`Warning: ${warning}`);
           }
           if (result.pushWarning) {
             log.warn(`Warning: ${result.pushWarning}`);
