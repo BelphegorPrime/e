@@ -230,7 +230,7 @@ export function renderCodexConfig(provider: Provider): string {
   lines.push(
     `model = ${tomlBasicString(provider.model)}`,
     `model_provider = ${tomlBasicString(id)}`,
-    `,
+    ``,
     `[model_providers.${id}]`,
     `name = ${tomlBasicString(id)}`,
     `base_url = ${tomlBasicString(provider.baseUrl)}`,
