@@ -108,13 +108,14 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     currentLocalRuntimes: state.currentLocalRuntimes,
     gitPlatforms: state.gitPlatforms,
     currentGitPlatform: config.gitPlatform,
+    shells: ['bash', 'zsh', 'fish', 'powershell'],
   });
 
-  applyPlan(root, planInit(state, answers));
+  applyPlan(root, planInit(state, answers), answers.shell);
 }
 
 /** Applies an {@link InitPlan} to disk — the only layer that touches the filesystem. */
-function applyPlan(root: string | undefined, plan: InitPlan): void {
+function applyPlan(root: string | undefined, plan: InitPlan, shell?: string): void {
   for (const step of plan.steps) {
     if (step.kind === 'harness') {
       log.info('');
@@ -154,15 +155,21 @@ function applyPlan(root: string | undefined, plan: InitPlan): void {
   log.success(
     `\nInitialized ${Object.keys(HARNESSES).length} harnesses in ${harnessesBaseDir(root)}.`
   );
-  log.info(
-    `Container MCP servers ready: ${Object.keys(SHIPPED_MCP_SERVERS).join(', ')} (compose with \`--mcp <name>\`).`
-  );
-  log.info(
-    `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent); collections ${SHIPPED_SKILL_COLLECTIONS.join(', ')} install into every harness image at build time.`
-  );
-  log.info(
-    'Run `e spawn "<prompt>"` to run your favorite harness, or `e spawn <harness> "<prompt>"` to pick one.'
-  );
+  log.info('\n--- Next Steps ---');
+  log.info('1. Enable shell completions:');
+  const completionCmd = shell === 'zsh'
+    ? 'source <(e completion zsh)'
+    : shell === 'fish'
+    ? 'source <(e completion fish)'
+    : shell === 'powershell'
+    ? 'e completion powershell | Out-String | Invoke-Expression'
+    : 'source <(e completion bash)';
+  log.command(`   # Add to ~/.${shell ?? 'bash'}rc or similar`);
+  log.command(`   ${completionCmd}`);
+  log.info('\n2. Run your favorite harness:');
+  log.command('   e spawn "<prompt>"');
+  log.info('\n3. Explore more commands:');
+  log.command('   e --help');
 }
 
 /** One filesystem write: mkdir the parent, then write honoring the clobber rule. */

@@ -113,6 +113,8 @@ export interface InitAnswers {
   omniroutePassword?: string;
   /** A 1-based index, an exact platform name, or ''/undefined (blank disables PR/MR). */
   gitPlatform?: string;
+  /** Preferred shell for completion setup (e.g. 'bash', 'zsh', 'fish'). */
+  shell?: string;
 }
 
 /** One filesystem write the plan prescribes, in prescribed order. */

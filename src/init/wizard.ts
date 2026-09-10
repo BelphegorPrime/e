@@ -45,8 +45,12 @@ export interface WizardState {
   currentLocalRuntimes: LocalRuntime[];
   /** All git platforms offered, in prompt order. */
   gitPlatforms: string[];
+  /** Supported shells for completion. */
+  readonly shells: readonly string[];
   /** Configured git platform, preselected (a blank answer disables PR/MR). */
   currentGitPlatform?: string;
+  /** Supported shells. */
+  shells: string[];
 }
 
 /**
@@ -149,6 +153,7 @@ export function interactiveWizard(): Wizard {
           state.gitPlatforms,
           state.currentGitPlatform
         );
+        const shell = await promptShell(rl, state.shells);
         return {
           harness,
           models,
@@ -156,6 +161,7 @@ export function interactiveWizard(): Wizard {
           apiKeys,
           ...(omniroutePassword ? { omniroutePassword } : {}),
           gitPlatform,
+          shell,
         };
       } finally {
         rl.close();
@@ -164,7 +170,25 @@ export function interactiveWizard(): Wizard {
   };
 }
 
-async function promptLocalRuntimes(
+/** Prompts for preferred shell. */
+async function promptShell(
+  rl: readline.Interface,
+  shells: readonly string[]
+): Promise<string> {
+  log.info('\nPreferred shell for completion setup:');
+  shells.forEach((shell, i) => {
+    log.info(`  ${i + 1}) ${shell}`);
+  });
+  for (;;) {
+    const answer = await rl.question(`Choose [${shells[0]}]: `);
+    const choice = answer.trim();
+    if (choice === '') return shells[0];
+    const index = parseInt(choice) - 1;
+    if (index >= 0 && index < shells.length) return shells[index];
+    if (shells.includes(choice)) return choice;
+    log.warn(`  "${choice}" is not one of: ${shells.join(', ')}.`);
+  }
+}
   rl: readline.Interface,
   current: LocalRuntime[]
 ): Promise<string> {
