@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'child_process';
 import { log } from '../utils/log.js';
+import { runComposeStack } from './compose.js';
 
 /**
  * A bind mount as structured data, so callers describe *what* to mount and the
@@ -215,7 +216,10 @@ export function volumeCreateArgs(volumeName: string): string[] {
   return ['volume', 'create', volumeName];
 }
 /** `alpine` copy run: volume -> host dir (`cp -a /source/. /dest/`). */
-export function volumeCopyOutArgs(volumeName: string, hostDir: string): string[] {
+export function volumeCopyOutArgs(
+  volumeName: string,
+  hostDir: string
+): string[] {
   return [
     'run',
     '--rm',
@@ -250,47 +254,6 @@ export function volumeCopyInArgs(
     '-c',
     `${rmGuard}cp -a /source/. /dest/`,
   ];
-}
-
-/**
- * Starts an entire Compose stack (`compose up -d`). `envFile`, when given, is
- * passed as `--env-file` so `${VAR}` interpolation in the compose file sees the
- * store's `.e/.env` (the stack has no fallback secrets; `e init` seeds them).
- */
-export function composeUpArgs(composeFile: string, envFile?: string): string[] {
-  const args = ['compose'];
-  if (envFile) args.push('--env-file', envFile);
-  return [...args, '-f', composeFile, 'up', '-d'];
-}
-
-/**
- * Waits for the compose stack's `bootstrap` service (same env-file rationale
- * as {@link composeUpArgs} — the file is re-interpolated on `compose wait`).
- */
-export function composeWaitArgs(
-  composeFile: string,
-  envFile?: string
-): string[] {
-  const args = ['compose'];
-  if (envFile) args.push('--env-file', envFile);
-  return [...args, '-f', composeFile, 'wait', 'bootstrap'];
-}
-
-/**
- * Restarts a compose service, by default the local `llama` container. The
- * bootstrap retry uses this to drop a model llama.cpp has loaded: with
- * `--models-max 1` its download path rejects a registration while any model
- * is loaded (HTTP 500 "model limit reached"), and a fresh llama process has
- * no loaded model.
- */
-export function composeRestartArgs(
-  composeFile: string,
-  envFile?: string,
-  service = 'llama'
-): string[] {
-  const args = ['compose'];
-  if (envFile) args.push('--env-file', envFile);
-  return [...args, '-f', composeFile, 'restart', service];
 }
 
 /**
@@ -419,81 +382,7 @@ export class ContainerRuntime implements ContainerRunner {
     envFile?: string,
     waitForBootstrap = true
   ): void {
-    if (!waitForBootstrap) {
-      const args = composeUpArgs(composeFile, envFile);
-      log.command(`> ${this.command} ${args.join(' ')}`);
-      const result = spawnSync(this.command, args, {
-        stdio: 'inherit',
-        shell: false,
-      });
-      if (result.error) {
-        throw new Error(
-          `Failed to start ${this.command} compose: ${result.error.message}`
-        );
-      }
-      if (result.status !== 0) {
-        throw new Error(
-          `Compose startup failed (exit code ${result.status ?? 1}).`
-        );
-      }
-      return;
-    }
-    // At most one retry. A bootstrap exit 22 means a curl HTTP >= 400 from
-    // llama.cpp: with `--models-max 1` it rejects a model download while a
-    // model is already loaded (500 "model limit reached"; upstream bug, fix
-    // in progress). Restarting llama drops that loaded-model state, so the
-    // retry succeeds — the manual `docker compose restart llama` workaround,
-    // automated. Other exit codes are not transient; fail immediately.
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const args = composeUpArgs(composeFile, envFile);
-      log.command(`> ${this.command} ${args.join(' ')}`);
-      const result = spawnSync(this.command, args, {
-        stdio: 'inherit',
-        shell: false,
-      });
-      if (result.error) {
-        throw new Error(
-          `Failed to start ${this.command} compose: ${result.error.message}`
-        );
-      }
-      if (result.status !== 0) {
-        throw new Error(
-          `Compose startup failed (exit code ${result.status ?? 1}).`
-        );
-      }
-
-      const waitArgs = composeWaitArgs(composeFile, envFile);
-      log.command(`> ${this.command} ${waitArgs.join(' ')}`);
-      const waitResult = spawnSync(this.command, waitArgs, {
-        stdio: 'inherit',
-        shell: false,
-      });
-      if (waitResult.error) {
-        throw new Error(
-          `Failed to wait for ${this.command} compose: ${waitResult.error.message}`
-        );
-      }
-      if (waitResult.status === 0) return;
-
-      const exitCode = waitResult.status ?? 1;
-      if (attempt === 2 || exitCode !== 22) {
-        throw new Error(`Compose bootstrap failed (exit code ${exitCode}).`);
-      }
-
-      const restartArgs = composeRestartArgs(composeFile, envFile);
-      log.warn(
-        `Bootstrap exited ${exitCode}; restarting llama to clear its loaded-model state, then retrying.`
-      );
-      log.command(`> ${this.command} ${restartArgs.join(' ')}`);
-      const restartResult = spawnSync(this.command, restartArgs, {
-        stdio: 'inherit',
-        shell: false,
-      });
-      if (restartResult.error || restartResult.status !== 0) {
-        // Keep the original bootstrap failure, not a masking restart error.
-        throw new Error(`Compose bootstrap failed (exit code ${exitCode}).`);
-      }
-    }
+    runComposeStack(this.command, composeFile, envFile, waitForBootstrap);
   }
 
   /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */
@@ -618,14 +507,14 @@ export class ContainerRuntime implements ContainerRunner {
   copyVolumeToDir(volumeName: string, hostDir: string): void {
     spawnSync(this.command, volumeCopyOutArgs(volumeName, hostDir), {
       stdio: 'ignore',
-      shell: false
+      shell: false,
     });
   }
 
   copyDirToVolume(hostDir: string, volumeName: string, wipe?: boolean): void {
     spawnSync(this.command, volumeCopyInArgs(hostDir, volumeName, wipe), {
       stdio: 'ignore',
-      shell: false
+      shell: false,
     });
   }
 }
