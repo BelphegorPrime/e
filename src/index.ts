@@ -10,6 +10,7 @@ import {
   registerImportCommand,
 } from './transfer/index.js';
 import { registerCompletion } from './completion/index.js';
+import { registerLintCommand } from './lint/index.js';
 import { E_VERSION } from './version.js';
 
 const program = new Command();
@@ -31,6 +32,9 @@ registerServeCommand(program);
 registerRuntimeCommands(program);
 registerExportCommand(program);
 registerImportCommand(program);
+registerLintCommand(program);
+
+// {@link registerCompletion} has to be the last thing to register before parse
 registerCompletion(program);
 
 program.parse();
