@@ -9,6 +9,7 @@ import {
   registerExportCommand,
   registerImportCommand,
 } from './transfer/index.js';
+import { registerCompletion } from './completion/index.js';
 import { E_VERSION } from './version.js';
 
 const program = new Command();
@@ -24,5 +25,6 @@ registerServeCommand(program);
 registerRuntimeCommands(program);
 registerExportCommand(program);
 registerImportCommand(program);
+registerCompletion(program);
 
 program.parse();
