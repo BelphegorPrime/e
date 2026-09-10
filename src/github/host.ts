@@ -12,6 +12,7 @@ import { log } from '../utils/log.js';
  */
 export class HostPullRequest implements PullRequest {
   create(spec: PullRequestSpec): string {
+    log.debug(`Creating ${spec.platform} PR: ${spec.head} -> ${spec.base}`);
     const args = this.args(spec);
     const cli = this.cli(spec.platform);
     const out = this.capture(

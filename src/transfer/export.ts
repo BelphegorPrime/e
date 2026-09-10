@@ -60,7 +60,7 @@ export async function exportConfiguration(
 
   try {
     // Export volume data via temporary container
-    log.info('Exporting omniroute volume...');
+    log.debug('Exporting omniroute volume...');
     const volumeExportDir = path.join(tempDir, 'omniroute-data');
     fs.mkdirSync(volumeExportDir, { recursive: true });
 
@@ -70,7 +70,7 @@ export async function exportConfiguration(
     );
 
     // Create zip archive
-    log.info(`Creating archive: ${outputPath}`);
+    log.debug(`Creating archive: ${outputPath}`);
     const output = fs.createWriteStream(outputPath);
     const archive = archiver('zip', { zlib: { level: 9 } });
 
@@ -93,7 +93,7 @@ export async function exportConfiguration(
         if (fs.existsSync(file.path)) {
           archive.file(file.path, { name: file.arcPath });
         } else {
-          log.warn(`Skipping missing file: ${file.arcPath}`);
+          log.debug(`Skipping missing file: ${file.arcPath}`);
         }
       }
 

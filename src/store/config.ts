@@ -8,6 +8,7 @@ import {
   egressDir,
   modelsFilePath,
 } from './paths.js';
+import { log } from '../utils/log.js';
 
 /**
  * The Store's **state files** (host-only): `config.json` orchestration
@@ -124,7 +125,11 @@ export function writeModelsJson(config: ModelDataEntry[], root?: string): void {
  */
 export function readConfig(root?: string): StoreConfig {
   const file = configFilePath(root);
-  if (!fs.existsSync(file)) return resolveConfig(undefined);
+  if (!fs.existsSync(file)) {
+    log.debug(`No config.json at ${file}, using defaults`);
+    return resolveConfig(undefined);
+  }
+  log.debug(`Reading config.json at ${file}`);
   return resolveConfig(JSON.parse(fs.readFileSync(file, 'utf8')));
 }
 

@@ -69,4 +69,8 @@ export const log = {
   info: (...args: unknown[]): void => write(process.stdout, undefined, args),
   /** An executed command or engine action (`> docker …`, git ops). Blue, on stdout. */
   command: (...args: unknown[]): void => write(process.stdout, 'blue', args),
+  /** Debug info. Uncolored, stdout, hidden unless verbose. */
+  debug: (...args: unknown[]): void => {
+    if (env.verbose) write(process.stdout, undefined, args);
+  },
 };
