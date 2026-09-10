@@ -120,17 +120,7 @@ export async function executeSpawn(
         'e spawn must be run inside a git repository — every run needs an isolated worktree.',
     };
   }
-  // A run's worktree is removed as soon as the container returns; a detached run
-  // would tear it down under a still-running agent, so a run must run foreground.
-  if (facts.attach === false) {
-    return {
-      ran: false,
-      exitCode: 1,
-      error:
-        'Detached runs (--no-attach) are not supported with per-run worktrees; run in the foreground (the default).',
-    };
-  }
-
+  // A run's worktree is removed as soon as the container returns.
   const imageTag = buildImages(facts, plan, runtime, scratch);
 
   // Materialize every rendered file into scratch and wire the resulting paths.
@@ -184,8 +174,7 @@ export async function executeSpawn(
   configMounts.push(...plan.skillMounts);
 
   const runOptions: RunOptions = {
-    attach: facts.attach,
-    interactive: facts.interactive,
+    interactive: !facts.detached,
     rm: facts.rm,
     port: facts.port,
     env: plan.agentEnv,
@@ -200,7 +189,7 @@ export async function executeSpawn(
       name: facts.name,
       harness: facts.harness,
       prompt: facts.prompt,
-      interactive: facts.interactive,
+      interactive: !facts.detached,
       model: plan.runtimeModel,
       mcpArgs: plan.mcpArgs,
       gitPlatform: deps.gitPlatform,

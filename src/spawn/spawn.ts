@@ -78,8 +78,8 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   mcp?: string[];
   /** `--skill <name...>`: Skills to add for this run (comma-separated or repeated). */
   skill?: string[];
-  /** `--interactive`: start the harness's terminal UI. */
-  interactive?: boolean;
+  /** `--detached`: run a one-shot detached prompt instead of starting the interactive TUI. */
+  detached?: boolean;
 }
 
 /**
@@ -202,6 +202,11 @@ function gatherSpawnFacts(
     resolveSkill(name, root);
   }
 
+  const detached = Boolean(opts.detached);
+  if (detached && !resolved.prompt.length) {
+    throw new Error('A prompt is required for detached runs.');
+  }
+
   return {
     root,
     agent,
@@ -215,8 +220,7 @@ function gatherSpawnFacts(
     name: opts.name,
     env: opts.env ?? [],
     port: opts.port,
-    attach: opts.attach,
-    interactive: Boolean(opts.interactive),
+    detached,
     rm: opts.rm,
     // Layer the shared base only when it exists on disk (ADR-0006).
     baseEnvFile:
@@ -260,18 +264,12 @@ export function registerSpawnCommand(program: Command): void {
     )
     .option('--rebuild', 'force a rebuild of the harness image', false)
     .option(
-      '-i, --interactive',
-      'start the harness terminal UI instead of running a one-shot prompt',
-      false
-    )
-    .option(
       '--dir <path>',
       'root directory holding the harness Dockerfiles (default: home directory)'
     )
-    .option('-a, --attach', 'run the container in the foreground', true)
     .option(
-      '--no-attach',
-      'run detached (unsupported with per-run worktrees; run in the foreground)'
+      '-d, --detached',
+      'run a one-shot detached prompt instead of starting the interactive TUI'
     )
     .option('--rm', 'automatically remove the container when it exits', true)
     .option('--no-rm', 'keep the container after it exits')

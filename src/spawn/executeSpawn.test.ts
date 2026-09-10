@@ -72,7 +72,6 @@ function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
     prompt: 'do it',
     rebuild: false,
     env: [],
-    attach: true,
     ...overrides,
   };
 }
@@ -100,18 +99,6 @@ test('errors before any build when not in a git repository', async () => {
   assert.equal(result.ran, false);
   assert.equal(result.exitCode, 1);
   assert.match(result.error ?? '', /git repository/i);
-});
-
-test('refuses a detached run before any build', async () => {
-  const scratch = new RunScratch();
-  const result = await executeSpawn(facts({ attach: false }), emptyPlan, {
-    git: new StubGit(true),
-    runtime: untouched,
-    scratch,
-  });
-  assert.equal(result.ran, false);
-  assert.equal(result.exitCode, 1);
-  assert.match(result.error ?? '', /--no-attach/);
 });
 
 // A runtime that uses the harmless `true` binary for image probes but records

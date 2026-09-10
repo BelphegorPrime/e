@@ -38,8 +38,8 @@ command action (it had grown to ~400 lines of untested wiring before this).
 - **Builds move up; `runSpawn` shrinks.** Image building lives in
   `executeSpawn`, before any worktree, preserving the ADR-0005 "build before
   worktree" invariant by construction. `runSpawn` no longer takes
-  `ensureImage`/`ensureSidecarImages` closures or owns the `isRepo`/`--no-attach`
-  guards; it receives a built `imageTag` and owns only the run lifecycle
+  `ensureImage`/`ensureSidecarImages` closures or owns the `isRepo` guard; it
+  receives a built `imageTag` and owns only the run lifecycle
   (worktree, run, commit, push, teardown). The build-effect closures that used
   to be defined in the action and invoked _inside_ `runSpawn` (a
   control-inversion across the seam) are gone.
