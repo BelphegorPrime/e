@@ -1,8 +1,8 @@
 /**
  * Host-side git operations a Run needs. Mirrors the `ContainerRuntime`
  * abstraction: the orchestrator (`runSpawn`) depends only on this interface,
- * so it can be driven by a fake in tests, and all real git — including the
- * push credentials it implies — stays in the host process (ADR-0002).
+ * so it can be driven by a fake in tests, and all real git - including the
+ * push credentials it implies - stays in the host process (ADR-0002).
  */
 export interface Git {
   /** True if `cwd` is inside a git repository. */
@@ -23,7 +23,7 @@ export interface Git {
 
   /**
    * Tip metadata for every branch under `refs/heads/<prefix>-*` or nested
-   * under `refs/heads/<prefix>/` (and the remote-tracking twins) — the raw
+   * under `refs/heads/<prefix>/` (and the remote-tracking twins) - the raw
    * material of the branch-backed runs index (ADR-0010). Both shapes are
    * enumerated so a full prefix (`e/<agent>/<slug>`) and the namespace
    * prefix (`e`) work; newest commit first.

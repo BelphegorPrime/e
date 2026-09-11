@@ -58,7 +58,7 @@ export interface WizardState {
  * The user-interaction seam of `e init`. Everything about what gets written is
  * decided by `planInit`; a wizard only collects answers. Three implementations:
  * the live readline wizard, the `--yes` defaults wizard, and (in tests) any
- * scripted object satisfying this interface — so the answers that drive a
+ * scripted object satisfying this interface - so the answers that drive a
  * plan's decisions are themselves scriptable and asserted.
  */
 export interface Wizard {
@@ -85,7 +85,7 @@ export function interactiveWizard(): Wizard {
           result = await runSettingsMenu(
             partial => buildInitRows(state, partial),
             {
-              title: 'e init — settings',
+              title: 'e init - settings',
               instructions:
                 'Space toggles a checkbox and cycles a choice · Enter finishes · q quits',
             }

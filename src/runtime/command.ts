@@ -49,7 +49,7 @@ export function registerRuntimeCommands(program: Command): void {
  * Handles `e <runtime> download <model>` for a running compose stack. Each
  * runtime has its own download surface: llama.cpp registers the model through
  * its HTTP API (the same POST the old bootstrap used), Ollama pulls through
- * its CLI inside the container, and vLLM pulls weights on first load — there
+ * its CLI inside the container, and vLLM pulls weights on first load - there
  * is no pull command to invoke, so this reports the handoff. `spawn` is
  * injectable for tests and defaults to the real `spawnSync`.
  */

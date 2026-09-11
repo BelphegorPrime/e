@@ -3,9 +3,9 @@ import os from 'os';
 import path from 'path';
 
 /**
- * Owns every throwaway host file and directory a single spawn creates — the MCP
+ * Owns every throwaway host file and directory a single spawn creates - the MCP
  * and provider credential env-files (mode 0600), the Codex config overlay, and
- * the derived-image build context — so their whole lifecycle lives in one place
+ * the derived-image build context - so their whole lifecycle lives in one place
  * and a single {@link dispose} removes them all.
  *
  * Before this, the spawn edge threaded two separate cleanup registries and
@@ -19,7 +19,7 @@ export class RunScratch {
   constructor(private readonly prefix: string = 'e-scratch-') {}
 
   /**
-   * A fresh empty temp dir, tracked for disposal — used to assemble a build
+   * A fresh empty temp dir, tracked for disposal - used to assemble a build
    * context (rendered files plus copied trees) before handing it to the runtime.
    */
   dir(): string {
@@ -40,7 +40,7 @@ export class RunScratch {
   }
 
   /**
-   * Removes every dir created here. Idempotent — safe to call in a `finally` and
+   * Removes every dir created here. Idempotent - safe to call in a `finally` and
    * again from an error path, so a spawn never has to reason about which files
    * it managed to create before it failed.
    */

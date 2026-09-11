@@ -11,8 +11,6 @@ export interface BranchNamer {
   ): Promise<{ branch: string; counter: number }>;
 }
 
-export type RunBranchNamer = BranchNamer;
-
 /** Production branch namer using actual git operations. */
 export class ProductionBranchNamer implements BranchNamer {
   constructor(
@@ -49,52 +47,19 @@ export class ProductionBranchNamer implements BranchNamer {
     }
   }
 
+  /**
+   * The highest counter already used for exactly this `<prefix>-<n>` branch,
+   * locally or on any remote (`<remote>/<prefix>-<n>`). Sibling slugs that
+   * merely start with the prefix (`fix` vs `fix-typo-3`) do not count.
+   */
   private maxRunCounter(prefix: string): number {
-    const existing = this.git.listRunBranches(prefix);
-    const matches = existing.filter(
-      (b: string) => b.startsWith(prefix) || b.startsWith(`origin/${prefix}`)
-    );
-    const counters = matches.map((b: string) => {
-      const match = b.match(/-?(\d+)$/);
-      return match ? parseInt(match[1], 10) : 0;
-    });
-    return Math.max(...counters, 0);
-  }
-}
-
-/** In-memory branch namer for testing. */
-export class InMemoryBranchNamer implements BranchNamer {
-  private branches = new Set<string>();
-  private base: string;
-
-  constructor(base = 'main') {
-    this.base = base;
-  }
-
-  async nextBranch(
-    agent: Agent,
-    slug: string,
-    maxAttempts = 50
-  ): Promise<{ branch: string; counter: number }> {
-    let attempt = 0;
-    let counter = 1;
-
-    while (true) {
-      const branch = `e/${agent.name}/${slug}-${counter}`;
-
-      if (!this.branches.has(branch)) {
-        this.branches.add(branch);
-        return { branch, counter };
-      }
-
-      if (attempt >= maxAttempts) {
-        throw new Error(
-          `Could not find unique branch name after ${maxAttempts} attempts`
-        );
-      }
-
-      counter++;
-      attempt++;
+    const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const runBranch = new RegExp(`^(?:[^/]+/)?${escaped}-(\\d+)$`);
+    let max = 0;
+    for (const branch of this.git.listRunBranches(prefix)) {
+      const match = runBranch.exec(branch);
+      if (match) max = Math.max(max, parseInt(match[1], 10));
     }
+    return max;
   }
 }

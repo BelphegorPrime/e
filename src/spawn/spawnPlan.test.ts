@@ -141,7 +141,7 @@ test('resolveSpawnTarget: a known target keeps existing behavior (target + promp
 });
 
 test('resolveSpawnTarget: an unknown first arg is part of the prompt, run on the favorite', () => {
-  // `e spawn "fix the bug"` — the quoted prompt lands in `target`.
+  // `e spawn "fix the bug"` - the quoted prompt lands in `target`.
   assert.deepEqual(
     resolveSpawnTarget({
       target: 'fix the bug',
@@ -154,7 +154,7 @@ test('resolveSpawnTarget: an unknown first arg is part of the prompt, run on the
 });
 
 test('resolveSpawnTarget: an unquoted unknown prompt keeps all its words in order', () => {
-  // `e spawn fix the bug` — commander splits into target + prompt words.
+  // `e spawn fix the bug` - commander splits into target + prompt words.
   assert.deepEqual(
     resolveSpawnTarget({
       target: 'fix',

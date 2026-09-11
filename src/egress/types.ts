@@ -13,6 +13,7 @@ export interface EgressLogEntry {
   domain: string;
   /** Protocol: always DNS for dnsmasq. */
   protocol: 'DNS';
+  /** Classified against the blacklist at read time (the API is stateless). */
   action: EgressAction;
 }
 

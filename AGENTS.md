@@ -47,14 +47,18 @@ sandbox limits of its run. The full model: what a spawned agent receives, how
 results return to the parent, and delegation patterns, documented in
 `docs/agents/e.md`.
 
-### Spawning siblings from inside a run
+### Spawning siblings from inside a run (planned, not yet implemented)
 
-Inside a run you can ask the host to spawn **brother** containers that
-share your run:
+**Not available today.** `e spawn-brother`, `$E_ROLE` and `$E_BROKER_URL`
+are the design of ADR-0013 (status: Proposed; tickets `docs/tickets/01-08`
+are open) and do not exist in the CLI yet. Until they ship, delegation from
+inside a run means writing the follow-up task down in `/workspace` and
+exiting 0 (see `docs/agents/e.md`, Recursive spawning). The intended shape,
+for when it lands:
 
 ```bash
 # Via the spawn-brother skill (post to the runtime-broker sidecar over
-the run's private network — no docker socket inside this container):
+the run's private network - no docker socket inside this container):
 e spawn-brother "<task description for the brother agent>"
 ```
 
@@ -63,12 +67,12 @@ e spawn-brother "<task description for the brother agent>"
 - Children may request siblings; siblings may never spawn children
   (depth 2).
 - Children start from the host's checkpoint commit of your current
-  worktree — build artifacts (`node_modules`) are synchronized as needed.
+  worktree - build artifacts (`node_modules`) are synchronized as needed.
 - On completion, the host merges your worktree with your brother's
   branch automatically. If a conflict is detected, merge conflict
   markers appear in your worktree; resolve, then signal the host to
   finalize.
-- Your role is set via env vars — check `$E_ROLE` (`parent` | `child`) and
+- Your role is set via env vars - check `$E_ROLE` (`parent` | `child`) and
   `$E_BROKER_URL`. Do not create or depend on `child` / `parent`
   marker files in the worktree; role is not a filesystem concept here.
 
@@ -79,4 +83,4 @@ e spawn-brother "<task description for the brother agent>"
 
 ### Tests follow code
 
-Any code change (new feature, fix, refactor) must include corresponding test adjustments: add tests for new functions/branches, update or remove tests for deleted code, and ensure `npm run test:coverage` passes. Never ship a code change without touching the relevant test file.
+Any code change (new feature, fix, refactor) must include corresponding test adjustments: add tests for the behaviour you add or change, update or remove tests for deleted code, and ensure `npm run test:coverage` passes. Tests live next to the code as `*.test.ts` (node:test); small modules may be covered through their consumer's test file (for example `renderCompose` through `init.test.ts`) instead of a sibling file. Never ship a behaviour change without a test that would have caught it.

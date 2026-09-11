@@ -46,7 +46,7 @@ test('buildInitRows: model rows track the selected runtimes', () => {
 });
 
 test('buildInitRows: toggling a runtime off drops its models', () => {
-  // Partial answer with no runtimes selected — the model list must be empty.
+  // Partial answer with no runtimes selected - the model list must be empty.
   const rows = buildInitRows(WIZARD_STATE, { localRuntimes: [] });
   const modelRows = rows.filter(
     (r): r is Extract<typeof r, { kind: 'checkbox' }> =>

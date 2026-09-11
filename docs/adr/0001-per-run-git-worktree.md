@@ -1,5 +1,7 @@
 # Runs execute in an isolated per-run git worktree
 
+**Status:** Accepted
+
 Each run gets its own git worktree on a new branch, created on the **host** and
 bind-mounted into the harness container at `/workspace`, never the user's
 working directory in place. The worktree is branched from local **HEAD**

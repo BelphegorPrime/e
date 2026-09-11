@@ -1,5 +1,5 @@
 /**
- * Rendering and planning for a **derived agent image** — ADR-0004 layer 2. A
+ * Rendering and planning for a **derived agent image** - ADR-0004 layer 2. A
  * derived image is a thin layer built `FROM` the shared harness base that bakes
  * an agent's static configuration: a file-configured harness's provider config
  * (Codex) and/or an agent's default Skills. The base's CLI/toolchain layers are
@@ -36,7 +36,7 @@ export interface DockerfileSkillsBlock {
   names: string[];
 }
 
-/** Inputs for rendering a derived agent Dockerfile — either or both blocks may be present. */
+/** Inputs for rendering a derived agent Dockerfile - either or both blocks may be present. */
 export interface DerivedDockerfileParams {
   /** The harness base image tag this derives from, e.g. `e-harness-codex`. */
   baseImage: string;
@@ -48,26 +48,26 @@ export interface DerivedDockerfileParams {
    * The container user the harness base runs as (the harness's
    * `DockerfileParams.runtimeUser`, default `'node'`). The derived image must
    * match it at the end, and must build its COPY layers in a way the runtime
-   * user can then write — see {@link renderDerivedDockerfile}.
+   * user can then write - see {@link renderDerivedDockerfile}.
    */
   runtimeUser?: 'node' | 'root';
 }
 
 /**
- * Renders a derived agent Dockerfile: `FROM` the harness base, then — as declared
- * — a provider block (relocate the config dir via its env var and `COPY` the
+ * Renders a derived agent Dockerfile: `FROM` the harness base, then - as declared
+ * - a provider block (relocate the config dir via its env var and `COPY` the
  * rendered config file into it) and/or a skills block (`COPY` each skill tree into
  * the harness's skills dir). Every `COPY` target lands outside `/workspace`, so
  * `e`-generated config and skills never pollute the Run's branch (ADR-0006). The
- * API key is *not* baked — the config file references it by name.
+ * API key is *not* baked - the config file references it by name.
  *
  * The base image ends with the harness's runtime user (`USER node` for the
- * non-root default — attack-surface.md Zone 1). The COPY layers must therefore
+ * non-root default - attack-surface.md Zone 1). The COPY layers must therefore
  * build as root (a non-root build step cannot reliably create root-owned parents
  * across builders) and then hand the copied trees back to the runtime user, so a
  * CLI that writes to its config dir at runtime (Codex history/log under
  * `CODEX_HOME`, pi sessions/trust under `PI_CODING_AGENT_DIR`) can. A `root`
- * runtime-user harness skips the whole escalation — the base already ends as
+ * runtime-user harness skips the whole escalation - the base already ends as
  * root and COPY layers are free to run as root.
  */
 export function renderDerivedDockerfile(p: DerivedDockerfileParams): string {
@@ -145,12 +145,12 @@ export interface BakedProviderConfig {
 export interface ProviderDelivery {
   /**
    * Env delivered at runtime via `--env-file`: the API key by name for every
-   * harness, plus — for an env-configured harness — the endpoint and resolved model.
+   * harness, plus - for an env-configured harness - the endpoint and resolved model.
    */
   runtimeEnv: ContainerEnv[];
   /**
    * A model to deliver on the run command (e.g. `codex exec -m <id>`), set only
-   * when the model was `auto`-resolved for a file harness — its config file omits
+   * when the model was `auto`-resolved for a file harness - its config file omits
    * the model so the resolved id arrives at runtime, not baked (ADR-0007).
    */
   runtimeModel?: string;
@@ -163,7 +163,7 @@ export interface ProviderDelivery {
 }
 
 /**
- * Plans how an agent's {@link Provider} reaches its Run, purely — the single
+ * Plans how an agent's {@link Provider} reaches its Run, purely - the single
  * place the delivery form is decided from the adapter's kind, given the model
  * already {@link ResolvedModel resolved} at spawn:
  *
@@ -220,8 +220,8 @@ export interface DerivedImagePlan {
   /** Tag of the derived image, built on and running instead of the harness base. */
   imageTag: string;
   /**
-   * Rendered files to write under `.e/agents/<name>/` — the provider config file
-   * (if any) plus the derived Dockerfile — never clobbering a hand edit. The
+   * Rendered files to write under `.e/agents/<name>/` - the provider config file
+   * (if any) plus the derived Dockerfile - never clobbering a hand edit. The
    * agent dir seeds the build context so the Dockerfile's `COPY` finds them.
    */
   files: RenderedConfigFile[];
@@ -234,7 +234,7 @@ export interface DerivedImagePlan {
 }
 
 /**
- * Composes an agent's derived image, purely — the single place baked provider
+ * Composes an agent's derived image, purely - the single place baked provider
  * config and baked default skills are combined into one thin layer-2 image
  * `FROM` the harness base. Returns `undefined` when there is nothing to bake (no
  * provider config and no skills), so the run uses the harness base directly.

@@ -1,5 +1,10 @@
 # A Run is a host-orchestrated group of containers on a private network
 
+**Status:** Accepted. _Amended 2026-09:_ with the local stack present, the
+agent and its sidecars share the global `e-egress` network namespace
+(ADR-0011) instead of a private per-run network; the per-run network remains
+the fallback without the stack.
+
 Extending ADR-0001 and ADR-0002, a Run is no longer a single container. It is a
 **primary agent container** plus zero or more per-run **Sidecars**:
 container-transport MCP servers today, a VPN later, on a private per-run

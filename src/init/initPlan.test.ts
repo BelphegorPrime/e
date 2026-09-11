@@ -164,6 +164,35 @@ test('planInit: collected API keys merge into the env and fill blank lines', () 
   assert.match(plan.env.content, /OPENAI_API_KEY=filled/);
 });
 
+test('planInit: a fresh store writes typed API keys over the template placeholders', () => {
+  const plan = planInit(state(), {
+    apiKeys: { ANTHROPIC_API_KEY: 'sk-typed', OPENAI_API_KEY: 'sk-other' },
+  });
+  assert.equal(plan.env.created, true);
+  assert.match(plan.env.content, /^ANTHROPIC_API_KEY=sk-typed$/m);
+  assert.match(plan.env.content, /^OPENAI_API_KEY=sk-other$/m);
+  assert.doesNotMatch(plan.env.content, /local-development/);
+  // Untyped keys keep the local-stack placeholder.
+  const untouched = planInit(state(), {});
+  assert.match(untouched.env.content, /^ANTHROPIC_API_KEY=local-development$/m);
+});
+
+test('planInit: re-init on its own output is byte-identical (no newline creep)', () => {
+  const first = planInit(state(), {});
+  const replay = planInit(
+    {
+      ...state(),
+      existingEnvContent: first.env.content,
+      currentDefaultHarness: first.defaultHarness,
+      currentModels: first.models,
+    },
+    {}
+  );
+  assert.equal(replay.env.created, false);
+  assert.equal(replay.env.changed, false);
+  assert.equal(replay.env.content, first.env.content);
+});
+
 test('planInit: a fresh store creates the env with the omniroute section seeded', () => {
   const plan = planInit(state(), {});
   assert.equal(plan.env.created, true);
@@ -225,7 +254,7 @@ test('planInit: re-init never rotates a set stack secret and stays up to date', 
   assert.equal(replay.env.content, withHeaders);
 });
 
-test('planInit: steps are ordered — harnesses, shipped servers, bootstrap, then compose', () => {
+test('planInit: steps are ordered - harnesses, shipped servers, bootstrap, then compose', () => {
   const plan = planInit(state(), {});
   const kinds = plan.steps.map(step => step.kind);
   assert.deepEqual(kinds, [
@@ -301,6 +330,7 @@ test('planInit: seeds the egress build context and blacklist template (never clo
   assert.ok(files.some(f => f.endsWith('.e/egress/entrypoint.sh')));
   assert.ok(files.some(f => f.endsWith('.e/egress/dnsmasq.conf')));
   assert.ok(files.some(f => f.endsWith('.e/egress-blacklist')));
+  assert.ok(files.some(f => f.endsWith('.e/egress-iptables.rules')));
   for (const write of egressStep.writes) {
     assert.equal(write.clobber, 'never');
   }

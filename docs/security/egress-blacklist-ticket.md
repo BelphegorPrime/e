@@ -1,5 +1,12 @@
 # Ticket: Egress blacklist monitor via a shared-network-namespace egress container
 
+> **Status: Done, superseded.** This ticket predates the rewrite of ADR-0011
+> (now the global `e-egress` netns design) and ADR-0012 (the egress API). The
+> code it cites (`src/egress/index.ts`, `deriveEgressAllowList`,
+> `planEgressProxies`, `ALLOWED_DOMAINS`, per-run `<run>-egress` containers)
+> no longer exists; see `src/egress/`, `src/init/renderEgress.ts` and
+> `src/init/renderCompose.ts` for what shipped. Kept for history.
+
 > Revision of the original egress-hardening ticket (whitelist, proxy-vs-policy
 > decision). The whitelist approach shipped as ADR-0011 but is being inverted:
 > the egress path becomes a blacklist **with full traffic monitoring written to
@@ -15,8 +22,8 @@ reach only enumerated `host:port` pairs. That works but is operationally
 brittle:
 
 - Every host the agent must reach has to be enumerated up front
-  (`deriveEgressAllowList`). Unexpected destinations — a package mirror, a CDN,
-  a redirect target, a random remote MCP endpoint — fail or hang.
+  (`deriveEgressAllowList`). Unexpected destinations - a package mirror, a CDN,
+  a redirect target, a random remote MCP endpoint - fail or hang.
 - The pressure showed: `ALLOWED_DOMAINS` (npmjs, pypi, github, ...) had to be
   force-added to the allow-list in `spawnPlan.ts`, breaking the allow-list
   invariants its own tests assert.
@@ -34,7 +41,7 @@ whose network namespace the harness agent shares**:
 
 - Compose form: `network_mode: "service:egress-proxy"`.
 - CLI form (the runtime seam, ADR-0005): `docker run --network container:<egress>`
-  / `podman run --network container:<egress>` — the agent is started with
+  / `podman run --network container:<egress>` - the agent is started with
   `--network container:<run>-egress` **after** the egress container is up.
 
 The agent then has no interfaces of its own: every socket, every DNS query,
@@ -44,7 +51,7 @@ measured it), no host iptables, no default-route surgery, no
 `NET_ADMIN`/`NET_RAW` on the untrusted agent (the egress container is ours and
 trusted).
 
-### Blacklist — Pi-hole style DNS sinkhole
+### Blacklist - Pi-hole style DNS sinkhole
 
 - Egress container runs `dnsmasq` with a **mounted blacklist file**:
   `address=/blocked.example/0.0.0.0` (matches the domain and its subdomains).
@@ -57,9 +64,9 @@ trusted).
   the forwarded/output path in the egress netns for blacklisted IP:port pairs.
 - No enumerated allow-list: everything not blacklisted is reachable by default.
 
-### Monitoring — mounted log file
+### Monitoring - mounted log file
 
-- `dnsmasq` logs every query (timestamp, source, qname, action) — this is the
+- `dnsmasq` logs every query (timestamp, source, qname, action) - this is the
   "all requests a harness is trying" record, Pi-hole style.
 - `iptables LOG` (or a userspace forwarder) appends non-DNS forwarded
   connections (src, dst, port, bytes).
@@ -90,7 +97,7 @@ trusted).
    still work for the agent (via the egress container's run-network membership
    and its embedded-DNS rules).
 3. **Engine parity.** `--network container:` on docker and podman CLIs; Docker
-   Desktop (Linux containers) OK, Windows containers unsupported — document the
+   Desktop (Linux containers) OK, Windows containers unsupported - document the
    floor.
 4. **Egress container liveness.** Agent's netns disappears if the egress
    container dies mid-run; detect and warn like a crashed sidecar (already
@@ -103,7 +110,7 @@ trusted).
       optional stub HTTP 404.
 - [ ] Replace `src/egress` whitelist derivation with blacklist planning:
       blacklist source (store file, e.g. `.e/egress-blacklist`, and/or CLI
-      flag — decide); drop `deriveEgressAllowList`/`planEgressProxies`/socat
+      flag - decide); drop `deriveEgressAllowList`/`planEgressProxies`/socat
       Dockerfile.
 - [ ] Runtime (`src/runtime`): start single egress container first; agent run
       args use `--network container:<run>-egress`; remove the per-host proxy
@@ -128,7 +135,7 @@ trusted).
 - **Network policy layer (compose driver, CNI).** Violates the thin runtime
   seam (ADR-0005); heavier than the gap warrants.
 - **Transparent gateway without netns sharing.** Requires pointing the agent's
-  default route at a container and host iptables — not expressible through the
+  default route at a container and host iptables - not expressible through the
   thin CLI seam. Netns sharing (`--network container:`) is what makes the same
   effect expressible: the agent's interfaces _are_ the egress container's.
 
@@ -147,7 +154,7 @@ trusted).
 
 - ADR-0002 (host orchestrates git; accepted egress + whole-file env injection)
 - ADR-0005 (container groups, sidecars, private networks, thin runtime seam)
-- ADR-0011 (whitelist proxies — superseded by this ticket)
+- ADR-0011 (whitelist proxies - superseded by this ticket)
 - `docs/security/attack-surface.md`, Zone 1, item 4
 - `src/egress/index.ts`, `src/spawn/spawnPlan.ts` (`ALLOWED_DOMAINS`),
   `src/runtime/index.ts`, `src/runs/runSpawn.ts`

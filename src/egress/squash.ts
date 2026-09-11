@@ -35,18 +35,32 @@ export function squashEntries(
   return [...byDomain.values()].sort((a, b) => b.count - a.count);
 }
 
-/** Applies the `GET /logs` filters (ADR-0012: since / domain / action / limit). */
+/**
+ * Applies the `GET /logs` filters (ADR-0012: since / domain / action / limit).
+ * An unparsable `since` is ignored here (the API rejects it with 400 first);
+ * `limit` keeps the newest entries and only counts when it is a positive
+ * integer (`0`, negatives and garbage mean "no limit"); `domain` matches
+ * case-insensitively and ignores a trailing dot, like the squash view.
+ */
 export function applyLogQuery(
   entries: readonly EgressLogEntry[],
   query: LogQuery
 ): EgressLogEntry[] {
   let result = [...entries];
   if (query.since) {
-    const since = new Date(query.since).getTime();
-    result = result.filter(e => new Date(e.timestamp).getTime() >= since);
+    const since = Date.parse(query.since);
+    if (!Number.isNaN(since)) {
+      result = result.filter(e => Date.parse(e.timestamp) >= since);
+    }
   }
-  if (query.domain) result = result.filter(e => e.domain === query.domain);
+  if (query.domain) {
+    const wanted = normalizeDomain(query.domain);
+    result = result.filter(e => normalizeDomain(e.domain) === wanted);
+  }
   if (query.action) result = result.filter(e => e.action === query.action);
-  if (query.limit) result = result.slice(-Number(query.limit));
+  if (query.limit) {
+    const limit = Number(query.limit);
+    if (Number.isInteger(limit) && limit > 0) result = result.slice(-limit);
+  }
   return result;
 }

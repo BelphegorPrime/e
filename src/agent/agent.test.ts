@@ -19,7 +19,7 @@ import { renderEnvTemplate } from '../harness/renderEnvTemplate.js';
 
 // resolveAgent is pure: it takes a spawn target plus injected readers (an
 // agent loader, the valid harness names, and the available agent names), so we
-// exercise the resolution order with fakes — no filesystem.
+// exercise the resolution order with fakes - no filesystem.
 function deps(overrides: Partial<ResolveAgentDeps> = {}): ResolveAgentDeps {
   return {
     readAgent: () => undefined,

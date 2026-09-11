@@ -1,6 +1,6 @@
 /**
  * **The branch-backed runs index** (ADR-0010, ADR-0003): resolves `/api/runs/*`
- * from git branches, because runs _are_ branches. This module is pure — it
+ * from git branches, because runs _are_ branches. This module is pure - it
  * turns `for-each-ref` output into a sorted, deduplicated run list and parses
  * branch short names back into run identities. Live timing and streaming log
  * views are deliberately absent; the namespace stays extensible by layering a
@@ -61,7 +61,7 @@ export interface RunIndexEntry extends RunIdentity {
  * Builds the runs index from `for-each-ref` output: drops non-run branches,
  * merges local and remote-tracking refs of the same branch (the local tip
  * wins the metadata), and sorts newest run first. Remote-tracking refs that
- * have no local twin still appear — a run pushed to origin is a run.
+ * have no local twin still appear - a run pushed to origin is a run.
  */
 export function buildRunIndex(refs: RunRef[]): RunIndexEntry[] {
   const byBranch = new Map<string, RunIndexEntry>();

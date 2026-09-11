@@ -7,9 +7,9 @@ import { renderSearxngFiles } from './searxng.js';
  * over the Model Context Protocol, chosen per-Run with `--mcp <name>`. Its
  * `mcp.json` `transport` decides the mechanism, while selection is uniform (by
  * name):
- *  - `container` — built from a Dockerfile under `mcp/<name>/` and run as a
+ *  - `container` - built from a Dockerfile under `mcp/<name>/` and run as a
  *    **Sidecar** on the Run's private network, exposing streamable HTTP.
- *  - `remote` — an already-hosted URL, wired to the agent's MCP client directly;
+ *  - `remote` - an already-hosted URL, wired to the agent's MCP client directly;
  *    no sidecar, no network entry. Auth headers may reference `${VAR}` env vars,
  *    resolved by the harness at runtime from `.e/.env` (never baked, never argv).
  *
@@ -177,7 +177,7 @@ export function listMcpServerNames(root?: string): string[] {
 export interface McpEndpoint {
   /** The server's short name (config key / network alias). */
   name: string;
-  /** The streamable-HTTP URL — a per-run sidecar alias, or a remote server's hosted URL. */
+  /** The streamable-HTTP URL - a per-run sidecar alias, or a remote server's hosted URL. */
   url: string;
   /** Optional auth headers (remote only); values may contain `${VAR}` for runtime expansion. */
   headers?: Record<string, string>;
@@ -264,7 +264,7 @@ function mcpJson(server: Omit<ContainerMcpServer, 'name'>): string {
 /**
  * The reference `everything` server (`@modelcontextprotocol/server-everything`),
  * run in its native streamable-HTTP mode on port 3001 at `/mcp`. Credential-free,
- * needs no stdio→HTTP bridge — the shipped example that proves the whole sidecar
+ * needs no stdio→HTTP bridge - the shipped example that proves the whole sidecar
  * path right after `e init`. Grounding: `docs/research/harness-cli-facts.md`.
  */
 export function renderEverythingFiles(): McpServerFiles {
@@ -290,7 +290,7 @@ export function renderEverythingFiles(): McpServerFiles {
  * A `filesystem` server: the stdio-only `@modelcontextprotocol/server-filesystem`
  * wrapped with `supergateway` to expose streamable HTTP on port 8000 at `/mcp`
  * (ADR-0006's stdio→HTTP bridge made concrete). It serves the sidecar's own
- * `/data` directory — an illustrative, self-contained example, not the agent's
+ * `/data` directory - an illustrative, self-contained example, not the agent's
  * workspace.
  */
 export function renderFilesystemFiles(): McpServerFiles {

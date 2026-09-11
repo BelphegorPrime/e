@@ -1,6 +1,6 @@
 /**
  * The per-harness **config adapter** seam (ADR-0006). `e` owns a uniform,
- * structured input — a {@link Provider} — and each Harness owns the translation
+ * structured input - a {@link Provider} - and each Harness owns the translation
  * into its own native delivery form, modelled as the {@link HarnessAdapter}
  * discriminated union: the *env* form for an env-configured harness (Claude
  * Code) delivers container env vars at runtime; the *file* form for a
@@ -13,7 +13,7 @@ import { NODE_HOME } from './renderDockerfile.js';
 import { log } from '../utils/log.js';
 
 /**
- * Every model wire protocol `e` recognises — the single source of truth. A
+ * Every model wire protocol `e` recognises - the single source of truth. A
  * protocol is the concrete HTTP API an endpoint speaks. "OpenAI" is not
  * monolithic: `openai-chat` (`/v1/chat/completions`) and `openai-responses`
  * (`/v1/responses`) are distinct, and a harness may speak one without the other.
@@ -39,18 +39,18 @@ export interface Provider {
   /** Base URL of the endpoint, e.g. `https://gateway.example.com`. */
   baseUrl: string;
   baseUrlEnv?: string;
-  /** Concrete model id, or `auto` — resolved at spawn against `/v1/models` (ADR-0007). */
+  /** Concrete model id, or `auto` - resolved at spawn against `/v1/models` (ADR-0007). */
   model: string;
   /** The wire protocol the endpoint speaks; must be one the harness speaks. */
   protocol: Protocol;
-  /** Name of the env var (in `.e/.env`) holding the API key — never the value. */
+  /** Name of the env var (in `.e/.env`) holding the API key - never the value. */
   apiKeyEnv: string;
 }
 
 /**
  * One container env var contributed by an adapter. A `value` entry carries a
  * literal (non-secret config like a base URL or model id); a `fromEnv` entry
- * delivers a secret *by name* — its value is resolved from `.e/.env` at delivery
+ * delivers a secret *by name* - its value is resolved from `.e/.env` at delivery
  * time and never appears in the adapter output, so secrets stay out of code and
  * argv.
  */
@@ -61,7 +61,7 @@ export type ContainerEnv =
  * A config file an adapter renders for a file-configured harness, to be baked
  * into a **derived agent image** (ADR-0004 layer 2). It is written under
  * `.e/agents/<name>/` on the host and `COPY`d into the image at
- * {@link FileHarnessAdapter.configDir} — a path outside `/workspace`, so
+ * {@link FileHarnessAdapter.configDir} - a path outside `/workspace`, so
  * `e`-generated config never lands in the Run's branch (ADR-0006).
  */
 export interface RenderedConfigFile {
@@ -101,7 +101,7 @@ export interface EnvHarnessAdapter {
 /**
  * A **file-based** config adapter (Codex): a {@link Provider} becomes a config
  * file baked into a derived agent image, read from a relocated config dir. The
- * API key is never baked — the file references it by env var name (Codex's
+ * API key is never baked - the file references it by env var name (Codex's
  * `env_key`), and {@link renderRuntimeEnv} delivers that name at runtime, so the
  * secret stays a runtime value (ADR-0006).
  */
@@ -132,7 +132,7 @@ export interface FileHarnessAdapter {
     storeEnv: Record<string, string>
   ): RenderedConfigFile;
   /**
-   * The runtime env the derived image still needs — the API key, by name only
+   * The runtime env the derived image still needs - the API key, by name only
    * (never baked). The baked config file points at it via the harness's own
    * key-by-name mechanism (Codex `env_key`, pi `${VAR}` interpolation).
    */
@@ -142,7 +142,7 @@ export interface FileHarnessAdapter {
    * runtime-overlay fragment (ADR-0006 layer 3), to be merged onto the baked
    * base config and delivered outside `/workspace` via {@link configDir}.
    * Container sidecars use streamable HTTP (a `url`); returns an empty string
-   * when nothing is selected. **Optional** — absent for a file harness whose
+   * when nothing is selected. **Optional** - absent for a file harness whose
    * MCP config is self-contained (pi renders `mcp.json` standalone in
    * {@link planConfigOverlay}, so it needs no fragment).
    */
@@ -152,10 +152,10 @@ export interface FileHarnessAdapter {
    * onto the baked `baseConfig` (the exact config the derived image baked, reused
    * not re-derived; empty for a default agent with no provider) and returns the
    * merged file, the container path to mount it at, and the config-dir relocation
-   * env — everything the spawn edge needs without touching this adapter's
-   * {@link configDir}/{@link configFileName}/{@link configDirEnv} fields. Pure —
+   * env - everything the spawn edge needs without touching this adapter's
+   * {@link configDir}/{@link configFileName}/{@link configDirEnv} fields. Pure -
    * the edge writes the file, formats the mount, and appends the env. **Optional**
-   * — its presence is the harness's declared file-MCP capability; pi ships one via
+   * - its presence is the harness's declared file-MCP capability; pi ships one via
    * the pi-mcp-adapter extension, delivering `mcp.json` beside the baked provider
    * file. See {@link planMcpDelivery}.
    */
@@ -217,7 +217,7 @@ function tomlBasicString(value: string): string {
  * `docs/research/harness-cli-facts.md`.
  *
  * A concrete model is baked as the top-level `model` (ADR-0004). An `auto` model
- * is **omitted** from the file — it is resolved at spawn and delivered at runtime
+ * is **omitted** from the file - it is resolved at spawn and delivered at runtime
  * (`codex exec -m <id>`, ADR-0007), so the derived image is not rebuilt when the
  * resolved model changes.
  */
@@ -243,8 +243,8 @@ export function renderCodexConfig(provider: Provider): string {
 /**
  * Renders the selected MCP endpoints into Codex `[mcp_servers.<name>]` TOML
  * blocks. A `url` denotes a streamable-HTTP server (Codex's only HTTP transport;
- * no `transport`/`type` key and no experimental flag are needed — verified
- * against `config.schema.json`'s `RawMcpServerConfig`) — used for container
+ * no `transport`/`type` key and no experimental flag are needed - verified
+ * against `config.schema.json`'s `RawMcpServerConfig`) - used for container
  * sidecars reached at `http://<alias>:<port>/mcp`. Any endpoint `headers` are
  * rendered as Codex `http_headers` verbatim; Codex does not expand `${VAR}`, so a
  * secret-bearing remote header is a Codex-native concern (its `env_http_headers`
@@ -373,7 +373,7 @@ export function piApi(protocol: Protocol): string {
  * (id `e`) carrying the endpoint, the mapped `api`, the API key, and the one model
  * to select. Because pi selects only models **declared** here (unlike Codex),
  * `e` resolves the key by name from the store and writes its **value** into the
- * file — which is then baked into the derived agent image (ADR-0006's exception to
+ * file - which is then baked into the derived agent image (ADR-0006's exception to
  * the "credentials referenced by name" rule). {@link planProviderDelivery}
  * guarantees a concrete model id even for `auto`. Grounding: pi `docs/models.md`,
  * `docs/providers.md`.
@@ -476,7 +476,7 @@ export function validateProviderProtocol(
  * Renders {@link ContainerEnv} entries into `.env` file content (one `NAME=value`
  * line each), delivered to the container via `--env-file` so no value lands on
  * argv. Constructed once with the parsed `.e/.env` resolver and reused for every
- * credential env-file a spawn writes — the provider's and each MCP server's — so
+ * credential env-file a spawn writes - the provider's and each MCP server's - so
  * the secret resolution and its single fail-loud live in one place (ADR-0006/0008).
  */
 export class EnvFileRenderer {
@@ -486,7 +486,7 @@ export class EnvFileRenderer {
    * Renders `entries` to env-file content. A `value` entry inlines its literal; a
    * `fromEnv` entry is resolved by name, and a missing or empty value is a hard
    * error. `subject` names who needs the key (e.g. `Provider API key`, `MCP server
-   * "everything"`) so the one message stays specific — running with an empty
+   * "everything"`) so the one message stays specific - running with an empty
    * credential would otherwise fail opaquely deep inside the harness.
    */
   render(entries: ContainerEnv[], subject: string): string {
@@ -496,7 +496,7 @@ export class EnvFileRenderer {
       if (value === undefined || value === '') {
         throw new Error(
           `${subject} env "${entry.fromEnv}" is not set in .e/.env. ` +
-            `Add "${entry.fromEnv}=<value>" there — its value is injected at runtime, never baked into an image.`
+            `Add "${entry.fromEnv}=<value>" there - its value is injected at runtime, never baked into an image.`
         );
       }
       return `${entry.name}=${value}`;

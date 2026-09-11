@@ -212,8 +212,10 @@ class FakeRuntime implements ContainerRunner {
       throw new Error(this.throwOn.message);
     this.removedContainers.push(name);
   }
-  probeTcp(_network: string, host: string, _port: number): boolean {
+  probedNetworks: string[] = [];
+  probeTcp(network: string, host: string, _port: number): boolean {
     this.calls.push('probeTcp');
+    this.probedNetworks.push(`${network} ${host}`);
     const script = this.tcpScript[host];
     if (!script || script.length === 0) return true;
     return script.length === 1 ? script[0] : (script.shift() as boolean);
@@ -236,7 +238,11 @@ class FakeRuntime implements ContainerRunner {
   copyVolumeToDir(_volumeName: string, _hostDir: string): void {
     this.calls.push('copyVolumeToDir');
   }
-  copyDirToVolume(_hostDir: string, _volumeName: string, _wipe?: boolean): void {
+  copyDirToVolume(
+    _hostDir: string,
+    _volumeName: string,
+    _wipe?: boolean
+  ): void {
     this.calls.push('copyDirToVolume');
   }
 }
@@ -469,7 +475,7 @@ test('rethrows a non-collision worktree failure immediately without retrying', a
     git: new FakeGit({ addWorktreeError: 'fatal: permission denied' }),
   });
   await assert.rejects(runSpawn(deps, makeParams()), /permission denied/);
-  // Exactly one attempt — no counter-bump storm on a genuine error.
+  // Exactly one attempt - no counter-bump storm on a genuine error.
   assert.equal(git.calls.filter(c => c === 'addWorktree').length, 1);
 });
 
@@ -590,6 +596,62 @@ test('regression: with no sidecars the run behaves exactly as before (no group c
   assert.deepEqual(runtime.calls, ['run']);
   assert.equal(runtime.networks.length, 0);
   assert.equal(runtime.startedSidecars.length, 0);
+});
+
+test('hands the sidecar its own credential env-file and never a phantom mcp.json', async () => {
+  const { deps, runtime } = makeDeps();
+  await runSpawn(
+    deps,
+    makeParams({
+      sidecars: [{ ...sidecar, envFile: ['/tmp/scratch/everything.env'] }],
+      readiness: fastReadiness,
+    })
+  );
+  assert.deepEqual(runtime.startedSidecars[0].envFile, [
+    '/tmp/scratch/everything.env',
+  ]);
+
+  // No credentials: no --env-file at all (docker rejects a missing file).
+  const plain = makeDeps();
+  await runSpawn(
+    plain.deps,
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
+  );
+  assert.equal(plain.runtime.startedSidecars[0].envFile, undefined);
+});
+
+test('with the egress netns, sidecars join it, are probed on its loopback, and no run network is created', async () => {
+  const { deps, runtime } = makeDeps();
+  const result = await runSpawn(
+    deps,
+    makeParams({
+      sidecars: [sidecar],
+      readiness: fastReadiness,
+      runOptions: { rm: true, netns: 'e-egress' },
+    })
+  );
+  assert.equal(result.ran, true);
+  assert.deepEqual(runtime.networks, []);
+  assert.deepEqual(runtime.removedNetworks, []);
+  assert.equal(runtime.startedSidecars[0].netns, 'e-egress');
+  assert.equal(runtime.startedSidecars[0].network, undefined);
+  assert.deepEqual(runtime.probedNetworks, ['container:e-egress 127.0.0.1']);
+  assert.equal(runtime.options?.netns, 'e-egress');
+});
+
+test('counter ignores sibling slugs that merely share the prefix and counts any remote', async () => {
+  const slug = slugify('Fix the flaky test');
+  const { deps } = makeDeps({
+    git: new FakeGit({
+      existingBranches: [
+        `e/demo/${slug}-typo-9`,
+        `upstream/e/demo/${slug}-2`,
+        `e/demo/${slug}-1`,
+      ],
+    }),
+  });
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(result.branch, `e/demo/${slug}-3`);
 });
 
 test('brings up the group in order: network → sidecar → probe → agent → teardown', async () => {

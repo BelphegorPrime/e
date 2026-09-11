@@ -13,7 +13,7 @@ export interface DockerfileParams {
   /** Extra flags for `npm install -g`, e.g. ["--ignore-scripts"]. Default: []. */
   npmFlags?: string[];
   /**
-   * The container user the harness CLI runs as. Default: `'node'` — the
+   * The container user the harness CLI runs as. Default: `'node'` - the
    * non-root user `node:lts-alpine` ships, with a writable home at
    * `/home/node`, so an agent container never runs as root (attack-surface.md
    * Zone 1). Set `'root'` only for a harness whose CLI genuinely needs root at
@@ -49,7 +49,7 @@ export interface DockerfileParams {
 /**
  * Shared Dockerfile template. Logic-less (Mustache); defaults are resolved in
  * {@link renderDockerfile} before rendering. Triple-mustache (`{{{ }}}`) is used
- * throughout to disable Mustache's HTML escaping — this is a Dockerfile, and
+ * throughout to disable Mustache's HTML escaping - this is a Dockerfile, and
  * values such as scoped package names and `/workspace` contain `/` that must
  * not be turned into HTML entities.
  */
@@ -90,7 +90,7 @@ function renderSkillsBlock(collections: string[], agent: string): string {
 /**
  * The runtime user's home, used for the non-root default. The `node` user
  * `node:*-alpine` ships has this home pre-created and owned by it, so it is
- * writable without extra layers — the "writable home" half of the non-root
+ * writable without extra layers - the "writable home" half of the non-root
  * baseline.
  */
 export const NODE_HOME = '/home/node';

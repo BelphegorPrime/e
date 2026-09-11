@@ -1,5 +1,7 @@
 # Harness configuration is rendered by a per-harness adapter and delivered in three layers
 
+**Status:** Accepted
+
 Custom providers, MCP wiring, and skills all reduce to one problem: each harness
 ingests configuration through its _own_ mechanism (env vars, config files, CLI
 flags), while `e` can deliver only env vars. So `e` owns a **uniform, structured

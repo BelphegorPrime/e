@@ -1,5 +1,7 @@
 # Agents are configured wrappers over Harnesses, built as derived images
 
+**Status:** Accepted
+
 An **Agent** pairs a Harness with a **Provider** (endpoint, model, protocol,
 key-name) and is the unit a Run executes. It is realized as a _derived image_
 built on the harness base with the Docker builder pattern: layer 1 is the shared

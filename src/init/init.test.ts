@@ -89,7 +89,7 @@ test('parseModelChoice: an out-of-range index or unknown token is unrecognized',
 });
 
 // applyEnvValues is pure: it fills blank `KEY=` lines with collected values and
-// leaves everything else — filled keys, comments, unmatched keys — untouched.
+// leaves everything else - filled keys, comments, unmatched keys - untouched.
 test('applyEnvValues: fills a blank key with its collected value', () => {
   const out = applyEnvValues('ANTHROPIC_API_KEY=\nOPENAI_API_KEY=\n', {
     ANTHROPIC_API_KEY: 'sk-abc',
@@ -218,6 +218,19 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
   assert.doesNotMatch(compose, /\n {2}vllm:/);
 });
 
+test('renderCompose: bind-mounts both host-editable egress policy files into the egress container', () => {
+  const compose = renderCompose('cpu', []);
+  assert.match(
+    compose,
+    /- \.\/egress-blacklist:\/etc\/egress\.d\/dnsmasq\.blacklist:rw/
+  );
+  assert.match(
+    compose,
+    /- \.\/egress-iptables\.rules:\/etc\/egress\.d\/iptables\.rules:ro/
+  );
+  assert.match(compose, /- egress-logs:\/var\/log\/egress/);
+});
+
 test('renderCompose: adds the Ollama and vLLM containers when selected', () => {
   const compose = renderCompose('cpu', ['llamacpp', 'ollama', 'vllm']);
   assert.match(compose, /\n {2}llama:/);
@@ -268,7 +281,7 @@ test('renderCompose: does not expose ports from services sharing the egress netw
   assert.doesNotMatch(redis, /\n\s+expose:/);
 });
 
-test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () => {
+test('renderCompose: binds OmniRoute to localhost only - no LAN exposure', () => {
   const compose = renderCompose('cpu');
   // The OmniRoute dashboard is a login surface; only the host itself may reach it.
   assert.doesNotMatch(compose, /\s- "20128:20128"/);
@@ -287,7 +300,7 @@ test('renderCompose: binds OmniRoute to localhost only — no LAN exposure', () 
   assert.equal(namespaceSharers.length, 6);
 });
 
-test('renderCompose: no default secrets — every stack var must come from .env', () => {
+test('renderCompose: no default secrets - every stack var must come from .env', () => {
   const compose = renderCompose('cpu');
   // Fallback defaults are gone; an unseeded stack fails closed instead of
   // shipping the well-known local-development credentials.
@@ -342,6 +355,24 @@ test('renderBootstrap: a multi-runtime selection registers every provider', () =
 test('renderBootstrap: omits defaultModel when none is configured', () => {
   const script = renderBootstrap(['ollama']);
   assert.doesNotMatch(script, /"defaultModel":/);
+});
+
+test('renderBootstrap: a model id with quotes cannot break the script or its JSON', () => {
+  const script = renderBootstrap(['ollama'], `it's "odd"/model`);
+  // Still valid shell...
+  const directory = mkdtempSync(join(tmpdir(), 'e-bootstrap-quote-'));
+  try {
+    const file = join(directory, 'bootstrap.sh');
+    writeFileSync(file, script);
+    execFileSync('sh', ['-n', file]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+  // ...and the JSON carries the id verbatim once the shell unquotes it.
+  const dataArg = /-d ('(?:[^']|'\\'')*') /.exec(script);
+  assert.ok(dataArg, 'provider body is a single-quoted shell word');
+  const unquoted = dataArg[1].slice(1, -1).replace(/'\\''/g, "'");
+  assert.equal(JSON.parse(unquoted).defaultModel, `ollama/it's "odd"/model`);
 });
 
 /** Runs a rendered bootstrap against a stubbed curl, returning output or exit status. */

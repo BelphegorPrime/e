@@ -4,7 +4,9 @@
  * directive: `address=/domain/0.0.0.0` sinkholes a domain and its subdomains.
  * A bare domain line is invalid dnsmasq syntax and crashes dnsmasq on start;
  * this module never writes one but still tolerates one when reading, so a
- * hand-edited file can at least be listed and classified.
+ * hand-edited file can at least be listed and classified. `ip:port` lines are
+ * skipped: direct-IP blocking lives in the iptables rules script
+ * (`.e/egress-iptables.rules`), not in dnsmasq config.
  */
 
 import { normalizeDomain, isDomainOrSubdomain } from './domain.js';

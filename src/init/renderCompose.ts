@@ -5,7 +5,12 @@ import {
 } from '../hardware/index.js';
 import Mustache from 'mustache';
 import { STACK_NETWORK } from '../constants.js';
-import { EGRESS_API_PORT } from '../egress/constants.js';
+import {
+  EGRESS_API_PORT,
+  EGRESS_BLACKLIST_IP_MOUNT,
+  EGRESS_BLACKLIST_MOUNT,
+  EGRESS_LOG_MOUNT,
+} from '../egress/constants.js';
 import type { LocalRuntime } from './localRuntimes.js';
 
 /** Compose template; conditional blocks keep each local runtime self-contained. */
@@ -13,7 +18,7 @@ const TEMPLATE = `# Local OmniRoute gateway with {{{runtimeSummary}}}.
 # Hardware detected: {{{vendor}}} -> {{{image}}}
 # Start with: docker compose -f .e/compose.yaml up -d
 # OmniRoute secrets (OMNIROUTE_INITIAL_PASSWORD, JWT_SECRET, API_KEY_SECRET) are
-# interpolated from .e/.env — e init seeds random values there; there are no
+# interpolated from .e/.env - e init seeds random values there; there are no
 # fallback defaults, so an unseeded stack simply has no known password.
 {{#anyRuntime}}# The bootstrap service registers each local runtime as an OmniRoute provider.
 # In OmniRoute Dashboard -> Providers, the registered runtimes point at their
@@ -44,8 +49,9 @@ services:
     networks:
       {{{stackNetwork}}}:
     volumes:
-      - ./egress-blacklist:/etc/egress.d/dnsmasq.blacklist:rw
-      - egress-logs:/var/log/egress
+      - ./egress-blacklist:${EGRESS_BLACKLIST_MOUNT}:rw
+      - ./egress-iptables.rules:${EGRESS_BLACKLIST_IP_MOUNT}:ro
+      - egress-logs:${EGRESS_LOG_MOUNT}
     ports:
       - "127.0.0.1:20128:20128"
       - "127.0.0.1:${EGRESS_API_PORT}:${EGRESS_API_PORT}"

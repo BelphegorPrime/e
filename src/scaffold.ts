@@ -3,7 +3,7 @@ import { log } from './utils/log.js';
 
 /**
  * Scaffolding writes shared by everything that renders e's on-disk state from a
- * declaration — harness Dockerfiles and default agents (`e init`), and the
+ * declaration - harness Dockerfiles and default agents (`e init`), and the
  * derived agent config/Dockerfile (`e spawn`). The invariant is the same across
  * all of them: **render, but never clobber a hand edit.** A file that already
  * exists is left exactly as the user left it; a divergence is shown as a diff so

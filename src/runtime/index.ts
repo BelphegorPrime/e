@@ -28,7 +28,6 @@ export interface RunOptions {
   port?: string[];
   env?: string[];
   rm?: boolean;
-  keepWorktree?: boolean;
   /** Bind mounts. */
   volumes?: Mount[];
   /** Working directory inside the container (-w). */
@@ -64,11 +63,11 @@ export interface SidecarSpec {
   alias: string;
   /** The sidecar's image tag (built from `.e/mcp/<name>/Dockerfile`). */
   image: string;
-  /** Global egress namespace container, normally `e-egress`. */
+  /** Shared egress namespace container (`e-egress`) when the local stack runs. */
   netns?: string;
-  /** Legacy private network when global egress is disabled. */
+  /** Private per-run network, the fallback when no namespace is shared. */
   network?: string;
-  /** TCP port the sidecar listens on — probed for readiness, reached by the agent. */
+  /** TCP port the sidecar listens on - probed for readiness, reached by the agent. */
   port: number;
   /** Optional in-container readiness command; readiness also requires it to exit 0. */
   healthcheck?: string[];
@@ -90,7 +89,7 @@ export interface ContainerRunner {
   /** Create a private container network. Throws on failure. */
   createNetwork(name: string): void;
   /**
-   * Remove a network. Best-effort: never throws — it runs in teardown, where a
+   * Remove a network. Best-effort: never throws - it runs in teardown, where a
    * failure must not mask the Run's result.
    */
   removeNetwork(name: string): void;
@@ -101,12 +100,11 @@ export interface ContainerRunner {
   /** Stop and remove a container by name. Best-effort: never throws (teardown). */
   removeContainer(name: string): void;
 
-  /**
-  /** Probe from a network or shared namespace container. */
+  /** Probe from a throwaway container on `network`; true iff `host:port` accepts a connection. */
   probeTcp(network: string, host: string, port: number): boolean;
   /** Run `command` inside `container` (`exec`); true iff it exits 0. */
   probeHealthcheck(container: string, command: string[]): boolean;
-  /** True if the named container is still running — used to detect a mid-run crash. */
+  /** True if the named container is still running - used to detect a mid-run crash. */
   isRunning(name: string): boolean;
 
   /**
@@ -115,26 +113,29 @@ export interface ContainerRunner {
   volumeExists(volumeName: string): boolean;
 
   /**
-   * Create a Docker volume. No-op if it already exists.
+   * Create a Docker volume. No-op if it already exists. Throws when the
+   * runtime cannot be started or reports a failure.
    */
   createVolume(volumeName: string): void;
 
   /**
    * Copy the contents of a Docker volume into a host directory using a
-   * temporary Alpine container (`cp -a /source/. /dest/`).
+   * temporary Alpine container (`cp -a /source/. /dest/`). Throws on failure
+   * so an export never silently produces an empty archive.
    */
   copyVolumeToDir(volumeName: string, hostDir: string): void;
 
   /**
    * Copy the contents of a host directory into a Docker volume. When
    * `wipe` is `true`, the volume is cleaned before the copy (`rm -rf /dest/*`)
-   * to match the import restore path.
+   * to match the import restore path. Throws on failure so an import never
+   * silently leaves a wiped volume behind.
    */
   copyDirToVolume(hostDir: string, volumeName: string, wipe?: boolean): void;
 }
 
 /**
- * Pure argv builders — one per runtime subcommand. Each returns the arguments
+ * Pure argv builders - one per runtime subcommand. Each returns the arguments
  * that follow the runtime executable, so the corresponding method reduces to
  * `spawnSync(this.command, xArgs(...))`. Extracted so every subcommand's argv is
  * assertable without spawning a process (only `run`'s builder, {@link
@@ -188,16 +189,20 @@ export function tcpProbeArgs(
   host: string,
   port: number
 ): string[] {
-  // BusyBox `nc HOST PORT` (empty stdin, 2s connect timeout) exits 0 on connect.
+  // BusyBox `nc HOST PORT` (2s connect timeout) exits 0 on connect. Passed as
+  // argv, never through `sh -c`: `host` is a user-chosen MCP alias. Without
+  // `-i` the container's stdin is already closed, so nc exits once connected.
   return [
     'run',
     '--rm',
     '--network',
     network,
     'busybox',
-    'sh',
-    '-c',
-    `nc -w 2 ${host} ${port} < /dev/null`,
+    'nc',
+    '-w',
+    '2',
+    host,
+    String(port),
   ];
 }
 
@@ -260,7 +265,7 @@ export function volumeCopyInArgs(
  * A container runtime (docker, podman, ...).
  *
  * Docker and Podman share the same CLI surface, so a single concrete class
- * covers both — the only thing that varies is the `command` executable, passed
+ * covers both - the only thing that varies is the `command` executable, passed
  * in at construction.
  */
 export class ContainerRuntime implements ContainerRunner {
@@ -290,7 +295,7 @@ export class ContainerRuntime implements ContainerRunner {
   /**
    * Builds an image from a build context, tagging it `imageTag`.
    * The Dockerfile defaults to `<contextDir>/Dockerfile`.
-   * Throws on failure — the edge (the spawn action) owns the exit.
+   * Throws on failure - the edge (the spawn action) owns the exit.
    */
   build(imageTag: string, contextDir: string, dockerfile?: string): void {
     const args = buildImageArgs(imageTag, contextDir, dockerfile);
@@ -346,8 +351,8 @@ export class ContainerRuntime implements ContainerRunner {
 
   /**
    * Runs a container, streaming stdio, and resolves with the container's exit
-   * code. It deliberately does not exit the process — the caller (the Run
-   * orchestrator) still has to commit, tear down the worktree, and report —
+   * code. It deliberately does not exit the process - the caller (the Run
+   * orchestrator) still has to commit, tear down the worktree, and report -
    * so lifecycle control stays with the caller. Rejects only if the runtime
    * process itself fails to start.
    */
@@ -498,23 +503,44 @@ export class ContainerRuntime implements ContainerRunner {
   }
 
   createVolume(volumeName: string): void {
-    spawnSync(this.command, volumeCreateArgs(volumeName), {
-      stdio: 'ignore',
-      shell: false,
-    });
+    this.runOrThrow(
+      volumeCreateArgs(volumeName),
+      `create volume ${volumeName}`
+    );
   }
 
   copyVolumeToDir(volumeName: string, hostDir: string): void {
-    spawnSync(this.command, volumeCopyOutArgs(volumeName, hostDir), {
-      stdio: 'ignore',
-      shell: false,
-    });
+    this.runOrThrow(
+      volumeCopyOutArgs(volumeName, hostDir),
+      `copy volume ${volumeName} to ${hostDir}`
+    );
   }
 
   copyDirToVolume(hostDir: string, volumeName: string, wipe?: boolean): void {
-    spawnSync(this.command, volumeCopyInArgs(hostDir, volumeName, wipe), {
-      stdio: 'ignore',
+    this.runOrThrow(
+      volumeCopyInArgs(hostDir, volumeName, wipe),
+      `copy ${hostDir} into volume ${volumeName}`
+    );
+  }
+
+  /**
+   * Runs a runtime subcommand whose failure must surface (volume export /
+   * import): stderr passes through for the user, anything else is silent.
+   */
+  private runOrThrow(args: string[], what: string): void {
+    const result = spawnSync(this.command, args, {
+      stdio: ['ignore', 'ignore', 'inherit'],
       shell: false,
     });
+    if (result.error) {
+      throw new Error(
+        `Failed to start ${this.command} to ${what}: ${result.error.message}`
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `${this.command} failed to ${what} (exit code ${result.status ?? 1}).`
+      );
+    }
   }
 }

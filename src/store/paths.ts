@@ -1,7 +1,7 @@
 import path from 'path';
 
 /**
- * The Store's **layout**: the `.e` directory holding e's on-disk state — the
+ * The Store's **layout**: the `.e` directory holding e's on-disk state - the
  * per-harness Dockerfiles under `harnesses/`, the Agent definitions under
  * `agents/`, the container MCP server definitions under `mcp/`, the Skills
  * under `skills/`, and the shared `.env` base environment. This leaf owns path
@@ -45,7 +45,7 @@ export function skillDir(name: string, root?: string): string {
   return path.join(skillsBaseDir(root), name);
 }
 
-/** Absolute path to a Skill's `SKILL.md` manifest — the file that makes a dir a skill. */
+/** Absolute path to a Skill's `SKILL.md` manifest - the file that makes a dir a skill. */
 export function skillManifestPath(name: string, root?: string): string {
   return path.join(skillDir(name, root), 'SKILL.md');
 }
@@ -91,7 +91,7 @@ export function bootstrapScriptPath(root?: string): string {
 /**
  * Path to the host-only `config.json`. Unlike `.env`, this file holds
  * orchestration settings for the host and is **never injected into a
- * container** — nothing in the spawn path passes it as environment.
+ * container** - nothing in the spawn path passes it as environment.
  */
 export function configFilePath(root?: string): string {
   return path.join(eBaseDir(root), 'config.json');
@@ -120,4 +120,9 @@ export function egressDir(root?: string): string {
 /** Absolute path to the store's egress blacklist file (host-editable, never clobbered). */
 export function egressBlacklistPath(root?: string): string {
   return path.join(eBaseDir(root), 'egress-blacklist');
+}
+
+/** Absolute path to the store's egress iptables rules script (host-editable, never clobbered). */
+export function egressIptablesPath(root?: string): string {
+  return path.join(eBaseDir(root), 'egress-iptables.rules');
 }

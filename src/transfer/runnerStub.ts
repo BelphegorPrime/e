@@ -1,4 +1,8 @@
-import { ContainerRunner, type RunOptions, type SidecarSpec } from '../runtime/index.js';
+import {
+  ContainerRunner,
+  type RunOptions,
+  type SidecarSpec,
+} from '../runtime/index.js';
 
 /**
  * A recording {@link ContainerRunner} for transfer tests: every call is
@@ -11,7 +15,11 @@ export class RecordingRunner implements ContainerRunner {
   copied: Array<{ source: string; target: string; wipe?: boolean }> = [];
   volumeExistsResult = true;
 
-  async run(_image: string, _opts: RunOptions, _commandArgs: string[]): Promise<number> {
+  async run(
+    _image: string,
+    _opts: RunOptions,
+    _commandArgs: string[]
+  ): Promise<number> {
     this.calls.push('run');
     return 0;
   }

@@ -1,8 +1,8 @@
-# 03 — Host Git merge primitive
+# 03 - Host Git merge primitive
 
 **What to build:** `Git.merge(branch)` added to `src/git/index.ts`, implemented in `HostGit` (`src/git/host.ts`), and mirrored in the in-memory test double. Merges a branch into the worktree's current branch; surfaces conflict markers rather than aborting silently.
 
-**Blocked by:** None — can start immediately.
+**Blocked by:** None - can start immediately.
 
 **Status:** ready-for-agent
 

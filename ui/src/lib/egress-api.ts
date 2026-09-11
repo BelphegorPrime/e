@@ -1,106 +1,107 @@
 import { useCallback, useEffect, useState } from 'react';
-export interface EgressLogEntry {
-  timestamp: string;
-  runID: string;
-  domain: string;
-  protocol: 'DNS';
-  action: 'allow' | 'deny(sinkholed)';
-}
 
+/**
+ * Client for the egress container API (ADR-0012), reached through the BFF's
+ * `/api/egress/*` proxy. The wire types mirror `src/egress/types.ts`.
+ */
+
+/** One rollup per domain from `GET /logs/squashed`. */
 export interface SquashedEntry {
   domain: string;
   count: number;
+  firstSeen: string;
+  lastSeen: string;
 }
 
-export interface BlacklistStatus {
-  status: 'ok' | 'error';
-  reload?: 'manual_required';
-  error?: string;
+/** Body of `GET /blacklist/domains`. */
+export interface BlacklistDomainsResponse {
+  domains: string[];
 }
 
-export function useEgressLogs() {
-  const [logs, setLogs] = useState<EgressLogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+export type EgressLoadState<T> =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; data: T };
+
+/** Reads the server's `{ error }` body for a failed response, else the HTTP status. */
+async function failureMessage(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body.error === 'string') return body.error;
+  } catch {
+    // Not JSON: fall through to the status line.
+  }
+  return `HTTP ${response.status}`;
+}
+
+/**
+ * Loads one egress resource and exposes `[state, reload]`, the same shape as
+ * `useRuns` in `bff.ts`, so a 503 "Egress API not configured" or a 502 from a
+ * stopped container renders as an error instead of an empty table.
+ */
+function useEgressResource<T>(path: string): [EgressLoadState<T>, () => void] {
+  const [state, setState] = useState<EgressLoadState<T>>({
+    status: 'loading',
+  });
 
   const load = useCallback(async () => {
-    setLoading(true);
+    setState({ status: 'loading' });
     try {
-      const response = await fetch('/api/egress/logs');
-      if (response.ok) {
-        setLogs(await response.json());
+      const response = await fetch(path);
+      if (!response.ok) {
+        throw new Error(await failureMessage(response));
       }
-    } finally {
-      setLoading(false);
+      setState({ status: 'ready', data: (await response.json()) as T });
+    } catch (error) {
+      setState({
+        status: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
-  }, []);
+  }, [path]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
-  return { logs, loading, load };
+
+  return [state, load];
 }
 
-export function useSquashedEgressLogs() {
-  const [logs, setLogs] = useState<SquashedEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch('/api/egress/logs/squashed');
-      if (response.ok) {
-        setLogs(await response.json());
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-  return { logs, loading, load };
+export function useSquashedEgressLogs(): [
+  EgressLoadState<SquashedEntry[]>,
+  () => void,
+] {
+  return useEgressResource<SquashedEntry[]>('/api/egress/logs/squashed');
 }
 
-export function useBlacklist() {
-  const [domains, setDomains] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch('/api/egress/blacklist/domains');
-      if (response.ok) {
-        const body = await response.json();
-        setDomains(body.domains);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-  return { domains, loading, load };
+export function useBlacklist(): [
+  EgressLoadState<BlacklistDomainsResponse>,
+  () => void,
+] {
+  return useEgressResource<BlacklistDomainsResponse>(
+    '/api/egress/blacklist/domains'
+  );
 }
 
-export async function addBlacklistDomain(
-  domain: string
-): Promise<BlacklistStatus> {
-  const response = await fetch('/api/egress/blacklist/domains', {
+/** Sends a blacklist mutation; resolves on `{ status: 'ok' }`, throws the server's error otherwise. */
+async function mutateBlacklist(path: string, init: RequestInit): Promise<void> {
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    throw new Error(await failureMessage(response));
+  }
+}
+
+export function addBlacklistDomain(domain: string): Promise<void> {
+  return mutateBlacklist('/api/egress/blacklist/domains', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ domain }),
   });
-  return response.json();
 }
 
-export async function removeBlacklistDomain(
-  domain: string
-): Promise<BlacklistStatus> {
-  const response = await fetch(`/api/egress/blacklist/domains/${domain}`, {
-    method: 'DELETE',
-  });
-  return response.json();
+export function removeBlacklistDomain(domain: string): Promise<void> {
+  return mutateBlacklist(
+    `/api/egress/blacklist/domains/${encodeURIComponent(domain)}`,
+    { method: 'DELETE' }
+  );
 }

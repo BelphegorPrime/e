@@ -2,7 +2,6 @@ import { test, beforeEach, afterEach } from 'node:test';
 import { stripVTControlCharacters } from 'node:util';
 import assert from 'node:assert/strict';
 import { log } from './log.js';
-import { env } from './env.js';
 
 // Capture each stream's writes. Color availability varies with test runner
 // environment, so stream-routing assertions strip ANSI escape sequences.

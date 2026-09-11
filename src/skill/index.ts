@@ -3,8 +3,8 @@ import { skillManifestPath, skillDir, skillsBaseDir } from '../store/paths.js';
 import type { Mount } from '../runtime/index.js';
 
 /**
- * The **Skill** context (ADR-0006): a packaged capability — a `SKILL.md` plus
- * optional resource files — an Agent can load, stored under the Store's
+ * The **Skill** context (ADR-0006): a packaged capability - a `SKILL.md` plus
+ * optional resource files - an Agent can load, stored under the Store's
  * `skills/<name>/`. Skills reach a harness two ways: an Agent may bake a default
  * set into its image (layer 2), and a Run may add more at spawn time (`--skill`,
  * layer 3). Either way they are delivered by the per-harness placement into the
@@ -70,7 +70,7 @@ export function parseSkillList(values: string[]): string[] {
 /**
  * The read-only bind mount that places a skill for a run: the host source dir
  * mounted at `<skillsDir>/<name>` inside the container (outside `/workspace`, so
- * it never lands in the run's branch). Pure — the spawn edge collects these.
+ * it never lands in the run's branch). Pure - the spawn edge collects these.
  */
 export function skillMountSpec(
   sourceDir: string,

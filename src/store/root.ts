@@ -6,8 +6,8 @@ import path from 'path';
  * The Store's **root-finding walk**: locating the directory that holds the
  * `.e` store. `resolveRoot` is pure (the glue supplies cwd, homedir, and a
  * `hasStore` predicate); `findRoot` wires it against the real filesystem. The
- * separation keeps the resolution order — `--dir`, nearest `.e` ancestor of
- * cwd, then home — testable without touching the disk.
+ * separation keeps the resolution order - `--dir`, nearest `.e` ancestor of
+ * cwd, then home - testable without touching the disk.
  */
 
 /** Inputs to the pure root resolution; the glue supplies the real values. */

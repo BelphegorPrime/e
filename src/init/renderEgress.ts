@@ -24,6 +24,8 @@
  *    it is the type-checked `src/egress/server.ts` and its imports, bundled by
  *    `scripts/build-egress-api.mjs` into one dependency-free ESM script.
  *  - `blacklist.example`: a commented template documenting the format.
+ *  - `iptables.example`: a commented template for the direct-IP rules script
+ *    the entrypoint applies into its EGRESS chain.
  *
  * None of these files carry per-installation variables, so they are plain
  * template literals over the shared egress constants rather than Mustache
@@ -44,6 +46,7 @@ export const EGRESS_FILES = {
   dnsmasqConf: 'dnsmasq.conf',
   apiScript: 'egress-api.mjs',
   blacklistExample: 'blacklist.example',
+  iptablesExample: 'iptables.example',
 } as const;
 
 export type EgressFileName = (typeof EGRESS_FILES)[keyof typeof EGRESS_FILES];
@@ -99,6 +102,20 @@ const BLACKLIST_EXAMPLE = `# Egress blacklist for e runs (ADR-0011).
 #
 # address=/example.com/0.0.0.0   # blocks example.com and *.example.com over IPv4
 # address=/example.com/::        # ...and the same over IPv6
+`;
+
+const IPTABLES_EXAMPLE = `# Egress iptables rules for e runs (ADR-0011): direct-IP blocking.
+#
+# The DNS sinkhole (egress-blacklist) only catches connections that resolve a
+# name first. This file is a plain sh script the egress entrypoint runs inside
+# its own network namespace (on start and after every SIGHUP), so rules here
+# block connections to hardcoded IPs. Append to the EGRESS chain only: the
+# entrypoint flushes and re-applies that chain and never touches OUTPUT itself.
+# This file is never clobbered by e init; reload with:
+#   docker kill -s HUP e-egress
+#
+# iptables -A EGRESS -d 203.0.113.7 -p tcp --dport 443 -j REJECT --reject-with icmp-port-unreachable
+# ip6tables -A EGRESS -d 2001:db8::7 -p tcp --dport 443 -j REJECT --reject-with icmp6-port-unreachable
 `;
 
 // Shell parameter expansions are written as \${VAR} so the TS template literal
@@ -210,6 +227,11 @@ export function renderBlacklistExample(): string {
   return BLACKLIST_EXAMPLE;
 }
 
+/** Renders the direct-IP rules template seeded as `iptables.example` and `.e/egress-iptables.rules`. */
+export function renderIptablesExample(): string {
+  return IPTABLES_EXAMPLE;
+}
+
 /** The files `e init` writes into `.e/egress/`, keyed by file name. */
 export function renderEgressFiles(): Record<EgressFileName, string> {
   return {
@@ -218,5 +240,6 @@ export function renderEgressFiles(): Record<EgressFileName, string> {
     [EGRESS_FILES.dnsmasqConf]: renderDnsmasqBaseConf(),
     [EGRESS_FILES.apiScript]: renderEgressApiJs(),
     [EGRESS_FILES.blacklistExample]: renderBlacklistExample(),
+    [EGRESS_FILES.iptablesExample]: renderIptablesExample(),
   };
 }

@@ -33,7 +33,7 @@ The API lives under a single `/api` root with namespaces:
 - `/api/info`: serve/stack status (extends the existing health/info surface).
 - `/api/runs/*`: the runs index and per-run status/logs.
 - `/api/omniroute/*`: gateway-derived views (models, provider status).
-- `/api/egress/*`: egress log views and the single delegated mutation — on-the-fly domain blacklisting (see below).
+- `/api/egress/*`: egress log views and the single delegated mutation - on-the-fly domain blacklisting (see below).
 
 UI views aggregate these; there is no second ad-hoc API surface.
 
@@ -45,7 +45,7 @@ performs **no writes**: no branch creation, no config mutation, no model
 switching. Read-only keeps the observer honest (no session-state to lose) and
 defers auth entirely (below).
 
-**One exception — delegated egress blacklisting.** On-the-fly domain
+**One exception - delegated egress blacklisting.** On-the-fly domain
 blacklisting is the single mutation the UI may carry. It is not a general
 write path: the action is mediated end-to-end by the egress container's own
 API (POST/DELETE on the blacklist, applied immediately via the existing SIGHUP
@@ -70,8 +70,8 @@ separate login surface is deferred until a UI write path exists.
 
 ### The runs index is branch-backed
 
-`/api/runs/*` resolves runs from git branches (`refs/heads/run/*` per
-ADR-0003) until the UI needs live timing or streaming logs. Branch-backed
+`/api/runs/*` resolves runs from git branches (`refs/heads/e/*`, the
+`e/<agent>/<slug>-N` scheme of ADR-0003) until the UI needs live timing or streaming logs. Branch-backed
 indexing is cheap, durable, and already canonical (runs _are_ branches); live
 log/timing views are an incremental addition to the same namespace.
 
@@ -83,18 +83,19 @@ log/timing views are an incremental addition to the same namespace.
 - **Secrets stay server-side by construction.** The gateway key never enters
   bundled UI code; the browser cannot read `.e/.env` or OmniRoute's credentials
   (see `docs/security/attack-surface.md`, Zone 4).
-- **The UI cannot mutate state — with one delegated exception.** Observer-first is a hard boundary; the runs
+- **The UI cannot mutate state - with one delegated exception.** Observer-first is a hard boundary; the runs
   list, status, config view, and model views are all reads. The sole mutation is egress blacklisting, mediated by the
-  egress container's own API and forwarded by `serve` — never a direct UI write to the store.
-- **Interactive `init` may ask about compose startup.** `e init` may prompt
-  whether `e spawn` should auto-start the compose stack (`autoComposeUp`) and
-  record the choice in `config.json`; `init --yes` defaults to `true`
-  (preserving today's behavior). No CLI flag is added.
+  egress container's own API and forwarded by `serve` - never a direct UI write to the store.
+- **Compose startup is not configurable yet.** `e spawn` starts the stack
+  whenever `.e/compose.yaml` exists. An opt-out (`autoComposeUp` in
+  `config.json`, asked by interactive `init`) was envisioned here but is not
+  implemented; no CLI flag exists either.
 
 ## Status
 
-Decided in the architecture review. The UI is a stub today; `serve` will be
-extended to the BFF surface as follow-up issues. The security fixes tracked as
+Decided in the architecture review. The UI now has dashboard, runs, activity,
+agents, OmniRoute, egress and settings pages; `serve` exposes `/api/runs/*`,
+`/api/omniroute/models`, `/api/egress/*` and the `/dashboard` proxy. The security fixes tracked as
 issues [#24](https://github.com/BelphegorPrime/e/issues/24) and
 [#25](https://github.com/BelphegorPrime/e/issues/25) touch the compose stack
 this ADR treats as core. The remaining implementation rests are tracked:

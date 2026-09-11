@@ -10,7 +10,8 @@ _whether_ to delegate work to other agents and _how_.
 coding work. It is a Node CLI (`pi -p "<prompt>"`) that runs headless in a
 container, reads Agent Skills from `~/.pi/agent/skills` and `~/.agents/skills`,
 keeps its config under `~/.pi/agent` (`PI_CODING_AGENT_DIR`), and reaches its
-model through a configured provider. pi has no MCP client and no approval
+model through a configured provider. pi reaches MCP servers through the
+`pi-mcp-adapter` extension `e` installs in its image, and has no approval
 popups; it is designed to run unattended. `e` supports several harnesses
 (pi, Claude Code, Codex, opencode); pi is the primary one.
 
@@ -77,12 +78,13 @@ e --version
 automatically on the container's `PATH`. Several signals tell you you are inside
 an `e`-managed run:
 
-- `$PI_CODING_AGENT` is set (pi harness) and your runner is `pi`.
+- `$PI_CODING_AGENT_DIR` points under `/home/node` (pi harness) and your runner is `pi`.
 - `/workspace` is a git worktree whose branch matches `e/<agent>/<slug>-N`.
 - The project's `AGENTS.md` or `CONTEXT.md` mentions `e` runs and
   host-orchestrated git.
-- Environment carries the run's injected values (`PI_PROVIDER`, `PI_MODEL`,
-  platform base URLs, and the provider's key referenced by name).
+- Environment carries the run's injected values (platform base URLs and the
+  provider's key referenced by name); provider and model arrive on pi's
+  command line (`--provider e --model <id>`), not as env vars.
 
 Where `e` is not on `PATH` but the repo is `e`'s own source, the README's build
 section documents a local alias:
@@ -103,7 +105,7 @@ The commands an agent (or user) actually uses:
 | `e spawn <agent-or-harness> "<prompt>"`     | Run an agent/harness against a prompt (one-shot detached) |
 | `e spawn <agent-or-harness>`                | Start the harness TUI (interactive by default)            |
 | `e spawn <agent-or-harness> --skill <name>` | Add a Skill for this run                                  |
-| `e spawn <agent-or-harness> --mcp <name>`   | Wire an MCP server (rejected for pi)                      |
+| `e spawn <agent-or-harness> --mcp <name>`   | Wire an MCP server (rejected for opencode)                |
 | `e init`                                    | Write the store (`~/.e`); usually done on the host        |
 | `e serve`                                   | Local web UI / BFF (observer-first, read-only)            |
 | `e --help`                                  | The full CLI                                              |
@@ -134,17 +136,17 @@ Details:
 
 ## What a spawned agent receives (the contract)
 
-| Aspect                | What the child agent gets                                                                                                                                                                                                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Working directory     | `/workspace`: a disposable git worktree on branch `e/<agent>/<slug>-N`, cut from the host's HEAD. Only committed state carries over.                                                                                                              |
-| Environment           | Provider keys and base URLs injected from `.e/.env` (filtered to the run's needs, referenced by name). Harness variables such as pi's `PI_*`. Never host git credentials (ADR-0002).                                                              |
-| Agent instructions    | The launch prompt, prefixed with `e`'s worktree rules ("Do not run git add, git commit, git push, or git worktree: Git metadata and credentials intentionally remain on the host"). Project `AGENTS.md` / `CLAUDE.md` in `/workspace` if present. |
-| Model / provider      | From the agent definition: baked into the image where the harness needs a file (pi's `models.json`, Codex's `config.toml`) or delivered via env / CLI flag (Claude Code). Keys resolve by name; only pi bakes the key value (its CLI forces it).  |
-| Tools                 | The harness CLI's native tools (pi: shell, file editing, ...), Agent Skills installed outside the worktree (`~/.agents/skills`, pi also reads `~/.pi/agent/skills`), plus any MCP sidecars chosen at spawn (pi has none).                         |
-| `e` CLI               | Only if the environment provides it. Check with `command -v e`. Do not assume it is installed, and do not install it yourself unless asked.                                                                                                       |
-| Permissions           | Non-root runtime user; full network egress to reach the model (some deployments route through the `e-egress` gatekeeper); no docker socket, no `NET_ADMIN`, no host git credentials (ADR-0002).                                                   |
-| Parent task / context | The prompt text, plus whatever the worktree already contains. No mid-run channel to the parent; the worktree is the shared artifact.                                                                                                              |
-| Result / reporting    | File changes in `/workspace`; see the next section.                                                                                                                                                                                               |
+| Aspect                | What the child agent gets                                                                                                                                                                                                                          |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Working directory     | `/workspace`: a disposable git worktree on branch `e/<agent>/<slug>-N`, cut from the host's HEAD. Only committed state carries over.                                                                                                               |
+| Environment           | Provider keys and base URLs injected from `.e/.env` (filtered to the run's needs, referenced by name). Harness variables such as pi's `PI_*`. Never host git credentials (ADR-0002).                                                               |
+| Agent instructions    | The launch prompt, prefixed with `e`'s worktree rules ("Do not run git add, git commit, git push, or git worktree: Git metadata and credentials intentionally remain on the host"). Project `AGENTS.md` / `CLAUDE.md` in `/workspace` if present.  |
+| Model / provider      | From the agent definition: baked into the image where the harness needs a file (pi's `models.json`, Codex's `config.toml`) or delivered via env / CLI flag (Claude Code). Keys resolve by name; only pi bakes the key value (its CLI forces it).   |
+| Tools                 | The harness CLI's native tools (pi: shell, file editing, ...), Agent Skills installed outside the worktree (`~/.agents/skills`, pi also reads `~/.pi/agent/skills`), plus any MCP sidecars chosen at spawn (delivered to pi via `pi-mcp-adapter`). |
+| `e` CLI               | Only if the environment provides it. Check with `command -v e`. Do not assume it is installed, and do not install it yourself unless asked.                                                                                                        |
+| Permissions           | Non-root runtime user; full network egress to reach the model (some deployments route through the `e-egress` gatekeeper); no docker socket, no `NET_ADMIN`, no host git credentials (ADR-0002).                                                    |
+| Parent task / context | The prompt text, plus whatever the worktree already contains. No mid-run channel to the parent; the worktree is the shared artifact.                                                                                                               |
+| Result / reporting    | File changes in `/workspace`; see the next section.                                                                                                                                                                                                |
 
 ## How results return to the parent
 

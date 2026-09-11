@@ -122,7 +122,19 @@ test('renderBlacklistExample: documents the dnsmasq address= directive for both 
   assert.doesNotMatch(example, /^example\.com\s*$/m);
 });
 
-test('renderEgressFiles: renders exactly the five build-context files', () => {
+test('renderIptablesExample: a comment-only sh script that documents EGRESS-chain rules for both families', () => {
+  const example = renderEgressFiles()[EGRESS_FILES.iptablesExample];
+  assert.match(example, /iptables -A EGRESS .* -j REJECT/);
+  assert.match(example, /ip6tables -A EGRESS/);
+  assert.match(example, /docker kill -s HUP e-egress/);
+  // Applied with `sh` by the entrypoint on every start: must parse and do nothing.
+  assert.ok(example.split('\n').every(l => l === '' || l.startsWith('#')));
+  withTempFile('iptables.rules', example, file => {
+    execFileSync('sh', ['-n', file]);
+  });
+});
+
+test('renderEgressFiles: renders exactly the six build-context files', () => {
   const files = renderEgressFiles();
   assert.deepEqual(
     Object.keys(files).sort(),

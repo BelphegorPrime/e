@@ -17,6 +17,8 @@ UI (which lives in the repo root now):
 - `ui/**/*` gets `globals.browser` (the React front-end, built by
   webpack into `dist/ui`)
 - `src/**` (the Node CLI) uses the global config
+- Ignored: `dist/`, `command/` (packaged binaries), the local `.e/` state
+  directory, and the generated `src/egress/bundle.generated.ts`
 
 ## Available Scripts
 
@@ -43,7 +45,8 @@ npm run format:check
 - Extends `eslint:recommended`
 - Extends `plugin:@typescript-eslint/recommended`
 - Uses TypeScript parser
-- Warns on console.log and debugger statements
+- Allows `console` (the CLI logs through it); warns on `debugger`
+- `no-undef` runs on plain JavaScript only; for TypeScript, `tsc` already reports undefined identifiers
 - Errors on unused variables and undefined variables
 
 ### Prettier Settings

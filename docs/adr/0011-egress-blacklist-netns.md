@@ -41,11 +41,17 @@ loopback interface.
 
 ## Blacklist and enforcement
 
-`.e/egress-blacklist` remains host-editable. `dnsmasq` sinkholes blocked
-domains; iptables rejects blocked IP:port destinations. The global service is
-trusted; the agent receives no `NET_ADMIN` capability and cannot edit the
-mounted policy. Reload policy through the global egress container, not a run
-container.
+Two host-editable policy files are bind-mounted into the egress container and
+seeded by `e init` (never clobbered): `.e/egress-blacklist` (dnsmasq
+`address=` directives; `dnsmasq` sinkholes those domains and their subdomains)
+and `.e/egress-iptables.rules` (a `sh` script of `iptables -A EGRESS ...`
+rules the entrypoint applies into its own netns, for direct-IP destinations
+that bypass DNS; it ships with comments only). The global service is trusted;
+the agent receives no `NET_ADMIN` capability and cannot edit the mounted
+policy. Both files are re-applied on `SIGHUP` to the egress container
+(`docker kill -s HUP e-egress`), which restarts dnsmasq and re-runs the rules
+script; the egress API (ADR-0012) sends that signal after each blacklist
+mutation.
 
 ## Consequences
 

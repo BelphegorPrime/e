@@ -100,7 +100,7 @@ function buildImages(
 /**
  * Performs the effects a {@link SpawnPlan} names (ADR-0008): the preflight guards
  * (a git repo, foreground), the image builds (before any worktree, so a build
- * failure never leaves orphan scaffolding — ADR-0005), materializing every
+ * failure never leaves orphan scaffolding - ADR-0005), materializing every
  * rendered file into {@link RunScratch} and wiring the resulting paths, then
  * handing the run's lifecycle to {@link runSpawn}. Returns the run's result, or a
  * pre-run error result when a guard fails.
@@ -117,7 +117,7 @@ export async function executeSpawn(
       ran: false,
       exitCode: 1,
       error:
-        'e spawn must be run inside a git repository — every run needs an isolated worktree.',
+        'e spawn must be run inside a git repository - every run needs an isolated worktree.',
     };
   }
   // A run's worktree is removed as soon as the container returns.
@@ -126,8 +126,8 @@ export async function executeSpawn(
   // Materialize every rendered file into scratch and wire the resulting paths.
   // The base `.e/.env` comes first, filtered to the run's declared keys (Zone 2:
   // the provider's and MCP servers' env refs plus the template's global base
-  // URLs). Unknown keys stay in `.e/.env` — the user's own shell keeps reading
-  // them — but never reach a container. Then the user's --env-file, then
+  // URLs). Unknown keys stay in `.e/.env` - the user's own shell keeps reading
+  // them - but never reach a container. Then the user's --env-file, then
   // remote-MCP and provider credentials layered last (each container gets its
   // own copy at run time).
   const baseEnvPath =
@@ -197,7 +197,7 @@ export async function executeSpawn(
       runOptions,
       sidecars,
       configMounts,
-      storeRoot: facts.root,
+      keepWorktree: facts.keepWorktree,
     }
   );
 }

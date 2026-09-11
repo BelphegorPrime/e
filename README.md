@@ -1,4 +1,4 @@
-# `e` — coding-agent harness runner
+# `e` - coding-agent harness runner
 
 `e` builds and runs coding-agent harnesses (Claude Code, Codex, opencode, **pi**)
 inside containers, one isolated run per git worktree. This README is the
@@ -45,15 +45,15 @@ results flow back should read [docs/agents/e.md](./docs/agents/e.md).
 
 ## Repo layout
 
-Single-package repo — no npm workspaces. Everything the `e` binary needs lives
+Single-package repo - no npm workspaces. Everything the `e` binary needs lives
 at the root:
 
-- `src/` — the Node CLI (`e` commands: init, spawn, serve).
-- `ui/` — the React front-end (webpack entry). Its build output is
+- `src/` - the Node CLI (`e` commands: init, spawn, serve).
+- `ui/` - the React front-end (webpack entry). Its build output is
   `dist/ui`, which `e serve` reads and `pkg.assets` embeds in each standalone
   binary.
-- `scripts/` — build preflight helpers (e.g. the `prebuild:bin` UI-assets gate).
-- `docs/` — ADRs, security analysis, research notes.
+- `scripts/` - build preflight helpers (e.g. the `prebuild:bin` UI-assets gate).
+- `docs/` - ADRs, security analysis, research notes.
 
 ## Build
 
@@ -121,27 +121,29 @@ UI-assets guard tests (the `prebuild:bin` gate) separately:
 
 ### 2. Rendering checks (no container, no gateway)
 
-Exercise the pure rendering directly against the compiled modules — the fastest
+Exercise the pure rendering directly against the compiled modules - the fastest
 way to _see_ what a harness will receive. Run from the repo root:
 
 ```bash
 # The pi models.json a provider renders. pi selects only models declared here, so
 # e resolves the API key by name from the store and writes its VALUE into the file
-# (which is then baked into the derived image — see the credential note below):
-node -e "const a=require('./dist/harness/adapter');console.log(a.renderPiModelsJson({storeEnv:{MY_GATEWAY_KEY:'sk-secret'}},{baseUrl:'https://gw.example.com/v1',model:'claude-opus-5',protocol:'anthropic-messages',apiKeyEnv:'MY_GATEWAY_KEY'}))"
+# (which is then baked into the derived image - see the credential note below):
+node -e "const a=require('./dist/harness/adapter');console.log(a.renderPiModelsJson({baseUrl:'https://gw.example.com/v1',model:'claude-opus-5',protocol:'anthropic-messages',apiKeyEnv:'MY_GATEWAY_KEY'},{MY_GATEWAY_KEY:'sk-secret'}))"
 
 # Protocol → pi api mapping (only openai-chat's name differs from e's):
 node -e "const a=require('./dist/harness/adapter');console.log(a.piApi('openai-chat'), a.piApi('anthropic-messages'))"
 # → openai-completions anthropic-messages
 
-# The container argv pi runs when a provider/model is delivered (the prompt is
-# rendered quoted):
+# The container argv pi runs when a provider/model is delivered (argv, no
+# shell: the prompt is one element and needs no quoting):
 node -e "const {HARNESSES}=require('./dist/harness/index');console.log(HARNESSES.pi.buildCommand('fix the bug','claude-opus-5'))"
-# → [ 'pi', '-p', '"fix the bug"', '--provider', 'e', '--model', 'claude-opus-5' ]
+# → [ 'pi', '-p', 'fix the bug', '--provider', 'e', '--model', 'claude-opus-5' ]
 
-# pi ships no MCP client, so --mcp is gated off:
-node -e "const {HARNESSES,harnessCapabilities}=require('./dist/harness/index');console.log(harnessCapabilities(HARNESSES.pi).mcp)"
-# → none
+# pi gets MCP through the pi-mcp-adapter package e installs in its image,
+# delivered as a rendered file; opencode has no MCP delivery yet, so --mcp is
+# gated off there:
+node -e "const {HARNESSES,harnessCapabilities}=require('./dist/harness/index');console.log(harnessCapabilities(HARNESSES.pi).mcp, harnessCapabilities(HARNESSES.opencode).mcp)"
+# → file none
 ```
 
 ### 3. End-to-end run
@@ -149,7 +151,7 @@ node -e "const {HARNESSES,harnessCapabilities}=require('./dist/harness/index');c
 Requires: `docker` **or** `podman` on `PATH`, a **git repo** to run inside (each
 run cuts its own worktree and branch), and a reachable model endpoint + key.
 
-**a. Initialize the store** (writes `~/.e/` — Dockerfiles, default agents,
+**a. Initialize the store** (writes `~/.e/` - Dockerfiles, default agents,
 `.env`, `config.json`). Interactive; press Enter to accept `pi` as the favorite,
 and fill in keys or skip and edit `.e/.env` later:
 
@@ -183,7 +185,7 @@ echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 }
 ```
 
-`protocol` must be one pi speaks — `anthropic-messages`, `openai-chat`, or
+`protocol` must be one pi speaks - `anthropic-messages`, `openai-chat`, or
 `openai-responses`. Use a concrete `model` for the first run; `"auto/coding"` is
 resolved by the harness against the endpoint's `/v1/models` at run start (see
 [ADR-0007](./docs/adr/0007-auto-model-delivery.md)).
@@ -195,26 +197,27 @@ cd /path/to/some/git/repo
 e spawn pi-gw "print hello world in python"
 ```
 
-First run builds the pi base image (slow — it installs the pi CLI), then a thin
+First run builds the pi base image (slow - it installs the pi CLI), then a thin
 derived image `e-agent-pi-gw` that bakes `models.json`, then runs
 `pi -p "<prompt>" --provider e --model claude-sonnet-4-5` in the container. On
 success a run branch `e/pi-gw/<slug>-1` is created (and pushed if it produced
 commits). If `e init` was asked for a git platform, the push is also opened as a
-PR/MR into the branch you were on when you spawned — title is the run branch's
+PR/MR into the branch you were on when you spawned - title is the run branch's
 commit message, body is the prompt, and the URL is printed on success.
 
-**e. Inspect the baked config** — proof the provider was delivered:
+**e. Inspect the baked config** - proof the provider was delivered:
 
 ```bash
 cat ~/.e/agents/pi-gw/models.json    # the rendered provider (baked API-key value)
 cat ~/.e/agents/pi-gw/Dockerfile      # ENV PI_CODING_AGENT_DIR + COPY models.json
 ```
 
-**f. Confirm MCP is gated** (fast; needs only the store, not a container):
+**f. Confirm MCP is gated for a harness without MCP delivery** (fast; needs
+only the store, not a container; pi itself accepts `--mcp`):
 
 ```bash
-e spawn pi-gw --mcp everything "hi"
-# → Harness "pi" has no MCP client, so it cannot use --mcp.
+e spawn opencode --mcp everything "hi"
+# → Harness "opencode" has no MCP client, so it cannot use --mcp.
 ```
 
 > **pi + `auto` model note:** pi selects only models declared in its
@@ -229,7 +232,7 @@ Every harness image installs a default set of skill **collections** at build
 time, one `RUN npx -y skills@latest add <collection> -a <agent> -g -y --copy`
 per collection. The `-a <agent>` flag makes the CLI place them into the
 exact skills dir the harness CLI reads (Claude Code `~/.claude/skills`; the
-shared `~/.agents/skills` for Codex, opencode, and pi) — outside `/workspace`,
+shared `~/.agents/skills` for Codex, opencode, and pi) - outside `/workspace`,
 so they never land in a run's branch. `e init` renders these instructions into
 each harness Dockerfile from its declared `skillCollections`/`skillsAgent`;
 git is installed in the image first so the CLI can clone the source.
@@ -244,21 +247,21 @@ Two further layers add skills for a specific agent or run:
 
 ## Merge requests on a successful run
 
-`e init` asks for a **git platform** — `github`, `gitlab`, `forgejo`, or
-`gitea` — and records it in `.e/config.json`. On a run that pushes, `e` then
+`e init` asks for a **git platform** - `github`, `gitlab`, `forgejo`, or
+`gitea` - and records it in `.e/config.json`. On a run that pushes, `e` then
 opens a PR/MR automatically:
 
 - **Title**: the run branch's tip commit message.
 - **Body**: the prompt that drove the run.
 - **Base**: the branch you were on when you spawned (the run's natural target),
   so the agent branch merges back into your `feature/…`/`dev`/`main` branch.
-- **Tool**: the platform's native CLI on the host — `gh` (GitHub, and the
+- **Tool**: the platform's native CLI on the host - `gh` (GitHub, and the
   GitHub-compatible Forgejo/Gitea, resolving the host from the git remote) or
   `glab` (GitLab). Needs that CLI installed and authenticated on the host,
   never in the container (ADR-0002).
 
 Blank the platform prompt to disable PR/MR creation; a re-init with `--yes`
-keeps the configured platform. PR/MR failure is non-fatal — the pushed branch
+keeps the configured platform. PR/MR failure is non-fatal - the pushed branch
 is the durable artifact, and a warning reports why the open failed.
 
 ## Cheat sheet
@@ -269,7 +272,7 @@ is the durable artifact, and a warning reports why the open failed.
 | `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt (one-shot detached)                                                                        |
 | `e spawn <agent-or-harness>`                   | Start the harness TUI (interactive by default)                                                                                   |
 | `e spawn … --skill <name>`                     | Add a Skill for this run                                                                                                         |
-| `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for pi)                                                                                             |
+| `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for opencode, which has no MCP delivery yet)                                                        |
 | `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model)                                                           |
 | `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                                                                                   |
 | `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                  |

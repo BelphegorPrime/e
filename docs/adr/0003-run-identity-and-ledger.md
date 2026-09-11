@@ -1,5 +1,7 @@
 # Run identity and ledger are branch-shaped
 
+**Status:** Accepted
+
 A run is named `e/<agent>/<slug>-N`. The **slug** is derived deterministically
 from the prompt (lowercase, non-alphanumerics to hyphens, stop-words dropped,
 truncated to a word boundary under ~40 chars); `--name` overrides it. `N` is a

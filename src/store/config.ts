@@ -101,7 +101,7 @@ export function serializeConfig(
 }
 
 /**
- * Reads the host-only `model-ids.json`, applying defaults for anything absent — a
+ * Reads the host-only `model-ids.json`, applying defaults for anything absent - a
  * missing file yields the built-in defaults.
  */
 export function readModelsJson(root?: string): ModelDataEntry[] {
@@ -120,7 +120,7 @@ export function writeModelsJson(config: ModelDataEntry[], root?: string): void {
 }
 
 /**
- * Reads the host-only `config.json`, applying defaults for anything absent — a
+ * Reads the host-only `config.json`, applying defaults for anything absent - a
  * missing file yields the built-in defaults ({@link DEFAULT_HARNESS}).
  */
 export function readConfig(root?: string): StoreConfig {

@@ -44,7 +44,7 @@ export class HostPullRequest implements PullRequest {
     // GitHub, and the GitHub-compatible Forgejo/Gitea: `gh` resolves the repo's
     // host from the git remote against its own authenticated-host config, so a
     // user on a self-hosted instance needs only `gh auth login --hostname <host>`
-    // — no hostname is baked into the invocation here.
+    // - no hostname is baked into the invocation here.
     return [
       'pr',
       'create',

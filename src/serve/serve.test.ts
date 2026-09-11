@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -14,6 +15,7 @@ import {
 } from './serve.js';
 import type { Git, RunCommit, RunRef } from '../git/index.js';
 import type { ModelsResponse } from '../modelStatus.js';
+import { E_VERSION } from '../version.js';
 
 test('detachedServeArguments preserves command arguments and removes detached flags', () => {
   assert.deepEqual(
@@ -55,7 +57,7 @@ test('serve app exposes API routes and the UI fallback', async () => {
 
     const info = await fetch(`${baseUrl}/api/info`);
     assert.equal(info.status, 200);
-    assert.deepEqual(await info.json(), { name: 'e', version: '1.0.0' });
+    assert.deepEqual(await info.json(), { name: 'e', version: E_VERSION });
 
     const page = await fetch(`${baseUrl}/projects/current`);
     assert.equal(page.status, 200);
@@ -225,6 +227,47 @@ test('serve app proxies /api/egress/logs to the egress API without a double slas
   }
 });
 
+test('serve app forwards the query string of a proxied /api/egress GET (the /logs filters live there)', async () => {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  await fs.writeFile(path.join(uiDirectory, 'index.html'), '<!doctype html>');
+  const seen: string[] = [];
+  const server = await startServeServer(
+    createServeApp(uiDirectory, {
+      egressApiUrl: 'http://egress-fake',
+      fetchImpl: (async (input: string | URL | Request) => {
+        seen.push(String(input));
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => '[]',
+        } as unknown as Response;
+      }) as typeof fetch,
+    }),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const res = await fetch(
+      `${baseUrl}/api/egress/logs?limit=10&action=deny(sinkholed)`
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(seen, [
+      'http://egress-fake/logs?limit=10&action=deny(sinkholed)',
+    ]);
+    // A bare prefix (with or without a query) is not a proxied route.
+    assert.equal((await fetch(`${baseUrl}/api/egress/?x=1`)).status, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+    });
+    await fs.rm(uiDirectory, { recursive: true, force: true });
+  }
+});
+
 test('serve app forwards the parsed JSON body on a proxied /api/egress POST', async () => {
   const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
   await fs.writeFile(
@@ -267,6 +310,63 @@ test('serve app forwards the parsed JSON body on a proxied /api/egress POST', as
     await new Promise<void>((resolve, reject) => {
       server.close(error => (error ? reject(error) : resolve()));
     });
+    await fs.rm(uiDirectory, { recursive: true, force: true });
+  }
+});
+
+test('serve app proxies /dashboard with its JSON body intact and keeps session cookies scoped to the BFF origin', async () => {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  await fs.writeFile(path.join(uiDirectory, 'index.html'), '<!doctype html>');
+  const seen: { url?: string; body?: string } = {};
+  const upstream = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', () => {
+      seen.url = req.url;
+      seen.body = body;
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'x-frame-options': 'DENY',
+        'set-cookie':
+          'auth_token=abc; Path=/; Domain=omniroute.local; Secure; HttpOnly',
+      });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const upstreamAddress = upstream.address();
+  assert.ok(upstreamAddress && typeof upstreamAddress !== 'string');
+  const server = await startServeServer(
+    createServeApp(uiDirectory, {
+      omniRoutedUrl: `http://127.0.0.1:${upstreamAddress.port}`,
+    }),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${address.port}/dashboard/api/auth/login`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: 'pw' }),
+      }
+    );
+    assert.equal(res.status, 200);
+    assert.equal(seen.url, '/dashboard/api/auth/login');
+    assert.equal(seen.body, '{"password":"pw"}');
+    assert.equal(res.headers.get('x-frame-options'), null);
+    assert.equal(
+      res.headers.get('set-cookie'),
+      'auth_token=abc; Path=/; HttpOnly'
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+    });
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
     await fs.rm(uiDirectory, { recursive: true, force: true });
   }
 });

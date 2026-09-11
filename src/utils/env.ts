@@ -1,10 +1,11 @@
 /**
  * Central catalog of the environment variables the `e` CLI reads or sets.
  * Names, defaults, and parsing live here so call sites ask for a typed
- * value instead of matching a string against `process.env` themselves —
+ * value instead of matching a string against `process.env` themselves -
  * one place to see every variable this process is sensitive to.
  */
 import { EGRESS_API_PORT } from '../egress/constants.js';
+import { OMNIROUTE_PORT } from '../constants.js';
 
 export class Env {
   /** Set on the detached `serve` child so it can recognize itself on restart. */
@@ -22,7 +23,7 @@ export class Env {
 
   /** Host-published base URL of the OmniRoute dashboard (see `renderCompose`). */
   get omniRoutedUrl(): string {
-    return process.env.OMNIROUTE_URL ?? 'http://127.0.0.1:20128';
+    return process.env.OMNIROUTE_URL ?? `http://127.0.0.1:${OMNIROUTE_PORT}`;
   }
 
   /** Whether `log` should mirror every line to `log.txt` in the working directory. */

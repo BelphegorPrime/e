@@ -1,5 +1,7 @@
 # `auto` model delivery: the harness resolves, `e` carries no catalog
 
+**Status:** Accepted
+
 ## Decision
 
 An Agent's Provider `model` is either a concrete id or `auto` (the value

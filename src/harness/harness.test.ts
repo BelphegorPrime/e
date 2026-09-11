@@ -146,7 +146,7 @@ test('pi buildCommand selects the e provider and resolved model when one is deli
   assert.deepEqual(HARNESSES.pi.buildCommand('do it', 'claude-opus-5'), [
     'pi',
     '-p',
-    '"do it"',
+    'do it',
     '--provider',
     'e',
     '--model',
@@ -155,7 +155,14 @@ test('pi buildCommand selects the e provider and resolved model when one is deli
 });
 
 test('pi buildCommand is plain when no provider/model is configured (default agent)', () => {
-  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', '"do it"']);
+  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', 'do it']);
+});
+
+test('buildCommand passes the prompt as one argv element, unquoted (the runtime uses no shell)', () => {
+  const prompt = 'say "hi" && echo $HOME';
+  assert.deepEqual(HARNESSES.pi.buildCommand(prompt).at(-1), prompt);
+  assert.deepEqual(HARNESSES.claudeCode.buildCommand(prompt)[2], prompt);
+  assert.deepEqual(HARNESSES.codex.buildCommand(prompt).at(-1), prompt);
 });
 
 test('interactive commands start each harness without a one-shot prompt', () => {
@@ -169,7 +176,7 @@ test('interactive commands start each harness without a one-shot prompt', () => 
 });
 
 test('each harness places skills at a path outside /workspace; Claude differs from the shared dir', () => {
-  // Claude reads its own skills dir; the others share ~/.agents/skills — all
+  // Claude reads its own skills dir; the others share ~/.agents/skills - all
   // under the non-root runtime user's home (/home/node).
   assert.equal(HARNESSES.claudeCode.skillsDir, '/home/node/.claude/skills');
   assert.equal(HARNESSES.codex.skillsDir, '/home/node/.agents/skills');

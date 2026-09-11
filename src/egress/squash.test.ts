@@ -90,3 +90,12 @@ test('applyLogQuery: since / domain / action / limit', () => {
     ['2026-09-07T15:00:03.000Z']
   );
 });
+
+test('applyLogQuery: garbage limits mean no limit; domain matching ignores case and a trailing dot; bad since is ignored', () => {
+  const entries = [at('A.Example.', '01'), at('b.example', '02')];
+  assert.equal(applyLogQuery(entries, { limit: '0' }).length, 2);
+  assert.equal(applyLogQuery(entries, { limit: 'abc' }).length, 2);
+  assert.equal(applyLogQuery(entries, { limit: '-1' }).length, 2);
+  assert.equal(applyLogQuery(entries, { domain: 'a.example' }).length, 1);
+  assert.equal(applyLogQuery(entries, { since: 'not a date' }).length, 2);
+});

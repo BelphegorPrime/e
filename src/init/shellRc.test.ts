@@ -29,7 +29,7 @@ test('ensureShellRcEntry: creates the rc file and appends a guarded block', () =
   assert.match(content, /source <\(e completion bash\)/);
 });
 
-test('ensureShellRcEntry: is idempotent — a second call reports already-configured', () => {
+test('ensureShellRcEntry: is idempotent - a second call reports already-configured', () => {
   const home = tempHome();
   ensureShellRcEntry('zsh', home);
   const before = fs.readFileSync(path.join(home, '.zshrc'), 'utf8');

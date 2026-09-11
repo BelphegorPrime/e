@@ -1,5 +1,7 @@
 # Spawn is a pure plan plus a thin executor
 
+**Status:** Accepted
+
 `e spawn` is structured as a pipeline: **gather → validate → resolve model →
 plan → execute**. Everything that _decides what a run is_ is pure and testable;
 the only effects live in a thin edge and a single executor. This records the
@@ -15,10 +17,10 @@ command action (it had grown to ~400 lines of untested wiring before this).
    errors before anything expensive: a provider protocol the harness does not
    speak, a provider on a harness with no adapter, `--mcp` on a harness with no
    MCP client, skills on a harness that supports none.
-3. **Resolve the model** (edge, the one remaining I/O) against the provider's
-   `/v1/models` (ADR-0007), only after `validateSpawn` passes, so a rejected
-   spawn never calls out to the network.
-4. **`planSpawn(facts, resolvedModel)`** (pure) composes the whole `SpawnPlan`
+3. _(Removed by ADR-0007/ADR-0009.)_ `e` no longer resolves `auto` against
+   `/v1/models`; the harness receives `auto` and resolves it at run start. The
+   pipeline is gather, validate, plan, execute.
+4. **`planSpawn(facts)`** (pure) composes the whole `SpawnPlan`
    as **data**: provider delivery, MCP sidecars vs. remote vs. flag vs. file,
    the config overlay, the derived-image plan, skill mounts, and every
    credential env-file's _content_ (resolving secrets by name and throwing on a
@@ -51,10 +53,9 @@ command action (it had grown to ~400 lines of untested wiring before this).
   exits; the ~9 scattered `try { ... } catch { console.error; process.exit(1) }`
   blocks are gone.
 
-## Note on ordering
+## Note on ordering (historical)
 
-Credential rendering (and its "missing secret" error) moved into `planSpawn`,
-which runs _after_ the model fetch. Previously a missing MCP credential surfaced
-before the fetch. The reordering is benign: both still fail fast, before any
-build or worktree, and only differs for the narrow case of an `auto`-model
-agent that _also_ has a missing MCP credential.
+When step 3 still existed, credential rendering (and its "missing secret"
+error) moved into `planSpawn`, which ran _after_ the model fetch. With the
+fetch gone (ADR-0007/0009) the question is moot: every planning error surfaces
+before any network call, build or worktree.

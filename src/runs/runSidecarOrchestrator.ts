@@ -31,32 +31,6 @@ export interface SidecarOrchestrator {
   ): Promise<ReadinessResult>;
 }
 
-/** In-memory sidecar orchestrator for testing. */
-export class InMemorySidecarOrchestrator implements SidecarOrchestrator {
-  private startedSidecars = new Map<string, SidecarSpec>();
-
-  async startAll(specs: SidecarSpec[]): Promise<void> {
-    for (const spec of specs) this.startedSidecars.set(spec.name, spec);
-  }
-
-  async stopAll(specs: SidecarSpec[]): Promise<void> {
-    for (const spec of specs) this.startedSidecars.delete(spec.name);
-  }
-
-  isSidecarReady(spec: SidecarSpec): boolean {
-    return this.startedSidecars.has(spec.name);
-  }
-
-  async waitForAllReady(
-    specs: SidecarSpec[],
-    _opts: ReadinessPolicy & { sleep: (ms: number) => Promise<void> }
-  ): Promise<ReadinessResult> {
-    const ready = specs.filter(spec => this.isSidecarReady(spec));
-    const notReady = specs.filter(spec => !this.isSidecarReady(spec));
-    return { ready, notReady };
-  }
-}
-
 /** Docker runtime sidecar orchestrator for production. */
 export class DockerSidecarOrchestrator implements SidecarOrchestrator {
   constructor(private readonly runner: ContainerRunner) {}
@@ -70,11 +44,11 @@ export class DockerSidecarOrchestrator implements SidecarOrchestrator {
   }
 
   isSidecarReady(spec: SidecarSpec): boolean {
-    const portOpen = this.runner.probeTcp(
-      spec.network ?? '',
-      spec.alias,
-      spec.port
-    );
+    // In a shared netns the sidecar has no alias of its own: it is reached on
+    // that namespace's loopback, so probe from inside the same namespace.
+    const portOpen = spec.netns
+      ? this.runner.probeTcp(`container:${spec.netns}`, '127.0.0.1', spec.port)
+      : this.runner.probeTcp(spec.network ?? '', spec.alias, spec.port);
     if (!portOpen) return false;
     if (spec.healthcheck && spec.healthcheck.length > 0) {
       return this.runner.probeHealthcheck(spec.name, spec.healthcheck);

@@ -3,7 +3,7 @@ const MAX_SLUG_LENGTH = 40;
 
 /**
  * Common English stop-words dropped from slugs so a branch name carries the
- * meaningful words of a prompt. Kept deliberately small — only words that add
+ * meaningful words of a prompt. Kept deliberately small - only words that add
  * no recognition value to a branch name.
  */
 const STOP_WORDS = new Set([

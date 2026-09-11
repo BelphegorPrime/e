@@ -6,25 +6,6 @@ export interface NetworkManager {
   createNetwork(name: string): Promise<void>;
   /** Remove a network and all its containers. */
   removeNetwork(name: string): Promise<void>;
-  /** Check if a network exists and is usable. */
-  networkExists(name: string): Promise<boolean>;
-}
-
-/** In-memory network manager for testing and development. */
-export class InMemoryNetworkManager implements NetworkManager {
-  private networks = new Set<string>();
-
-  async createNetwork(name: string): Promise<void> {
-    this.networks.add(name);
-  }
-
-  async removeNetwork(name: string): Promise<void> {
-    this.networks.delete(name);
-  }
-
-  async networkExists(name: string): Promise<boolean> {
-    return this.networks.has(name);
-  }
 }
 
 /** Docker runtime network manager for production. */
@@ -37,10 +18,6 @@ export class DockerNetworkManager implements NetworkManager {
 
   async removeNetwork(name: string): Promise<void> {
     await this.runner.removeNetwork(name);
-  }
-
-  async networkExists(_name: string): Promise<boolean> {
-    return true;
   }
 }
 

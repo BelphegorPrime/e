@@ -100,7 +100,7 @@ function readAgentFile(name: string, root?: string): Agent | undefined {
 /**
  * Validates a parsed `agent.json` object into an {@link Agent}, purely. The
  * `name`/`harness` strings are required; a `provider`, if present, is validated
- * in shape (its protocol must be one `e` recognises — whether the harness
+ * in shape (its protocol must be one `e` recognises - whether the harness
  * *speaks* it is checked later, against the resolved harness). `where` names
  * the source in error messages.
  */
@@ -198,7 +198,7 @@ export function findAgent(name: string, root?: string): Agent {
 }
 
 /**
- * True if `name` names a persisted agent or a known harness — used to tell a
+ * True if `name` names a persisted agent or a known harness - used to tell a
  * spawn *target* from a bare *prompt*. This is a lightweight existence check;
  * {@link findAgent} still performs the full validation once a target is chosen.
  */

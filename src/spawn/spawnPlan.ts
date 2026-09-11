@@ -7,8 +7,8 @@
  * The edge gathers {@link SpawnFacts} (all I/O), then: {@link validateSpawn}
  * (pure, fail-fast) → resolve the model (the one remaining I/O) → {@link
  * planSpawn} (pure) → execute the returned {@link SpawnPlan}. Everything that
- * decides *what* the run is — including rendering every credential env-file and
- * throwing on a missing secret — happens purely here; the edge only performs the
+ * decides *what* the run is - including rendering every credential env-file and
+ * throwing on a missing secret - happens purely here; the edge only performs the
  * effects the plan names (ADR-0008).
  */
 
@@ -67,9 +67,9 @@ export interface ImageActionInput {
 /**
  * Decides what a spawn should do about the harness image before running:
  *
- * - `skip` — a usable image is already present and no rebuild was requested.
- * - `build` — an image is needed and the harness is initialized (has a Dockerfile).
- * - `not-initialized` — an image is needed but the harness has no Dockerfile;
+ * - `skip` - a usable image is already present and no rebuild was requested.
+ * - `build` - an image is needed and the harness is initialized (has a Dockerfile).
+ * - `not-initialized` - an image is needed but the harness has no Dockerfile;
  *   the caller surfaces the "run `e init`" error.
  *
  * The caller performs the effect the decision names; this function does no I/O.
@@ -98,7 +98,7 @@ export interface SpawnTargetInput {
 
 /** What a spawn's positional args resolve to. */
 export interface SpawnTarget {
-  /** The name to resolve to an Agent — a known agent/harness, or the favorite. */
+  /** The name to resolve to an Agent - a known agent/harness, or the favorite. */
   agentTarget: string;
   /** The prompt words, joined by the caller. */
   prompt: string[];
@@ -134,7 +134,7 @@ export function resolveSpawnTarget({
 /**
  * Everything a spawn's decisions need, gathered by the edge from disk (and the
  * CLI args) so that {@link validateSpawn} and {@link planSpawn} can be pure. The
- * resolved model is *not* here — it needs a network call, so the edge resolves it
+ * resolved model is *not* here - it needs a network call, so the edge resolves it
  * between validate and plan and passes it to {@link planSpawn} separately.
  */
 export interface SpawnFacts {
@@ -168,6 +168,8 @@ export interface SpawnFacts {
   detached?: boolean;
   /** `--rm`. */
   rm?: boolean;
+  /** `--keep-worktree`: leave the run's worktree in place after the container exits. */
+  keepWorktree?: boolean;
   /** The shared `.e/.env` path when it exists on disk, for env-file layering. */
   baseEnvFile?: string;
   /** Store blacklist source used to materialize the per-run egress monitor. */
@@ -226,7 +228,7 @@ export function validateSpawn(facts: SpawnFacts): void {
  * `fromEnv` name) and renders them into `.env` file content via `renderer`,
  * resolving each secret by name and failing loud on a missing one (the shared
  * {@link EnvFileRenderer} owns that resolution). Returns undefined for a
- * credential-free server. Pure — the edge writes the content to a scratch file.
+ * credential-free server. Pure - the edge writes the content to a scratch file.
  */
 export function renderMcpCredentials(
   server: McpServer,
@@ -241,7 +243,7 @@ export function renderMcpCredentials(
 }
 
 /**
- * The complete plan for a spawn, as data — every effect the edge will perform,
+ * The complete plan for a spawn, as data - every effect the edge will perform,
  * decided purely. Credential and config *content* is rendered here (resolving
  * secrets by name, throwing on a missing one); the edge materializes that content
  * into scratch files and wires the resulting paths (ADR-0008).
@@ -251,9 +253,6 @@ export interface SpawnPlan {
   delivery?: ProviderDelivery;
   /** Rendered provider runtime env-file content (appended to the run's env-files). */
   providerEnvContent?: string;
-  /** Global egress is active when the local Compose stack is present. */
-  egressEnabled?: boolean;
-
   /** Container MCP sidecars to bring up (without their credential env-file, wired at execute). */
   sidecars: SidecarPlan[];
   /** Rendered credential env-file content per sidecar alias (for sidecars that need it). */
@@ -274,7 +273,7 @@ export interface SpawnPlan {
   runtimeModel?: string;
   /**
    * The base `.e/.env` key whitelist (Zone 2): the only keys a container may
-   * receive — the provider's `apiKeyEnv`/`baseUrlEnv`, the `requiredEnv` of every
+   * receive - the provider's `apiKeyEnv`/`baseUrlEnv`, the `requiredEnv` of every
    * selected MCP server (sidecar and remote), and the template's global base-URL
    * lines. Everything else in `.e/.env` is filtered out at execute, so an
    * unrelated secret never reaches the untrusted harness agent.
@@ -285,16 +284,16 @@ export interface SpawnPlan {
 /**
  * Composes the whole {@link SpawnPlan} purely, given the gathered {@link
  * SpawnFacts} and the already-resolved model (undefined for a default agent). All
- * the branching that used to live inline in the spawn action — provider delivery,
+ * the branching that used to live inline in the spawn action - provider delivery,
  * MCP sidecar vs. remote vs. flag vs. file, the config overlay, the derived image,
- * skill mounts, and every credential env-file — is decided here, so the whole
+ * skill mounts, and every credential env-file - is decided here, so the whole
  * thing is testable without a runtime, a container, or the network. Throws on a
  * missing credential (via {@link renderMcpCredentials}/{@link EnvFileRenderer}).
  */
 export function planSpawn(facts: SpawnFacts): SpawnPlan {
   const { agent, harness, storeEnv, root } = facts;
   // One renderer, bound to the store's secrets, for every credential env-file this
-  // spawn writes — the provider's and each MCP server's (ADR-0008).
+  // spawn writes - the provider's and each MCP server's (ADR-0008).
   const envRenderer = new EnvFileRenderer(name => storeEnv[name]);
 
   // Provider delivery (env harness → runtime env; file harness → baked config).
@@ -311,7 +310,7 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
   // The base `.e/.env` whitelist (Zone 2): which keys may reach a container. The
   // template's global base-URL lines are always allowed; the provider's key and
   // base-URL names, and every selected MCP server's required env, are added
-  // below. Everything else in `.e/.env` is filtered out at execute time — an
+  // below. Everything else in `.e/.env` is filtered out at execute time - an
   // unrelated secret stays in the file (the user's own shell reads it) but never
   // enters the untrusted harness container.
   const allowedEnvKeys = new Set<string>(GLOBAL_BASE_URL_ENV);
@@ -400,7 +399,6 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     providerEnvContent,
     baseEnvWhitelist: [...allowedEnvKeys],
 
-    egressEnabled: facts.egressBlacklistFile !== undefined,
     sidecars,
     sidecarCredentials,
     remoteCredentials,

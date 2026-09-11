@@ -3,11 +3,11 @@ import { log } from './utils/log.js';
 /** A locally-provisionable llama.cpp model, with its approximate download size. */
 export interface ModelCatalogEntry {
   id: string;
-  /** Approximate download size in bytes — shown during `e init` selection. */
+  /** Approximate download size in bytes - shown during `e init` selection. */
   sizeBytes: number;
 }
 
-/** Models `e init` offers to provision locally, in preference order — first is the default. */
+/** Models `e init` offers to provision locally, in preference order - first is the default. */
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
   {
     id: 'unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M',
@@ -143,7 +143,7 @@ export function describeModels(
         }
       }
       lines.push(
-        `${id}: downloading ${pct}% (${formatBytes(done)} / ${formatBytes(total)}) — ${eta}`
+        `${id}: downloading ${pct}% (${formatBytes(done)} / ${formatBytes(total)}) - ${eta}`
       );
       continue;
     }

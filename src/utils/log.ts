@@ -6,18 +6,18 @@ import { env } from './env.js';
 /**
  * Semantic, color-coded line logging for the `e` CLI.
  *
- * Call sites name a *category* — what the line means, not what color it is —
+ * Call sites name a *category* - what the line means, not what color it is -
  * and this module owns the mapping from category to color and stream. There is
  * one place to change what "error" or "command" looks like.
  *
  * Colors come from Node's built-in `util.styleText` (no dependency). It strips
  * color automatically when the target stream is not a TTY or `NO_COLOR` is set,
- * so redirected/piped output stays plain with no handling here — the `{ stream }`
+ * so redirected/piped output stays plain with no handling here - the `{ stream }`
  * option points that TTY check at the same stream the line is written to.
  *
  * Every method takes `console`-style rest args: the whole formatted line is
  * colored one color (a red error line, a blue command line), so a single call
- * can't mix a colored label with an uncolored body — use separate calls for that.
+ * can't mix a colored label with an uncolored body - use separate calls for that.
  *
  * | category | color  | stream |
  * |----------|--------|--------|

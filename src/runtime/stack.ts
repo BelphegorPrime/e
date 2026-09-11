@@ -4,7 +4,7 @@ import { dockerComposePath, envFilePath } from '../store/paths.js';
 /**
  * The **local OmniRoute stack**: the composed set of sidecar services under
  * `.e/` (compose.yaml + .env) that e brings up before a spawn. Stack presence is
- * the single predicate every consumer needs — answer it here, once, so
+ * the single predicate every consumer needs - answer it here, once, so
  * `spawn`/`executeSpawn` can never disagree about whether the stack is up.
  */
 export interface LocalStack {
@@ -14,7 +14,7 @@ export interface LocalStack {
   composeFile: string;
   /** Absolute path to `.e/.env`, or undefined when it doesn't exist yet. */
   envFile: string | undefined;
-  /** True when the compose file exists — the one stack-present predicate. */
+  /** True when the compose file exists - the one stack-present predicate. */
   present: boolean;
 }
 

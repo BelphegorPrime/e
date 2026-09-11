@@ -115,7 +115,7 @@ export class HostGit implements Git {
 
   addWorktree(spec: WorktreeSpec): void {
     // `-b <branch>` makes the branch; git refuses if it already exists, and
-    // refuses if `path` is non-empty — giving us atomic create for free.
+    // refuses if `path` is non-empty - giving us atomic create for free.
     log.debug(
       `Creating worktree: ${spec.path} -> branch ${spec.branch} at ${spec.base}`
     );
@@ -146,7 +146,7 @@ export class HostGit implements Git {
       // diff. Since here that diff is machine-generated run output, restage
       // and retry once: if the hook only rewrote files, this second attempt
       // has nothing left to fix and succeeds. A real hook failure (lint
-      // error, test failure) fails the same way again and rethrows — the
+      // error, test failure) fails the same way again and rethrows - the
       // original error's message would be stale after the restage, so let
       // this second failure speak for itself.
       this.run(addParams, `restage hook-modified changes in ${worktreePath}`);

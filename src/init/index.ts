@@ -50,8 +50,8 @@ export function registerInitCommand(program: Command): void {
 /**
  * Runs a full `e init`. This is the thin executor: it gathers the on-disk
  * state, picks a wizard, collects answers, and applies the resulting
- * {@link InitPlan}. Every decision — what gets written, in what order, and
- * what never gets clobbered — lives in `planInit` (pure, fully tested), so the
+ * {@link InitPlan}. Every decision - what gets written, in what order, and
+ * what never gets clobbered - lives in `planInit` (pure, fully tested), so the
  * interactive flow, `--yes`, and a piped/CI run all share one tested core.
  */
 async function runInit(opts: InitCommandOptions): Promise<void> {
@@ -64,7 +64,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     !opts.yes && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 
   // Seed from any existing config so a re-init preserves the configured
-  // favorite instead of silently resetting it — mirrors how the `.env` and
+  // favorite instead of silently resetting it - mirrors how the `.env` and
   // Dockerfiles are never clobbered. A fresh store reads back the default.
   const config = readConfig(root);
   const envFile = envFilePath(root);
@@ -120,7 +120,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
   applyPlan(state.root, planInit(state, answers), answers.shell);
 }
 
-/** Applies an {@link InitPlan} to disk — the only layer that touches the filesystem. */
+/** Applies an {@link InitPlan} to disk - the only layer that touches the filesystem. */
 function applyPlan(
   root: string | undefined,
   plan: InitPlan,
@@ -186,7 +186,9 @@ function applyPlan(
   } else if (rcResult?.status === 'already-configured') {
     log.info(`   already configured in ${rcResult.file}`);
   } else {
-    log.command(`   # Add to ~/.${shell ?? 'bash'}rc or similar`);
+    log.command(
+      '   # Add to your shell startup file (~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, or $PROFILE for PowerShell)'
+    );
     log.command(`   ${completionSourceCommand(shell ?? 'bash')}`);
   }
   log.info('\n2. Run your favorite harness:');

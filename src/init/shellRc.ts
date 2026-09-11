@@ -34,7 +34,7 @@ export type ShellRcResult =
 /**
  * Appends a guarded completion-loading block to the shell's rc file, unless
  * one is already there. `powershell` (and any other unmapped shell) is
- * reported as unsupported — its startup file ($PROFILE) isn't a fixed path,
+ * reported as unsupported - its startup file ($PROFILE) isn't a fixed path,
  * so the caller falls back to printing the command for the user to add by
  * hand.
  */

@@ -1,4 +1,3 @@
-import type { Git } from '../git/index.js';
 import type { PullRequest } from '../github/index.js';
 import { GitPlatform } from '../store/config.js';
 
@@ -16,10 +15,7 @@ export interface PullRequestManager {
 
 /** Production PR manager using actual GitHub/GitLab clients. */
 export class ProductionPullRequestManager implements PullRequestManager {
-  constructor(
-    private readonly git: Git,
-    private readonly pullRequest: PullRequest
-  ) {}
+  constructor(private readonly pullRequest: PullRequest) {}
 
   async create(params: {
     platform: GitPlatform;
@@ -43,21 +39,5 @@ export class ProductionPullRequestManager implements PullRequestManager {
         warning: `could not open a ${params.platform} merge request for ${params.head}: ${(error as Error).message}`,
       };
     }
-  }
-}
-
-/** In-memory PR manager for testing. */
-export class InMemoryPullRequestManager implements PullRequestManager {
-  async create(params: {
-    platform: GitPlatform;
-    head: string;
-    base: string;
-    title: string;
-    body: string;
-  }): Promise<{ url: string; warning?: string }> {
-    // Simulate PR creation for testing
-    return {
-      url: `https://example.com/${params.platform}/${params.head}`,
-    };
   }
 }

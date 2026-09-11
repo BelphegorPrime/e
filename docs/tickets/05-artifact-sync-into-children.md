@@ -1,8 +1,8 @@
-# 05 — Artifact sync into children
+# 05 - Artifact sync into children
 
 **What to build:** Host-side copy of an allowlist of build artifacts (default `node_modules`) from parent worktree → child scratch dir, before the child container starts. Uses reflink copy when on same filesystem (`cp --reflink`), plain copy otherwise. Skips `.env` and `.git` always (ADR-0002). Allowlist configurable per repo.
 
-**Blocked by:** None — can start immediately.
+**Blocked by:** None - can start immediately.
 
 **Status:** ready-for-agent
 

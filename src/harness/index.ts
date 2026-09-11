@@ -28,7 +28,7 @@ export interface Harness {
   requiredEnv: string[];
   /**
    * The wire protocols this harness speaks. A provider's protocol must be one of
-   * these — see {@link validateProviderProtocol}. Grounding:
+   * these - see {@link validateProviderProtocol}. Grounding:
    * `docs/research/harness-cli-facts.md`.
    */
   protocols: readonly Protocol[];
@@ -54,7 +54,7 @@ export interface Harness {
    * Wires container MCP sidecar endpoints into this harness, returning the extra
    * argv to append to {@link buildCommand}. Present only for harnesses that take
    * MCP config inline via a flag (Claude Code's `--mcp-config`); absent for
-   * harnesses that need a rendered config file or support no MCP — the spawn edge
+   * harnesses that need a rendered config file or support no MCP - the spawn edge
    * capability-gates on its presence. Grounding: `docs/research/harness-cli-facts.md`.
    */
   renderMcpArgs?(endpoints: McpEndpoint[]): string[];
@@ -75,8 +75,6 @@ export interface Harness {
  * `docs/research/harness-cli-facts.md`.
  */
 const AGENTS_SKILLS_DIR = `${NODE_HOME}/.agents/skills`;
-
-const escapePrompt = (prompt: string) => `"${prompt}"`;
 
 /** Available coding harnesses, keyed by name. */
 export const HARNESSES: Record<string, Harness> = {
@@ -107,16 +105,8 @@ export const HARNESSES: Record<string, Harness> = {
     // `pi -p <prompt>` and uses pi's own built-in default).
     buildCommand: (prompt: string, model?: string) =>
       model
-        ? [
-            'pi',
-            '-p',
-            escapePrompt(prompt),
-            '--provider',
-            PI_PROVIDER_ID,
-            '--model',
-            model,
-          ]
-        : ['pi', '-p', escapePrompt(prompt)],
+        ? ['pi', '-p', prompt, '--provider', PI_PROVIDER_ID, '--model', model]
+        : ['pi', '-p', prompt],
     buildInteractiveCommand: (model?: string) =>
       model ? ['pi', '--provider', PI_PROVIDER_ID, '--model', model] : ['pi'],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
@@ -141,7 +131,7 @@ export const HARNESSES: Record<string, Harness> = {
     buildCommand: (prompt: string) => [
       'claude',
       '-p',
-      escapePrompt(prompt),
+      prompt,
       '--dangerously-skip-permissions',
     ],
     buildInteractiveCommand: () => ['claude', '--dangerously-skip-permissions'],
@@ -185,8 +175,8 @@ export const HARNESSES: Record<string, Harness> = {
     adapter: codexAdapter,
     buildCommand: (prompt: string, model?: string) =>
       model
-        ? ['codex', 'exec', '-m', model, escapePrompt(prompt)]
-        : ['codex', 'exec', escapePrompt(prompt)],
+        ? ['codex', 'exec', '-m', model, prompt]
+        : ['codex', 'exec', prompt],
     buildInteractiveCommand: (model?: string) =>
       model ? ['codex', '-m', model] : ['codex'],
     // Codex reads Agent Skills from the shared `~/.agents/skills`.
@@ -204,7 +194,7 @@ export const HARNESSES: Record<string, Harness> = {
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
     // opencode (Vercel AI SDK) speaks all three via its provider plugins.
     protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],
-    buildCommand: (prompt: string) => ['opencode', 'run', escapePrompt(prompt)],
+    buildCommand: (prompt: string) => ['opencode', 'run', prompt],
     buildInteractiveCommand: () => ['opencode'],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
@@ -226,17 +216,17 @@ export function resolveHarness(name: string): Harness {
 
 /**
  * How a harness accepts MCP server config, its declared MCP capability (ADR-0006):
- *  - `flag` — inline on the command line (Claude Code's `--mcp-config`).
- *  - `file` — rendered into its native config file, delivered as a runtime
+ *  - `flag` - inline on the command line (Claude Code's `--mcp-config`).
+ *  - `file` - rendered into its native config file, delivered as a runtime
  *    overlay via its file adapter (Codex's `config.toml` / `CODEX_HOME`; pi's
  *    `mcp.json` via the pi-mcp-adapter extension).
- *  - `none` — no MCP client at all or no MCP delivery wired yet (opencode);
+ *  - `none` - no MCP client at all or no MCP delivery wired yet (opencode);
  *    `--mcp` is rejected with a clear error at spawn.
  */
 export type McpDeliveryForm = 'flag' | 'file' | 'none';
 
 /**
- * The MCP delivery form a harness declares — the single classifier of the
+ * The MCP delivery form a harness declares - the single classifier of the
  * `flag`/`file`/`none` fork. Internal: both {@link harnessCapabilities} (for
  * gating) and {@link planMcpDelivery} (for wiring) derive from it, so the label
  * and the wiring it implies can never disagree.
@@ -252,7 +242,7 @@ function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
 }
 
 /**
- * The harness's file config adapter when it has one, else undefined — narrows the
+ * The harness's file config adapter when it has one, else undefined - narrows the
  * {@link HarnessAdapter} union so {@link planMcpDelivery} avoids an
  * `as FileHarnessAdapter` cast. Internal to this module.
  */
@@ -261,11 +251,11 @@ function fileAdapterFor(harness: Harness): FileHarnessAdapter | undefined {
 }
 
 /**
- * What a harness can do, as a small described value — the presence/form gates the
+ * What a harness can do, as a small described value - the presence/form gates the
  * spawn edge checks before a run (ADR-0006/0008). It replaces the scatter of
  * optional-field probes (`adapter?`, `renderMcpArgs?`, `skillsDir?`) that
  * `validateSpawn` used to reassemble by hand: each field states one capability.
- * Gating only — `planSpawn` still fetches the real `adapter` and calls
+ * Gating only - `planSpawn` still fetches the real `adapter` and calls
  * {@link planMcpDelivery} for the wiring a form implies. (Protocol compatibility
  * is a set-membership check with its own home, `validateProviderProtocol`, so it
  * is deliberately not a capability here.)
@@ -289,12 +279,12 @@ export function harnessCapabilities(harness: Harness): HarnessCapabilities {
 }
 
 /**
- * How the selected MCP servers reach a harness, as data — the wiring a
+ * How the selected MCP servers reach a harness, as data - the wiring a
  * {@link McpDeliveryForm} implies, decided in one place so `planSpawn` no longer
  * re-branches on `renderMcpArgs` vs the file adapter (ADR-0006):
- *  - `flag` — extra argv for the run command (Claude's `--mcp-config`).
- *  - `file` — a config overlay merged onto `baseConfig` (Codex's `config.toml`).
- *  - `none` — no delivery; the spawn edge rejects `--mcp` against such a harness
+ *  - `flag` - extra argv for the run command (Claude's `--mcp-config`).
+ *  - `file` - a config overlay merged onto `baseConfig` (Codex's `config.toml`).
+ *  - `none` - no delivery; the spawn edge rejects `--mcp` against such a harness
  *    before ever calling this, so it is unreachable in a valid run (defensive).
  */
 export type McpDelivery =
@@ -305,7 +295,7 @@ export type McpDelivery =
 /**
  * Plans MCP delivery for a harness, given the selected `endpoints` and the baked
  * provider `baseConfig` a file overlay merges onto (empty for a default agent).
- * Dispatches on the single {@link mcpDeliveryForm} classifier — the label and the
+ * Dispatches on the single {@link mcpDeliveryForm} classifier - the label and the
  * wiring share one source, so they cannot drift. The non-null assertions are
  * guaranteed by that classifier: a `flag` form has `renderMcpArgs`; a `file` form
  * has a file adapter with `planConfigOverlay`.
@@ -333,7 +323,7 @@ export function planMcpDelivery(
 }
 
 /**
- * Builds the per-harness sections for the shared `.env` template — one entry
+ * Builds the per-harness sections for the shared `.env` template - one entry
  * per harness, carrying that harness's `requiredEnv` verbatim (no dedup).
  */
 export function envHarnessSections(): EnvHarnessSection[] {
@@ -344,7 +334,7 @@ export function envHarnessSections(): EnvHarnessSection[] {
 }
 
 /**
- * The deduped union of every harness's `requiredEnv` — the set of API keys
+ * The deduped union of every harness's `requiredEnv` - the set of API keys
  * `e init` collects into `.e/.env`, in first-seen order across the registry.
  */
 export function requiredEnvKeys(): string[] {

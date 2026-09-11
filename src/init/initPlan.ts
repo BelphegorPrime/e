@@ -26,6 +26,7 @@ import {
   dockerComposePath,
   dockerfilePath,
   egressBlacklistPath,
+  egressIptablesPath,
   egressDir,
   envFilePath,
   harnessDir,
@@ -107,7 +108,7 @@ export interface InitAnswers {
   /**
    * The OmniRoute dashboard sign-in password, when the interactive wizard
    * asked for one. Blank (or undefined) leaves the key unset, so planInit's
-   * seeder generates a fresh random value — user input wins over random only
+   * seeder generates a fresh random value - user input wins over random only
    * when the user actually typed one.
    */
   omniroutePassword?: string;
@@ -128,8 +129,8 @@ export interface InitWrite {
   /** Rendered content. */
   content: string;
   /**
-   * `never` — a `writeIfAbsent` (never clobber a hand edit, show a diff);
-   * `always` — an unconditional overwrite (bootstrap script, config).
+   * `never` - a `writeIfAbsent` (never clobber a hand edit, show a diff);
+   * `always` - an unconditional overwrite (bootstrap script, config).
    */
   clobber: 'never' | 'always';
 }
@@ -141,7 +142,7 @@ export type InitStep =
   | { kind: 'bootstrap'; write: InitWrite }
   | { kind: 'compose'; write: InitWrite };
 
-/** The full, ordered description of what `e init` will do — pure and testable. */
+/** The full, ordered description of what `e init` will do - pure and testable. */
 export interface InitPlan {
   /** Ordered build steps (harness files, shipped MCP/skills, bootstrap, compose). */
   steps: InitStep[];
@@ -177,7 +178,7 @@ export interface InitPlan {
 
 /**
  * Builds the ordered `e init` plan for a disk state and wizard answers, purely.
- * Everything the action writes — and the order, and the never-clobber rules —
+ * Everything the action writes - and the order, and the never-clobber rules -
  * is decided here and asserted by tests; the executor only applies {@link InitWrite}
  * specs and logs. Re-init subtlety: `.env` sections are appended, not rewritten,
  * and `applyEnvValues` fills blank `KEY=` lines only, so a hand-edited or
@@ -240,7 +241,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
 
   const steps: InitStep[] = [];
 
-  // Step 1 — each harness's Dockerfile + default agent (never clobbered).
+  // Step 1 - each harness's Dockerfile + default agent (never clobbered).
   for (const harness of Object.values(HARNESSES)) {
     steps.push({
       kind: 'harness',
@@ -262,7 +263,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     });
   }
 
-  // Step 2 — shipped MCP servers, then shipped skills (never clobbered).
+  // Step 2 - shipped MCP servers, then shipped skills (never clobbered).
   const mcpWrites: InitWrite[] = [];
   for (const [name, render] of Object.entries(SHIPPED_MCP_SERVERS)) {
     const dir = mcpDir(name, root);
@@ -292,12 +293,13 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     steps.push({ kind: 'writes', writes: [...mcpWrites, ...skillWrites] });
   }
 
-  // Step 2b — the shared egress gateway build context + blacklist template
+  // Step 2b - the shared egress gateway build context + blacklist template
   // (never clobbered). The image is built once and runs as a global compose
   // service shared by all stack services and agents (ADR-0011).
   const egressWrites: InitWrite[] = [];
   const egressCtx = egressDir(root);
-  for (const [fileName, content] of Object.entries(renderEgressFiles())) {
+  const egressFiles = renderEgressFiles();
+  for (const [fileName, content] of Object.entries(egressFiles)) {
     egressWrites.push({
       directory: egressCtx,
       file: path.join(egressCtx, fileName),
@@ -305,18 +307,26 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       clobber: 'never',
     });
   }
+  // The two host-editable policy files compose bind-mounts into the egress
+  // container. Both must exist before `compose up`: a missing bind-mount
+  // source would be created as a directory.
   const egressBlacklistFile = egressBlacklistPath(root);
   egressWrites.push({
     directory: path.dirname(egressBlacklistFile),
     file: egressBlacklistFile,
-    content: renderEgressFiles()[EGRESS_FILES.blacklistExample],
+    content: egressFiles[EGRESS_FILES.blacklistExample],
     clobber: 'never',
   });
-  if (egressWrites.length > 0) {
-    steps.push({ kind: 'writes', writes: egressWrites });
-  }
+  const egressIptablesFile = egressIptablesPath(root);
+  egressWrites.push({
+    directory: path.dirname(egressIptablesFile),
+    file: egressIptablesFile,
+    content: egressFiles[EGRESS_FILES.iptablesExample],
+    clobber: 'never',
+  });
+  steps.push({ kind: 'writes', writes: egressWrites });
 
-  // Step 3 — selected runtimes' derived bootstrap state (provider registration
+  // Step 3 - selected runtimes' derived bootstrap state (provider registration
   // only; model downloads happen on demand via `e <runtime> download <model>`).
   if (localRuntimes.length > 0) {
     const bootstrapFile = bootstrapScriptPath(root);
@@ -331,7 +341,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     });
   }
 
-  // Step 4 — derived Compose state. Re-render so a re-init can change runtime selection.
+  // Step 4 - derived Compose state. Re-render so a re-init can change runtime selection.
   steps.push({
     kind: 'compose',
     write: {
@@ -415,10 +425,11 @@ function resolveGitPlatform(
 
 /**
  * Builds the planned `.env` write, purely: a missing file renders the full
- * template (with the e-net section); an existing file gains only the
- * sections it lacks; collected values fill blank `KEY=` lines only. The
- * `created`/`changed` outcome tells the executor whether to write or report
- * the file up to date.
+ * template (with the e-net section) and every collected value replaces the
+ * template's placeholder for that key; an existing file gains only the
+ * sections it lacks, and collected values fill blank `KEY=` lines only, so a
+ * hand-edited `.env` is never clobbered. The `created`/`changed` outcome tells
+ * the executor whether to write or report the file up to date.
  */
 function buildEnvWrite(
   root: string | undefined,
@@ -435,23 +446,31 @@ function buildEnvWrite(
 
   let content: string;
   if (existingContent === undefined) {
-    content = renderEnvTemplate({ harnesses: sections });
+    // The template pre-fills the two global keys with local-stack defaults;
+    // a key the user just typed must win over that placeholder.
+    content = applyEnvValues(
+      renderEnvTemplate({ harnesses: sections }),
+      envValues,
+      { overwrite: true }
+    );
   } else {
     const missing = sections.filter(
       section => !existingContent.includes(`# --- ${section.name} ---`)
     );
-    if (missing.length === 0) {
+    // Sections whose keys are all global render to nothing; appending that
+    // would only grow the file by a newline on every re-init.
+    const addition = renderEnvTemplate({
+      harnesses: missing,
+      includeHeader: false,
+    });
+    if (addition.trim() === '') {
       content = existingContent;
     } else {
       const separator = existingContent.endsWith('\n') ? '\n' : '\n\n';
-      content =
-        existingContent +
-        separator +
-        renderEnvTemplate({ harnesses: missing, includeHeader: false });
+      content = existingContent + separator + addition;
     }
+    content = applyEnvValues(content, envValues);
   }
-
-  content = applyEnvValues(content, envValues);
 
   return {
     file,
@@ -505,7 +524,7 @@ export function parseGitPlatformChoice(
  * Resolves a model multi-select prompt answer, purely: a blank answer keeps
  * `fallback`, `"all"`/`"none"` select every/no catalog entry, and a
  * comma-separated list of 1-based indices selects those models (deduplicated).
- * Anything else — an unknown token, an out-of-range index — is unrecognized
+ * Anything else - an unknown token, an out-of-range index - is unrecognized
  * (`undefined`, so the glue re-prompts).
  */
 export function parseModelChoice(
@@ -551,22 +570,26 @@ export function keysToPrompt(
 }
 
 /**
- * Fills collected values into a `.env` body, purely: a line that is exactly
  * `KEY=` (blank) becomes `KEY=<value>` when a non-empty value was collected for
  * it. Already-filled keys and keys with no collected value are left untouched,
- * so re-running `init` never clobbers a hand-edited `.env`.
+ * so re-running `init` never clobbers a hand-edited `.env`. With `overwrite`
+ * (a freshly rendered template) a collected value also replaces a pre-filled
+ * placeholder.
  */
 export function applyEnvValues(
   content: string,
-  values: Record<string, string>
+  values: Record<string, string>,
+  options: { overwrite?: boolean } = {}
 ): string {
   return content
     .split('\n')
     .map(line => {
-      const match = /^([A-Za-z_][A-Za-z0-9_]*)=$/.exec(line);
+      const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
       if (!match) return line;
-      const value = values[match[1]];
-      return value ? `${match[1]}=${value}` : line;
+      const [, key, current] = match;
+      if (current !== '' && !options.overwrite) return line;
+      const value = values[key];
+      return value ? `${key}=${value}` : line;
     })
     .join('\n');
 }

@@ -95,6 +95,7 @@ test('egress api: GET /logs/squashed rolls up per domain', async () => {
       api.logFile,
       [
         'Sep  7 15:00:01 dnsmasq[1]: query[A] a.example from 127.0.0.1',
+        'Sep  7 15:00:01 dnsmasq[1]: query[AAAA] a.example from 127.0.0.1',
         'Sep  7 15:00:02 dnsmasq[1]: reply a.example is 1.2.3.4',
         'Sep  7 15:00:03 dnsmasq[1]: query[A] localhost from 127.0.0.1',
         '',
@@ -162,6 +163,47 @@ test('egress api: POST rejects a missing domain and malformed JSON with 400', as
     });
     assert.equal(malformed.status, 400);
     assert.equal(api.reloads, 0);
+  } finally {
+    await api.close();
+  }
+});
+
+test('egress api: rejects domains that would inject dnsmasq directives, and malformed escapes', async () => {
+  const api = await startApi();
+  try {
+    for (const domain of [
+      'evil.example/0.0.0.0\naddress=/#/',
+      'has space.example',
+      'slash/inside',
+      '-leading.example',
+      'trailing-.example',
+      'a'.repeat(64) + '.example',
+      'under_score.example',
+    ]) {
+      const res = await fetch(`${api.url}/blacklist/domains`, {
+        method: 'POST',
+        body: JSON.stringify({ domain }),
+      });
+      assert.equal(res.status, 400, `accepted ${JSON.stringify(domain)}`);
+      assert.deepEqual(await json(res), { error: 'Invalid domain' });
+    }
+    assert.equal(fs.existsSync(api.blacklistFile), false);
+    assert.equal(api.reloads, 0);
+
+    const badEscape = await fetch(`${api.url}/blacklist/domains/%E0%A4%A`, {
+      method: 'DELETE',
+    });
+    assert.equal(badEscape.status, 400);
+  } finally {
+    await api.close();
+  }
+});
+
+test('egress api: GET /logs rejects an unparsable since with 400', async () => {
+  const api = await startApi();
+  try {
+    const res = await fetch(`${api.url}/logs?since=yesterday-ish`);
+    assert.equal(res.status, 400);
   } finally {
     await api.close();
   }

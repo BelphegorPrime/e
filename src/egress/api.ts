@@ -17,6 +17,7 @@ import {
   removeBlacklistDomain,
 } from './blacklist.js';
 import { EGRESS_BLACKLIST_MOUNT, EGRESS_DNSMASQ_LOG } from './constants.js';
+import { isValidDomain } from './domain.js';
 import { parseDnsmasqLog } from './logParser.js';
 import { applyLogQuery, squashEntries } from './squash.js';
 import type {
@@ -43,6 +44,10 @@ type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
 const BLACKLIST_DOMAINS_PATH = '/blacklist/domains';
 const BLACKLIST_DOMAIN_RE = /^\/blacklist\/domains\/([^/]+)$/;
+/** A blacklist mutation body is one short JSON object; anything bigger is abuse. */
+const MAX_BODY_BYTES = 64 * 1024;
+
+class BodyTooLarge extends Error {}
 
 function readFileOrEmpty(file: string): string {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
@@ -74,12 +79,25 @@ function sendJson(
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => {
+    req.on('data', (chunk: Buffer | string) => {
       body += chunk;
+      if (body.length > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new BodyTooLarge('Request body too large'));
+      }
     });
     req.on('end', () => resolve(body));
     req.on('error', reject);
   });
+}
+
+/** Decodes a path segment; `null` for malformed percent-escapes (a URIError). */
+function decodeSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
 }
 
 function errorMessage(err: unknown): string {
@@ -117,6 +135,9 @@ export function createEgressApi(options: EgressApiOptions = {}): Handler {
 
     if (pathname === '/logs' && method === 'GET') {
       const query: LogQuery = Object.fromEntries(url.searchParams);
+      if (query.since !== undefined && Number.isNaN(Date.parse(query.since))) {
+        return sendJson(res, 400, { error: 'Invalid since timestamp' });
+      }
       return sendJson(res, 200, applyLogQuery(readLog(), query));
     }
 
@@ -136,14 +157,20 @@ export function createEgressApi(options: EgressApiOptions = {}): Handler {
         ({ domain } = JSON.parse(
           await readBody(req)
         ) as Partial<BlacklistAddRequest>);
-      } catch {
+      } catch (err) {
+        if (err instanceof BodyTooLarge) {
+          return sendJson(res, 413, { error: err.message });
+        }
         return sendJson(res, 400, { error: 'Invalid JSON body' });
       }
       if (typeof domain !== 'string' || domain.trim() === '') {
         return sendJson(res, 400, { error: 'Missing domain' });
       }
+      if (!isValidDomain(domain.trim())) {
+        return sendJson(res, 400, { error: 'Invalid domain' });
+      }
       const content = readFileOrEmpty(blacklistFile);
-      const next = appendBlacklistDomain(content, domain);
+      const next = appendBlacklistDomain(content, domain.trim());
       if (next !== content) fs.writeFileSync(blacklistFile, next);
       reload();
       return sendJson(res, 200, { status: 'ok' });
@@ -151,7 +178,10 @@ export function createEgressApi(options: EgressApiOptions = {}): Handler {
 
     const domainMatch = BLACKLIST_DOMAIN_RE.exec(pathname);
     if (domainMatch && method === 'DELETE') {
-      const domain = decodeURIComponent(domainMatch[1]);
+      const domain = decodeSegment(domainMatch[1]);
+      if (domain === null || !isValidDomain(domain)) {
+        return sendJson(res, 400, { error: 'Invalid domain' });
+      }
       fs.writeFileSync(
         blacklistFile,
         removeBlacklistDomain(readFileOrEmpty(blacklistFile), domain)

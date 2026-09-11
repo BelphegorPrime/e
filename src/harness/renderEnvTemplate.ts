@@ -3,7 +3,7 @@ import Mustache from 'mustache';
 /**
  * Parameters for rendering the shared `.env` template from the Mustache
  * template below. The file is organised as one section per harness, listing
- * exactly the env vars that harness declares in its `requiredEnv` — env vars
+ * exactly the env vars that harness declares in its `requiredEnv` - env vars
  * are intentionally NOT deduplicated across harnesses.
  */
 export interface EnvTemplateParams {

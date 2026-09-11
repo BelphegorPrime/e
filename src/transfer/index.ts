@@ -32,7 +32,7 @@ export function registerImportCommand(program: Command): void {
     .argument('<file>', 'path to the zip file to import')
     .option(
       '--dir <path>',
-      'root directory to import the configuration into (default: home directory)'
+      'root directory to import the configuration into (default: the nearest .e store above the current directory)'
     )
     .option(
       '-f, --force',
@@ -41,10 +41,9 @@ export function registerImportCommand(program: Command): void {
     )
     .action(async (file: string, options) => {
       try {
-        // Discover the nearest initialized `.e` store when no root was supplied.
-        // Passing undefined directly to the path helpers would incorrectly default
-        // every path to the user's home directory.
-        const root = findRoot();
+        // `--dir` wins; otherwise discover the nearest initialized `.e` store
+        // (walking up from cwd, falling back to home).
+        const root = findRoot(options.dir);
 
         await importConfiguration({ file, ...options, root });
 

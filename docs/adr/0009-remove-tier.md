@@ -1,5 +1,7 @@
 # Remove Tier: agents are selected by name only
 
+**Status:** Accepted
+
 Supersedes the "Tier selects an agent" half of ADR-0007, and the Tier-carrying
 parts of ADR-0004/0006/CONTEXT.
 

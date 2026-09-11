@@ -1,5 +1,5 @@
 import express, { type Express } from 'express';
-import { createProxyMiddleware } from 'http-proxy-middleware';
+import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import type { Server } from 'node:http';
@@ -17,6 +17,7 @@ import {
 import { eBaseDir } from '../store/paths.js';
 import { log } from '../utils/log.js';
 import { env } from '../utils/env.js';
+import { E_VERSION } from '../version.js';
 import { type ModelsResponse } from '../modelStatus.js';
 
 const serveStatePath = path.join(eBaseDir(), 'serve.json');
@@ -70,6 +71,13 @@ function startDetachedServe(): Promise<void> {
   });
   child.unref();
   return new Promise((resolve, reject) => {
+    // A spawn failure (bad execPath, EMFILE) would otherwise only surface as
+    // the generic 5s "did not become ready" timeout below.
+    child.once('error', error =>
+      reject(
+        new Error(`Could not start the detached UI server: ${error.message}`)
+      )
+    );
     const deadline = Date.now() + 5000;
     const checkState = (): void => {
       if (readServeState()) {
@@ -108,7 +116,7 @@ async function healthProbe(url: string): Promise<boolean> {
 /**
  * True when the recorded detached server is really up: its pid is alive and
  * its `/api/health` answers. A reboot leaves a file whose pid is dead and
- * whose port answers nothing — this is how we tell that entry apart.
+ * whose port answers nothing - this is how we tell that entry apart.
  */
 export async function isServeStateLive(
   state: ServeState,
@@ -164,6 +172,9 @@ function readServeState(): ServeState | undefined {
     return state as ServeState;
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return undefined;
+    // A truncated or hand-edited file is stale state, not a crash: the caller
+    // removes what it cannot read, and `e serve` / `e serve stop` keep working.
+    if (error instanceof SyntaxError) return undefined;
     throw error;
   }
 }
@@ -226,14 +237,16 @@ export function createServeApp(
     git = new HostGit(),
   } = deps;
   const app = express();
-  app.use(express.json());
+  // JSON bodies are only read by the /api handlers; parsing them globally would
+  // consume the stream before the /dashboard proxy can forward it.
+  app.use('/api', express.json());
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok' });
   });
 
   app.get('/api/info', (_request, response) => {
-    response.json({ name: 'e', version: '1.0.0' });
+    response.json({ name: 'e', version: E_VERSION });
   });
 
   // Observer-first model view (ADR-0010): a raw snapshot of llama.cpp's
@@ -257,7 +270,7 @@ export function createServeApp(
 
   // Branch-backed runs index (ADR-0010): runs _are_ git branches
   // (`e/<agent>/<slug>-N` per ADR-0003), so everything here reads git. No
-  // write endpoints and no live timing or streaming logs yet — the namespace
+  // write endpoints and no live timing or streaming logs yet - the namespace
   // stays extensible by layering a state store on top.
   app.get('/api/runs', (_request, response) => {
     try {
@@ -268,8 +281,8 @@ export function createServeApp(
   });
 
   // Covers `/api/runs/e/<agent>/<slug>-N` (per-run status) and
-  // `/api/runs/e/<agent>/<slug>-N/logs`; Express 5 requires explicit paths.
-  // Handler extracts path from request.path since params can't capture slashes.
+  // `/api/runs/e/<agent>/<slug>-N/logs`. The handler extracts the branch from
+  // request.path because Express 4 route params cannot capture slashes.
   const handleRunRequest = (
     request: express.Request,
     response: express.Response
@@ -333,7 +346,7 @@ export function createServeApp(
   // OmniRoute itself.
   //
   // Mounted at the app root with a `pathFilter` (not `app.use('/dashboard',
-  // ...)`) so the full incoming path — including the `/dashboard` prefix —
+  // ...)`) so the full incoming path - including the `/dashboard` prefix -
   // reaches the target unchanged. OmniRoute's own basePath is `/dashboard`,
   // so its absolute asset and navigation links (e.g. `/dashboard/_next/...`,
   // `/dashboard/logs/timeline`) already point back at this same path and
@@ -344,23 +357,44 @@ export function createServeApp(
       target: omniRoutedUrl,
       changeOrigin: true,
       on: {
+        // express.json() is mounted on /api only, so dashboard bodies still
+        // stream through; fixRequestBody re-serializes one if some earlier
+        // middleware has parsed it anyway.
+        proxyReq: fixRequestBody,
         proxyRes: proxyResponse => {
           delete proxyResponse.headers['content-security-policy'];
           delete proxyResponse.headers['x-frame-options'];
-          delete proxyResponse.headers['set-cookie'];
+          // Keep the dashboard session, but scope its cookies to this origin:
+          // a `Domain` for OmniRoute's host would be rejected by the browser,
+          // and `Secure` never reaches a plain-http loopback BFF.
+          const cookies = proxyResponse.headers['set-cookie'];
+          if (cookies) {
+            proxyResponse.headers['set-cookie'] = cookies.map(cookie =>
+              cookie
+                .split(';')
+                .map(part => part.trim())
+                .filter(part => !/^(domain=|secure$)/i.test(part))
+                .join('; ')
+            );
+          }
         },
       },
     })
   );
 
-  // Egress query + mutation API proxy (ADR-0012). The BFF forwards to the
-  // egress container's own HTTP listener — same proxy shape as /api/runs/*.
+  // Egress query + mutation API proxy (ADR-0012). The BFF forwards the path,
+  // query string and JSON body to the egress container's own HTTP listener;
+  // it adds no write logic of its own.
+  const EGRESS_PROXY_TIMEOUT_MS = 5000;
+
   const handleEgressRequest: express.RequestHandler = async (
     request,
     response
   ) => {
-    const restPath = request.path.replace(/^\/api\/egress\//, '');
-    if (!restPath) {
+    // `request.path` drops the query string; the GET /logs filters
+    // (since/domain/action/limit) live there, so forward originalUrl's tail.
+    const restPath = request.originalUrl.replace(/^\/api\/egress\//, '');
+    if (!restPath || restPath.startsWith('?')) {
       response.status(404).json({ error: 'Not found' });
       return;
     }
@@ -374,9 +408,13 @@ export function createServeApp(
         method: string;
         headers: Record<string, string>;
         body?: string;
+        signal: AbortSignal;
       } = {
         method: request.method,
         headers: {},
+        // The egress API reads two small files per request; a hung container
+        // must not pin a BFF worker forever.
+        signal: AbortSignal.timeout(EGRESS_PROXY_TIMEOUT_MS),
       };
       if (request.method === 'POST' || request.method === 'DELETE') {
         init.headers = { 'content-type': 'application/json' };

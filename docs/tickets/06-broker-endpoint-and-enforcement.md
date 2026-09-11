@@ -1,8 +1,8 @@
-# 06 — Broker HTTP endpoint and depth/cap enforcement
+# 06 - Broker HTTP endpoint and depth/cap enforcement
 
-**What to build:** The runtime-broker from #1 wires its HTTP surface: `POST /spawn` accepts a sibling request, assigns a sibling branch, enforces depth ≤ 2 (children may request siblings, never children of children) and concurrency cap ≤ 3 (default, configurable), returns run identity; readiness follows existing `SidecarOrchestrator` policy.
+**What to build:** The runtime-broker from #02 wires its HTTP surface: `POST /spawn` accepts a sibling request, assigns a sibling branch, enforces depth ≤ 2 (children may request siblings, never children of children) and concurrency cap ≤ 3 (default, configurable), returns run identity; readiness follows existing `SidecarOrchestrator` policy.
 
-**Blocked by:** 02 — runtime-broker sidecar image and spawn-brother skill.
+**Blocked by:** 02 - runtime-broker sidecar image and spawn-brother skill.
 
 **Status:** blocked
 

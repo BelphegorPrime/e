@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import test from 'node:test';
 import { renderDockerfile } from './renderDockerfile.js';
 
-/** The valid outputs of the render — one `RUN skills add` per collection. */
+/** The valid outputs of the render - one `RUN skills add` per collection. */
 const pi = {
   label: 'Pi Coding Agent CLI harness.',
   npmPackage: '@earendil-works/pi-coding-agent',

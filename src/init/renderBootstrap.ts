@@ -40,7 +40,7 @@ const RUNTIME_FACTS: Readonly<Record<LocalRuntime, RuntimeBootstrapFacts>> = {
 /**
  * Bootstrap script template. It provisions OmniRoute only: waits for each
  * selected runtime to answer its health probe, then registers it as an
- * OmniRoute provider. Model downloads are deliberately out of scope — they
+ * OmniRoute provider. Model downloads are deliberately out of scope - they
  * happen on demand through `e <runtime> download <model>`, so the one-shot
  * stack bring-up never blocks on a multi-GB model fetch.
  */
@@ -69,7 +69,7 @@ log '{{{name}}} ready; registering OmniRoute provider'
 if ! curl -sf -H "Cookie: auth_token=$token" \
   http://localhost:20128/api/providers | grep -q '{{{name}}}'; then
   curl -sf -H "Cookie: auth_token=$token" -H 'Content-Type: application/json' \
-    -d '{"provider":"{{{provider}}}","apiKey":"sk-no-key-required","name":"{{{name}}}",{{#defaultModel}}"defaultModel":"{{{provider}}}/{{{defaultModel}}}",{{/defaultModel}}"providerSpecificData":{"baseUrl":"{{{baseUrl}}}"}}' \
+    -d {{{providerBody}}} \
     http://localhost:20128/api/providers > /dev/null
   log 'provider registered'
 else
@@ -79,18 +79,49 @@ fi
 log 'bootstrap complete'
 `;
 
+/** Quotes `value` as one POSIX shell word: `'…'` with an embedded `'` as `'\\''`. */
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The OmniRoute provider registration body for one runtime, JSON-encoded in
+ * TypeScript and shell-quoted once, so a model id from `config.json` can never
+ * break out of the script's JSON or its quoting.
+ */
+function providerBody(
+  facts: RuntimeBootstrapFacts,
+  defaultModel: string
+): string {
+  return shellSingleQuote(
+    JSON.stringify({
+      provider: facts.provider,
+      apiKey: 'sk-no-key-required',
+      name: facts.name,
+      ...(defaultModel
+        ? { defaultModel: `${facts.provider}/${defaultModel}` }
+        : {}),
+      providerSpecificData: { baseUrl: facts.baseUrl },
+    })
+  );
+}
+
 /**
  * Renders the one-shot script that registers the selected local runtimes as
  * OmniRoute providers. `defaultModel`, when given, is recorded as each
  * provider's initial default model id (model downloads stay manual via
- * `e <runtime> download <model>`).
+ * `e <runtime> download <model>`). `INITIAL_PASSWORD` is still expanded by the
+ * shell at run time into the login JSON; it comes from `.e/.env`, which `e
+ * init` seeds as hex (a hand-set password must not contain `"` or `\\`).
  */
 export function renderBootstrap(
   runtimes: readonly LocalRuntime[] = ['llamacpp'],
   defaultModel = ''
 ): string {
   return Mustache.render(TEMPLATE, {
-    runtimes: runtimes.map(runtime => ({ ...RUNTIME_FACTS[runtime] })),
-    defaultModel,
+    runtimes: runtimes.map(runtime => ({
+      ...RUNTIME_FACTS[runtime],
+      providerBody: providerBody(RUNTIME_FACTS[runtime], defaultModel),
+    })),
   });
 }

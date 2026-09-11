@@ -20,6 +20,13 @@ import {
   type McpServer,
 } from '../mcp/index.js';
 import { RunScratch } from '../runs/runScratch.js';
+import {
+  LocalApiKeyError,
+  createLocalApiKey,
+  needsLocalApiKey,
+  providerTargetsLocalStack,
+  upsertEnvValue,
+} from './localApiKey.js';
 import { executeSpawn } from './executeSpawn.js';
 import { findRoot } from '../store/root.js';
 import { envFilePath, egressBlacklistPath } from '../store/paths.js';
@@ -27,6 +34,7 @@ import { readConfig } from '../store/config.js';
 import { localStack } from '../runtime/stack.js';
 
 import { log } from '../utils/log.js';
+import { env } from '../utils/env.js';
 
 /** Available runtimes, mapping name → executable, in auto-detection order. */
 const RUNTIMES: Record<string, string> = {
@@ -80,6 +88,8 @@ interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   skill?: string[];
   /** `--detached`: run a one-shot detached prompt instead of starting the interactive TUI. */
   detached?: boolean;
+  /** `--keep-worktree`: leave the run's worktree in place after the container exits. */
+  keepWorktree?: boolean;
 }
 
 /**
@@ -93,21 +103,62 @@ function loadStoreEnv(baseEnvFile: string | undefined): Record<string, string> {
   return parseDotenv(fs.readFileSync(baseEnvFile, 'utf8'));
 }
 
+/**
+ * Gets the OmniRoute endpoint API key the agent needs and records it in the
+ * store env under the provider's `apiKeyEnv`. First choice is to create one
+ * through OmniRoute's own API with the stack password (no interaction); when
+ * that login fails, the user is walked through the dashboard instead.
+ */
+async function obtainLocalApiKey(
+  envFile: string,
+  initialPassword: string,
+  apiKeyEnv: string,
+  agentName: string
+): Promise<string> {
+  if (initialPassword) {
+    try {
+      const key = await createLocalApiKey({
+        baseUrl: env.omniRoutedUrl,
+        password: initialPassword,
+        name: `e (${agentName})`,
+      });
+      const content = fs.existsSync(envFile)
+        ? fs.readFileSync(envFile, 'utf8')
+        : '';
+      fs.writeFileSync(envFile, upsertEnvValue(content, apiKeyEnv, key));
+      log.success(
+        `Created an OmniRoute API key for this agent and saved it as ${apiKeyEnv} in .e/.env.`
+      );
+      return key;
+    } catch (error) {
+      const reason =
+        error instanceof LocalApiKeyError
+          ? error.message
+          : `OmniRoute is not reachable at ${env.omniRoutedUrl}: ${(error as Error).message}`;
+      log.warn(
+        `Could not create an OmniRoute API key automatically (${reason}). If the stack was set up with a different OMNIROUTE_INITIAL_PASSWORD, restore it in .e/.env or remove the omniroute-data volume to reset the dashboard login.`
+      );
+    }
+  }
+  return promptForLocalApiKey(envFile, initialPassword, apiKeyEnv);
+}
+
 async function promptForLocalApiKey(
   envFile: string,
-  initialPassword: string
+  initialPassword: string,
+  apiKeyEnv: string
 ): Promise<string> {
   log.info(
     '\nOmniRoute needs an endpoint API key before `auto` model discovery can run.'
   );
-  log.info('1. Open http://localhost:20128 in your browser.');
+  log.info(`1. Open ${env.omniRoutedUrl} in your browser.`);
   log.info(
     initialPassword
       ? `2. Sign in with the local password: ${initialPassword}`
       : '2. Sign in with the password in `OMNIROUTE_INITIAL_PASSWORD` in `.e/.env` (run `e init` to generate one).'
   );
   log.info(
-    '3. http://localhost:20128/dashboard/api-manager → Create API Key → Copy the key and paste it below.'
+    `3. ${env.omniRoutedUrl}/dashboard/api-manager → Create API Key → Copy the key and paste it below.`
   );
 
   const rl = readline.createInterface({
@@ -118,11 +169,12 @@ async function promptForLocalApiKey(
     for (;;) {
       const key = (await rl.question('OmniRoute API key: ')).trim();
       if (key) {
-        const content = fs.readFileSync(envFile, 'utf8');
-        const updated = content
-          .replace(/^OPENAI_API_KEY=.*$/m, `OPENAI_API_KEY=${key}`)
-          .replace(/^ANTHROPIC_API_KEY=.*$/m, `ANTHROPIC_API_KEY=${key}`);
-        fs.writeFileSync(envFile, updated);
+        // Only the provider's own key variable: another agent's hosted key in
+        // the same .e/.env must survive this handshake untouched.
+        const content = fs.existsSync(envFile)
+          ? fs.readFileSync(envFile, 'utf8')
+          : '';
+        fs.writeFileSync(envFile, upsertEnvValue(content, apiKeyEnv, key));
         return key;
       }
       log.warn('API key cannot be blank.');
@@ -134,7 +186,7 @@ async function promptForLocalApiKey(
 
 async function localApiKeyIsAccepted(key: string): Promise<boolean> {
   try {
-    const response = await fetch('http://127.0.0.1:20128/v1/models', {
+    const response = await fetch(`${env.omniRoutedUrl}/v1/models`, {
       headers: { Authorization: `Bearer ${key}` },
     });
     return response.status !== 401;
@@ -161,12 +213,12 @@ function resolveMcpServer(name: string, root: string | undefined): McpServer {
 
 /**
  * Gathers everything a spawn's decisions need from disk and the CLI args into a
- * pure {@link SpawnFacts} value — the single I/O step before the pure pipeline
+ * pure {@link SpawnFacts} value - the single I/O step before the pure pipeline
  * ({@link validateSpawn} → resolve model → {@link planSpawn} → executeSpawn). It
  * resolves the Agent, the Harness, the store env, and every requested MCP server
  * and skill *now* (existence checked, throwing a clear error), so a bad name
- * fails fast — before the model fetch, any build, or a worktree. The resolved
- * model is *not* gathered here (it needs a network call — see the action).
+ * fails fast - before the model fetch, any build, or a worktree. The resolved
+ * model is *not* gathered here (it needs a network call - see the action).
  */
 function gatherSpawnFacts(
   target: string | undefined,
@@ -190,7 +242,7 @@ function gatherSpawnFacts(
   const baseEnvPath = root !== undefined ? envFilePath(root) : undefined;
   const mcpNames = opts.mcp ?? [];
   // The shared `.e/.env` is the sole source of a provider's API key and any MCP
-  // credential (ADR-0006) — read once, only when something needs it.
+  // credential (ADR-0006) - read once, only when something needs it.
   const needStoreEnv = Boolean(agent.provider) || mcpNames.length > 0;
   const storeEnv = needStoreEnv ? loadStoreEnv(baseEnvPath) : {};
 
@@ -222,6 +274,7 @@ function gatherSpawnFacts(
     port: opts.port,
     detached,
     rm: opts.rm,
+    keepWorktree: Boolean(opts.keepWorktree),
     // Layer the shared base only when it exists on disk (ADR-0006).
     baseEnvFile:
       baseEnvPath !== undefined && fs.existsSync(baseEnvPath)
@@ -256,7 +309,7 @@ export function registerSpawnCommand(program: Command): void {
     .option('--env-file <path>', 'load environment variables from a file')
     .option(
       '--mcp <name...>',
-      'MCP server(s) to wire for this run — container (sidecar) or remote (hosted URL); repeatable'
+      'MCP server(s) to wire for this run - container (sidecar) or remote (hosted URL); repeatable'
     )
     .option(
       '--skill <name...>',
@@ -302,7 +355,7 @@ export function registerSpawnCommand(program: Command): void {
           const localRuntimes = readConfig(facts.root).localRuntimes;
           if (stack?.present) {
             // The stack is interpolated from `.e/.env` (no fallback secrets), so
-            // pass it explicitly — compose does not otherwise look inside `.e/`.
+            // pass it explicitly - compose does not otherwise look inside `.e/`.
             runtime.composeUp(
               stack.composeFile,
               stack.envFile,
@@ -312,22 +365,39 @@ export function registerSpawnCommand(program: Command): void {
             // selections intentionally render no bootstrap service.
           }
 
-          const configuredApiKey = facts.agent.provider
-            ? (facts.storeEnv[facts.agent.provider.apiKeyEnv] ?? '')
+          // A provider that points at the local OmniRoute needs an endpoint
+          // API key; unconfigured means empty or still the generated initial
+          // password. Hosted providers are never asked (see localApiKey.ts).
+          const provider = facts.agent.provider;
+          const configuredApiKey = provider
+            ? (facts.storeEnv[provider.apiKeyEnv] ?? '')
             : '';
-          // Unconfigured means empty, or still the generated initial password —
-          // the user has not created an endpoint API key yet.
           const stackPassword = facts.storeEnv.OMNIROUTE_INITIAL_PASSWORD ?? '';
+          const accepted =
+            provider &&
+            facts.localStackPresent &&
+            providerTargetsLocalStack(provider) &&
+            configuredApiKey !== '' &&
+            configuredApiKey !== stackPassword
+              ? await localApiKeyIsAccepted(configuredApiKey)
+              : true;
           if (
-            facts.agent.provider &&
-            (['', stackPassword].includes(configuredApiKey) ||
-              !(await localApiKeyIsAccepted(configuredApiKey)))
+            provider &&
+            needsLocalApiKey({
+              stackPresent: facts.localStackPresent,
+              provider,
+              configuredKey: configuredApiKey,
+              stackPassword,
+              accepted,
+            })
           ) {
-            const key = await promptForLocalApiKey(
+            const key = await obtainLocalApiKey(
               facts.baseEnvFile ?? envFilePath(facts.root),
-              stackPassword
+              stackPassword,
+              provider.apiKeyEnv,
+              facts.agent.name
             );
-            facts.storeEnv[facts.agent.provider.apiKeyEnv] = key;
+            facts.storeEnv[provider.apiKeyEnv] = key;
           }
 
           const plan = planSpawn(facts);
@@ -341,10 +411,9 @@ export function registerSpawnCommand(program: Command): void {
           });
 
           // Rendered env-files hold resolved secrets; each container already has
-          // its own copy, so drop them before reporting and exiting.
-          if (!opts.keepWorktree) {
-            scratch.dispose();
-          }
+          // its own copy, so drop them before reporting and exiting. This is
+          // independent of --keep-worktree, which only concerns the worktree.
+          scratch.dispose();
 
           if (result.error) {
             log.error(result.error);

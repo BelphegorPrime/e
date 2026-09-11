@@ -13,7 +13,7 @@ An agent inside a run can request **sibling** runs (e.g. "I'll do A, spawn broth
 ### Transport
 
 - A `runtime-broker` sidecar attaches to the run's private network (ADR-0005 machinery, same pattern as MCP sidecars).
-- It owns the host docker socket — never bind-mounted into the agent container (ADR-0002 credential line held).
+- It owns the host docker socket - never bind-mounted into the agent container (ADR-0002 credential line held).
 - Agent calls it over HTTP: `POST /spawn {agent, prompt}` + query/response contract. The call lives in a Skill (`spawn-brother`) so no binary is injected; the harness uses its native shell/curl.
 - Role is communicated by env vars injected per container (`E_ROLE`, `E_BROKER_URL`), not marker files in the worktree. No repo pollution, no gitignored surprises. AGENTS.md guidance checks `$E_ROLE`; the launch prompt states role behavior.
 
@@ -25,7 +25,7 @@ An agent inside a run can request **sibling** runs (e.g. "I'll do A, spawn broth
 ### Checkpoint + WIP commit on spawn
 
 - At every spawn request the **host** auto-commits the parent worktree's WIP ("e/<agent>/<slug>-N") so the child's worktree branch has the parent's current state (ADR-0001 only carries committed ref; this closes the gap).
-- This is host-side `git commit -a` on an already-bound worktree — zero data movement of file contents (the worktree IS the live /workspace mount).
+- This is host-side `git commit -a` on an already-bound worktree - zero data movement of file contents (the worktree IS the live /workspace mount).
 
 ### Artifact sync into children
 
@@ -54,10 +54,10 @@ An agent inside a run can request **sibling** runs (e.g. "I'll do A, spawn broth
 
 - **Agent sandbox unchanged**: no docker socket, no host git credentials, no `.git` inside container (ADR-0002 lines preserved). The broker is the only new trust boundary, scoped to run network.
 - **Image matrix stays flat** (ADR-0005 rejected bake-in of sidecars): `runtime-broker` is a standard sidecar image, composed per-run.
-- **Host does all git + container lifecycle** — the agent only makes HTTP requests to its broker.
+- **Host does all git + container lifecycle** - the agent only makes HTTP requests to its broker.
 - **New capability surface**: the agent can fan out across siblings for parallelism (researcher split, role split) and recover a sibling's work into its own tree after merge.
 
 ## Out of scope
 
-- Grandchildren / arbitrary depth — deliberately unsupported.
-- Arbitrary host filesystem access from children — broker surfaces only spawn+status contracts, not a generic FS bridge.
+- Grandchildren / arbitrary depth - deliberately unsupported.
+- Arbitrary host filesystem access from children - broker surfaces only spawn+status contracts, not a generic FS bridge.

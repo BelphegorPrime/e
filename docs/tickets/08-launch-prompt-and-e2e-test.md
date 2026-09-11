@@ -1,8 +1,8 @@
-# 08 — Launch-prompt role guidance and end-to-end test
+# 08 - Launch-prompt role guidance and end-to-end test
 
 **What to build:** Parent and child launch prompts instruct agents to check `$E_ROLE` / `$E_BROKER_URL` and state role behavior explicitly (no marker files). An end-to-end test runs the full cycle: parent spawns child via broker, child observes env, child requests a sibling, run completes, parent worktree contains sibling's merged changes.
 
-**Blocked by:** 01 — Env injection: E_ROLE and E_BROKER_URL.
+**Blocked by:** 01 - Env injection: E_ROLE and E_BROKER_URL.
 
 **Status:** blocked
 

@@ -30,7 +30,7 @@ export function buildInitRows(
   const rows: MenuRow[] = [
     {
       kind: 'header',
-      label: 'Favorite harness (used when `e spawn` names none)',
+      label: 'Local AI runtimes to include in the stack',
     },
 
     ...LOCAL_RUNTIMES.map(runtime => ({

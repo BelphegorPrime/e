@@ -1,5 +1,5 @@
 /**
- * The **Store**: the `.e` directory holding e's on-disk state — the per-harness
+ * The **Store**: the `.e` directory holding e's on-disk state - the per-harness
  * Dockerfiles under `harnesses/`, the Agent definitions under `agents/`, the
  * container MCP server definitions under `mcp/`, the Skills under `skills/`, and
  * the shared `.env` base environment. The module owns the store's layout

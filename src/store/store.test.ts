@@ -21,7 +21,7 @@ import {
 import { MODELS } from '../modelStatus.js';
 
 // resolveRoot is pure: it takes cwd, homedir, and a `hasStore` predicate, so we
-// exercise the resolution order with synthetic paths and a fake predicate — no
+// exercise the resolution order with synthetic paths and a fake predicate - no
 // temp dirs and no process.chdir.
 
 test('resolveRoot: explicitDir wins, resolved to absolute, without consulting hasStore', () => {

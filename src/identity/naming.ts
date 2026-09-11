@@ -1,17 +1,17 @@
 /**
- * **Container identity** — the single source of the deterministic names `e`
+ * **Container identity** - the single source of the deterministic names `e`
  * gives the things it builds and runs. Two concerns live here, both pure:
  *
  *  - **Image tags**: the `e-<kind>-<name>` convention shared by harness base
  *    images, derived agent images, and MCP sidecar images. One rule, one place,
  *    instead of a literal per harness plus a function per other kind.
  *  - **Run identity**: a {@link RunName} value derived from an Agent name, a
- *    prompt slug, and the run counter — the branch, the dashed run/container
+ *    prompt slug, and the run counter - the branch, the dashed run/container
  *    name, the private network, and each sidecar's container name. This replaces
  *    the untyped run-name string that used to be passed between `runSpawn` and
  *    `mcp` and re-derived by hand at each end (ADR-0003).
  *
- * This module imports nothing — the names are its whole implementation, so it
+ * This module imports nothing - the names are its whole implementation, so it
  * sits at the bottom of the dependency graph and every other module points at it.
  */
 
@@ -41,7 +41,7 @@ export function runBranchPrefix(agent: string, slug: string): string {
  * A run's identity, derived once from `(agent, slug, counter)`. The branch is the
  * durable artifact (`e/<agent>/<slug>-N`); {@link name} is that branch with `/`
  * turned into `-`, used as the worktree directory, the container `--name`, and
- * the base for the private network and each sidecar's container name — so the
+ * the base for the private network and each sidecar's container name - so the
  * agent always reaches a sidecar at the stable alias while the container names
  * stay unique per run.
  */

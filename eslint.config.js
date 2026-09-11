@@ -13,6 +13,9 @@ export default tseslint.config(
       '**/node_modules/',
       '**/dist/',
       '**/.git/',
+      // Local e state and packaged binaries are not source.
+      '.e/',
+      'command/',
       'src/egress/bundle.generated.ts',
     ],
   },
@@ -40,8 +43,6 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         ...globals.browser,
-        // UMD global exposed by @types/react for the classic runtime
-        React: 'readonly',
       },
     },
   },
@@ -58,7 +59,13 @@ export default tseslint.config(
           argsIgnorePattern: '^_',
         },
       ],
-
+    },
+  },
+  {
+    // Undefined identifiers in TypeScript are a tsc error already; the ESLint
+    // rule only produces false positives on type names there.
+    files: ['**/*.{js,mjs,cjs}'],
+    rules: {
       'no-undef': 'error',
     },
   }

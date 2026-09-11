@@ -26,7 +26,7 @@ import {
   composeRestartArgs,
 } from './compose.js';
 
-// buildRunArgs is pure argv construction — no child process is spawned — so we
+// buildRunArgs is pure argv construction - no child process is spawned - so we
 // exercise it directly on a concrete ContainerRuntime and assert the exact
 // argument list. `command` is irrelevant here (it's the executable, not an
 // arg), so any value does.
@@ -143,7 +143,7 @@ for (const { name, opts, expected } of cases) {
   });
 }
 
-test('buildRunArgs: full ordering — flags, env-files, v/p/e, image, then command args', () => {
+test('buildRunArgs: full ordering - flags, env-files, v/p/e, image, then command args', () => {
   const args = argsFor(
     {
       rm: true,
@@ -427,10 +427,28 @@ test('tcpProbeArgs: throwaway busybox nc on the private network', () => {
     '--network',
     'run-1-net',
     'busybox',
-    'sh',
-    '-c',
-    'nc -w 2 everything 3001 < /dev/null',
+    'nc',
+    '-w',
+    '2',
+    'everything',
+    '3001',
   ]);
+});
+
+test('volume operations surface a failing or missing runtime instead of returning silently', () => {
+  // `false` exits 1 for every subcommand; a nonexistent binary cannot start.
+  const failing = new ContainerRuntime('false');
+  assert.throws(() => failing.createVolume('v'), /failed to create volume v/);
+  assert.throws(
+    () => failing.copyVolumeToDir('v', '/tmp/out'),
+    /failed to copy volume v to \/tmp\/out/
+  );
+  assert.throws(
+    () => failing.copyDirToVolume('/tmp/in', 'v', true),
+    /failed to copy \/tmp\/in into volume v/
+  );
+  const missing = new ContainerRuntime('e-no-such-runtime-binary');
+  assert.throws(() => missing.createVolume('v'), /Failed to start/);
 });
 
 test('execArgs: the command trails exec <container>', () => {

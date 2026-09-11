@@ -4,7 +4,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index.js';
-import { ContainerRuntime, type RunOptions } from '../runtime/index.js';
+import {
+  ContainerRuntime,
+  type RunOptions,
+  type SidecarSpec,
+} from '../runtime/index.js';
 import { RunScratch } from '../runs/runScratch.js';
 import { executeSpawn } from './executeSpawn.js';
 import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
@@ -15,6 +19,7 @@ import type { Agent } from '../agent/index.js';
 // are reachable with a fake git and an untouched runtime.
 
 class StubGit implements Git {
+  removedWorktrees: string[] = [];
   constructor(private repo: boolean) {}
   isRepo(): boolean {
     return this.repo;
@@ -46,7 +51,9 @@ class StubGit implements Git {
     return false;
   }
   push(): void {}
-  removeWorktree(): void {}
+  removeWorktree(worktreePath: string): void {
+    this.removedWorktrees.push(worktreePath);
+  }
 }
 
 const harness: Harness = {
@@ -107,6 +114,7 @@ test('errors before any build when not in a git repository', async () => {
 class RecordingRuntime extends ContainerRuntime {
   options?: RunOptions;
   built: string[] = [];
+  sidecars: SidecarSpec[] = [];
 
   constructor() {
     super('true');
@@ -128,7 +136,78 @@ class RecordingRuntime extends ContainerRuntime {
     this.options = opts;
     return 0;
   }
+
+  startSidecar(spec: SidecarSpec): void {
+    this.sidecars.push(spec);
+  }
+
+  probeTcp(): boolean {
+    return true;
+  }
 }
+
+/** A repo with a demo harness Dockerfile, so executeSpawn passes preflight. */
+async function withDemoStore<T>(fn: (root: string) => Promise<T>): Promise<T> {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-exec-'));
+  try {
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'),
+      'FROM alpine\n'
+    );
+    return await fn(tmp);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test('a sidecar with credentials gets its own env-file; one without gets none', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    const scratch = new RunScratch();
+    const result = await executeSpawn(
+      facts({ root }),
+      {
+        ...emptyPlan,
+        sidecars: [
+          { alias: 'gh', image: 'mcp-gh', port: 3000 },
+          { alias: 'plain', image: 'mcp-plain', port: 3001 },
+        ],
+        sidecarCredentials: { gh: 'GITHUB_TOKEN=abc\n' },
+      },
+      { git: new StubGit(true), runtime, scratch }
+    );
+    assert.equal(result.ran, true);
+    const [gh, plain] = runtime.sidecars;
+    assert.equal(gh.alias, 'gh');
+    assert.equal(gh.envFile?.length, 1);
+    assert.equal(fs.readFileSync(gh.envFile![0], 'utf8'), 'GITHUB_TOKEN=abc\n');
+    assert.equal(plain.envFile, undefined);
+    scratch.dispose();
+  });
+});
+
+test('--keep-worktree reaches the orchestrator: a clean worktree is left in place', async () => {
+  await withDemoStore(async root => {
+    const kept = new StubGit(true);
+    await executeSpawn(facts({ root, keepWorktree: true }), emptyPlan, {
+      git: kept,
+      runtime: new RecordingRuntime(),
+      scratch: new RunScratch(),
+    });
+    assert.deepEqual(kept.removedWorktrees, []);
+
+    const removed = new StubGit(true);
+    await executeSpawn(facts({ root }), emptyPlan, {
+      git: removed,
+      runtime: new RecordingRuntime(),
+      scratch: new RunScratch(),
+    });
+    assert.equal(removed.removedWorktrees.length, 1);
+  });
+});
 
 test('does not attach the agent to a Compose network when the stack is present', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-net-'));

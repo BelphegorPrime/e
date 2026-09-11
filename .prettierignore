@@ -1,4 +1,7 @@
 node_modules
 dist
 command
+.e
+# Third-party agent skills, vendored as-is
+.agents
 src/egress/bundle.generated.ts
