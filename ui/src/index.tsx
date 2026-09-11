@@ -7,6 +7,7 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { ActivityPage } from '@/pages/activity';
 import { AgentsPage } from '@/pages/agents';
 import { DashboardPage } from '@/pages/dashboard';
+import { EgressPage } from '@/pages/egress';
 import { OmniRoutePage } from '@/pages/omniroute';
 import { RunsPage } from '@/pages/runs';
 import { SettingsPage } from '@/pages/settings';
@@ -22,6 +23,7 @@ function App() {
         <SidebarInset>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/egress" element={<EgressPage />} />
             <Route path="/runs" element={<RunsPage />} />
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/activity" element={<ActivityPage />} />

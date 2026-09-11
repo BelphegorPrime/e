@@ -13,6 +13,11 @@ export class Env {
     return process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
   }
 
+  /** Host-published base URL of the egress container HTTP API (ADR-0012). */
+  get egressApiUrl(): string {
+    return process.env.EGRESS_API_URL ?? 'http://127.0.0.1:20129';
+  }
+
   /** Whether `log` should mirror every line to `log.txt` in the working directory. */
   get shouldWriteLogFile(): boolean {
     return process.env.SHOULD_WRITE_LOG_FILE === 'true';

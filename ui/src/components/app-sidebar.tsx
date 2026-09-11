@@ -5,6 +5,7 @@ import {
   Network,
   Play,
   Settings,
+  ShieldAlert,
   TerminalSquare,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
@@ -32,6 +33,7 @@ const mainNav = [
 const systemNav = [
   { title: 'Activity', to: '/activity', icon: Activity },
   { title: 'Terminal', to: '/terminal', icon: TerminalSquare },
+  { title: 'Egress', to: '/egress', icon: ShieldAlert },
   { title: 'OmniRoute', to: '/omniroute', icon: Network },
   { title: 'Settings', to: '/settings', icon: Settings },
 ];
