@@ -16,11 +16,12 @@ const WIZARD_STATE: WizardState = {
   currentLocalRuntimes: ['llamacpp'],
   gitPlatforms: [...GIT_PLATFORMS],
   shells: ['bash', 'zsh', 'fish', 'powershell'],
+  root: '.',
 };
 
 function state(): InitState {
   return {
-    root: undefined, // home directory; these tests never write
+    root: undefined, // home directory / default; these tests never write
     harnessNames: WIZARD_STATE.harnessNames,
     currentDefaultHarness: WIZARD_STATE.currentHarness,
     currentModels: WIZARD_STATE.currentModels,

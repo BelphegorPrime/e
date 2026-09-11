@@ -1,4 +1,3 @@
-import os from 'os';
 import path from 'path';
 
 /**
@@ -14,10 +13,10 @@ import path from 'path';
 /**
  * The `.e` directory under `root` that holds all of e's state (harness
  * Dockerfiles, the shared `.env`, ...).
- * `root` defaults to the user's home directory; `e init --dir <path>` uses
+ * `root` defaults to the current directory; `e init --dir <path>` uses
  * `<path>` as the root instead (e.g. to init into the current project).
  */
-export function eBaseDir(root: string = os.homedir()): string {
+export function eBaseDir(root: string = process.cwd()): string {
   return path.join(root, '.e');
 }
 

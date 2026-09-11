@@ -16,6 +16,7 @@ const WIZARD_STATE: WizardState = {
   currentLocalRuntimes: ['llamacpp'],
   gitPlatforms: [...GIT_PLATFORMS],
   shells: ['bash', 'zsh', 'fish', 'powershell'],
+  root: '.',
 };
 
 // buildInitRows / applyMenuResult are the testable seam of the raw-mode menu:
@@ -97,4 +98,9 @@ test('applyMenuResult: unchecked marks stay absent from the answers', () => {
   assert.equal(answers.localRuntimes, undefined);
   assert.equal(answers.models, undefined);
   assert.equal(answers.harness, undefined);
+});
+
+test('applyMenuResult: root flows into the answer', () => {
+  const answers = applyMenuResult({ root: '/tmp/custom' }, WIZARD_STATE);
+  assert.equal(answers.root, '/tmp/custom');
 });

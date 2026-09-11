@@ -35,7 +35,7 @@ export function registerInitCommand(program: Command): void {
     )
     .option(
       '--dir <path>',
-      'root directory to write the harnesses into (default: home directory)'
+      'root directory to write the harnesses into (default: current directory)'
     )
     .option(
       '-y, --yes',
@@ -55,7 +55,7 @@ export function registerInitCommand(program: Command): void {
  * interactive flow, `--yes`, and a piped/CI run all share one tested core.
  */
 async function runInit(opts: InitCommandOptions): Promise<void> {
-  const root = opts.dir ? path.resolve(opts.dir) : undefined;
+  const root = opts.dir ? path.resolve(opts.dir) : path.resolve('.');
 
   // Ask only when there is a terminal to ask on: `--yes`, or a non-TTY
   // stdin/stdout (a pipe or CI), falls back to defaults so the command never
@@ -76,7 +76,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     : {};
 
   const state: InitState = {
-    root,
+    root: root ?? undefined,
     harnessNames: Object.keys(HARNESSES),
     currentDefaultHarness: config.defaultHarness,
     currentModels: config.models,
@@ -92,11 +92,12 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     `init interactive=${interactive} stdinTTY=${process.stdin.isTTY} stdoutTTY=${process.stdout.isTTY}`
   );
 
-  // Only prompt for keys not already set in `.e/.env`; a re-init never re-asks
-  // for one the user has filled in (and which `applyEnvValues` would refuse to
-  // clobber anyway).
+  // Default to current directory when no --dir provided, so the init target is selectable.
+  log.info(`Initializing into [${root}]`);
+
   const wizard: Wizard = interactive ? interactiveWizard() : defaultsWizard;
   const answers = await wizard.ask({
+    root: state.root,
     harnessNames: state.harnessNames,
     currentHarness: state.currentDefaultHarness,
     promptKeys: keysToPrompt(requiredEnvKeys(), existingValues),
@@ -112,7 +113,11 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     shells: ['bash', 'zsh', 'fish', 'powershell'],
   });
 
-  applyPlan(root, planInit(state, answers), answers.shell);
+  // If the wizard provided a different root, sync state so applyPlan uses it.
+  if (answers.root) {
+    state.root = answers.root;
+  }
+  applyPlan(state.root, planInit(state, answers), answers.shell);
 }
 
 /** Applies an {@link InitPlan} to disk — the only layer that touches the filesystem. */
