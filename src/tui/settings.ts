@@ -31,7 +31,16 @@ export interface HeaderRow {
   hint?: string;
 }
 
-export type MenuRow = CheckboxRow | CycleRow | HeaderRow;
+export interface TextRow {
+  kind: 'text';
+  id: string;
+  target: string;
+  label: string;
+  hint?: string;
+  value: string;
+}
+
+export type MenuRow = CheckboxRow | CycleRow | HeaderRow | TextRow;
 export type MenuResult = Record<string, string | string[]>;
 
 export interface SettingsMenuOptions {
@@ -311,6 +320,8 @@ export async function runSettingsMenu(
       if (row.kind === 'checkbox') {
         toggleCheckbox(row);
         render();
+      } else if (row.kind === 'text') {
+        // Text input not implemented in TUI menu; ignoring.
       }
 
       return { consume: true };

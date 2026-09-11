@@ -35,7 +35,7 @@ export function registerInitCommand(program: Command): void {
     )
     .option(
       '--dir <path>',
-      'root directory to write the harnesses into (default: home directory)'
+      'root directory to write the harnesses into (default: current directory)'
     )
     .option(
       '-y, --yes',
@@ -66,8 +66,9 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
   // Seed from any existing config so a re-init preserves the configured
   // favorite instead of silently resetting it — mirrors how the `.env` and
   // Dockerfiles are never clobbered. A fresh store reads back the default.
-  const config = readConfig(root);
-  const envFile = envFilePath(root);
+  const resolvedRoot = root ?? path.resolve('.');
+  const config = readConfig(resolvedRoot);
+  const envFile = envFilePath(resolvedRoot);
   const existingEnvContent = fs.existsSync(envFile)
     ? fs.readFileSync(envFile, 'utf8')
     : undefined;
@@ -76,7 +77,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     : {};
 
   const state: InitState = {
-    root,
+    root: root ?? undefined,
     harnessNames: Object.keys(HARNESSES),
     currentDefaultHarness: config.defaultHarness,
     currentModels: config.models,
@@ -92,11 +93,13 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     `init interactive=${interactive} stdinTTY=${process.stdin.isTTY} stdoutTTY=${process.stdout.isTTY}`
   );
 
-  // Only prompt for keys not already set in `.e/.env`; a re-init never re-asks
-  // for one the user has filled in (and which `applyEnvValues` would refuse to
-  // clobber anyway).
+  // Default to current directory when no --dir provided, so the init target is selectable.
+  state.root = resolvedRoot;
+  log.info(`Initializing into [${resolvedRoot}]`);
+
   const wizard: Wizard = interactive ? interactiveWizard() : defaultsWizard;
   const answers = await wizard.ask({
+    root: state.root,
     harnessNames: state.harnessNames,
     currentHarness: state.currentDefaultHarness,
     promptKeys: keysToPrompt(requiredEnvKeys(), existingValues),
@@ -112,7 +115,11 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     shells: ['bash', 'zsh', 'fish', 'powershell'],
   });
 
-  applyPlan(root, planInit(state, answers), answers.shell);
+  // If the wizard provided a different root, sync state so applyPlan uses it.
+  if (answers.root) {
+    state.root = answers.root;
+  }
+  applyPlan(state.root, planInit(state, answers), answers.shell);
 }
 
 /** Applies an {@link InitPlan} to disk — the only layer that touches the filesystem. */

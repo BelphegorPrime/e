@@ -28,7 +28,10 @@ export function buildInitRows(
     (partial.models as string[] | undefined) ?? state.currentModels;
 
   const rows: MenuRow[] = [
-    { kind: 'header', label: 'Local AI runtimes' },
+    {
+      kind: 'header',
+      label: 'Favorite harness (used when `e spawn` names none)',
+    },
 
     ...LOCAL_RUNTIMES.map(runtime => ({
       kind: 'checkbox' as const,
@@ -119,6 +122,7 @@ export function applyMenuResult(
   const harness = result.harness as string | undefined;
   const gitPlatform = result.gitPlatform as string | undefined;
   const shell = result.shell as string | undefined;
+  const root = result.root as string | undefined;
 
   if (runtimes !== undefined) {
     answers.localRuntimes = runtimes as LocalRuntime[];
@@ -141,6 +145,10 @@ export function applyMenuResult(
 
   if (shell !== undefined && shell.length > 0) {
     answers.shell = shell;
+  }
+
+  if (root !== undefined && root.length > 0) {
+    answers.root = root;
   }
 
   return answers;

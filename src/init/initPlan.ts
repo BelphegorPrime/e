@@ -72,7 +72,7 @@ export function seedStackSecrets(
 
 /** Everything the planner knows about the disk before answering a wizard. */
 export interface InitState {
-  /** The directory to initialize into (the home directory when undefined). */
+  /** The directory to initialize into (the current directory when not provided). */
   root?: string;
   /** Favorite-harness names in prompt order. */
   harnessNames: string[];
@@ -115,6 +115,8 @@ export interface InitAnswers {
   gitPlatform?: string;
   /** Preferred shell for completion setup (e.g. 'bash', 'zsh', 'fish'). */
   shell?: string;
+  /** Installation directory. */
+  root?: string;
 }
 
 /** One filesystem write the plan prescribes, in prescribed order. */
@@ -183,13 +185,15 @@ export interface InitPlan {
  */
 export function planInit(state: InitState, answers: InitAnswers): InitPlan {
   const {
-    root,
+    root: stateRoot,
     harnessNames,
     currentDefaultHarness,
     currentModels,
     currentLocalRuntimes,
     hardware,
   } = state;
+  // The wizard's TUI or readline prompt may override the install directory.
+  const root = answers.root ?? stateRoot;
   const existingValues = state.existingEnvContent
     ? parseDotenv(state.existingEnvContent)
     : {};

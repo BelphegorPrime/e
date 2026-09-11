@@ -5,6 +5,7 @@ import {
   type MenuResult,
 } from '../tui/settings.js';
 import { applyMenuResult, buildInitRows } from '../tui/index.js';
+import path from 'path';
 import * as readline from 'node:readline/promises';
 import * as readlineSync from 'node:readline';
 import { setImmediate } from 'node:timers';
@@ -49,6 +50,8 @@ export interface WizardState {
   currentGitPlatform?: string;
   /** Supported shells. */
   shells: string[];
+  /** Installation directory. */
+  root: string;
 }
 
 /**
@@ -101,6 +104,9 @@ export function interactiveWizard(): Wizard {
           output: process.stdout,
         });
         try {
+          const root = await promptRoot(rl, state.root);
+          answers.root = root;
+          state.root = path.resolve(root);
           answers.apiKeys = await promptApiKeys(rl, state.promptKeys);
           if (state.askOmniroutePassword) {
             const pwd = await promptOmniroutePassword(rl);
@@ -152,6 +158,7 @@ export function interactiveWizard(): Wizard {
           state.currentGitPlatform
         );
         const shell = await promptShell(rl, state.shells);
+        const root = await promptRoot(rl, state.root);
 
         return {
           harness,
@@ -160,6 +167,7 @@ export function interactiveWizard(): Wizard {
           apiKeys,
           ...(omniroutePassword ? { omniroutePassword } : {}),
           gitPlatform,
+          root,
           shell,
         };
       } finally {
@@ -167,6 +175,34 @@ export function interactiveWizard(): Wizard {
       }
     },
   };
+}
+
+/** Prompts for the installation directory. */
+async function promptRoot(
+  rl: readline.Interface,
+  current: string
+): Promise<string> {
+  log.info('\nInstallation directory (where `.e/` will be created):');
+  for (;;) {
+    const answer = await rl.question(`Choose [${current}]: `);
+    const choice = answer.trim();
+    if (choice === '') return current;
+    const resolved = path.resolve(choice);
+    return resolved;
+  }
+}
+
+/** Prompts for installation directory. */
+async function promptRoot(
+  rl: readline.Interface,
+  current: string
+): Promise<string> {
+  for (;;) {
+    const answer = await rl.question(`Installation directory [${current}]: `);
+    const choice = answer.trim();
+    if (choice === '') return current;
+    return path.resolve(choice);
+  }
 }
 
 /** Prompts for preferred shell. */
