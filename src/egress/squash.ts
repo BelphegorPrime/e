@@ -13,29 +13,29 @@ function isLocalhost(domain: string): boolean {
 }
 
 /**
- * Squash consecutive same-domain entries into rollups.
- * Entries are processed in log order; a run of identical domains
- * collapses to one record. Localhost entries are dropped.
+ * Squash same-domain entries into rollups.
+ * Every domain yields exactly one record, counting all of its entries;
+ * records keep the order of first appearance. Localhost entries are dropped.
  */
 export function squashEntries(entries: EgressLogEntry[]): SquashedEntry[] {
-  const result: SquashedEntry[] = [];
-  let current: SquashedEntry | undefined;
+  const byDomain = new Map<string, SquashedEntry>();
 
   for (const entry of entries) {
-    if (isLocalhost(entry.domain)) continue;
+    if (isLocalhost(entry.domain)) {
+      continue;
+    }
 
-    if (current && current.domain === entry.domain) {
-      current.count++;
-      current.lastSeen = entry.timestamp;
+    const existing = byDomain.get(entry.domain);
+    if (existing) {
+      existing.count++;
     } else {
-      current = {
-        domain: entry.domain,
-        count: 1,
-        firstSeen: entry.timestamp,
-        lastSeen: entry.timestamp,
-      };
-      result.push(current);
+      byDomain.set(entry.domain, { domain: entry.domain, count: 1 });
     }
   }
-  return result;
+
+  const entriesInOrder = Array.from(byDomain.values()).sort(
+    // start with the highest count first
+    (a, b) => b.count - a.count
+  );
+  return entriesInOrder;
 }

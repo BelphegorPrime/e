@@ -23,8 +23,6 @@ export interface EgressLogEntry {
 export interface SquashedEntry {
   domain: string;
   count: number;
-  firstSeen: string;
-  lastSeen: string;
 }
 
 /** Query filters for `GET /logs`. */

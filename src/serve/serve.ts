@@ -226,6 +226,7 @@ export function createServeApp(
     git = new HostGit(),
   } = deps;
   const app = express();
+  app.use(express.json());
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok' });
@@ -369,7 +370,11 @@ export function createServeApp(
     }
     try {
       const upstreamUrl = `${egressApiUrl}/${restPath}`;
-      const init: RequestInit = {
+      const init: {
+        method: string;
+        headers: Record<string, string>;
+        body?: string;
+      } = {
         method: request.method,
         headers: {},
       };
@@ -393,7 +398,7 @@ export function createServeApp(
     }
   };
 
-  app.use('/api/egress/*', handleEgressRequest);
+  app.all('/api/egress/*', handleEgressRequest);
 
   app.use('/api', (_request, response) => {
     response.status(404).json({ error: 'Not found' });

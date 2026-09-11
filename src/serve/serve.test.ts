@@ -187,6 +187,90 @@ test('serve app reports 502 when llama.cpp answers with a non-OK status', async 
   }
 });
 
+test('serve app proxies /api/egress/logs to the egress API without a double slash', async () => {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  await fs.writeFile(
+    path.join(uiDirectory, 'index.html'),
+    '<!doctype html><title>e</title>'
+  );
+  const server = await startServeServer(
+    createServeApp(uiDirectory, {
+      egressApiUrl: 'http://egress-fake',
+      fetchImpl: (async (input: string | URL | Request) => {
+        assert.equal(String(input), 'http://egress-fake/logs');
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => '[]',
+        } as unknown as Response;
+      }) as typeof fetch,
+    }),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const res = await fetch(`${baseUrl}/api/egress/logs`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), []);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+    });
+    await fs.rm(uiDirectory, { recursive: true, force: true });
+  }
+});
+
+test('serve app forwards the parsed JSON body on a proxied /api/egress POST', async () => {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  await fs.writeFile(
+    path.join(uiDirectory, 'index.html'),
+    '<!doctype html><title>e</title>'
+  );
+  const server = await startServeServer(
+    createServeApp(uiDirectory, {
+      egressApiUrl: 'http://egress-fake',
+      fetchImpl: (async (
+        input: string | URL | Request,
+        init?: Parameters<typeof fetch>[1]
+      ) => {
+        assert.equal(String(input), 'http://egress-fake/blacklist/domains');
+        assert.equal(init?.body, JSON.stringify({ domain: 'golem.de' }));
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ status: 'ok' }),
+        } as unknown as Response;
+      }) as typeof fetch,
+    }),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const res = await fetch(`${baseUrl}/api/egress/blacklist/domains`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ domain: 'golem.de' }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { status: 'ok' });
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+    });
+    await fs.rm(uiDirectory, { recursive: true, force: true });
+  }
+});
+
 test('isServeStateLive: a dead pid makes the entry stale', async () => {
   const stale: ServeState = { pid: 999_999, host: '127.0.0.1', port: 8080 };
   const result = await isServeStateLive(stale, {

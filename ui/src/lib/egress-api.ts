@@ -10,8 +10,6 @@ export interface EgressLogEntry {
 export interface SquashedEntry {
   domain: string;
   count: number;
-  firstSeen: string;
-  lastSeen: string;
 }
 
 export interface BlacklistStatus {
@@ -28,7 +26,9 @@ export function useEgressLogs() {
     setLoading(true);
     try {
       const response = await fetch('/api/egress/logs');
-      if (response.ok) setLogs(await response.json());
+      if (response.ok) {
+        setLogs(await response.json());
+      }
     } finally {
       setLoading(false);
     }
@@ -48,7 +48,9 @@ export function useSquashedEgressLogs() {
     setLoading(true);
     try {
       const response = await fetch('/api/egress/logs/squashed');
-      if (response.ok) setLogs(await response.json());
+      if (response.ok) {
+        setLogs(await response.json());
+      }
     } finally {
       setLoading(false);
     }

@@ -1,14 +1,21 @@
 import { useState } from 'react';
 import { PageHeader } from '@/components/page-header';
-import { 
-  useSquashedEgressLogs, 
+import {
+  useSquashedEgressLogs,
   useBlacklist,
-  addBlacklistDomain, 
-  removeBlacklistDomain 
+  addBlacklistDomain,
+  removeBlacklistDomain,
 } from '@/lib/egress-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export function EgressPage() {
@@ -41,8 +48,8 @@ export function EgressPage() {
       <PageHeader title="Egress" description="Network monitoring & blocklist" />
 
       <div className="flex gap-2">
-        <Input 
-          placeholder="Enter domain to block..." 
+        <Input
+          placeholder="Enter domain to block..."
           value={domain}
           onChange={e => setDomain(e.target.value)}
         />
@@ -54,7 +61,7 @@ export function EgressPage() {
           <TabsTrigger value="logs">Activity Logs</TabsTrigger>
           <TabsTrigger value="blacklist">Blocklist</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="logs">
           <div className="rounded-md border">
             <Table>
@@ -68,27 +75,46 @@ export function EgressPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {logsState.loading ? <TableRow><TableCell colSpan={5}>Loading...</TableCell></TableRow> :
-                logsState.logs.map(log => (
-                  <TableRow key={log.domain}>
-                    <TableCell className="font-mono">{log.domain}</TableCell>
-                    <TableCell>{log.count}</TableCell>
-                    <TableCell>
-                      {blacklistState.domains.includes(log.domain) ? 
-                        <span className="text-destructive font-bold">Blocked</span> : 
-                        <span className="text-success">Allowed</span>
-                      }
-                    </TableCell>
-                    <TableCell>{new Date(log.lastSeen).toLocaleString()}</TableCell>
-                    <TableCell>
-                      {blacklistState.domains.includes(log.domain) ? (
-                        <Button variant="outline" size="sm" onClick={() => handleRemove(log.domain)}>Unblock</Button>
-                      ) : (
-                        <Button variant="destructive" size="sm" onClick={() => handleAddWithDomain(log.domain)}>Block</Button>
-                      )}
-                    </TableCell>
+                {logsState.loading ? (
+                  <TableRow>
+                    <TableCell colSpan={5}>Loading...</TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  logsState.logs.map(log => (
+                    <TableRow key={log.domain}>
+                      <TableCell className="font-mono">{log.domain}</TableCell>
+                      <TableCell>{log.count}</TableCell>
+                      <TableCell>
+                        {blacklistState.domains.includes(log.domain) ? (
+                          <span className="text-destructive font-bold">
+                            Blocked
+                          </span>
+                        ) : (
+                          <span className="text-success">Allowed</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {blacklistState.domains.includes(log.domain) ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRemove(log.domain)}
+                          >
+                            Unblock
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleAddWithDomain(log.domain)}
+                          >
+                            Block
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>
@@ -104,16 +130,30 @@ export function EgressPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {blacklistState.loading ? <TableRow><TableCell colSpan={2}>Loading...</TableCell></TableRow> :
-                blacklistState.domains.length === 0 ? <TableRow><TableCell colSpan={2}>No domains blocked</TableCell></TableRow> :
-                blacklistState.domains.map(d => (
-                  <TableRow key={d}>
-                    <TableCell className="font-mono">{d}</TableCell>
-                    <TableCell>
-                      <Button variant="outline" size="sm" onClick={() => handleRemove(d)}>Unblock</Button>
-                    </TableCell>
+                {blacklistState.loading ? (
+                  <TableRow>
+                    <TableCell colSpan={2}>Loading...</TableCell>
                   </TableRow>
-                ))}
+                ) : blacklistState.domains.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={2}>No domains blocked</TableCell>
+                  </TableRow>
+                ) : (
+                  blacklistState.domains.map(d => (
+                    <TableRow key={d}>
+                      <TableCell className="font-mono">{d}</TableCell>
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRemove(d)}
+                        >
+                          Unblock
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>

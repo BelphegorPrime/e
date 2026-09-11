@@ -20,7 +20,7 @@
  *    from the mounted blacklist file.
  *  - `dnsmasq.conf` — the base dnsmasq config with independent upstream
  *    resolvers.
- *  - `egress-api.js` — the egress HTTP API server (ADR-0012). Stateless: reads
+ *  - `egress-api.mjs` — the egress HTTP API server (ADR-0012). Stateless: reads
  *    the mounted dnsmasq log + blacklist per request, serves query + mutation
  *    endpoints, triggers SIGHUP reload after blacklist edits.
  *  - `blacklist.example` — a commented template documenting the format.
@@ -36,13 +36,13 @@ import Mustache from 'mustache';
 const DOCKERFILE_TEMPLATE = `# The egress gateway container (ADR-0011). A single global service; all
 # stack services and run agents share its network namespace, so a blacklist here
 # is enforced and every query / connection is logged host-side.
-FROM alpine:3.20
+FROM node:24-alpine
 
-RUN apk add --no-cache nodejs npm dnsmasq iptables ip6tables bash
+RUN apk add --no-cache dnsmasq iptables ip6tables bash
 
 COPY entrypoint.sh /egress-entrypoint.sh
 COPY dnsmasq.conf /etc/egress.d/dnsmasq.conf
-COPY egress-api.js /egress-api.js
+COPY egress-api.mjs /egress-api.mjs
 RUN chmod +x /egress-entrypoint.sh
 
 # Compose mounts the blacklist file and log directory explicitly. Do not declare
@@ -72,14 +72,18 @@ server=8.8.8.8
 
 const BLACKLIST_EXAMPLE_TEMPLATE = `# Egress blacklist for e runs (ADR-0011).
 #
-# One entry per line. A domain line is sinkholed by dnsmasq (blocks the domain
-# and all its subdomains, resolves to 0.0.0.0 so the connection fails fast and
-# is logged). An IPv4:port line is REJECTed by iptables (catches direct-IP
-# connections that bypass DNS entirely). '#' and ';' start a comment; blank
+# Read directly by dnsmasq's --conf-dir, so every entry must be a valid dnsmasq
+# directive: \`address=/domain/0.0.0.0\` sinkholes a domain and all its
+# subdomains (resolves to 0.0.0.0 so the connection fails fast and is logged).
+# A bare domain (no \`address=/.../\`) is invalid dnsmasq syntax and will crash
+# the egress container's dnsmasq on startup. '#' and ';' start a comment; blank
 # lines are ignored. This file is never clobbered by e init.
 #
-# example.com            # blocks example.com and *.example.com
-# 203.0.113.7:8443       # rejects the direct IP:port
+# Each address line only covers its own address family, so block both or the
+# domain stays reachable over the other one:
+#
+# address=/example.com/0.0.0.0   # blocks example.com and *.example.com over IPv4
+# address=/example.com/::        # ...and the same over IPv6
 `;
 
 /** Egress API server script rendered into the container (ADR-0012). */
@@ -87,16 +91,16 @@ const EGGRESS_API_TEMPLATE = `/* Egress HTTP API (ADR-0012). Stateless: reads mo
  * blacklist per request, serves query + mutation endpoints. Runs inside
  * the e-egress container alongside dnsmasq.
  */
-const http = require('http');
-const fs = require('fs');
-const { exec } = require('child_process');
+import http from 'http';
+import fs from 'fs';
+import { exec } from 'child_process';
 
 const LOG_FILE = '/var/log/egress/dnsmasq.log';
 const BLACKLIST_FILE = '/etc/egress.d/dnsmasq.blacklist';
 const PORT = {{{egressApiPort}}};
 
-const QUERY_RE = /^\\w{3}\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2}\\s+\\S+\\s+dnsmasq\\[\\d+\\]:\\s+query\\[[^\\]]+\\]\\s+(\\S+)\\s+from\\s+/;
-const REPLY_RE = /^\\w{3}\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2}\\s+\\S+\\s+dnsmasq\\[\\d+\\]:\\s+reply\\s+(\\S+)\\s+is\\s+/;
+const QUERY_RE = /^\\w{3}\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2}\\s+dnsmasq\\[\\d+\\]:\\s+query\\[[^\\]]+\\]\\s+(\\S+)\\s+from\\s+/;
+const REPLY_RE = /^\\w{3}\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2}\\s+dnsmasq\\[\\d+\\]:\\s+reply\\s+(\\S+)\\s+is\\s+/;
 const MONTH_MAP = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
 
 const LOCAL_NAMES = ['localhost', 'localhost.localdomain'];
@@ -129,6 +133,11 @@ function parseBlacklistDomains(content) {
   for (const raw of content.split('\\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const addressMatch = /^address=\\/([^/]+)\\//.exec(line);
+    if (addressMatch) {
+      domains.push(addressMatch[1].toLowerCase().replace(/\\.$/, ''));
+      continue;
+    }
     if (line.includes(':')) {
       const idx = line.lastIndexOf(':');
       const portPart = line.slice(idx + 1);
@@ -137,7 +146,8 @@ function parseBlacklistDomains(content) {
     }
     domains.push(line.toLowerCase().replace(/\\.$/, ''));
   }
-  return domains;
+  // A domain contributes one \`address=\` line per address family, so dedupe.
+  return [...new Set(domains)];
 }
 
 function isSinkholed(domain, blacklistDomains) {
@@ -183,7 +193,12 @@ function sendJson(res, status, obj) {
 }
 
 function handleRequest(req, res) {
-  const url = new URL(req.url, 'http://localhost');
+  let url;
+  try {
+    url = new URL(req.url, 'http://localhost');
+  } catch (err) {
+    return sendJson(res, 400, {error: 'Invalid URL'});
+  }
   const pathname = url.pathname;
 
   if (pathname === '/health') {
@@ -226,6 +241,16 @@ function handleRequest(req, res) {
   const postMatch = pathname.match(/^\\/blacklist\\/domains$/);
   const delMatch = pathname.match(/^\\/blacklist\\/domains\\/([^/]+)$/);
 
+  if (postMatch && req.method === 'GET') {
+    try {
+      const content = fs.existsSync(BLACKLIST_FILE) ? fs.readFileSync(BLACKLIST_FILE, 'utf-8') : '';
+      sendJson(res, 200, {domains: parseBlacklistDomains(content)});
+    } catch (err) {
+      sendJson(res, 500, {error: String(err)});
+    }
+    return;
+  }
+
   if (postMatch && req.method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
@@ -235,12 +260,14 @@ function handleRequest(req, res) {
         if (!domain) return sendJson(res, 400, {error: 'Missing domain'});
         const content = fs.existsSync(BLACKLIST_FILE) ? fs.readFileSync(BLACKLIST_FILE, 'utf-8') : '';
         const norm = domain.toLowerCase().replace(/\\.$/, '');
-        const lines = content.trim().split('\\n').filter(l => l.trim() && !l.trim().startsWith('#') && !l.trim().startsWith(';'));
-        if (!lines.includes(norm)) {
-          const newContent = (content ? content.trimEnd() + '\\n' : '') + norm + '\\n';
+        if (!parseBlacklistDomains(content).includes(norm)) {
+          // Both families: an \`address=\` line only sinkholes the record type
+          // its target belongs to, so an IPv4-only entry leaves the domain
+          // reachable over AAAA/IPv6.
+          const newContent = (content ? content.trimEnd() + '\\n' : '') + 'address=/' + norm + '/0.0.0.0\\n' + 'address=/' + norm + '/::\\n';
           fs.writeFileSync(BLACKLIST_FILE, newContent);
         }
-        try { exec('kill -HUP $(cat /run/dnsmasq.pid 2>/dev/null)', {stdio: 'ignore'); } catch (e) {}
+        try { exec('kill -HUP 1', {stdio: 'ignore'}); } catch (e) {}
         sendJson(res, 200, {status: 'ok'});
       } catch (err) {
         sendJson(res, 500, {error: String(err)});
@@ -255,11 +282,13 @@ function handleRequest(req, res) {
       const content = fs.existsSync(BLACKLIST_FILE) ? fs.readFileSync(BLACKLIST_FILE, 'utf-8') : '';
       const norm = domain.toLowerCase().replace(/\\.$/, '');
       const newContent = content.split('\\n').filter(line => {
-        const t = line.trim().toLowerCase().replace(/\\.$/, '');
-        return t !== norm;
+        const t = line.trim();
+        const addressMatch = /^address=\\/([^/]+)\\//.exec(t);
+        const lineDomain = (addressMatch ? addressMatch[1] : t).toLowerCase().replace(/\\.$/, '');
+        return lineDomain !== norm;
       }).join('\\n') + (content.trim() ? '\\n' : '');
       fs.writeFileSync(BLACKLIST_FILE, newContent);
-      try { exec('kill -HUP $(cat /run/dnsmasq.pid 2>/dev/null)', {stdio: 'ignore'); } catch (e) {}
+      try { exec('kill -HUP 1', {stdio: 'ignore'}); } catch (e) {}
       sendJson(res, 200, {status: 'ok'});
     } catch (err) {
       sendJson(res, 500, {error: String(err)});
@@ -278,13 +307,22 @@ http.createServer(handleRequest).listen(PORT, '0.0.0.0', () => {
 const ENTRYPOINT_TEMPLATE = `#!/bin/sh
 # Egress gateway entrypoint (ADR-0011). Applies the mounted iptables blacklist
 # to this netns, starts the egress HTTP API (ADR-0012) in the background, then
-# runs dnsmasq in the foreground with query logging. All stack services and
-# run agents share this container's network namespace, so every DNS query and
-# connection crosses here and is logged / blocked.
+# supervises dnsmasq with query logging. All stack services and run agents
+# share this container's network namespace, so every DNS query and connection
+# crosses here and is logged / blocked.
+#
+# dnsmasq's own SIGHUP handling only refreshes hosts-style data (/etc/hosts,
+# DHCP lease files); it never re-reads --conf-dir directives, which is exactly
+# how the mounted blacklist's \`address=/domain/0.0.0.0\` lines are declared
+# (dnsmasq(8)). So a blacklist add/remove needs a full dnsmasq restart to take
+# effect, not a reload. This script therefore stays PID 1 itself (it never
+# \`exec\`s into dnsmasq) and restarts the dnsmasq child on SIGHUP; the egress
+# API (ADR-0012) triggers that by sending SIGHUP to PID 1 after every mutation.
 set -eu
 
 IP_BLACKLIST="{{{blacklistIpMount}}}"
 DNSMASQ_CONF="/etc/egress.d/dnsmasq.conf"
+DNSMASQ_PID=""
 
 apply_ip_rules() {
   # Hook a dedicated EGRESS chain into OUTPUT once, then (re)apply the mounted
@@ -298,25 +336,50 @@ apply_ip_rules() {
   echo "egress: applied iptables blacklist \${IP_BLACKLIST}" >&2
 }
 
+start_dnsmasq() {
+  # -k keep running, -d don't daemonize (also lets this script capture its
+  # pid -- daemonizing forks and never writes one). --conf-file reads the base
+  # config (bind-interfaces + listen-address=127.0.0.1, so it never clashes
+  # with the engine's embedded DNS at 127.0.0.11 in the same netns);
+  # --conf-dir reads the mounted *.blacklist for sinkhole address lines.
+  dnsmasq -k -d \\
+    --conf-file="\${DNSMASQ_CONF}" \\
+    --conf-dir=/etc/egress.d/,*.blacklist \\
+    --log-queries \\
+    --log-facility="{{{logMount}}}/dnsmasq.log" &
+  DNSMASQ_PID=$!
+}
+
+restart_dnsmasq() {
+  apply_ip_rules
+  if [ -n "\${DNSMASQ_PID}" ] && kill -0 "\${DNSMASQ_PID}" 2>/dev/null; then
+    kill "\${DNSMASQ_PID}" 2>/dev/null || true
+    while kill -0 "\${DNSMASQ_PID}" 2>/dev/null; do
+      sleep 0.1
+    done
+  fi
+  echo "egress: restarting dnsmasq to pick up blacklist changes" >&2
+  start_dnsmasq
+}
+
 apply_ip_rules
 
 # Start the egress HTTP API (ADR-0012) in the background.
-node /egress-api.js &
+node /egress-api.mjs &
 
-# Reload dnsmasq + re-apply iptables on SIGHUP so a host edit to the mounted
-# blacklist takes effect without restarting the shared netns.
-trap 'apply_ip_rules; kill -HUP $(cat /run/dnsmasq.pid 2>/dev/null) 2>/dev/null || true' HUP
+trap 'restart_dnsmasq' HUP
+trap 'kill "\${DNSMASQ_PID}" 2>/dev/null || true; exit 0' TERM INT
 
 mkdir -p "{{{logMount}}}"
-# -k keep running, -d don't daemonize. --conf-file reads the base config
-# (bind-interfaces + listen-address=127.0.0.1, so it never clashes with the
-# engine's embedded DNS at 127.0.0.11 in the same netns); --conf-dir reads the
-# mounted *.blacklist for sinkhole address lines.
-exec dnsmasq -k -d \\
-  --conf-file="\${DNSMASQ_CONF}" \\
-  --conf-dir=/etc/egress.d/,*.blacklist \\
-  --log-queries \\
-  --log-facility="{{{logMount}}}/dnsmasq.log"
+start_dnsmasq
+
+# Supervise: exit (taking the container down, matching the old \`exec\`
+# behavior) only if dnsmasq dies on its own. A HUP-triggered restart replaces
+# \${DNSMASQ_PID} before this next checks it, so the loop just keeps watching
+# whichever process is current.
+while kill -0 "\${DNSMASQ_PID}" 2>/dev/null; do
+  sleep 1
+done
 `;
 
 /** Renders the `entrypoint.sh` for the egress container. */
@@ -355,7 +418,7 @@ export function renderEgressFiles(): Record<string, string> {
     Dockerfile: renderEgressDockerfile(),
     'entrypoint.sh': renderEgressEntrypoint(),
     'dnsmasq.conf': renderDnsmasqBaseConf(),
-    'egress-api.js': renderEgressApiJs(),
+    'egress-api.mjs': renderEgressApiJs(),
     'blacklist.example': renderBlacklistExample(),
   };
 }

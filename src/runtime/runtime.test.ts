@@ -206,6 +206,7 @@ test('composeUpArgs: starts the selected Compose file detached', () => {
     '/project/.e/compose.yaml',
     'up',
     '-d',
+    '--build',
   ]);
 });
 
@@ -220,6 +221,7 @@ test('composeUpArgs: passes the store env-file for secret interpolation', () => 
       '/project/.e/compose.yaml',
       'up',
       '-d',
+      '--build',
     ]
   );
 });
@@ -283,6 +285,7 @@ test('composeUp: no-runtime path uses ordinary compose-up argv', () => {
     '/project/.e/compose.yaml',
     'up',
     '-d',
+    '--build',
   ]);
 });
 
