@@ -26,6 +26,14 @@ _Avoid_: service, plugin
 
 **Skill**:
 A capability directory with `SKILL.md` manifest and resources. Located by walking up from the working directory (or `--dir`), falling back to home.
+**Runtime-broker**:
+A sidecar that owns the host container-runtime socket for a Run and exposes a host-local-only HTTP contract (e.g. spawn siblings) to agent containers over the run's private network — so nested spawn can happen without a runtime socket inside the agent sandbox (ADR-0013). The broker is **not** a generic root shell: it surfaces only declared contracts.
+**Sibling run**:
+A child run requested from inside a parent run via its runtime-broker. Siblings execute on the parent run's private network + lifecycle and share its worktree branch only through the host's checkpoint-before-spawn + merge-back protocol (ADR-0001, ADR-0013). Depth is capped: children may request siblings, never children of children.
+**Checkpoint**:
+The host-side `git commit -a` of a parent worktree's WIP to its run branch immediately before spawning a sibling, so the sibling's worktree branch starts from the parent's current state (ADR-0001 only carries committed refs; ADR-0013). Zero file-content movement — the worktree is the live bind-mount of the parent's `/workspace`.
+**Merge-back**:
+The host-side merge of a sibling's branched work back into the parent worktree after the sibling exits. Delivered as a merge commit whose files are reflected in the parent's live `/workspace`; on conflict the host folds the parent's current WIP into the merge and reports conflict markers for the parent agent to resolve (ADR-0013). Never uses git from inside the container.
 _Avoid_: plugin, addon
 
 **Run**:

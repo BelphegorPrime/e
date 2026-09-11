@@ -47,6 +47,31 @@ sandbox limits of its run. The full model: what a spawned agent receives, how
 results return to the parent, and delegation patterns, documented in
 `docs/agents/e.md`.
 
+### Spawning siblings from inside a run
+
+Inside a run you can ask the host to spawn **brother** containers that
+share your run:
+
+```bash
+# Via the spawn-brother skill (post to the runtime-broker sidecar over
+the run's private network — no docker socket inside this container):
+e spawn-brother "<task description for the brother agent>"
+```
+
+- Spawn is **non-blocking**; multiple siblings run in parallel
+  (default cap 3, host-enforced).
+- Children may request siblings; siblings may never spawn children
+  (depth 2).
+- Children start from the host's checkpoint commit of your current
+  worktree — build artifacts (`node_modules`) are synchronized as needed.
+- On completion, the host merges your worktree with your brother's
+  branch automatically. If a conflict is detected, merge conflict
+  markers appear in your worktree; resolve, then signal the host to
+  finalize.
+- Your role is set via env vars — check `$E_ROLE` (`parent` | `child`) and
+  `$E_BROKER_URL`. Do not create or depend on `child` / `parent`
+  marker files in the worktree; role is not a filesystem concept here.
+
 ### Common things
 
 - if you want to execute commands be aware that `&amp;` should be replaced with `&`
