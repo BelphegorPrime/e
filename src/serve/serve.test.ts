@@ -8,7 +8,9 @@ import {
   createServeApp,
   detachedServeArguments,
   isServeStateLive,
+  omniRouteEmbedPortFor,
   shouldReuseDetachedServe,
+  startOmniRouteEmbedProxy,
   startServeServer,
   type ServeAppDeps,
   type ServeState,
@@ -57,7 +59,11 @@ test('serve app exposes API routes and the UI fallback', async () => {
 
     const info = await fetch(`${baseUrl}/api/info`);
     assert.equal(info.status, 200);
-    assert.deepEqual(await info.json(), { name: 'e', version: E_VERSION });
+    assert.deepEqual(await info.json(), {
+      name: 'e',
+      version: E_VERSION,
+      omniRouteEmbedPort: null,
+    });
 
     const page = await fetch(`${baseUrl}/projects/current`);
     assert.equal(page.status, 200);
@@ -314,9 +320,7 @@ test('serve app forwards the parsed JSON body on a proxied /api/egress POST', as
   }
 });
 
-test('serve app proxies /dashboard with its JSON body intact and keeps session cookies scoped to the BFF origin', async () => {
-  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
-  await fs.writeFile(path.join(uiDirectory, 'index.html'), '<!doctype html>');
+test('OmniRoute embed proxy mirrors paths 1:1, strips framing headers and keeps session cookies scoped to its origin', async () => {
   const seen: { url?: string; body?: string } = {};
   const upstream = http.createServer((req, res) => {
     let body = '';
@@ -326,6 +330,7 @@ test('serve app proxies /dashboard with its JSON body intact and keeps session c
       seen.body = body;
       res.writeHead(200, {
         'content-type': 'application/json',
+        'content-security-policy': "frame-ancestors 'none'",
         'x-frame-options': 'DENY',
         'set-cookie':
           'auth_token=abc; Path=/; Domain=omniroute.local; Secure; HttpOnly',
@@ -336,37 +341,57 @@ test('serve app proxies /dashboard with its JSON body intact and keeps session c
   await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
   const upstreamAddress = upstream.address();
   assert.ok(upstreamAddress && typeof upstreamAddress !== 'string');
-  const server = await startServeServer(
-    createServeApp(uiDirectory, {
-      omniRoutedUrl: `http://127.0.0.1:${upstreamAddress.port}`,
-    }),
+  const proxy = await startOmniRouteEmbedProxy(
     '127.0.0.1',
-    0
+    0,
+    `http://127.0.0.1:${upstreamAddress.port}`
   );
-  const address = server.address();
+  const address = proxy.address();
   assert.ok(address && typeof address !== 'string');
   try {
-    const res = await fetch(
-      `http://127.0.0.1:${address.port}/dashboard/api/auth/login`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ password: 'pw' }),
-      }
-    );
+    // OmniRoute's login endpoint is root-anchored, not under /dashboard.
+    const res = await fetch(`http://127.0.0.1:${address.port}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: 'pw' }),
+    });
     assert.equal(res.status, 200);
-    assert.equal(seen.url, '/dashboard/api/auth/login');
+    assert.equal(seen.url, '/api/auth/login');
     assert.equal(seen.body, '{"password":"pw"}');
+    assert.equal(res.headers.get('content-security-policy'), null);
     assert.equal(res.headers.get('x-frame-options'), null);
     assert.equal(
       res.headers.get('set-cookie'),
       'auth_token=abc; Path=/; HttpOnly'
     );
   } finally {
+    await new Promise<void>(resolve => proxy.close(() => resolve()));
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
+  }
+});
+
+test('serve app publishes the OmniRoute embed port via /api/info', async () => {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  await fs.writeFile(path.join(uiDirectory, 'index.html'), '<!doctype html>');
+  const server = await startServeServer(
+    createServeApp(uiDirectory, { omniRouteEmbedPort: 8081 }),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    const info = await fetch(`http://127.0.0.1:${address.port}/api/info`);
+    assert.deepEqual(await info.json(), {
+      name: 'e',
+      version: E_VERSION,
+      omniRouteEmbedPort: 8081,
+    });
+    assert.equal(omniRouteEmbedPortFor(8080), 8081);
+  } finally {
     await new Promise<void>((resolve, reject) => {
       server.close(error => (error ? reject(error) : resolve()));
     });
-    await new Promise<void>(resolve => upstream.close(() => resolve()));
     await fs.rm(uiDirectory, { recursive: true, force: true });
   }
 });

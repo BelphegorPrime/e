@@ -1,8 +1,8 @@
 import express, { type Express } from 'express';
-import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
-import type { Server } from 'node:http';
+import http, { type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import type { Command } from 'commander';
@@ -17,6 +17,7 @@ import {
 import { eBaseDir } from '../store/paths.js';
 import { log } from '../utils/log.js';
 import { env } from '../utils/env.js';
+import { resolveFreePortBlock } from '../utils/port.js';
 import { E_VERSION } from '../version.js';
 import { type ModelsResponse } from '../modelStatus.js';
 
@@ -215,8 +216,12 @@ export interface ServeAppDeps {
   llamaBaseUrl?: string;
   /** Base URL of the egress container API (ADR-0012), e.g. `http://127.0.0.1:20129`. */
   egressApiUrl?: string;
-  /** Base URL of the OmniRoute service, e.g. `http://127.0.0.1:20128`. */
-  omniRoutedUrl?: string;
+  /**
+   * Loopback port of the OmniRoute embed proxy (see `startOmniRouteEmbedProxy`),
+   * published via `/api/info` so the UI can frame the dashboard. `null` when
+   * the proxy is not running (tests, or a BFF started without it).
+   */
+  omniRouteEmbedPort?: number | null;
   fetchImpl?: typeof fetch;
   /**
    * Git read source for the branch-backed runs index (ADR-0010). Defaults to
@@ -232,13 +237,11 @@ export function createServeApp(
   const {
     llamaBaseUrl = env.localLlamaUrl,
     egressApiUrl = env.egressApiUrl,
-    omniRoutedUrl = env.omniRoutedUrl,
     fetchImpl = fetch,
+    omniRouteEmbedPort = null,
     git = new HostGit(),
   } = deps;
   const app = express();
-  // JSON bodies are only read by the /api handlers; parsing them globally would
-  // consume the stream before the /dashboard proxy can forward it.
   app.use('/api', express.json());
 
   app.get('/api/health', (_request, response) => {
@@ -246,7 +249,7 @@ export function createServeApp(
   });
 
   app.get('/api/info', (_request, response) => {
-    response.json({ name: 'e', version: E_VERSION });
+    response.json({ name: 'e', version: E_VERSION, omniRouteEmbedPort });
   });
 
   // Observer-first model view (ADR-0010): a raw snapshot of llama.cpp's
@@ -338,50 +341,6 @@ export function createServeApp(
   // Match both status and logs endpoints
   app.get('/api/runs/*', handleRunRequest);
 
-  // OmniRoute dashboard reverse proxy: the dashboard sends
-  // `frame-ancestors 'none'` + `X-Frame-Options: DENY`, which blocks the UI
-  // from framing it directly. Proxying it same-origin through the BFF and
-  // stripping those headers (mirroring what OmniRoute's own embed proxy does
-  // for its internal dashboards) lets the browser frame it without touching
-  // OmniRoute itself.
-  //
-  // Mounted at the app root with a `pathFilter` (not `app.use('/dashboard',
-  // ...)`) so the full incoming path - including the `/dashboard` prefix -
-  // reaches the target unchanged. OmniRoute's own basePath is `/dashboard`,
-  // so its absolute asset and navigation links (e.g. `/dashboard/_next/...`,
-  // `/dashboard/logs/timeline`) already point back at this same path and
-  // resolve correctly without any rewriting.
-  app.use(
-    createProxyMiddleware({
-      pathFilter: '/dashboard',
-      target: omniRoutedUrl,
-      changeOrigin: true,
-      on: {
-        // express.json() is mounted on /api only, so dashboard bodies still
-        // stream through; fixRequestBody re-serializes one if some earlier
-        // middleware has parsed it anyway.
-        proxyReq: fixRequestBody,
-        proxyRes: proxyResponse => {
-          delete proxyResponse.headers['content-security-policy'];
-          delete proxyResponse.headers['x-frame-options'];
-          // Keep the dashboard session, but scope its cookies to this origin:
-          // a `Domain` for OmniRoute's host would be rejected by the browser,
-          // and `Secure` never reaches a plain-http loopback BFF.
-          const cookies = proxyResponse.headers['set-cookie'];
-          if (cookies) {
-            proxyResponse.headers['set-cookie'] = cookies.map(cookie =>
-              cookie
-                .split(';')
-                .map(part => part.trim())
-                .filter(part => !/^(domain=|secure$)/i.test(part))
-                .join('; ')
-            );
-          }
-        },
-      },
-    })
-  );
-
   // Egress query + mutation API proxy (ADR-0012). The BFF forwards the path,
   // query string and JSON body to the egress container's own HTTP listener;
   // it adds no write logic of its own.
@@ -462,6 +421,72 @@ export function startServeServer(
   });
 }
 
+/**
+ * OmniRoute embed proxy: a second loopback listener that mirrors OmniRoute
+ * 1:1 so the UI can frame its dashboard.
+ *
+ * OmniRoute sends `frame-ancestors 'none'` + `X-Frame-Options: DENY`, which
+ * blocks the iframe when it points at OmniRoute directly, and both knobs are
+ * build-time in its image. It also ships without a basePath: only its pages
+ * live under `/dashboard`, while the login redirect (`/login`), assets
+ * (`/_next/*`) and API (`/api/*`) are root-anchored. A path-prefixed proxy on
+ * the BFF port would therefore either have to rewrite HTML and JS or share
+ * the BFF's `/api` namespace, so the mirror gets its own port instead: every
+ * path is forwarded unchanged, only the framing headers are stripped and the
+ * session cookie is rescoped. The UI frames `http://<bff-host>:<port>/dashboard`,
+ * which is same-site with the BFF origin, so the dashboard's session cookie
+ * still flows inside the frame.
+ */
+export function createOmniRouteEmbedProxy(
+  omniRoutedUrl: string = env.omniRoutedUrl
+): ReturnType<typeof createProxyMiddleware> {
+  return createProxyMiddleware({
+    target: omniRoutedUrl,
+    changeOrigin: true,
+    // The dashboard opens a Live WebSocket to its own origin.
+    ws: true,
+    on: {
+      proxyRes: proxyResponse => {
+        delete proxyResponse.headers['content-security-policy'];
+        delete proxyResponse.headers['x-frame-options'];
+        // Keep the dashboard session, but scope its cookies to this origin:
+        // a `Domain` for OmniRoute's host would be rejected by the browser,
+        // and `Secure` never reaches a plain-http loopback proxy.
+        const cookies = proxyResponse.headers['set-cookie'];
+        if (cookies) {
+          proxyResponse.headers['set-cookie'] = cookies.map(cookie =>
+            cookie
+              .split(';')
+              .map(part => part.trim())
+              .filter(part => !/^(domain=|secure$)/i.test(part))
+              .join('; ')
+          );
+        }
+      },
+    },
+  });
+}
+
+export function startOmniRouteEmbedProxy(
+  host: string,
+  port: number,
+  omniRoutedUrl: string = env.omniRoutedUrl
+): Promise<Server> {
+  const proxy = createOmniRouteEmbedProxy(omniRoutedUrl);
+  const server = http.createServer(proxy);
+  server.on('upgrade', proxy.upgrade);
+  return new Promise((resolve, reject) => {
+    server.listen(port, host);
+    server.once('listening', () => resolve(server));
+    server.once('error', reject);
+  });
+}
+
+/** The embed proxy sits right next to the BFF port so one `--port` configures both. */
+export function omniRouteEmbedPortFor(bffPort: number): number {
+  return bffPort + 1;
+}
+
 export function registerServeCommand(program: Command): void {
   const serve = program
     .command('serve')
@@ -471,8 +496,12 @@ export function registerServeCommand(program: Command): void {
     .option('-d, --detached', 'run the server in the background', false)
     .action(async (options: ServeOptions) => {
       const host = options.host ?? '127.0.0.1';
-      const port = Number(options.port ?? '8080');
-      if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      const requestedPort = Number(options.port ?? '8080');
+      if (
+        !Number.isInteger(requestedPort) ||
+        requestedPort < 0 ||
+        requestedPort > 65535
+      ) {
         throw new Error(`Invalid port: ${options.port}`);
       }
 
@@ -498,13 +527,27 @@ export function registerServeCommand(program: Command): void {
         return;
       }
 
-      const app = createServeApp(resolveUiDirectory());
+      // The BFF and the embed proxy (BFF port + 1) only work as a pair, so a
+      // busy port on either side moves both to the nearest free pair.
+      const port = await resolveFreePortBlock(requestedPort, 2, { host });
+      if (port !== requestedPort) {
+        log.warn(
+          `Port ${requestedPort} or ${omniRouteEmbedPortFor(requestedPort)} is in use, using ${port} instead`
+        );
+      }
+      const embedPort = omniRouteEmbedPortFor(port);
+      const app = createServeApp(resolveUiDirectory(), {
+        omniRouteEmbedPort: embedPort,
+      });
       const server = await startServeServer(app, host, port);
+      const embedProxy = await startOmniRouteEmbedProxy(host, embedPort);
+      server.once('close', () => embedProxy.close());
       const address = server.address() as AddressInfo;
       if (env.serveDetached) {
         trackDetachedServer(server, host, address.port);
       }
       log.info(`UI serving at http://${host}:${address.port}`);
+      log.info(`OmniRoute embed proxy at http://${host}:${embedPort}`);
     });
 
   serve

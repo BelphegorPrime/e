@@ -2,68 +2,74 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Palette mirrors the OmniRoute dashboard (its `:root` / `.dark` tokens in
+ * globals.css) so the embedded dashboard and the e shell read as one app:
+ * primary #e54d5e, dark bg #0b0e14 / surface #161b22 / sidebar #10141e,
+ * light bg #f9f9fb / sidebar #f5f5fa, text #e6e6ef / #1a1a2e.
+ */
 @layer base {
   :root {
     color-scheme: light;
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
+    --background: 240 20% 98%;
+    --foreground: 240 28% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.9%;
+    --card-foreground: 240 28% 14%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
-    --radius: 0.5rem;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --popover-foreground: 240 28% 14%;
+    --primary: 353 75% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 20% 95%;
+    --secondary-foreground: 240 28% 14%;
+    --muted: 240 20% 95%;
+    --muted-foreground: 240 4% 46%;
+    --accent: 240 20% 95%;
+    --accent-foreground: 240 28% 14%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 92%;
+    --input: 0 0% 92%;
+    --ring: 353 75% 60%;
+    --radius: 0.75rem;
+    --sidebar-background: 240 33% 97%;
+    --sidebar-foreground: 240 28% 14%;
+    --sidebar-primary: 353 75% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 20% 93%;
+    --sidebar-accent-foreground: 240 28% 14%;
+    --sidebar-border: 0 0% 90%;
+    --sidebar-ring: 353 75% 60%;
   }
 
   .dark {
     color-scheme: dark;
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
+    --background: 220 29% 6%;
+    --foreground: 240 22% 92%;
+    --card: 215 21% 11%;
+    --card-foreground: 240 22% 92%;
+    --popover: 215 21% 11%;
+    --popover-foreground: 240 22% 92%;
+    --primary: 353 75% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 224 31% 10%;
+    --secondary-foreground: 240 22% 92%;
+    --muted: 224 31% 10%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 215 21% 11%;
+    --accent-foreground: 240 22% 92%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 218 12% 18%;
+    --input: 218 12% 18%;
+    --ring: 353 75% 60%;
+    --sidebar-background: 223 30% 9%;
+    --sidebar-foreground: 240 22% 92%;
+    --sidebar-primary: 353 75% 60%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 215 21% 11%;
+    --sidebar-accent-foreground: 240 22% 92%;
+    --sidebar-border: 218 12% 18%;
+    --sidebar-ring: 353 75% 60%;
   }
 }
 
@@ -72,6 +78,6 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
   }
 }

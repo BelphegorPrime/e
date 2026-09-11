@@ -13,6 +13,25 @@ export default {
       },
     },
     extend: {
+      // Same stacks as the OmniRoute dashboard, so the framed dashboard and
+      // the shell around it render in one typeface.
+      fontFamily: {
+        sans: [
+          '-apple-system',
+          'BlinkMacSystemFont',
+          '"SF Pro Text"',
+          '"SF Pro Display"',
+          'system-ui',
+          'sans-serif',
+        ],
+        mono: [
+          'ui-monospace',
+          '"JetBrains Mono"',
+          '"Fira Code"',
+          '"SF Mono"',
+          'monospace',
+        ],
+      },
       colors: {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',

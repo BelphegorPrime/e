@@ -38,6 +38,12 @@ const systemNav = [
   { title: 'Settings', to: '/settings', icon: Settings },
 ];
 
+// OmniRoute's sidebar: small uppercase section labels, generous rounded
+// items, and the active entry tinted in the primary colour instead of grey.
+const groupLabelClass = 'text-[11px] uppercase tracking-wider';
+const menuButtonClass =
+  'h-10 rounded-lg px-3 data-[active=true]:bg-primary/10 data-[active=true]:text-primary hover:data-[active=true]:bg-primary/15 hover:data-[active=true]:text-primary';
+
 export function AppSidebar() {
   const { pathname } = useLocation();
 
@@ -48,7 +54,9 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <NavLink to="/">
-                <Logo className="h-8 w-8" />
+                <div className="flex aspect-square size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                  <Logo className="size-6" />
+                </div>
                 <span className="font-mono text-lg font-bold leading-none">
                   e -
                 </span>
@@ -59,7 +67,9 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+          <SidebarGroupLabel className={groupLabelClass}>
+            Workspace
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {mainNav.map(item => (
@@ -68,6 +78,7 @@ export function AppSidebar() {
                     asChild
                     isActive={pathname === item.to}
                     tooltip={item.title}
+                    className={menuButtonClass}
                   >
                     <NavLink to={item.to}>
                       <item.icon />
@@ -80,7 +91,9 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
-          <SidebarGroupLabel>System</SidebarGroupLabel>
+          <SidebarGroupLabel className={groupLabelClass}>
+            System
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {systemNav.map(item => (
@@ -89,6 +102,7 @@ export function AppSidebar() {
                     asChild
                     isActive={pathname === item.to}
                     tooltip={item.title}
+                    className={menuButtonClass}
                   >
                     <NavLink to={item.to}>
                       <item.icon />
