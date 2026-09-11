@@ -32,7 +32,9 @@ export function OmniRoutePage() {
         }
         const body = (await response.json()) as InfoResponse;
         if (body.omniRouteEmbedPort === null) {
-          throw new Error('The BFF is running without the OmniRoute embed proxy.');
+          throw new Error(
+            'The BFF is running without the OmniRoute embed proxy.'
+          );
         }
         if (!cancelled) {
           setState({ status: 'ready', url: embedUrl(body.omniRouteEmbedPort) });
