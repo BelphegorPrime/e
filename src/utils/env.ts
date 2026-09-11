@@ -18,6 +18,11 @@ export class Env {
     return process.env.EGRESS_API_URL ?? 'http://127.0.0.1:20129';
   }
 
+  /** Host-published base URL of the OmniRoute dashboard (see `renderCompose`). */
+  get omniRoutedUrl(): string {
+    return process.env.OMNIROUTE_URL ?? 'http://127.0.0.1:20128';
+  }
+
   /** Whether `log` should mirror every line to `log.txt` in the working directory. */
   get shouldWriteLogFile(): boolean {
     return process.env.SHOULD_WRITE_LOG_FILE === 'true';

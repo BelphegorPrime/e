@@ -1,4 +1,5 @@
 import express, { type Express } from 'express';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import type { Server } from 'node:http';
@@ -203,6 +204,8 @@ export interface ServeAppDeps {
   llamaBaseUrl?: string;
   /** Base URL of the egress container API (ADR-0012), e.g. `http://127.0.0.1:20129`. */
   egressApiUrl?: string;
+  /** Base URL of the OmniRoute service, e.g. `http://127.0.0.1:20128`. */
+  omniRoutedUrl?: string;
   fetchImpl?: typeof fetch;
   /**
    * Git read source for the branch-backed runs index (ADR-0010). Defaults to
@@ -218,6 +221,7 @@ export function createServeApp(
   const {
     llamaBaseUrl = env.localLlamaUrl,
     egressApiUrl = env.egressApiUrl,
+    omniRoutedUrl = env.omniRoutedUrl,
     fetchImpl = fetch,
     git = new HostGit(),
   } = deps;
@@ -319,6 +323,34 @@ export function createServeApp(
 
   // Match both status and logs endpoints
   app.get('/api/runs/*', handleRunRequest);
+
+  // OmniRoute dashboard reverse proxy: the dashboard sends
+  // `frame-ancestors 'none'` + `X-Frame-Options: DENY`, which blocks the UI
+  // from framing it directly. Proxying it same-origin through the BFF and
+  // stripping those headers (mirroring what OmniRoute's own embed proxy does
+  // for its internal dashboards) lets the browser frame it without touching
+  // OmniRoute itself.
+  //
+  // Mounted at the app root with a `pathFilter` (not `app.use('/dashboard',
+  // ...)`) so the full incoming path — including the `/dashboard` prefix —
+  // reaches the target unchanged. OmniRoute's own basePath is `/dashboard`,
+  // so its absolute asset and navigation links (e.g. `/dashboard/_next/...`,
+  // `/dashboard/logs/timeline`) already point back at this same path and
+  // resolve correctly without any rewriting.
+  app.use(
+    createProxyMiddleware({
+      pathFilter: '/dashboard',
+      target: omniRoutedUrl,
+      changeOrigin: true,
+      on: {
+        proxyRes: proxyResponse => {
+          delete proxyResponse.headers['content-security-policy'];
+          delete proxyResponse.headers['x-frame-options'];
+          delete proxyResponse.headers['set-cookie'];
+        },
+      },
+    })
+  );
 
   // Egress query + mutation API proxy (ADR-0012). The BFF forwards to the
   // egress container's own HTTP listener — same proxy shape as /api/runs/*.

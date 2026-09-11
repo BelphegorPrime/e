@@ -6,7 +6,7 @@ export function composeUpArgs(composeFile: string, envFile?: string): string[] {
   if (envFile) {
     args.push('--env-file', envFile);
   }
-  return [...args, '-f', composeFile, 'up', '-d'];
+  return [...args, '-f', composeFile, 'up', '-d', '--build'];
 }
 
 export function composeWaitArgs(
