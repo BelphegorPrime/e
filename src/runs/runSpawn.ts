@@ -19,6 +19,7 @@ import {
 } from './runSidecarOrchestrator.js';
 import { ProductionPullRequestManager } from './runPrManager.js';
 import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
+import { runRoleInstructions, type RunRole } from './runRole.js';
 
 export type { ReadinessPolicy } from './runSidecarOrchestrator.js';
 
@@ -29,6 +30,14 @@ const DEFAULT_READINESS_INTERVAL_MS = 1000;
 /** Tells one-shot harnesses that the host owns Git for their disposable worktree. */
 export const RUN_GIT_INSTRUCTIONS =
   'You are working in an e-managed Git worktree. Do not run git add, git commit, git push, or git worktree: Git metadata and credentials intentionally remain on the host. Make requested file changes only; e will capture, commit, and push them after the run.';
+
+/**
+ * The one-shot launch prompt: e's worktree rules, the role contract (ADR-0013:
+ * check `$E_ROLE` / `$E_BROKER_URL`, no marker files), then the task itself.
+ */
+export function launchPrompt(prompt: string, role: RunRole = 'parent'): string {
+  return `${RUN_GIT_INSTRUCTIONS}\n${runRoleInstructions(role)}\n\n${prompt}`;
+}
 
 /** A sidecar to bring up before the agent runs. */
 export interface SidecarPlan {
@@ -71,6 +80,8 @@ export interface RunSpawnParams {
   worktreesDir?: string;
   /** Leave the worktree in place after the run instead of removing a clean one. */
   keepWorktree?: boolean;
+  /** The role named in the launch prompt (`parent` by default); the env is the plan's. */
+  role?: RunRole;
 }
 
 /** Orchestrated run output. */
@@ -198,7 +209,7 @@ export async function runSpawn(
     const command = params.interactive
       ? params.harness.buildInteractiveCommand(params.model)
       : params.harness.buildCommand(
-          `${RUN_GIT_INSTRUCTIONS}\n\n${params.prompt}`,
+          launchPrompt(params.prompt, params.role),
           params.model
         );
 

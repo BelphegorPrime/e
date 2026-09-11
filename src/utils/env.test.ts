@@ -6,6 +6,7 @@ const VARS = [
   'LOCAL_LLAMA_URL',
   'SHOULD_WRITE_LOG_FILE',
   Env.SERVE_DETACHED_VAR,
+  Env.SPAWN_ROLE_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -52,4 +53,21 @@ test('withServeDetached copies the base env and sets the marker without mutating
   assert.equal(result.FOO, 'bar');
   assert.equal(result[Env.SERVE_DETACHED_VAR], '1');
   assert.equal(Env.SERVE_DETACHED_VAR in base, false);
+});
+
+test('spawnRole defaults to parent when the marker is unset or blank', () => {
+  delete process.env[Env.SPAWN_ROLE_VAR];
+  assert.equal(env.spawnRole, 'parent');
+  process.env[Env.SPAWN_ROLE_VAR] = '  ';
+  assert.equal(env.spawnRole, 'parent');
+});
+
+test('spawnRole reflects the marker and rejects unknown roles', () => {
+  process.env[Env.SPAWN_ROLE_VAR] = 'child';
+  assert.equal(env.spawnRole, 'child');
+  process.env[Env.SPAWN_ROLE_VAR] = 'grandchild';
+  assert.throws(
+    () => env.spawnRole,
+    /Unknown run role "grandchild" in E_SPAWN_ROLE/
+  );
 });

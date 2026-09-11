@@ -28,7 +28,7 @@ _Avoid_: service, plugin
 A capability directory with `SKILL.md` manifest and resources. Located by walking up from the working directory (or `--dir`), falling back to home.
 _Avoid_: plugin, addon
 
-The next four terms are the vocabulary of ADR-0013 (proposed, not implemented yet):
+The next five terms are the vocabulary of ADR-0013 (proposed; only the run-role contract, ticket 01, is implemented so far):
 
 **Runtime-broker**:
 A sidecar that owns the host container-runtime socket for a Run and exposes a host-local-only HTTP contract (e.g. spawn siblings) to agent containers over the run's private network - so nested spawn can happen without a runtime socket inside the agent sandbox (ADR-0013). The broker is **not** a generic root shell: it surfaces only declared contracts.
@@ -38,6 +38,8 @@ A child run requested from inside a parent run via its runtime-broker. Siblings 
 The host-side `git commit -a` of a parent worktree's WIP to its run branch immediately before spawning a sibling, so the sibling's worktree branch starts from the parent's current state (ADR-0001 only carries committed refs; ADR-0013). Zero file-content movement - the worktree is the live bind-mount of the parent's `/workspace`.
 **Merge-back**:
 The host-side merge of a sibling's branched work back into the parent worktree after the sibling exits. Delivered as a merge commit whose files are reflected in the parent's live `/workspace`; on conflict the host folds the parent's current WIP into the merge and reports conflict markers for the parent agent to resolve (ADR-0013). Never uses git from inside the container.
+**Run role**:
+A container's place in a Run's tree, `parent` or `child`, delivered as host-set env: `E_ROLE`, with `E_BROKER_URL` naming the runtime-broker endpoint (by alias `runtime-broker` on a private run network, on loopback in the shared egress namespace) - never an image layer or a marker file in the worktree (ADR-0013; `src/runs/runRole.ts`). The `e spawn` process learns the role it hands out from its internal `E_SPAWN_ROLE` marker; unset means `parent`.
 
 **Run**:
 A RunScratch + primary container + sidecars, the unit that executes an Agent. With the local stack present, agent and sidecars share the global `e-egress` network namespace (ADR-0011); otherwise sidecars sit on a private per-run network. The pure description of a run is a `SpawnPlan` (`src/spawn/spawnPlan.ts`); `runSpawn` (`src/runs/runSpawn.ts`) executes it. Container configuration is a `RunOptions` (below).

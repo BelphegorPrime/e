@@ -200,6 +200,7 @@ export async function executeSpawn(
       configMounts,
       keepWorktree: facts.keepWorktree,
       worktreesDir: facts.worktreesDir,
+      role: facts.role,
     }
   );
 }

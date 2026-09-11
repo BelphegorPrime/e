@@ -13,6 +13,7 @@ import type { Agent } from '../agent/index.js';
 import {
   runSpawn,
   RUN_GIT_INSTRUCTIONS,
+  launchPrompt,
   type RunSpawnDeps,
   type RunSpawnParams,
   type SidecarPlan,
@@ -319,7 +320,7 @@ test('creates a worktree from HEAD on branch e/<harness>/<slug>-1 and runs the h
   assert.deepEqual(runtime.command, [
     'demo',
     '-p',
-    `${RUN_GIT_INSTRUCTIONS}\n\nFix the flaky test`,
+    launchPrompt('Fix the flaky test'),
   ]);
 
   assert.equal(result.ran, true);
@@ -361,7 +362,7 @@ test('threads a runtime-resolved model into the harness command', async () => {
     'exec',
     '-m',
     'gpt-5-codex',
-    `${RUN_GIT_INSTRUCTIONS}\n\nFix the flaky test`,
+    launchPrompt('Fix the flaky test'),
   ]);
 });
 
@@ -702,7 +703,7 @@ test('appends the harness MCP args to the container command', async () => {
   assert.deepEqual(runtime.command, [
     'demo',
     '-p',
-    `${RUN_GIT_INSTRUCTIONS}\n\nFix the flaky test`,
+    launchPrompt('Fix the flaky test'),
     '--mcp-config',
     '{"mcpServers":{}}',
   ]);
@@ -823,4 +824,28 @@ test('supports multiple sidecars: both started, both probed, both removed', asyn
     `${runName}-mcp-everything`,
     `${runName}-mcp-filesystem`,
   ]);
+});
+
+// The launch prompt carries the role contract (ADR-0013, ticket 01) between
+// e's worktree rules and the task, so a one-shot agent is told to read
+// $E_ROLE / $E_BROKER_URL and never to create marker files.
+test('launchPrompt: worktree rules, then the role contract, then the task', () => {
+  const prompt = launchPrompt('Fix the flaky test');
+  assert.ok(prompt.startsWith(`${RUN_GIT_INSTRUCTIONS}\n`));
+  assert.ok(prompt.endsWith('\n\nFix the flaky test'));
+  assert.match(prompt, /role in this run is "parent"/);
+  assert.match(prompt, /\$E_ROLE/);
+  assert.match(prompt, /\$E_BROKER_URL/);
+  assert.match(prompt, /do not create or rely on parent\/child marker files/);
+});
+
+test('a child run is launched with the child role named in its prompt', async () => {
+  const { deps, runtime } = makeDeps();
+  await runSpawn(deps, makeParams({ role: 'child' }));
+  assert.deepEqual(runtime.command, [
+    'demo',
+    '-p',
+    launchPrompt('Fix the flaky test', 'child'),
+  ]);
+  assert.match(runtime.command?.[2] ?? '', /role in this run is "child"/);
 });

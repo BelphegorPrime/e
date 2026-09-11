@@ -363,3 +363,50 @@ test('planSpawn: baked skills go to the derived image; per-run skills become mou
   );
   assert.equal(plan.skillMounts[0].ro, true);
 });
+
+// The role contract (ADR-0013, ticket 01): every agent container receives its
+// role and broker endpoint as host-set `-e` env, decided purely in the plan.
+test('planSpawn: a run is a parent by default, reaching the broker by alias', () => {
+  const plan = planSpawn(facts({}));
+  assert.deepEqual(plan.agentEnv, [
+    'E_ROLE=parent',
+    'E_BROKER_URL=http://runtime-broker:20130',
+  ]);
+  // The contract is `-e` only; it is never whitelisted out of `.e/.env`.
+  assert.equal(plan.baseEnvWhitelist.includes('E_ROLE'), false);
+});
+
+test('planSpawn: a child run receives E_ROLE=child', () => {
+  const plan = planSpawn(facts({ role: 'child' }));
+  assert.ok(plan.agentEnv.includes('E_ROLE=child'));
+  assert.equal(plan.agentEnv.includes('E_ROLE=parent'), false);
+});
+
+test('planSpawn: with the local stack the broker URL is on loopback', () => {
+  const plan = planSpawn(facts({ localStackPresent: true }));
+  assert.ok(plan.agentEnv.includes('E_BROKER_URL=http://localhost:20130'));
+});
+
+test('planSpawn: the host-set role contract follows the user -e entries', () => {
+  const plan = planSpawn(facts({ env: ['FOO=bar'] }));
+  assert.deepEqual(plan.agentEnv, [
+    'FOO=bar',
+    'E_ROLE=parent',
+    'E_BROKER_URL=http://runtime-broker:20130',
+  ]);
+});
+
+test('validateSpawn: a user -e on a role-contract variable is refused up front', () => {
+  assert.throws(
+    () => validateSpawn(facts({ env: ['E_ROLE=child'] })),
+    /Cannot pass -e E_ROLE: e sets E_ROLE and E_BROKER_URL/
+  );
+  assert.throws(
+    () => validateSpawn(facts({ env: ['FOO=1', 'E_BROKER_URL=http://x:1'] })),
+    /Cannot pass -e E_BROKER_URL/
+  );
+  // Other keys, and the internal E_SPAWN_ROLE marker, are not the contract.
+  assert.doesNotThrow(() =>
+    validateSpawn(facts({ env: ['FOO=1', 'E_SPAWN_ROLE=child'] }))
+  );
+});

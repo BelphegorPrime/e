@@ -251,6 +251,8 @@ function gatherSpawnFacts(
     dirOpt: opts.dir,
     // Platform default or `E_WORKTREES_DIR`; a path the engine can bind-mount.
     worktreesDir: defaultWorktreesDir(),
+    // `parent` unless the `E_SPAWN_ROLE` marker says `child` (ADR-0013).
+    role: env.spawnRole,
   };
 }
 

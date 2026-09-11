@@ -33,6 +33,12 @@ import {
 import { planMcpSelection, type McpServer } from '../mcp/index.js';
 import type { Mount } from '../runtime/index.js';
 import type { SidecarPlan } from '../runs/runSpawn.js';
+import {
+  brokerUrl,
+  isRoleContractEntry,
+  roleEnv,
+  type RunRole,
+} from '../runs/runRole.js';
 import { imageTag } from '../identity/naming.js';
 import { skillMountSpec } from '../skill/index.js';
 import { skillDir } from '../store/paths.js';
@@ -189,6 +195,12 @@ export interface SpawnFacts {
    * default or `E_WORKTREES_DIR`. Absent → `runSpawn` applies the default.
    */
   worktreesDir?: string;
+  /**
+   * The role this run's containers receive as `E_ROLE` (ADR-0013): `parent`
+   * for a run the user (or `serve`) started, `child` for a sibling requested
+   * through the runtime-broker. Absent → `parent`.
+   */
+  role?: RunRole;
 }
 
 /**
@@ -197,12 +209,24 @@ export interface SpawnFacts {
  *  - a provider protocol the harness does not speak;
  *  - a provider on a harness with no config adapter;
  *  - `--mcp` against a harness with no MCP client (opencode);
- *  - baked or `--skill` skills against a harness that supports none.
+ *  - baked or `--skill` skills against a harness that supports none;
+ *  - a `-e` that names a role-contract variable (`E_ROLE`, `E_BROKER_URL`).
  * Server/skill *existence* is checked by the edge during gather (it needs disk).
  */
 export function validateSpawn(facts: SpawnFacts): void {
   const { agent, harness } = facts;
   const caps = harnessCapabilities(harness);
+
+  // The role contract is the host's to set for every run container (ADR-0013);
+  // a user `-e` naming it would only be out-ranked by the host's entry, so it
+  // is refused up front instead of silently ignored.
+  const reserved = facts.env.filter(isRoleContractEntry);
+  if (reserved.length > 0) {
+    const keys = reserved.map(entry => entry.split('=', 1)[0]).join(', ');
+    throw new Error(
+      `Cannot pass -e ${keys}: e sets E_ROLE and E_BROKER_URL for every run container itself (ADR-0013).`
+    );
+  }
 
   validateProviderProtocol(agent.provider, harness);
 
@@ -278,7 +302,12 @@ export interface SpawnPlan {
   agentImagePlan?: DerivedImagePlan;
   /** Read-only per-run skill mounts (outside `/workspace`). */
   skillMounts: Mount[];
-  /** The agent container's `-e` env (user `-e` plus any config-dir relocation env). */
+  /**
+   * The agent container's `-e` env: the user's `-e`, any config-dir relocation
+   * env, then the host-set role contract (`E_ROLE`, `E_BROKER_URL`). A user
+   * `-e` on those keys is refused by {@link validateSpawn}; env-files are
+   * out-ranked by `-e` in every runtime, so the host's values always land.
+   */
   agentEnv: string[];
   /** A runtime-resolved model to pass on the harness command line, when applicable. */
   runtimeModel?: string;
@@ -405,6 +434,14 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     runtimeUser: harness.dockerfile.runtimeUser,
   });
 
+  // The role contract (ADR-0013): `E_ROLE` and `E_BROKER_URL` as `-e` entries,
+  // never baked into an image. The broker is reached like any sidecar - on
+  // loopback in the shared egress namespace, by alias on a private network.
+  const roleContract = roleEnv(
+    facts.role ?? 'parent',
+    brokerUrl(facts.localStackPresent === true)
+  );
+
   return {
     delivery,
     providerEnvContent,
@@ -417,7 +454,7 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     configOverlay,
     agentImagePlan,
     skillMounts,
-    agentEnv: [...facts.env, ...(configOverlay?.env ?? [])],
+    agentEnv: [...facts.env, ...(configOverlay?.env ?? []), ...roleContract],
     runtimeModel: delivery?.runtimeModel,
   };
 }

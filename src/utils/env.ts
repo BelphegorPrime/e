@@ -6,6 +6,7 @@
  */
 import { EGRESS_API_PORT } from '../egress/constants.js';
 import { OMNIROUTE_PORT } from '../constants.js';
+import { parseRunRole, type RunRole } from '../runs/runRole.js';
 
 export class Env {
   /** Set on the detached `serve` child so it can recognize itself on restart. */
@@ -17,6 +18,14 @@ export class Env {
    * container and the parent attaches through the container engine's API.
    */
   static readonly TTY_HEADLESS_VAR = 'E_TTY_HEADLESS';
+
+  /**
+   * Set on an `e spawn` process started for a sibling request (ADR-0013): the
+   * role its containers receive as `E_ROLE`. Deliberately not `E_ROLE` itself,
+   * so a run's own container env never leaks into a nested `e spawn` as its
+   * role. Unset means `parent`.
+   */
+  static readonly SPAWN_ROLE_VAR = 'E_SPAWN_ROLE';
 
   /**
    * The container runtime to use when `--runtime` is not passed - one of the
@@ -98,6 +107,14 @@ export class Env {
     delete copy[Env.SERVE_DETACHED_VAR];
     copy[Env.TTY_HEADLESS_VAR] = '1';
     return copy;
+  }
+
+  /**
+   * The role this `e spawn` gives its containers (see {@link Env.SPAWN_ROLE_VAR}):
+   * `parent` unless the marker says `child`. Throws on any other value.
+   */
+  get spawnRole(): RunRole {
+    return parseRunRole(process.env[Env.SPAWN_ROLE_VAR], Env.SPAWN_ROLE_VAR);
   }
 }
 

@@ -116,6 +116,8 @@ test('errors before any build when not in a git repository', async () => {
 // path (preflight → build check → env-file composition → runSpawn) is testable.
 class RecordingRuntime extends ContainerRuntime {
   options?: RunOptions;
+  /** The argv handed to the container (the harness command with its prompt). */
+  ranCommand?: string[];
   built: string[] = [];
   sidecars: SidecarSpec[] = [];
 
@@ -134,9 +136,10 @@ class RecordingRuntime extends ContainerRuntime {
   async run(
     _image: string,
     opts: RunOptions,
-    _command: string[]
+    command: string[]
   ): Promise<number> {
     this.options = opts;
+    this.ranCommand = command;
     return 0;
   }
 
@@ -326,4 +329,19 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('the role reaches the orchestrator: a child run is launched with the child prompt', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    await executeSpawn(
+      facts({ root, role: 'child', detached: true }),
+      { ...emptyPlan, agentEnv: ['E_ROLE=child'] },
+      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+    );
+    // The plan's `-e` env is passed through untouched (the plan decided it) ...
+    assert.deepEqual(runtime.options?.env, ['E_ROLE=child']);
+    // ... and the launch prompt names the same role.
+    assert.match(runtime.ranCommand?.[2] ?? '', /role in this run is "child"/);
+  });
 });

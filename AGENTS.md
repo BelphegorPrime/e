@@ -47,18 +47,21 @@ sandbox limits of its run. The full model: what a spawned agent receives, how
 results return to the parent, and delegation patterns, documented in
 `docs/agents/e.md`.
 
-### Spawning siblings from inside a run (planned, not yet implemented)
+### Spawning siblings from inside a run (role contract only)
 
-**Not available today.** `e spawn-brother`, `$E_ROLE` and `$E_BROKER_URL`
-are the design of ADR-0013 (status: Proposed; tickets `docs/tickets/01-08`
-are open) and do not exist in the CLI yet. Until they ship, delegation from
-inside a run means writing the follow-up task down in `/workspace` and
-exiting 0 (see `docs/agents/e.md`, Recursive spawning). The intended shape,
-for when it lands:
+The design is ADR-0013 (status: Proposed; tickets `docs/tickets/01-08`).
+What exists today is the **role contract** (ticket 01): every run container
+receives `E_ROLE` (`parent` | `child`) and `E_BROKER_URL` as host-set env,
+and the one-shot launch prompt points you at them. The runtime-broker
+sidecar, the `spawn-brother` skill, checkpoint and merge-back (tickets 02-08)
+are not built yet, so `$E_BROKER_URL` names an endpoint nothing listens on
+until they ship. Until then, delegation from inside a run means writing the
+follow-up task down in `/workspace` and exiting 0 (see `docs/agents/e.md`,
+Recursive spawning). The intended shape, for when it lands:
 
 ```bash
 # Via the spawn-brother skill (post to the runtime-broker sidecar over
-the run's private network - no docker socket inside this container):
+# the run's private network - no docker socket inside this container):
 e spawn-brother "<task description for the brother agent>"
 ```
 
@@ -73,8 +76,10 @@ e spawn-brother "<task description for the brother agent>"
   markers appear in your worktree; resolve, then signal the host to
   finalize.
 - Your role is set via env vars - check `$E_ROLE` (`parent` | `child`) and
-  `$E_BROKER_URL`. Do not create or depend on `child` / `parent`
-  marker files in the worktree; role is not a filesystem concept here.
+  `$E_BROKER_URL` (`http://<host>:<port>`, no trailing slash). Do not create
+  or depend on `child` / `parent` marker files in the worktree; role is not a
+  filesystem concept here. If the broker does not answer, fall back to the
+  handoff-file pattern above.
 
 ### Common things
 
