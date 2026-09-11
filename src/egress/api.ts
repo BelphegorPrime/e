@@ -37,8 +37,12 @@ function readAndParseLog(): EgressLogEntry[] {
 /** Apply filters to a list of entries (ADR-0012: since/domain/action/limit). */
 function applyLogQuery(
   entries: EgressLogEntry[],
-  query: LogQuery
+  query?: LogQuery
 ): EgressLogEntry[] {
+  if (!query) {
+    return entries
+  }
+  
   let result = entries;
   if (query.since) {
     const since = new Date(query.since).getTime();
@@ -76,7 +80,8 @@ export function createEgressApiApp(): express.Express {
     try {
       const query = req.query as unknown as LogQuery;
       const entries = applyLogQuery(readAndParseLog(), query);
-      res.json(entries);
+      const squashed = squashEntries(entries);
+      res.json(squashed);
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
