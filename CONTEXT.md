@@ -71,6 +71,7 @@ Container configuration options (`src/runtime/index.ts`):
 
 - `name`: string?
 - `interactive`: boolean? (keep stdin open, allocate a TTY)
+- `headlessTty`: boolean? (with `interactive`: `run -d -it` then `wait`, for a caller without a host TTY that attaches through the engine API - ADR-0014)
 - `port`: string[]? (`-p` publishes)
 - `env`: string[]? (`-e` entries)
 - `envFile`: string[]? (`--env-file`, in order)
@@ -103,4 +104,8 @@ Network egress management
 Model status tracking
 
 **Serve**:
-Server management and observation
+Server management and observation. The BFF for the web UI (ADR-0010); also hosts the browser terminal (below).
+
+**Terminal session**:
+A run started from the web UI (ADR-0014): one headless `e spawn <agent> --name <slug>` child of `serve` whose container TTY `serve` attaches to through the container engine's API and relays to browser tabs over a WebSocket. Phases `starting` (child output: build, worktree) → `attached` (the harness TUI) → `exited` (the child's exit code, after commit/push). Lives in the `serve` process; the run itself does not depend on it.
+_Avoid_: shell (it is the harness's TTY, not a host shell), console

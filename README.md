@@ -105,6 +105,15 @@ change the bind address, or `--detached` to run it in the background. Stop a
 detached server with `e serve stop`. It serves the UI at `/` and provides
 `/api/health` and `/api/info`.
 
+The UI's Terminal page starts runs from the browser (ADR-0014): pick an agent,
+optionally name the run, and the harness's TUI opens in the page. Each session
+is a headless `e spawn <agent> --name <slug>` in the directory `e serve` was
+started in, so start `e serve` inside the repository you want to work on. The
+terminal attaches to the run container through the container engine's socket
+(`DOCKER_HOST=unix://…`, `/var/run/docker.sock`, or Podman's
+`$XDG_RUNTIME_DIR/podman/podman.sock`); without one the page explains that
+runs cannot be started.
+
 ## Test
 
 Three levels, cheapest first.

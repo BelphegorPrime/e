@@ -175,6 +175,7 @@ export async function executeSpawn(
 
   const runOptions: RunOptions = {
     interactive: !facts.detached,
+    headlessTty: facts.headlessTty,
     rm: facts.rm,
     port: facts.port,
     env: plan.agentEnv,

@@ -25,6 +25,13 @@ export interface RunOptions {
   name?: string;
   /** Keep stdin open and allocate a TTY for an interactive harness session. */
   interactive?: boolean;
+  /**
+   * With `interactive`: allocate the TTY inside the container but do not
+   * attach the host's stdio (`run -d -it`, then `wait`). For a caller that has
+   * no host TTY - the `serve` browser terminal - and attaches to the container
+   * through the engine API instead. Without `interactive` this has no effect.
+   */
+  headlessTty?: boolean;
   port?: string[];
   env?: string[];
   rm?: boolean;
@@ -132,6 +139,11 @@ export interface ContainerRunner {
    * silently leaves a wiped volume behind.
    */
   copyDirToVolume(hostDir: string, volumeName: string, wipe?: boolean): void;
+}
+
+/** `wait <container>`: blocks until the container stops, printing its exit code. */
+export function waitArgs(container: string): string[] {
+  return ['wait', container];
 }
 
 /**
@@ -269,8 +281,15 @@ export function volumeCopyInArgs(
  * in at construction.
  */
 export class ContainerRuntime implements ContainerRunner {
-  /** The executable invoked for this runtime, e.g. "docker". */
-  constructor(readonly command: string) {}
+  /**
+   * @param command The executable invoked for this runtime, e.g. "docker".
+   * @param spawnImpl Process spawner for the long-running `run`/`wait` calls;
+   *   tests inject a fake, production uses `child_process.spawn`.
+   */
+  constructor(
+    readonly command: string,
+    private readonly spawnImpl: typeof spawn = spawn
+  ) {}
 
   /** Returns true if this runtime is installed and responds to `--version`. */
   isAvailable(): boolean {
@@ -326,7 +345,12 @@ export class ContainerRuntime implements ContainerRunner {
   ): string[] {
     const args = ['run'];
 
-    if (opts.interactive) args.push('-it');
+    if (opts.interactive) {
+      if (opts.headlessTty) {
+        args.push('-d');
+      }
+      args.push('-it');
+    }
     if (opts.rm) args.push('--rm');
     if (opts.name) args.push('--name', opts.name);
     if (opts.workdir) args.push('-w', opts.workdir);
@@ -361,8 +385,12 @@ export class ContainerRuntime implements ContainerRunner {
     log.info(`Using runtime: ${this.command}`);
     log.command(`> ${this.command} ${runArgs.join(' ')}`);
 
+    if (opts.interactive && opts.headlessTty) {
+      return this.runHeadless(runArgs);
+    }
+
     return new Promise<number>((resolve, reject) => {
-      const child = spawn(this.command, runArgs, {
+      const child = this.spawnImpl(this.command, runArgs, {
         stdio: 'inherit',
         shell: false,
       });
@@ -373,6 +401,46 @@ export class ContainerRuntime implements ContainerRunner {
 
       child.on('exit', (code, signal) => {
         resolve(signal ? 1 : (code ?? 0));
+      });
+    });
+  }
+
+  /**
+   * The headless-TTY variant of {@link ContainerRuntime.run}: `run -d -it`
+   * prints the container id and returns at once (the CLI refuses `-it` without
+   * a host TTY, but not when detaching), then `wait <id>` blocks until the
+   * container stops and prints its exit code. A caller with engine-API access
+   * attaches to the container's TTY in between. The container's exit code is
+   * the run's exit code, exactly as in the foreground variant; a failed `run`
+   * (or an unparsable `wait`) resolves 1 so the orchestrator skips the commit.
+   */
+  private async runHeadless(runArgs: string[]): Promise<number> {
+    const started = await this.capture(runArgs);
+    const containerId = started.stdout.trim().split('\n').pop() ?? '';
+    if (started.code !== 0 || containerId === '') {
+      return started.code === 0 ? 1 : started.code;
+    }
+    const waited = await this.capture(waitArgs(containerId));
+    const exitCode = Number.parseInt(waited.stdout.trim(), 10);
+    return waited.code === 0 && Number.isInteger(exitCode) ? exitCode : 1;
+  }
+
+  /** Runs `<command> <args>`, inheriting stderr, and captures stdout with the exit code. */
+  private capture(args: string[]): Promise<{ code: number; stdout: string }> {
+    return new Promise((resolve, reject) => {
+      const child = this.spawnImpl(this.command, args, {
+        stdio: ['ignore', 'pipe', 'inherit'],
+        shell: false,
+      });
+      let stdout = '';
+      child.stdout?.on('data', (chunk: Buffer | string) => {
+        stdout += chunk.toString();
+      });
+      child.on('error', err => {
+        reject(new Error(`Failed to start ${this.command}: ${err.message}`));
+      });
+      child.on('exit', (code, signal) => {
+        resolve({ code: signal ? 1 : (code ?? 0), stdout });
       });
     });
   }

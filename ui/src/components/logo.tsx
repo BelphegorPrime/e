@@ -5,9 +5,11 @@ export interface LogoProps {
 }
 
 /**
- * Brand mark for `e -`. Inline SVG so it renders at any size
- * and inherits the current text color. Terminal caret with block
- * cursor replaces the old text glyph.
+ * Brand mark for `e -`: Euler's identity, e^(iπ) + 1 = 0, drawn as its
+ * geometric meaning in the complex plane. The faint circle and axes are
+ * the unit circle; the bold arc is the half-turn from 1 to −1 traced by
+ * e^(iπ); the solid point is −1, which +1 brings back to the origin.
+ * Inline SVG so it renders at any size and inherits the text color.
  */
 export function Logo({ className }: LogoProps) {
   return (
@@ -19,30 +21,33 @@ export function Logo({ className }: LogoProps) {
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      <rect
-        x="1"
-        y="1"
-        width="30"
-        height="30"
-        rx="8"
+      {/* unit circle and axes */}
+      <circle
+        cx="16"
+        cy="16"
+        r="12"
         stroke="currentColor"
-        strokeWidth="2"
+        strokeWidth="1.5"
+        opacity="0.4"
       />
       <path
-        d="M10 10 L17 16 L10 22"
+        d="M2 16 H30 M16 2 V30"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        opacity="0.4"
+      />
+      {/* e^(iπ): half-turn from 1 to -1 along the upper arc */}
+      <path
+        d="M28 16 A12 12 0 0 0 4 16"
         stroke="currentColor"
         strokeWidth="2.5"
         strokeLinecap="round"
-        strokeLinejoin="round"
       />
-      <rect
-        x="19"
-        y="12.5"
-        width="3.5"
-        height="7"
-        rx="1.5"
-        fill="currentColor"
-      />
+      {/* start at 1 */}
+      <circle cx="28" cy="16" r="2" fill="currentColor" opacity="0.4" />
+      {/* land on -1 */}
+      <circle cx="4" cy="16" r="3" fill="currentColor" />
     </svg>
   );
 }

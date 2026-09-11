@@ -16,6 +16,8 @@ import {
   type ServeState,
 } from './serve.js';
 import type { Git, RunCommit, RunRef } from '../git/index.js';
+import { TerminalSessions } from './terminalSessions.js';
+import { fakeEngine, scriptedSpawner } from './terminalSessions.testSupport.js';
 import type { ModelsResponse } from '../modelStatus.js';
 import { E_VERSION } from '../version.js';
 
@@ -33,6 +35,25 @@ test('detachedServeArguments preserves command arguments and removes detached fl
       '8080',
     ]),
     ['/workspace/dist/index.js', 'serve', '--host', '0.0.0.0', '--port', '8080']
+  );
+});
+
+test('detachedServeArguments drops the snapshot entry path in a single-executable', () => {
+  // In a pkg --sea binary argv[1] is the embedded entry, which the executable
+  // runs by itself; passing it again would be taken for an unknown command.
+  assert.deepEqual(
+    detachedServeArguments(
+      [
+        '/usr/local/bin/e',
+        '/snapshot/e/dist/index.js',
+        'serve',
+        '-d',
+        '--port',
+        '9000',
+      ],
+      true
+    ),
+    ['serve', '--port', '9000']
   );
 });
 
@@ -63,6 +84,7 @@ test('serve app exposes API routes and the UI fallback', async () => {
       name: 'e',
       version: E_VERSION,
       omniRouteEmbedPort: null,
+      terminal: false,
     });
 
     const page = await fetch(`${baseUrl}/projects/current`);
@@ -386,6 +408,7 @@ test('serve app publishes the OmniRoute embed port via /api/info', async () => {
       name: 'e',
       version: E_VERSION,
       omniRouteEmbedPort: 8081,
+      terminal: false,
     });
     assert.equal(omniRouteEmbedPortFor(8080), 8081);
   } finally {
@@ -738,4 +761,116 @@ test('/api/runs reports 500 when git enumeration fails', async () => {
       });
     }
   );
+});
+
+// --- browser terminal routes (ADR-0014) --------------------------------------
+
+test('terminal routes answer 503 when no session manager is wired', async () => {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  const server = await startServeServer(
+    createServeApp(uiDirectory, { listAgents: () => [] }),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const list = await fetch(`${baseUrl}/api/terminal/sessions`);
+    assert.equal(list.status, 503);
+    const start = await fetch(`${baseUrl}/api/terminal/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agent: 'pi' }),
+    });
+    assert.equal(start.status, 503);
+  } finally {
+    server.close();
+  }
+});
+
+test('terminal routes list agents, start, inspect and remove sessions', async () => {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  const spawner = scriptedSpawner();
+  const terminal = new TerminalSessions({
+    engine: fakeEngine({ containers: [] }),
+    spawnChild: spawner.spawn,
+    pollIntervalMs: 1000,
+  });
+  const server = await startServeServer(
+    createServeApp(uiDirectory, {
+      terminal,
+      listAgents: () => [{ name: 'smart-pi', harness: 'pi', model: 'auto' }],
+    }),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const info = await fetch(`${baseUrl}/api/info`);
+    assert.equal(((await info.json()) as { terminal: boolean }).terminal, true);
+
+    const agents = await fetch(`${baseUrl}/api/agents`);
+    assert.deepEqual(await agents.json(), {
+      agents: [{ name: 'smart-pi', harness: 'pi', model: 'auto' }],
+    });
+
+    const bad = await fetch(`${baseUrl}/api/terminal/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agent: '../x' }),
+    });
+    assert.equal(bad.status, 400);
+
+    const start = await fetch(`${baseUrl}/api/terminal/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agent: 'smart-pi', name: 'fix-login' }),
+    });
+    assert.equal(start.status, 201);
+    const { session } = (await start.json()) as {
+      session: { id: string; agent: string; slug: string; phase: string };
+    };
+    assert.equal(session.agent, 'smart-pi');
+    assert.equal(session.slug, 'fix-login');
+    assert.equal(session.phase, 'starting');
+    assert.deepEqual(spawner.calls[0], [
+      'spawn',
+      'smart-pi',
+      '--name',
+      'fix-login',
+    ]);
+
+    const list = await fetch(`${baseUrl}/api/terminal/sessions`);
+    const listed = (await list.json()) as { sessions: Array<{ id: string }> };
+    assert.deepEqual(
+      listed.sessions.map(entry => entry.id),
+      [session.id]
+    );
+
+    const one = await fetch(`${baseUrl}/api/terminal/sessions/${session.id}`);
+    assert.equal(one.status, 200);
+    const missing = await fetch(`${baseUrl}/api/terminal/sessions/nope`);
+    assert.equal(missing.status, 404);
+
+    // Still running: removal is refused.
+    const busy = await fetch(`${baseUrl}/api/terminal/sessions/${session.id}`, {
+      method: 'DELETE',
+    });
+    assert.equal(busy.status, 409);
+
+    spawner.children[0].exit(0);
+    await new Promise(resolve => setImmediate(resolve));
+    const gone = await fetch(`${baseUrl}/api/terminal/sessions/${session.id}`, {
+      method: 'DELETE',
+    });
+    assert.equal(gone.status, 204);
+    const after = await fetch(`${baseUrl}/api/terminal/sessions`);
+    assert.deepEqual(await after.json(), { sessions: [] });
+  } finally {
+    terminal.dispose();
+    server.close();
+  }
 });

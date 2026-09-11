@@ -166,6 +166,12 @@ export interface SpawnFacts {
   port?: string[];
   /** `--detached`: run a one-shot detached prompt instead of starting the interactive TUI. */
   detached?: boolean;
+  /**
+   * `E_TTY_HEADLESS`: this spawn has no host TTY (it was started by the `serve`
+   * browser terminal), so an interactive run detaches the container's TTY and
+   * the parent attaches through the engine API (see `RunOptions.headlessTty`).
+   */
+  headlessTty?: boolean;
   /** `--rm`. */
   rm?: boolean;
   /** `--keep-worktree`: leave the run's worktree in place after the container exits. */

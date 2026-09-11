@@ -58,7 +58,7 @@ export function AppSidebar() {
                   <Logo className="size-6" />
                 </div>
                 <span className="font-mono text-lg font-bold leading-none">
-                  e -
+                  e - Dash
                 </span>
               </NavLink>
             </SidebarMenuButton>

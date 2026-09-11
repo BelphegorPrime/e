@@ -17,6 +17,7 @@ import {
   volumeCreateArgs,
   volumeCopyOutArgs,
   volumeCopyInArgs,
+  waitArgs,
   type RunOptions,
   type SidecarSpec,
 } from './index.js';
@@ -50,6 +51,16 @@ const cases: Array<{ name: string; opts: RunOptions; expected: string[] }> = [
     name: 'interactive: keeps stdin open and allocates a TTY',
     opts: { interactive: true },
     expected: ['run', '-it', 'img'],
+  },
+  {
+    name: 'interactive + headlessTty: detaches so the CLI does not demand a host TTY',
+    opts: { interactive: true, headlessTty: true },
+    expected: ['run', '-d', '-it', 'img'],
+  },
+  {
+    name: 'headlessTty without interactive: no effect',
+    opts: { headlessTty: true },
+    expected: ['run', 'img'],
   },
   {
     name: '--rm / --name / -w in order',
@@ -529,4 +540,104 @@ test('volumeCopyInArgs: wipe=true prepends the destructive rm guard', () => {
     '-c',
     'rm -rf /dest/* /dest/..?* /dest/.[!.]* 2>/dev/null || true && cp -a /source/. /dest/',
   ]);
+});
+
+test('waitArgs blocks on a container and prints its exit code', () => {
+  assert.deepEqual(waitArgs('abc123'), ['wait', 'abc123']);
+});
+
+// --- run(): foreground vs headless-TTY ---------------------------------------
+//
+// A fake spawner records every argv and scripts each child's stdout/exit, so
+// the two run modes are exercised without a container engine.
+
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import type { spawn as spawnType } from 'node:child_process';
+
+interface ScriptedChild {
+  stdout?: string;
+  code?: number;
+  signal?: string;
+}
+
+function fakeSpawner(scripts: ScriptedChild[]): {
+  spawn: typeof spawnType;
+  calls: Array<{ args: string[]; stdio: unknown }>;
+} {
+  const calls: Array<{ args: string[]; stdio: unknown }> = [];
+  const spawn = ((_command: string, args: string[], options: unknown) => {
+    const script = scripts[calls.length] ?? {};
+    calls.push({ args, stdio: (options as { stdio: unknown }).stdio });
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: PassThrough;
+    };
+    child.stdout = new PassThrough();
+    setImmediate(() => {
+      if (script.stdout !== undefined) child.stdout.write(script.stdout);
+      child.stdout.end();
+      child.emit('exit', script.code ?? 0, script.signal ?? null);
+    });
+    return child;
+  }) as unknown as typeof spawnType;
+  return { spawn, calls };
+}
+
+test('run: foreground mode inherits stdio and resolves the exit code', async () => {
+  const { spawn, calls } = fakeSpawner([{ code: 3 }]);
+  const rt = new ContainerRuntime('docker', spawn);
+  const code = await rt.run('img', { interactive: true }, ['pi']);
+  assert.equal(code, 3);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ['run', '-it', 'img', 'pi']);
+  assert.equal(calls[0].stdio, 'inherit');
+});
+
+test('run: headless TTY detaches, then waits on the printed container id', async () => {
+  const { spawn, calls } = fakeSpawner([
+    { stdout: 'deadbeefcafe\n' },
+    { stdout: '7\n' },
+  ]);
+  const rt = new ContainerRuntime('docker', spawn);
+  const code = await rt.run(
+    'img',
+    { interactive: true, headlessTty: true, name: 'e-a-b-1' },
+    ['pi']
+  );
+  assert.equal(code, 7);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].args, [
+    'run',
+    '-d',
+    '-it',
+    '--name',
+    'e-a-b-1',
+    'img',
+    'pi',
+  ]);
+  assert.deepEqual(calls[0].stdio, ['ignore', 'pipe', 'inherit']);
+  assert.deepEqual(calls[1].args, ['wait', 'deadbeefcafe']);
+});
+
+test('run: headless TTY reports a failed start without waiting', async () => {
+  const { spawn, calls } = fakeSpawner([{ stdout: '', code: 125 }]);
+  const rt = new ContainerRuntime('docker', spawn);
+  const code = await rt.run(
+    'img',
+    { interactive: true, headlessTty: true },
+    []
+  );
+  assert.equal(code, 125);
+  assert.equal(calls.length, 1);
+});
+
+test('run: headless TTY treats an unparsable wait result as failure', async () => {
+  const { spawn } = fakeSpawner([{ stdout: 'abc\n' }, { stdout: 'nope\n' }]);
+  const rt = new ContainerRuntime('docker', spawn);
+  const code = await rt.run(
+    'img',
+    { interactive: true, headlessTty: true },
+    []
+  );
+  assert.equal(code, 1);
 });

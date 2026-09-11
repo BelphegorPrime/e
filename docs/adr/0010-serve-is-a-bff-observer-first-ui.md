@@ -45,6 +45,11 @@ performs **no writes**: no branch creation, no config mutation, no model
 switching. Read-only keeps the observer honest (no session-state to lose) and
 defers auth entirely (below).
 
+**Amended by [ADR-0014](./0014-browser-terminal-starts-runs-via-serve.md):**
+the UI may also _start_ a run (a headless `e spawn` child behind
+`/api/terminal/*`) and attach to its TTY. That is the second and last write
+delegation; everything below still holds for the Store, models and git.
+
 **One exception - delegated egress blacklisting.** On-the-fly domain
 blacklisting is the single mutation the UI may carry. It is not a general
 write path: the action is mediated end-to-end by the egress container's own

@@ -11,6 +11,13 @@ export class Env {
   /** Set on the detached `serve` child so it can recognize itself on restart. */
   static readonly SERVE_DETACHED_VAR = 'E_SERVE_DETACHED';
 
+  /**
+   * Set on an `e spawn` child that has no host TTY to attach to (the browser
+   * terminal started by `e serve`): the run allocates its TTY inside the
+   * container and the parent attaches through the container engine's API.
+   */
+  static readonly TTY_HEADLESS_VAR = 'E_TTY_HEADLESS';
+
   /** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
   get localLlamaUrl(): string {
     return process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
@@ -46,6 +53,25 @@ export class Env {
     base: Record<string, string | undefined> = process.env
   ): Record<string, string | undefined> {
     return { ...base, [Env.SERVE_DETACHED_VAR]: '1' };
+  }
+
+  /** True when this `e spawn` runs without a host TTY and must detach the container's TTY (see {@link Env.TTY_HEADLESS_VAR}). */
+  get headlessTty(): boolean {
+    return process.env[Env.TTY_HEADLESS_VAR] === '1';
+  }
+
+  /**
+   * Copies `base` for a headless `e spawn` child: the headless-TTY marker set
+   * and the detached-serve marker dropped, so the child never mistakes itself
+   * for a `serve` process.
+   */
+  withHeadlessTty(
+    base: Record<string, string | undefined> = process.env
+  ): Record<string, string | undefined> {
+    const copy: Record<string, string | undefined> = { ...base };
+    delete copy[Env.SERVE_DETACHED_VAR];
+    copy[Env.TTY_HEADLESS_VAR] = '1';
+    return copy;
   }
 }
 

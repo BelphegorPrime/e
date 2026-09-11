@@ -273,6 +273,7 @@ function gatherSpawnFacts(
     env: opts.env ?? [],
     port: opts.port,
     detached,
+    headlessTty: env.headlessTty,
     rm: opts.rm,
     keepWorktree: Boolean(opts.keepWorktree),
     // Layer the shared base only when it exists on disk (ADR-0006).

@@ -20,6 +20,15 @@ import { env } from '../utils/env.js';
 import { resolveFreePortBlock } from '../utils/port.js';
 import { E_VERSION } from '../version.js';
 import { type ModelsResponse } from '../modelStatus.js';
+import { listAgents as listStoreAgents } from '../agent/index.js';
+import { findRoot } from '../store/root.js';
+import {
+  resolveEngineSocketPath,
+  UnixSocketEngineApi,
+} from './containerApi.js';
+import { TerminalRequestError, TerminalSessions } from './terminalSessions.js';
+import { attachTerminalWebSocket } from './terminalSocket.js';
+import { selfInvocation } from '../utils/selfInvoke.js';
 
 const serveStatePath = path.join(eBaseDir(), 'serve.json');
 
@@ -58,14 +67,28 @@ export interface ServeOptions {
   detached?: boolean;
 }
 
-export function detachedServeArguments(argv: string[]): string[] {
-  return argv
-    .slice(1)
-    .filter(argument => argument !== '--detached' && argument !== '-d');
+/**
+ * The argv for the background `serve` child: this CLI's own re-invocation
+ * prefix (see {@link selfInvocation}) plus the user's `serve` arguments minus
+ * the detach flag. `sea` is injectable so the single-executable shape is
+ * testable under plain Node.
+ */
+export function detachedServeArguments(
+  argv: string[],
+  sea?: boolean
+): string[] {
+  const { prefix } = selfInvocation(argv, sea);
+  return [
+    ...prefix,
+    ...argv
+      .slice(2)
+      .filter(argument => argument !== '--detached' && argument !== '-d'),
+  ];
 }
 
 function startDetachedServe(): Promise<void> {
-  const child = spawn(process.execPath, detachedServeArguments(process.argv), {
+  const { command } = selfInvocation();
+  const child = spawn(command, detachedServeArguments(process.argv), {
     detached: true,
     stdio: 'ignore',
     env: env.withServeDetached(),
@@ -228,6 +251,29 @@ export interface ServeAppDeps {
    * the host git executable; tests inject a fake.
    */
   git?: Git;
+  /**
+   * Browser-started runs (ADR-0014). Absent in tests that do not exercise the
+   * terminal; the routes then answer 503.
+   */
+  terminal?: TerminalSessions;
+  /** The store's agents for the terminal's "start a run" picker; tests inject a fake. */
+  listAgents?: () => AgentSummary[];
+}
+
+/** One selectable agent as the UI sees it. */
+export interface AgentSummary {
+  name: string;
+  harness: string;
+  /** The provider's configured model id (`auto` included), or null for a default agent. */
+  model: string | null;
+}
+
+function storeAgents(): AgentSummary[] {
+  return listStoreAgents(findRoot()).map(agent => ({
+    name: agent.name,
+    harness: agent.harness,
+    model: agent.provider?.model ?? null,
+  }));
 }
 
 export function createServeApp(
@@ -240,6 +286,8 @@ export function createServeApp(
     fetchImpl = fetch,
     omniRouteEmbedPort = null,
     git = new HostGit(),
+    terminal,
+    listAgents = storeAgents,
   } = deps;
   const app = express();
   app.use('/api', express.json());
@@ -249,7 +297,85 @@ export function createServeApp(
   });
 
   app.get('/api/info', (_request, response) => {
-    response.json({ name: 'e', version: E_VERSION, omniRouteEmbedPort });
+    response.json({
+      name: 'e',
+      version: E_VERSION,
+      omniRouteEmbedPort,
+      // The terminal needs both a session manager and an engine socket.
+      terminal: terminal?.engineAvailable ?? false,
+    });
+  });
+
+  app.get('/api/agents', (_request, response) => {
+    try {
+      response.json({ agents: listAgents() });
+    } catch (error) {
+      response.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  // Browser-started runs (ADR-0014): the one write path besides egress
+  // blacklisting. Starting a run is exactly `e spawn <agent> --name <slug>`
+  // in a headless child; the routes never touch git or containers themselves.
+  const requireTerminal = (
+    response: express.Response
+  ): TerminalSessions | undefined => {
+    if (!terminal) {
+      response
+        .status(503)
+        .json({ error: 'Terminal sessions are not available' });
+    }
+    return terminal;
+  };
+
+  app.get('/api/terminal/sessions', (_request, response) => {
+    const sessions = requireTerminal(response);
+    if (sessions) response.json({ sessions: sessions.list() });
+  });
+
+  app.post('/api/terminal/sessions', (request, response) => {
+    const sessions = requireTerminal(response);
+    if (!sessions) return;
+    const body = (request.body ?? {}) as { agent?: unknown; name?: unknown };
+    try {
+      const session = sessions.start({
+        agent: typeof body.agent === 'string' ? body.agent : '',
+        name: typeof body.name === 'string' ? body.name : undefined,
+      });
+      response.status(201).json({ session });
+    } catch (error) {
+      if (error instanceof TerminalRequestError) {
+        response.status(400).json({ error: error.message });
+        return;
+      }
+      response.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  app.get('/api/terminal/sessions/:id', (request, response) => {
+    const sessions = requireTerminal(response);
+    if (!sessions) return;
+    const session = sessions.get(request.params.id);
+    if (!session) {
+      response.status(404).json({ error: 'Not found' });
+      return;
+    }
+    response.json({ session });
+  });
+
+  app.delete('/api/terminal/sessions/:id', (request, response) => {
+    const sessions = requireTerminal(response);
+    if (!sessions) return;
+    try {
+      sessions.remove(request.params.id);
+      response.status(204).end();
+    } catch (error) {
+      if (error instanceof TerminalRequestError) {
+        response.status(409).json({ error: error.message });
+        return;
+      }
+      response.status(500).json({ error: errorMessage(error) });
+    }
   });
 
   // Observer-first model view (ADR-0010): a raw snapshot of llama.cpp's
@@ -536,12 +662,31 @@ export function registerServeCommand(program: Command): void {
         );
       }
       const embedPort = omniRouteEmbedPortFor(port);
+      // The browser terminal attaches to run containers through the engine
+      // socket; without one the routes still answer, but a start is refused
+      // with a clear message.
+      const engineSocket = resolveEngineSocketPath();
+      const terminal = new TerminalSessions({
+        engine: engineSocket
+          ? new UnixSocketEngineApi(engineSocket)
+          : undefined,
+      });
+      if (!engineSocket) {
+        log.warn(
+          'No container engine socket found; the browser terminal cannot start runs.'
+        );
+      }
       const app = createServeApp(resolveUiDirectory(), {
         omniRouteEmbedPort: embedPort,
+        terminal,
       });
       const server = await startServeServer(app, host, port);
+      attachTerminalWebSocket(server, terminal);
       const embedProxy = await startOmniRouteEmbedProxy(host, embedPort);
-      server.once('close', () => embedProxy.close());
+      server.once('close', () => {
+        embedProxy.close();
+        terminal.dispose();
+      });
       const address = server.address() as AddressInfo;
       if (env.serveDetached) {
         trackDetachedServer(server, host, address.port);

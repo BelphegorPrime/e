@@ -135,16 +135,21 @@ is scoped to the compose network. No change needed there.
 
 ## Zone 4: `serve` (the BFF per the architecture review)
 
-| Fact                                                                                                                                                        | Status |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| Express server binds `127.0.0.1` by default                                                                                                                 | Good   |
-| Serves the bundled static UI and `/api/health`, `/api/info`                                                                                                 | Good   |
-| Detached mode spawns a background `node` process, tracked via `serve.json`                                                                                  | Note   |
-| Per the architecture review: becomes a BFF proxying OmniRoute (and runs/status from git refs), key read host-side from `.e/.env`, never sent to the browser | Agreed |
+| Fact                                                                                                                                                                                                                                                         | Status |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| Express server binds `127.0.0.1` by default                                                                                                                                                                                                                  | Good   |
+| Serves the bundled static UI and `/api/health`, `/api/info`                                                                                                                                                                                                  | Good   |
+| Detached mode spawns a background `node` process, tracked via `serve.json`                                                                                                                                                                                   | Note   |
+| Per the architecture review: becomes a BFF proxying OmniRoute (and runs/status from git refs), key read host-side from `.e/.env`, never sent to the browser                                                                                                  | Agreed |
+| Browser terminal (ADR-0014): `POST /api/terminal/sessions` starts a headless `e spawn` child; the run container's TTY is attached through the engine's unix socket from the `serve` process only - the socket is never exposed to the browser or a container | Note   |
+| Terminal WebSocket (`/api/terminal/ws`) rejects upgrades whose `Origin` does not name the serving host; browsers skip same-origin for WebSockets, so this is what keeps another open page from typing into a run                                             | Good   |
+| `serve` needs no engine socket to run; without one the terminal routes refuse to start sessions and `/api/info.terminal` is false                                                                                                                            | Good   |
 
-The BFF keeps secrets server-side, so a future read-only browser UI does not
-expand the secret exposure. Keep the localhost bind; do not add auth (the UI
-is a local observer). One caution for the detached mode: `serve.json` holds a
+The BFF keeps secrets server-side, so the browser UI does not expand the
+secret exposure. Keep the localhost bind; do not add auth while it holds (the
+UI observes, plus two delegated writes: egress blacklisting and starting a run,
+neither of which grants the local user a capability `e spawn` did not). Binding
+`serve` beyond loopback is the point where auth becomes required (ADR-0014). One caution for the detached mode: `serve.json` holds a
 pid/host/port in `$HOME/.e` and `E_SERVE_DETACHED` gates re-detachment -
 verify a stale pid (host reboot) is handled today or add a health check before
 reporting "already serving".
