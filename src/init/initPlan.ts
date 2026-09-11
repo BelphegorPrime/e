@@ -4,7 +4,7 @@ import { renderDockerfile } from '../harness/renderDockerfile.js';
 import { renderEnvTemplate } from '../harness/renderEnvTemplate.js';
 import { renderCompose } from './renderCompose.js';
 import { renderBootstrap } from './renderBootstrap.js';
-import { renderEgressFiles } from './renderEgress.js';
+import { EGRESS_FILES, renderEgressFiles } from './renderEgress.js';
 import { HARNESSES, envHarnessSections } from '../harness/index.js';
 import { renderDefaultAgent } from '../agent/index.js';
 import { parseDotenv } from '../utils/dotenv.js';
@@ -309,7 +309,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
   egressWrites.push({
     directory: path.dirname(egressBlacklistFile),
     file: egressBlacklistFile,
-    content: renderEgressFiles()['blacklist.example'],
+    content: renderEgressFiles()[EGRESS_FILES.blacklistExample],
     clobber: 'never',
   });
   if (egressWrites.length > 0) {

@@ -1,7 +1,7 @@
 /**
  * Renders the **egress gateway** build context (ADR-0011): a Dockerfile,
- * an entrypoint script, a dnsmasq config, a blacklist template, and an
- * embedded Node.js egress API server (ADR-0012) — all seeded into `.e/egress/`
+ * an entrypoint script, a dnsmasq config, a blacklist template, and the
+ * bundled Node.js egress API server (ADR-0012), all seeded into `.e/egress/`
  * mirroring how harness/mcp build contexts are seeded (never clobbered, so a
  * user can edit them). The rendered image `e-egress` is built once and started
  * once as a global stack service; every stack service and run agent joins the
@@ -9,47 +9,55 @@
  *
  * The rendered artifacts:
  *
- *  - `Dockerfile` — Alpine + `nodejs` + `dnsmasq` + `iptables`, non-root is NOT
+ *  - `Dockerfile`: Alpine + `nodejs` + `dnsmasq` + `iptables`. Non-root is NOT
  *    applied here by design: the egress container is ours (trusted), and
  *    iptables needs `NET_ADMIN` in its own netns (added at run time, never on
  *    the agent).
- *  - `entrypoint.sh` — applies the mounted iptables blacklist to its own netns,
+ *  - `entrypoint.sh`: applies the mounted iptables blacklist to its own netns,
  *    starts the egress API server (ADR-0012) in the background, re-applies
- *    iptables + reloads dnsmasq on SIGHUP, then runs `dnsmasq` in the foreground
- *    with query logging to the mounted log dir and its blacklist conf-dir read
+ *    iptables + restarts dnsmasq on SIGHUP, then supervises `dnsmasq` with
+ *    query logging to the mounted log dir and its blacklist conf-dir read
  *    from the mounted blacklist file.
- *  - `dnsmasq.conf` — the base dnsmasq config with independent upstream
+ *  - `dnsmasq.conf`: the base dnsmasq config with independent upstream
  *    resolvers.
- *  - `egress-api.mjs` — the egress HTTP API server (ADR-0012). Stateless: reads
- *    the mounted dnsmasq log + blacklist per request, serves query + mutation
- *    endpoints, triggers SIGHUP reload after blacklist edits.
- *  - `blacklist.example` — a commented template documenting the format.
+ *  - `egress-api.mjs`: the egress HTTP API server (ADR-0012). Not a template:
+ *    it is the type-checked `src/egress/server.ts` and its imports, bundled by
+ *    `scripts/build-egress-api.mjs` into one dependency-free ESM script.
+ *  - `blacklist.example`: a commented template documenting the format.
+ *
+ * None of these files carry per-installation variables, so they are plain
+ * template literals over the shared egress constants rather than Mustache
+ * templates (Mustache would also eat a literal `{{` in a shell or config file).
  */
 
-import Mustache from 'mustache';
+import { EGRESS_API_BUNDLE } from '../egress/bundle.generated.js';
+import {
+  EGRESS_BLACKLIST_IP_MOUNT,
+  EGRESS_DNSMASQ_LOG,
+  EGRESS_LOG_MOUNT,
+} from '../egress/constants.js';
 
-/**
- * Container-side paths and ports baked into the rendered egress files. The
- * Dockerfile, entrypoint and API script below read these fixed locations; the
- * host path of each mount comes from the spawn plan / scratch.
- */
-const EGRESS_LOG_MOUNT = '/var/log/egress';
-// Named `.rules` (not `.blacklist`) so dnsmasq's `conf-dir=*.blacklist` glob
-// never tries to parse the iptables script as a dnsmasq config file.
-const EGRESS_BLACKLIST_IP_MOUNT = '/etc/egress.d/iptables.rules';
-/** The port the egress HTTP API listens on inside the container (ADR-0012). */
-const EGRESS_API_PORT = 20129;
+/** File names inside the egress build context, keyed for `renderEgressFiles`. */
+export const EGRESS_FILES = {
+  dockerfile: 'Dockerfile',
+  entrypoint: 'entrypoint.sh',
+  dnsmasqConf: 'dnsmasq.conf',
+  apiScript: 'egress-api.mjs',
+  blacklistExample: 'blacklist.example',
+} as const;
 
-const DOCKERFILE_TEMPLATE = `# The egress gateway container (ADR-0011). A single global service; all
+export type EgressFileName = (typeof EGRESS_FILES)[keyof typeof EGRESS_FILES];
+
+const DOCKERFILE = `# The egress gateway container (ADR-0011). A single global service; all
 # stack services and run agents share its network namespace, so a blacklist here
 # is enforced and every query / connection is logged host-side.
 FROM node:24-alpine
 
 RUN apk add --no-cache dnsmasq iptables ip6tables bash
 
-COPY entrypoint.sh /egress-entrypoint.sh
-COPY dnsmasq.conf /etc/egress.d/dnsmasq.conf
-COPY egress-api.mjs /egress-api.mjs
+COPY ${EGRESS_FILES.entrypoint} /egress-entrypoint.sh
+COPY ${EGRESS_FILES.dnsmasqConf} /etc/egress.d/dnsmasq.conf
+COPY ${EGRESS_FILES.apiScript} /egress-api.mjs
 RUN chmod +x /egress-entrypoint.sh
 
 # Compose mounts the blacklist file and log directory explicitly. Do not declare
@@ -60,7 +68,7 @@ RUN chmod +x /egress-entrypoint.sh
 ENTRYPOINT ["/egress-entrypoint.sh"]
 `;
 
-const DNSMASQ_BASE_CONF_TEMPLATE = `# Base dnsmasq config for the egress gateway (ADR-0011).
+const DNSMASQ_BASE_CONF = `# Base dnsmasq config for the egress gateway (ADR-0011).
 # The mounted blacklist (address=/domain/0.0.0.0 lines) is read from
 # the conf-dir; log-queries records every query to the mounted log.
 #
@@ -77,7 +85,7 @@ server=1.1.1.1
 server=8.8.8.8
 `;
 
-const BLACKLIST_EXAMPLE_TEMPLATE = `# Egress blacklist for e runs (ADR-0011).
+const BLACKLIST_EXAMPLE = `# Egress blacklist for e runs (ADR-0011).
 #
 # Read directly by dnsmasq's --conf-dir, so every entry must be a valid dnsmasq
 # directive: \`address=/domain/0.0.0.0\` sinkholes a domain and all its
@@ -93,232 +101,9 @@ const BLACKLIST_EXAMPLE_TEMPLATE = `# Egress blacklist for e runs (ADR-0011).
 # address=/example.com/::        # ...and the same over IPv6
 `;
 
-/** Egress API server script rendered into the container (ADR-0012). */
-const EGGRESS_API_TEMPLATE = `/* Egress HTTP API (ADR-0012). Stateless: reads mounted log +
- * blacklist per request, serves query + mutation endpoints. Runs inside
- * the e-egress container alongside dnsmasq.
- */
-import http from 'http';
-import fs from 'fs';
-import { exec } from 'child_process';
-
-const LOG_FILE = '/var/log/egress/dnsmasq.log';
-const BLACKLIST_FILE = '/etc/egress.d/dnsmasq.blacklist';
-const PORT = {{{egressApiPort}}};
-
-const QUERY_RE = /^\\w{3}\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2}\\s+dnsmasq\\[\\d+\\]:\\s+query\\[[^\\]]+\\]\\s+(\\S+)\\s+from\\s+/;
-const REPLY_RE = /^\\w{3}\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2}\\s+dnsmasq\\[\\d+\\]:\\s+reply\\s+(\\S+)\\s+is\\s+/;
-const MONTH_MAP = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-
-const LOCAL_NAMES = ['localhost', 'localhost.localdomain'];
-
-function toISO8601(ts) {
-  const m = /^(\\w{3})\\s+(\\d+)\\s+(\\d{2}:\\d{2}:\\d{2})/.exec(ts.trim());
-  if (!m) return ts;
-  const month = MONTH_MAP[m[1]];
-  if (month === undefined) return ts;
-  const parts = m[3].split(':').map(Number);
-  const year = new Date().getFullYear();
-  return new Date(Date.UTC(year, month, parseInt(m[2]), parts[0], parts[1], parts[2])).toISOString();
-}
-
-function parseLogLine(line) {
-  const qm = QUERY_RE.exec(line);
-  const rm = REPLY_RE.exec(line);
-  let domain = null;
-  if (qm) domain = qm[1];
-  else if (rm) domain = rm[1];
-  if (!domain) return null;
-
-  const tsMatch = /^(\\w{3}\\s+\\d+\\s+\\d{2}:\\d{2}:\\d{2})/.exec(line);
-  const timestamp = tsMatch ? toISO8601(tsMatch[1]) : '';
-  return { timestamp, runID: '', domain, protocol: 'DNS', action: '' };
-}
-
-function parseBlacklistDomains(content) {
-  const domains = [];
-  for (const raw of content.split('\\n')) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
-    const addressMatch = /^address=\\/([^/]+)\\//.exec(line);
-    if (addressMatch) {
-      domains.push(addressMatch[1].toLowerCase().replace(/\\.$/, ''));
-      continue;
-    }
-    if (line.includes(':')) {
-      const idx = line.lastIndexOf(':');
-      const portPart = line.slice(idx + 1);
-      const ipPart = line.slice(0, idx);
-      if (/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(ipPart) && /^\\d+$/.test(portPart) && parseInt(portPart) > 0 && parseInt(portPart) <= 65535) continue;
-    }
-    domains.push(line.toLowerCase().replace(/\\.$/, ''));
-  }
-  // A domain contributes one \`address=\` line per address family, so dedupe.
-  return [...new Set(domains)];
-}
-
-function isSinkholed(domain, blacklistDomains) {
-  const norm = domain.toLowerCase().replace(/\\.$/, '');
-  return blacklistDomains.some(b => norm === b || norm.endsWith('.' + b));
-}
-
-function readLog() {
-  if (!fs.existsSync(LOG_FILE)) return [];
-  const raw = fs.readFileSync(LOG_FILE, 'utf-8');
-  const blContent = fs.existsSync(BLACKLIST_FILE) ? fs.readFileSync(BLACKLIST_FILE, 'utf-8') : '';
-  const blacklistDomains = parseBlacklistDomains(blContent);
-  const entries = [];
-  for (const line of raw.split('\\n')) {
-    const entry = parseLogLine(line);
-    if (!entry) continue;
-    entry.action = isSinkholed(entry.domain, blacklistDomains) ? 'deny(sinkholed)' : 'allow';
-    entries.push(entry);
-  }
-  return entries;
-}
-
-function isLocalhost(domain) {
-  const norm = domain.toLowerCase().replace(/\\.$/, '');
-  return LOCAL_NAMES.some(l => norm === l || norm.endsWith('.' + l));
-}
-
-// One record per domain over the whole log — NOT per consecutive run, which
-// yields thousands of rows for a handful of domains. Keyed on the normalized
-// name so 'Example.com.' and 'example.com' roll up together.
-function squashEntries(entries) {
-  const byDomain = new Map();
-  for (const e of entries) {
-    if (isLocalhost(e.domain)) continue;
-    const domain = e.domain.toLowerCase().replace(/\\.$/, '');
-    const existing = byDomain.get(domain);
-    if (existing) {
-      existing.count++;
-      if (e.timestamp < existing.firstSeen) existing.firstSeen = e.timestamp;
-      if (e.timestamp > existing.lastSeen) existing.lastSeen = e.timestamp;
-    } else {
-      byDomain.set(domain, {domain, count: 1, firstSeen: e.timestamp, lastSeen: e.timestamp});
-    }
-  }
-  return [...byDomain.values()].sort((a, b) => b.count - a.count);
-}
-
-function applyQuery(entries, q) {
-  let result = entries;
-  if (q.since) {
-    const since = new Date(q.since).getTime();
-    result = result.filter(e => new Date(e.timestamp).getTime() >= since);
-  }
-  if (q.domain) result = result.filter(e => e.domain === q.domain);
-  if (q.action) result = result.filter(e => e.action === q.action);
-  if (q.limit) result = result.slice(-Number(q.limit));
-  return result;
-}
-
-function sendJson(res, status, obj) {
-  res.writeHead(status, {'content-type': 'application/json'});
-  res.end(JSON.stringify(obj));
-}
-
-function handleRequest(req, res) {
-  let url;
-  try {
-    url = new URL(req.url, 'http://localhost');
-  } catch (err) {
-    return sendJson(res, 400, {error: 'Invalid URL'});
-  }
-  const pathname = url.pathname;
-
-  if (pathname === '/health') {
-    return sendJson(res, 200, {status: 'ok'});
-  }
-
-  if (pathname === '/logs') {
-    try {
-      const query = Object.fromEntries(url.searchParams.entries());
-      const entries = applyQuery(readLog(), query);
-      sendJson(res, 200, entries);
-    } catch (err) {
-      sendJson(res, 500, {error: String(err)});
-    }
-    return;
-  }
-
-  if (pathname === '/logs/squashed') {
-    try {
-      sendJson(res, 200, squashEntries(readLog()));
-    } catch (err) {
-      sendJson(res, 500, {error: String(err)});
-    }
-    return;
-  }
-
-  const postMatch = pathname.match(/^\\/blacklist\\/domains$/);
-  const delMatch = pathname.match(/^\\/blacklist\\/domains\\/([^/]+)$/);
-
-  if (postMatch && req.method === 'GET') {
-    try {
-      const content = fs.existsSync(BLACKLIST_FILE) ? fs.readFileSync(BLACKLIST_FILE, 'utf-8') : '';
-      sendJson(res, 200, {domains: parseBlacklistDomains(content)});
-    } catch (err) {
-      sendJson(res, 500, {error: String(err)});
-    }
-    return;
-  }
-
-  if (postMatch && req.method === 'POST') {
-    let body = '';
-    req.on('data', c => body += c);
-    req.on('end', () => {
-      try {
-        const { domain } = JSON.parse(body);
-        if (!domain) return sendJson(res, 400, {error: 'Missing domain'});
-        const content = fs.existsSync(BLACKLIST_FILE) ? fs.readFileSync(BLACKLIST_FILE, 'utf-8') : '';
-        const norm = domain.toLowerCase().replace(/\\.$/, '');
-        if (!parseBlacklistDomains(content).includes(norm)) {
-          // Both families: an \`address=\` line only sinkholes the record type
-          // its target belongs to, so an IPv4-only entry leaves the domain
-          // reachable over AAAA/IPv6.
-          const newContent = (content ? content.trimEnd() + '\\n' : '') + 'address=/' + norm + '/0.0.0.0\\n' + 'address=/' + norm + '/::\\n';
-          fs.writeFileSync(BLACKLIST_FILE, newContent);
-        }
-        try { exec('kill -HUP 1', {stdio: 'ignore'}); } catch (e) {}
-        sendJson(res, 200, {status: 'ok'});
-      } catch (err) {
-        sendJson(res, 500, {error: String(err)});
-      }
-    });
-    return;
-  }
-
-  if (delMatch && req.method === 'DELETE') {
-    try {
-      const domain = decodeURIComponent(delMatch[1]);
-      const content = fs.existsSync(BLACKLIST_FILE) ? fs.readFileSync(BLACKLIST_FILE, 'utf-8') : '';
-      const norm = domain.toLowerCase().replace(/\\.$/, '');
-      const newContent = content.split('\\n').filter(line => {
-        const t = line.trim();
-        const addressMatch = /^address=\\/([^/]+)\\//.exec(t);
-        const lineDomain = (addressMatch ? addressMatch[1] : t).toLowerCase().replace(/\\.$/, '');
-        return lineDomain !== norm;
-      }).join('\\n') + (content.trim() ? '\\n' : '');
-      fs.writeFileSync(BLACKLIST_FILE, newContent);
-      try { exec('kill -HUP 1', {stdio: 'ignore'}); } catch (e) {}
-      sendJson(res, 200, {status: 'ok'});
-    } catch (err) {
-      sendJson(res, 500, {error: String(err)});
-    }
-    return;
-  }
-
-  sendJson(res, 404, {error: 'Not found'});
-}
-
-http.createServer(handleRequest).listen(PORT, '0.0.0.0', () => {
-  console.log('Egress API listening on port ' + PORT);
-});
-`;
-
-const ENTRYPOINT_TEMPLATE = `#!/bin/sh
+// Shell parameter expansions are written as \${VAR} so the TS template literal
+// leaves them for the shell.
+const ENTRYPOINT = `#!/bin/sh
 # Egress gateway entrypoint (ADR-0011). Applies the mounted iptables blacklist
 # to this netns, starts the egress HTTP API (ADR-0012) in the background, then
 # supervises dnsmasq with query logging. All stack services and run agents
@@ -334,7 +119,7 @@ const ENTRYPOINT_TEMPLATE = `#!/bin/sh
 # API (ADR-0012) triggers that by sending SIGHUP to PID 1 after every mutation.
 set -eu
 
-IP_BLACKLIST="{{{blacklistIpMount}}}"
+IP_BLACKLIST="${EGRESS_BLACKLIST_IP_MOUNT}"
 DNSMASQ_CONF="/etc/egress.d/dnsmasq.conf"
 DNSMASQ_PID=""
 
@@ -360,7 +145,7 @@ start_dnsmasq() {
     --conf-file="\${DNSMASQ_CONF}" \\
     --conf-dir=/etc/egress.d/,*.blacklist \\
     --log-queries \\
-    --log-facility="{{{logMount}}}/dnsmasq.log" &
+    --log-facility="${EGRESS_DNSMASQ_LOG}" &
   DNSMASQ_PID=$!
 }
 
@@ -384,7 +169,7 @@ node /egress-api.mjs &
 trap 'restart_dnsmasq' HUP
 trap 'kill "\${DNSMASQ_PID}" 2>/dev/null || true; exit 0' TERM INT
 
-mkdir -p "{{{logMount}}}"
+mkdir -p "${EGRESS_LOG_MOUNT}"
 start_dnsmasq
 
 # Supervise: exit (taking the container down, matching the old \`exec\`
@@ -398,41 +183,40 @@ done
 
 /** Renders the `entrypoint.sh` for the egress container. */
 export function renderEgressEntrypoint(): string {
-  return Mustache.render(ENTRYPOINT_TEMPLATE, {
-    blacklistIpMount: EGRESS_BLACKLIST_IP_MOUNT,
-    logMount: EGRESS_LOG_MOUNT,
-  });
+  return ENTRYPOINT;
 }
 
-/** Renders the egress API server script (ADR-0012). */
+/**
+ * The egress API server script (ADR-0012): the bundled, type-checked
+ * `src/egress/server.ts`. Kept as a function so callers stay uniform with the
+ * other renderers.
+ */
 export function renderEgressApiJs(): string {
-  return Mustache.render(EGGRESS_API_TEMPLATE, {
-    egressApiPort: EGRESS_API_PORT,
-  });
+  return EGRESS_API_BUNDLE;
 }
 
 /** Renders the base `dnsmasq.conf` for the egress container. */
 export function renderDnsmasqBaseConf(): string {
-  return Mustache.render(DNSMASQ_BASE_CONF_TEMPLATE, {});
+  return DNSMASQ_BASE_CONF;
 }
 
 /** Renders the `Dockerfile` for the egress container. */
 export function renderEgressDockerfile(): string {
-  return Mustache.render(DOCKERFILE_TEMPLATE, {});
+  return DOCKERFILE;
 }
 
 /** Renders the user-facing blacklist template seeded as `blacklist.example`. */
 export function renderBlacklistExample(): string {
-  return Mustache.render(BLACKLIST_EXAMPLE_TEMPLATE, {});
+  return BLACKLIST_EXAMPLE;
 }
 
 /** The files `e init` writes into `.e/egress/`, keyed by file name. */
-export function renderEgressFiles(): Record<string, string> {
+export function renderEgressFiles(): Record<EgressFileName, string> {
   return {
-    Dockerfile: renderEgressDockerfile(),
-    'entrypoint.sh': renderEgressEntrypoint(),
-    'dnsmasq.conf': renderDnsmasqBaseConf(),
-    'egress-api.mjs': renderEgressApiJs(),
-    'blacklist.example': renderBlacklistExample(),
+    [EGRESS_FILES.dockerfile]: renderEgressDockerfile(),
+    [EGRESS_FILES.entrypoint]: renderEgressEntrypoint(),
+    [EGRESS_FILES.dnsmasqConf]: renderDnsmasqBaseConf(),
+    [EGRESS_FILES.apiScript]: renderEgressApiJs(),
+    [EGRESS_FILES.blacklistExample]: renderBlacklistExample(),
   };
 }

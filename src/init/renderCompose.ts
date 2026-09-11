@@ -5,6 +5,7 @@ import {
 } from '../hardware/index.js';
 import Mustache from 'mustache';
 import { STACK_NETWORK } from '../constants.js';
+import { EGRESS_API_PORT } from '../egress/constants.js';
 import type { LocalRuntime } from './localRuntimes.js';
 
 /** Compose template; conditional blocks keep each local runtime self-contained. */
@@ -47,7 +48,7 @@ services:
       - egress-logs:/var/log/egress
     ports:
       - "127.0.0.1:20128:20128"
-      - "127.0.0.1:20129:20129"
+      - "127.0.0.1:${EGRESS_API_PORT}:${EGRESS_API_PORT}"
 {{#llama}}      - "127.0.0.1:9931:9931"
 {{/llama}}{{#ollama}}      - "127.0.0.1:11434:11434"
 {{/ollama}}{{#vllm}}      - "127.0.0.1:8000:8000"

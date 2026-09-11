@@ -4,6 +4,8 @@
  * value instead of matching a string against `process.env` themselves —
  * one place to see every variable this process is sensitive to.
  */
+import { EGRESS_API_PORT } from '../egress/constants.js';
+
 export class Env {
   /** Set on the detached `serve` child so it can recognize itself on restart. */
   static readonly SERVE_DETACHED_VAR = 'E_SERVE_DETACHED';
@@ -15,7 +17,7 @@ export class Env {
 
   /** Host-published base URL of the egress container HTTP API (ADR-0012). */
   get egressApiUrl(): string {
-    return process.env.EGRESS_API_URL ?? 'http://127.0.0.1:20129';
+    return process.env.EGRESS_API_URL ?? `http://127.0.0.1:${EGRESS_API_PORT}`;
   }
 
   /** Host-published base URL of the OmniRoute dashboard (see `renderCompose`). */

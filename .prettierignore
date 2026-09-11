@@ -1,0 +1,4 @@
+node_modules
+dist
+command
+src/egress/bundle.generated.ts

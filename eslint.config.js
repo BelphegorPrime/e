@@ -13,6 +13,7 @@ export default tseslint.config(
       '**/node_modules/',
       '**/dist/',
       '**/.git/',
+      'src/egress/bundle.generated.ts',
     ],
   },
   {
