@@ -64,10 +64,12 @@ jobs:
       - name: Install ldid
         run: brew install ldid
 
+      # ldid has no --version flag (prints usage and exits 1), so report the
+      # installed formula version via brew instead.
       - name: Verify ldid
         run: |
           which ldid
-          ldid --version
+          brew list --versions ldid
 
       - name: Install dependencies
         run: npm ci
