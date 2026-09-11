@@ -177,26 +177,12 @@ export function interactiveWizard(): Wizard {
   };
 }
 
-/** Prompts for the installation directory. */
-async function promptRoot(
-  rl: readline.Interface,
-  current: string
-): Promise<string> {
-  log.info('\nInstallation directory (where `.e/` will be created):');
-  for (;;) {
-    const answer = await rl.question(`Choose [${current}]: `);
-    const choice = answer.trim();
-    if (choice === '') return current;
-    const resolved = path.resolve(choice);
-    return resolved;
-  }
-}
-
 /** Prompts for installation directory. */
 async function promptRoot(
   rl: readline.Interface,
   current: string
 ): Promise<string> {
+  log.info('\nInstallation directory (where `.e/` will be created):');
   for (;;) {
     const answer = await rl.question(`Installation directory [${current}]: `);
     const choice = answer.trim();
