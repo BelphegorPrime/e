@@ -7,7 +7,6 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { ActivityPage } from '@/pages/activity';
 import { AgentsPage } from '@/pages/agents';
 import { DashboardPage } from '@/pages/dashboard';
-import { DashboardPage } from '@/pages/dashboard';
 import { EgressPage } from '@/pages/egress';
 import { OmniRoutePage } from '@/pages/omniroute';
 import { RunsPage } from '@/pages/runs';
