@@ -97,7 +97,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
 
   const wizard: Wizard = interactive ? interactiveWizard() : defaultsWizard;
   const answers = await wizard.ask({
-    root: state.root,
+    root,
     harnessNames: state.harnessNames,
     currentHarness: state.currentDefaultHarness,
     promptKeys: keysToPrompt(requiredEnvKeys(), existingValues),
