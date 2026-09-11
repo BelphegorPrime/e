@@ -10,15 +10,16 @@ import {
 } from '../store/paths.js';
 import { findRoot } from '../store/root.js';
 import { log } from '../utils/log.js';
-import { ContainerRuntime, type ContainerRunner } from '../runtime/index.js';
+import type { ContainerRunner } from '../runtime/index.js';
+import { resolveRuntime } from '../runtime/registry.js';
 import { OMNIROUTE_VOLUME } from '../constants.js';
 
 export interface ExportOptions {
   output?: string;
   root?: string;
   /**
-   * Runtime used for docker volume operations; defaults to the production
-   * `ContainerRuntime` (and is injected by tests as a recording fake).
+   * Runtime used for the volume operations; defaults to the resolved
+   * production runtime (and is injected by tests as a recording fake).
    */
   runner?: ContainerRunner;
 }
@@ -40,7 +41,8 @@ export async function exportConfiguration(
   // every path to the user's home directory.
   const root = findRoot(options.root);
   const baseDir = eBaseDir(root);
-  const runner = options.runner ?? new ContainerRuntime('docker');
+  // `--runtime`/`E_RUNTIME`/auto-detect, like `e spawn` (never hardcoded docker).
+  const runner = options.runner ?? resolveRuntime();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const defaultOutput = path.join(baseDir, `e-export-${timestamp}.zip`);
   const outputPath = options.output ?? defaultOutput;

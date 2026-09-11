@@ -43,7 +43,8 @@ The host-side merge of a sibling's branched work back into the parent worktree a
 A RunScratch + primary container + sidecars, the unit that executes an Agent. With the local stack present, agent and sidecars share the global `e-egress` network namespace (ADR-0011); otherwise sidecars sit on a private per-run network. The pure description of a run is a `SpawnPlan` (`src/spawn/spawnPlan.ts`); `runSpawn` (`src/runs/runSpawn.ts`) executes it. Container configuration is a `RunOptions` (below).
 
 **Runtime**:
-The container engine - docker or podman - that builds and runs harness images. Runtime instance with docker/podman commands.
+The container engine that builds and runs harness images - any engine whose CLI matches Docker's: `docker`, `podman`, `nerdctl`, or `finch` (the registry in `src/runtime/registry.ts`; desktop products such as Docker Desktop, OrbStack, Colima, Rancher Desktop, Podman Desktop, and Finch provide one of them). Selected by `--runtime`, then `E_RUNTIME`, then the first one on `PATH`. Engines with a different command surface (Apple `container`, Docker `sbx`) are not Runtimes; they would need their own `ContainerRunner` adapter.
+_Avoid_: naming a desktop product as a runtime (it is the CLI it installs that counts)
 
 **Spawn**:
 To start a run - includes planning phase with container configuration.
@@ -83,7 +84,10 @@ Container configuration options (`src/runtime/index.ts`):
 - `extraHosts`: string[]?
 
 **ContainerRuntime**:
-Runtime instance with docker/podman commands
+Runtime instance driving one Docker-CLI-compatible executable (`src/runtime/index.ts`)
+
+**Worktrees dir**:
+The host directory run worktrees are created in (`src/runs/worktreesDir.ts`): `E_WORKTREES_DIR`, else the platform default - the temp dir on Linux, `~/Library/Caches/e/worktrees` on macOS, `%LOCALAPPDATA%\e\worktrees` on Windows - chosen so the engine's VM can bind-mount it
 
 **RunScratch**:
 Temporary workspace

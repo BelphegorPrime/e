@@ -4,6 +4,7 @@ import type { Command } from 'commander';
 import { LOCAL_RUNTIMES, type LocalRuntime } from '../init/localRuntimes.js';
 import { log } from '../utils/log.js';
 import { env } from '../utils/env.js';
+import { resolveRuntime } from './registry.js';
 
 /**
  * The minimal spawn surface these commands use. Abstracted from
@@ -40,7 +41,13 @@ export function registerRuntimeCommands(program: Command): void {
       .command('download <model>')
       .description(`Download <model> into the running ${runtime.label} stack`)
       .action((model: string) => {
-        downloadModel(runtime.id, model);
+        // The Ollama pull runs through the same engine `e spawn` would use.
+        downloadModel(
+          runtime.id,
+          model,
+          cp.spawnSync,
+          resolveRuntime().command
+        );
       });
   }
 }
@@ -51,19 +58,21 @@ export function registerRuntimeCommands(program: Command): void {
  * its HTTP API (the same POST the old bootstrap used), Ollama pulls through
  * its CLI inside the container, and vLLM pulls weights on first load - there
  * is no pull command to invoke, so this reports the handoff. `spawn` is
- * injectable for tests and defaults to the real `spawnSync`.
+ * injectable for tests and defaults to the real `spawnSync`; `containerCommand`
+ * is the engine CLI the Ollama pull runs through (`docker`, `podman`, ...).
  */
 export function downloadModel(
   runtime: LocalRuntime,
   model: string,
-  spawn: SpawnSyncLike = cp.spawnSync
+  spawn: SpawnSyncLike = cp.spawnSync,
+  containerCommand = 'docker'
 ): void {
   switch (runtime) {
     case 'llamacpp':
       downloadLlamacpp(model, spawn);
       return;
     case 'ollama':
-      downloadOllama(model, spawn);
+      downloadOllama(model, spawn, containerCommand);
       return;
     case 'vllm':
       log.info(
@@ -102,18 +111,25 @@ function downloadLlamacpp(model: string, spawn: SpawnSyncLike): void {
   log.success(`Model "${model}" is downloading into llama.cpp.`);
 }
 
-function downloadOllama(model: string, spawn: SpawnSyncLike): void {
+function downloadOllama(
+  model: string,
+  spawn: SpawnSyncLike,
+  containerCommand: string
+): void {
   log.info(`Pulling "${model}" into the ollama container...`);
-  const result = spawn('docker', ['exec', 'ollama', 'ollama', 'pull', model], {
-    stdio: 'inherit',
-    shell: false,
-  });
+  const result = spawn(
+    containerCommand,
+    ['exec', 'ollama', 'ollama', 'pull', model],
+    { stdio: 'inherit', shell: false }
+  );
   if (result.error) {
-    throw new Error(`Failed to start docker: ${result.error.message}`);
+    throw new Error(
+      `Failed to start ${containerCommand}: ${result.error.message}`
+    );
   }
   if (result.status !== 0) {
     throw new Error(
-      `ollama pull failed (exit code ${result.status ?? 1}). Is the stack running? Try \`docker compose -f .e/compose.yaml up -d\`.`
+      `ollama pull failed (exit code ${result.status ?? 1}). Is the stack running? Try \`${containerCommand} compose -f .e/compose.yaml up -d\`.`
     );
   }
   log.success(`Model "${model}" pulled into Ollama.`);

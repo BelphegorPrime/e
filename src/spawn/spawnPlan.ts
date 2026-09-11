@@ -184,6 +184,11 @@ export interface SpawnFacts {
   userEnvFile?: string;
   /** The raw `--dir` value, only for the "run `e init` --dir <x>" hint. */
   dirOpt?: string;
+  /**
+   * Where the run's worktree is created (`runs/worktreesDir.ts`): the platform
+   * default or `E_WORKTREES_DIR`. Absent → `runSpawn` applies the default.
+   */
+  worktreesDir?: string;
 }
 
 /**

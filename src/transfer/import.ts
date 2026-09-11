@@ -9,7 +9,8 @@ import {
   bootstrapScriptPath,
 } from '../store/paths.js';
 import { log } from '../utils/log.js';
-import { ContainerRuntime, type ContainerRunner } from '../runtime/index.js';
+import type { ContainerRunner } from '../runtime/index.js';
+import { resolveRuntime } from '../runtime/registry.js';
 import { OMNIROUTE_VOLUME } from '../constants.js';
 
 export interface ImportOptions {
@@ -17,8 +18,8 @@ export interface ImportOptions {
   root?: string;
   force?: boolean;
   /**
-   * Runtime used for docker volume operations; defaults to the production
-   * `ContainerRuntime` (and is injected by tests as a recording fake).
+   * Runtime used for the volume operations; defaults to the resolved
+   * production runtime (and is injected by tests as a recording fake).
    */
   runner?: ContainerRunner;
 }
@@ -37,7 +38,8 @@ export async function importConfiguration(
 ): Promise<void> {
   const { file: zipPath, root, force = false } = options;
   const baseDir = eBaseDir(root);
-  const runner = options.runner ?? new ContainerRuntime('docker');
+  // `--runtime`/`E_RUNTIME`/auto-detect, like `e spawn` (never hardcoded docker).
+  const runner = options.runner ?? resolveRuntime();
 
   if (!fs.existsSync(zipPath)) {
     throw new Error(`Import file not found: ${zipPath}`);

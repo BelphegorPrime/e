@@ -673,7 +673,7 @@ export function registerServeCommand(program: Command): void {
       });
       if (!engineSocket) {
         log.warn(
-          'No container engine socket found; the browser terminal cannot start runs.'
+          "No container engine socket found; the browser terminal cannot start runs. Set DOCKER_HOST (unix:// or npipe://) or CONTAINER_HOST to your engine's socket if it lives somewhere unusual."
         );
       }
       const app = createServeApp(resolveUiDirectory(), {

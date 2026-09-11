@@ -1,7 +1,9 @@
 import fs from 'fs';
 import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
-import { ContainerRuntime, type RunOptions } from '../runtime/index.js';
+import type { RunOptions } from '../runtime/index.js';
+import { resolveRuntime, RUNTIME_NAMES } from '../runtime/registry.js';
+import { defaultWorktreesDir } from '../runs/worktreesDir.js';
 import { HostGit } from '../git/host.js';
 import { HostPullRequest } from '../github/host.js';
 import {
@@ -35,46 +37,6 @@ import { localStack } from '../runtime/stack.js';
 
 import { log } from '../utils/log.js';
 import { env } from '../utils/env.js';
-
-/** Available runtimes, mapping name → executable, in auto-detection order. */
-const RUNTIMES: Record<string, string> = {
-  docker: 'docker',
-  podman: 'podman',
-};
-
-/**
- * Resolves which container runtime to use.
- * If `preferred` is given, it must be a known runtime and be available.
- * Otherwise the first available runtime is returned (docker preferred over podman).
- */
-export function resolveRuntime(preferred?: string): ContainerRuntime {
-  if (preferred) {
-    const command = RUNTIMES[preferred];
-    if (!command) {
-      throw new Error(
-        `Invalid runtime "${preferred}". Valid values: ${Object.keys(RUNTIMES).join(', ')}.`
-      );
-    }
-    const runtime = new ContainerRuntime(command);
-    if (!runtime.isAvailable()) {
-      throw new Error(
-        `Requested runtime "${preferred}" is not installed or not on PATH.`
-      );
-    }
-    return runtime;
-  }
-
-  for (const command of Object.values(RUNTIMES)) {
-    const runtime = new ContainerRuntime(command);
-    if (runtime.isAvailable()) {
-      return runtime;
-    }
-  }
-
-  throw new Error(
-    `No container runtime found. Install docker or podman, or make sure it is on PATH.`
-  );
-}
 
 interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   runtime?: string;
@@ -287,6 +249,8 @@ function gatherSpawnFacts(
       root === undefined ? undefined : egressBlacklistPath(root),
     userEnvFile: opts.envFile,
     dirOpt: opts.dir,
+    // Platform default or `E_WORKTREES_DIR`; a path the engine can bind-mount.
+    worktreesDir: defaultWorktreesDir(),
   };
 }
 
@@ -301,7 +265,7 @@ export function registerSpawnCommand(program: Command): void {
     .argument('[prompt...]', 'instruction passed to the harness')
     .option(
       '--runtime <runtime>',
-      'container runtime to use (docker or podman)'
+      `container runtime to use: ${RUNTIME_NAMES.join(', ')} (default: $E_RUNTIME, else the first one on PATH)`
     )
     .option(
       '--name <name>',

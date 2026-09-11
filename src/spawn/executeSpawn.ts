@@ -199,6 +199,7 @@ export async function executeSpawn(
       sidecars,
       configMounts,
       keepWorktree: facts.keepWorktree,
+      worktreesDir: facts.worktreesDir,
     }
   );
 }

@@ -1,5 +1,6 @@
 import type { Agent } from '../agent/index.js';
 import type { Git } from '../git/index.js';
+import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
 
 /** Clean seam for run branch naming and collision resolution. */
 export interface BranchNamer {
@@ -15,7 +16,7 @@ export interface BranchNamer {
 export class ProductionBranchNamer implements BranchNamer {
   constructor(
     private readonly git: Git,
-    private readonly worktreesDir = '/tmp/e-worktrees'
+    private readonly worktreesDir: string = defaultWorktreesDir()
   ) {}
 
   async nextBranch(
@@ -31,7 +32,7 @@ export class ProductionBranchNamer implements BranchNamer {
       const branch = `${prefix}-${counter}`;
       try {
         this.git.addWorktree({
-          path: `${this.worktreesDir}/${branch}`,
+          path: worktreePathFor(this.worktreesDir, branch),
           branch,
           base: this.git.headSha(),
         });

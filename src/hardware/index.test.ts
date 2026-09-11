@@ -10,9 +10,26 @@ const SIGNALS = {
   intelGpuPresent: false,
 };
 
-test('chooseVendor: a non-Linux platform always falls back to cpu', () => {
+test('chooseVendor: macOS always falls back to cpu (no container GPU passthrough)', () => {
   assert.equal(
     chooseVendor({ ...SIGNALS, platform: 'darwin', nvidiaSmiAvailable: true }),
+    'cpu'
+  );
+});
+
+test('chooseVendor: Windows passes only NVIDIA through (Docker Desktop WSL 2 backend)', () => {
+  assert.equal(
+    chooseVendor({ ...SIGNALS, platform: 'win32', nvidiaSmiAvailable: true }),
+    'nvidia'
+  );
+  assert.equal(
+    chooseVendor({
+      ...SIGNALS,
+      platform: 'win32',
+      amdKfdPresent: true,
+      rocminfoAvailable: true,
+      intelGpuPresent: true,
+    }),
     'cpu'
   );
 });

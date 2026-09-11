@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import tab from '@bomb.sh/tab/commander';
+import { RUNTIMES } from '../runtime/registry.js';
 
 /**
  * Register shell completions for the program.
@@ -16,8 +17,7 @@ export function registerCompletion(program: Command): void {
   const runtimeOption = spawnCommand?.options.get('runtime');
   if (runtimeOption) {
     runtimeOption.handler = complete => {
-      complete('docker', 'Use Docker runtime');
-      complete('podman', 'Use Podman runtime');
+      for (const runtime of RUNTIMES) complete(runtime.name, runtime.label);
     };
   }
 

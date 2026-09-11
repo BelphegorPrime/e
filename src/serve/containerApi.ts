@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import type { Duplex } from 'node:stream';
 
 /**
@@ -29,24 +31,94 @@ export interface ContainerRef {
 }
 
 /**
- * Where the engine listens. `DOCKER_HOST=unix://…` wins, then Docker's default
- * socket, then Podman's rootless service socket. Returns `undefined` when none
- * exists, so `serve` can report "no engine socket" instead of failing on the
- * first attach.
+ * The local socket a `DOCKER_HOST`/`CONTAINER_HOST` value names, or undefined
+ * when the value is not a local socket (`tcp://`, `ssh://`): `unix://<path>`
+ * on Linux/macOS, `npipe:////./pipe/<name>` on Windows (returned in the
+ * `\\.\pipe\<name>` form Node's `socketPath` takes).
  */
-export function resolveEngineSocketPath(
-  environment: Record<string, string | undefined> = process.env,
-  exists: (path: string) => boolean = fs.existsSync
-): string | undefined {
-  const dockerHost = environment.DOCKER_HOST;
-  if (dockerHost?.startsWith('unix://')) {
-    const path = dockerHost.slice('unix://'.length);
-    return exists(path) ? path : undefined;
+export function localSocketFromHost(host: string): string | undefined {
+  if (host.startsWith('unix://')) return host.slice('unix://'.length);
+  if (host.startsWith('npipe://')) {
+    return host.slice('npipe://'.length).replace(/\//g, '\\');
+  }
+  return undefined;
+}
+
+/**
+ * The engine sockets worth probing on `platform`, most common first. Every
+ * engine `e` drives exposes the Docker Engine API on one of these: on Linux
+ * the system socket, the rootless Docker and Podman user sockets, and the
+ * Podman system service; on macOS the per-user sockets Docker Desktop,
+ * OrbStack, Colima, Rancher Desktop, and Podman machine create (all under the
+ * home directory, so they are independent of `sudo`); on Windows the named
+ * pipes of Docker Desktop and Podman machine. Unix paths are built with the
+ * POSIX joiner so the list is stable whatever platform computes it.
+ */
+export function engineSocketCandidates(
+  platform: string,
+  homedir: string,
+  environment: Record<string, string | undefined>
+): string[] {
+  const join = path.posix.join;
+  if (platform === 'win32') {
+    return [
+      '\\\\.\\pipe\\docker_engine',
+      '\\\\.\\pipe\\podman-machine-default',
+    ];
+  }
+  if (platform === 'darwin') {
+    return [
+      join(homedir, '.docker', 'run', 'docker.sock'),
+      '/var/run/docker.sock',
+      join(homedir, '.orbstack', 'run', 'docker.sock'),
+      join(homedir, '.colima', 'default', 'docker.sock'),
+      join(homedir, '.colima', 'docker.sock'),
+      join(homedir, '.rd', 'docker.sock'),
+      join(
+        homedir,
+        '.local',
+        'share',
+        'containers',
+        'podman',
+        'machine',
+        'podman.sock'
+      ),
+    ];
   }
   const candidates = ['/var/run/docker.sock'];
   const runtimeDir = environment.XDG_RUNTIME_DIR;
-  if (runtimeDir) candidates.push(`${runtimeDir}/podman/podman.sock`);
-  return candidates.find(exists);
+  if (runtimeDir) {
+    candidates.push(
+      join(runtimeDir, 'docker.sock'),
+      join(runtimeDir, 'podman', 'podman.sock')
+    );
+  }
+  candidates.push('/run/podman/podman.sock');
+  return candidates;
+}
+
+/**
+ * Where the engine listens. An explicit `DOCKER_HOST` (Docker) or
+ * `CONTAINER_HOST` (Podman) naming a local socket wins and is final - a
+ * missing socket there yields `undefined` rather than a silent fallback to a
+ * different engine. Otherwise the platform's candidates
+ * ({@link engineSocketCandidates}) are probed in order. Returns `undefined`
+ * when none exists, so `serve` can report "no engine socket" instead of
+ * failing on the first attach.
+ */
+export function resolveEngineSocketPath(
+  environment: Record<string, string | undefined> = process.env,
+  exists: (path: string) => boolean = fs.existsSync,
+  platform: string = process.platform,
+  homedir: string = os.homedir()
+): string | undefined {
+  for (const key of ['DOCKER_HOST', 'CONTAINER_HOST']) {
+    const host = environment[key];
+    if (!host) continue;
+    const socket = localSocketFromHost(host);
+    if (socket !== undefined) return exists(socket) ? socket : undefined;
+  }
+  return engineSocketCandidates(platform, homedir, environment).find(exists);
 }
 
 /**
@@ -70,7 +142,11 @@ interface EngineResponse {
   body: string;
 }
 
-/** {@link EngineApi} over the engine's unix socket. */
+/**
+ * {@link EngineApi} over the engine's local socket: a unix socket on Linux and
+ * macOS, or a named pipe (`\\.\pipe\docker_engine`) on Windows - Node's
+ * `socketPath` speaks both, so one client covers every platform.
+ */
 export class UnixSocketEngineApi implements EngineApi {
   constructor(private readonly socketPath: string) {}
 

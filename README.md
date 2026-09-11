@@ -43,6 +43,163 @@ to one parent/child level). The docs below are the hands-on build guide; an AI
 agent that needs to know how to delegate, what a spawned run provides, and how
 results flow back should read [docs/agents/e.md](./docs/agents/e.md).
 
+## Install
+
+`e` is a single host-side binary. It needs three things on the host: `git`, a
+container engine that speaks the Docker CLI, and (for pushes and PR/MRs) your
+git credentials plus the platform CLI. Everything else - the harness CLIs, the
+skills, the model gateway - runs in containers `e` builds.
+
+### Prerequisites (all platforms)
+
+| Dependency                      | Why                                                                                                                                           | Required                 |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `git` 2.20+                     | Each run is a git worktree on its own branch (ADR-0001); the host commits and pushes (ADR-0002)                                               | yes                      |
+| A container engine              | Builds harness images, runs the agent container, sidecars, and the local stack. See [Container runtimes](#container-runtimes) for the choices | yes                      |
+| Compose v2 (`<engine> compose`) | Only for the local OmniRoute/egress stack `e init` renders (`.e/compose.yaml`); runs without the stack need no Compose                        | for the local stack      |
+| `gh` or `glab`                  | Opens the PR/MR after a successful run (GitHub/Forgejo/Gitea via `gh`, GitLab via `glab`); must be authenticated on the host                  | for PR/MR creation       |
+| Node.js 24+ and npm             | Only to build `e` from source or run the tests; the prebuilt binaries embed their own Node runtime                                            | for building from source |
+
+### Prebuilt binaries
+
+Every tagged release on the
+[GitHub Releases page](https://github.com/BelphegorPrime/e/releases) ships six
+archives, one per target: `e-linux-x64.tar.gz`, `e-linux-arm64.tar.gz`,
+`e-macos-x64.tar.gz`, `e-macos-arm64.tar.gz`, `e-win-x64.zip`, and
+`e-win-arm64.zip`. Each unpacks to a single `e` (or `e.exe`) file.
+
+```bash
+# Linux / macOS: unpack and put `e` on PATH
+tar -xzf e-<os>-<arch>.tar.gz
+sudo install -m 0755 e /usr/local/bin/e      # or ~/.local/bin, ~/bin, ...
+e --version
+```
+
+```powershell
+# Windows (PowerShell): unpack and put e.exe on PATH
+Expand-Archive e-win-x64.zip -DestinationPath "$env:LOCALAPPDATA\Programs\e"
+[Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:LOCALAPPDATA\Programs\e", "User")
+e --version   # in a new terminal
+```
+
+The macOS binaries are ad-hoc signed during the build. If Gatekeeper still
+refuses a downloaded copy, clear the quarantine flag once:
+`xattr -d com.apple.quarantine ./e`.
+
+### Linux
+
+- **Engine**: [Docker Engine](https://docs.docker.com/engine/install/) with the
+  `docker-compose-plugin` (the `get.docker.com` script installs both), or
+  Podman 4.4+ with `podman compose` (needs `podman-compose` or
+  `docker-compose` installed alongside). Add yourself to the `docker` group so
+  `e` can talk to the daemon without `sudo`.
+- **Rootless engines** map the container's uid 1000 into your subordinate uid
+  range, so the bind-mounted worktree may look owned by an unmapped uid inside
+  the container. Verify writability once per machine, see
+  [docs/security/attack-surface.md](./docs/security/attack-surface.md) (Zone 1)
+  for the probe command and the `--userns=keep-id` workaround.
+- **GPU** for the local llama.cpp service: NVIDIA needs the
+  `nvidia-container-toolkit`, AMD needs ROCm (`/dev/kfd`), Intel needs
+  `/dev/dri`; `e init` detects the vendor and renders the matching image and
+  device passthrough.
+- Any distribution works; `e` has no distro-specific dependency beyond the
+  engine. (Docker's own `sbx` microVM sandboxes are a different product with a
+  KVM requirement; `e` does not use them, see issue #107.)
+
+### macOS
+
+Every engine on macOS runs Linux containers inside a VM, and only the paths it
+shares with that VM can be bind-mounted. `e` therefore keeps run worktrees
+under `~/Library/Caches/e/worktrees`, a path every engine below shares by
+default (see [Platform notes](#platform-notes) to move it).
+
+- **Engine**, pick one (all Apple Silicon and Intel):
+  - [Docker Desktop](https://docs.docker.com/desktop/setup/install/mac-install/) -
+    `brew install --cask docker`
+  - [OrbStack](https://orbstack.dev/) - `brew install orbstack` (Docker CLI)
+  - [Colima](https://github.com/abiosoft/colima) -
+    `brew install colima docker docker-compose && colima start` (Docker CLI)
+  - [Rancher Desktop](https://rancherdesktop.io/) - `brew install --cask rancher`
+    (choose dockerd/moby for `docker`, or containerd for `nerdctl`)
+  - [Podman](https://podman.io/) -
+    `brew install podman podman-compose && podman machine init && podman machine start`
+  - [Finch](https://runfinch.com/) - `brew install --cask finch && finch vm init`
+- **Host tools**: `brew install git gh` (or `glab` for GitLab).
+- **GPU**: no macOS engine passes a GPU into a container; the local llama.cpp
+  service runs on the CPU. Point an Agent at a hosted provider, or at
+  Ollama/llama.cpp running natively on the host, for Metal acceleration.
+
+### Windows
+
+The simplest path is **WSL 2**: install a distribution, install Docker Desktop
+with the WSL 2 backend (or Docker Engine inside the distribution), and run the
+Linux `e` binary from the WSL shell following the Linux notes above.
+
+Running the native `e.exe` from PowerShell or Windows Terminal also works:
+
+- **Engine**, pick one:
+  - [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
+    with the WSL 2 backend - `winget install Docker.DockerDesktop`
+  - [Podman Desktop](https://podman-desktop.io/) -
+    `winget install RedHat.Podman RedHat.Podman-Desktop`, then create a
+    Podman machine
+  - [Rancher Desktop](https://rancherdesktop.io/) -
+    `winget install SUSE.RancherDesktop`
+  - [Finch](https://runfinch.com/) - the MSI installer from the
+    [Finch releases](https://github.com/runfinch/finch/releases) (needs WSL 2)
+- **Host tools**: `winget install Git.Git GitHub.cli` (or `glab`). Git for
+  Windows is what `e` calls for worktrees, commits, and pushes.
+- **Paths**: run worktrees live under `%LOCALAPPDATA%\e\worktrees`, on the
+  system drive every engine shares into its VM. Keep the repository you spawn
+  from on a local NTFS drive (a network share or a path only visible inside
+  WSL cannot be bind-mounted by a Windows engine).
+- **Shell completion**: `e init` writes the completion loader into your
+  PowerShell `$PROFILE` when you pick `powershell`; the POSIX shells are
+  covered when you run `e` from WSL.
+- **GPU**: Docker Desktop's WSL 2 backend passes NVIDIA GPUs through, and
+  `e init` renders the CUDA llama.cpp image when `nvidia-smi` is present.
+  AMD and Intel GPUs fall back to the CPU image.
+
+### Container runtimes
+
+`e` drives any engine whose CLI matches Docker's (`run`, `build`, `network`,
+`volume`, `exec`, `inspect`, `compose`). The `--runtime` names, in
+auto-detection order:
+
+| `--runtime` | Executable | Products that provide it                                                   | Local stack (`compose`)           |
+| ----------- | ---------- | -------------------------------------------------------------------------- | --------------------------------- |
+| `docker`    | `docker`   | Docker Engine, Docker Desktop, OrbStack, Colima, Rancher Desktop (dockerd) | supported                         |
+| `podman`    | `podman`   | Podman, Podman Desktop                                                     | supported (`podman compose` 4.4+) |
+| `nerdctl`   | `nerdctl`  | containerd hosts: Rancher Desktop (containerd mode), Lima                  | best effort (`nerdctl compose`)   |
+| `finch`     | `finch`    | Finch on macOS and Windows                                                 | best effort (`finch compose`)     |
+
+Selection order: `e spawn --runtime <name>`, then the `E_RUNTIME` environment
+variable, then the first executable found on `PATH` in the order above.
+`e export`/`e import` and `e ollama download` use the same resolution, so a
+Podman-only host never sees a stray `docker` call.
+
+The local stack (`.e/compose.yaml`) relies on Compose v2 features - shared
+network namespaces (`network_mode: "service:egress"`), healthchecks, and
+`--env-file` interpolation - that Docker Compose and `podman compose` honour;
+nerdctl's and Finch's Compose implementations are less complete, so with those
+runtimes prefer runs without the local stack (skip the runtime selection in
+`e init`) and point Agents at a hosted provider.
+
+Not supported as runtimes: Apple's `container` CLI (a different command
+surface, no shared network namespaces) and Docker Sandboxes (`sbx`, microVMs
+with their own network and image model). Both would need a dedicated adapter
+behind the `ContainerRunner` port rather than a registry entry.
+
+### Platform notes
+
+| Concern                          | Linux                                                                                                                             | macOS                                                                                                                        | Windows                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Run worktrees (`/workspace`)     | `$TMPDIR/e-worktrees` (usually `/tmp/e-worktrees`)                                                                                | `~/Library/Caches/e/worktrees`                                                                                               | `%LOCALAPPDATA%\e\worktrees`                                                              |
+| Override                         | `E_WORKTREES_DIR=<path>` on every platform; the path must be one the engine can bind-mount (shared into its VM on macOS/Windows)  |                                                                                                                              |                                                                                           |
+| Engine socket (browser terminal) | `DOCKER_HOST`/`CONTAINER_HOST`, `/var/run/docker.sock`, `$XDG_RUNTIME_DIR/{docker,podman/podman}.sock`, `/run/podman/podman.sock` | `~/.docker/run/docker.sock`, `/var/run/docker.sock`, OrbStack, Colima, Rancher Desktop, and Podman machine sockets under `~` | `\\.\pipe\docker_engine`, `\\.\pipe\podman-machine-default`, or `DOCKER_HOST=npipe://...` |
+| GPU for local llama.cpp          | NVIDIA, AMD (ROCm), Intel (`/dev/dri`)                                                                                            | CPU only                                                                                                                     | NVIDIA via Docker Desktop's WSL 2 backend; otherwise CPU                                  |
+| Shell completion via `e init`    | bash, zsh, fish                                                                                                                   | bash, zsh, fish                                                                                                              | PowerShell `$PROFILE` (bash/zsh/fish from WSL)                                            |
+
 ## Repo layout
 
 Single-package repo - no npm workspaces. Everything the `e` binary needs lives
@@ -71,6 +228,10 @@ repo root):
 alias e="node $(pwd)/dist/index.js"
 ```
 
+```powershell
+function e { node "$PWD\dist\index.js" @args }
+```
+
 `npm run build` builds the UI, compiles the TypeScript, and packages native
 binaries under `command/` via pkg. The UI assets are embedded in each
 standalone binary.
@@ -93,7 +254,9 @@ npm run link
 e --version
 ```
 
-Serve the bundled UI locally:
+Serve the bundled UI locally (pick the binary for your platform:
+`e-linux-x64`, `e-linux-arm64`, `e-macos-x64`, `e-macos-arm64`,
+`e-win-x64.exe`, or `e-win-arm64.exe`):
 
 ```bash
 npm run build
@@ -109,10 +272,14 @@ The UI's Terminal page starts runs from the browser (ADR-0014): pick an agent,
 optionally name the run, and the harness's TUI opens in the page. Each session
 is a headless `e spawn <agent> --name <slug>` in the directory `e serve` was
 started in, so start `e serve` inside the repository you want to work on. The
-terminal attaches to the run container through the container engine's socket
-(`DOCKER_HOST=unix://…`, `/var/run/docker.sock`, or Podman's
-`$XDG_RUNTIME_DIR/podman/podman.sock`); without one the page explains that
-runs cannot be started.
+terminal attaches to the run container through the container engine's socket:
+`DOCKER_HOST` (`unix://…` or `npipe://…`) or Podman's `CONTAINER_HOST` when
+set, otherwise the platform's usual sockets - `/var/run/docker.sock` and the
+rootless Docker/Podman user sockets on Linux, the Docker Desktop, OrbStack,
+Colima, Rancher Desktop, and Podman machine sockets under `~` on macOS, and
+the `docker_engine`/`podman-machine-default` named pipes on Windows (see
+[Platform notes](#platform-notes)). Without one the page explains that runs
+cannot be started.
 
 ## Test
 
@@ -157,8 +324,10 @@ node -e "const {HARNESSES,harnessCapabilities}=require('./dist/harness/index');c
 
 ### 3. End-to-end run
 
-Requires: `docker` **or** `podman` on `PATH`, a **git repo** to run inside (each
-run cuts its own worktree and branch), and a reachable model endpoint + key.
+Requires: a container engine on `PATH` (`docker`, `podman`, `nerdctl`, or
+`finch`, see [Container runtimes](#container-runtimes)), a **git repo** to run
+inside (each run cuts its own worktree and branch), and a reachable model
+endpoint + key.
 
 **a. Initialize the store** (writes `~/.e/` - Dockerfiles, default agents,
 `.env`, `config.json`). Interactive; press Enter to accept `pi` as the favorite,
@@ -284,4 +453,21 @@ is the durable artifact, and a warning reports why the open failed.
 | `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for opencode, which has no MCP delivery yet)                                                        |
 | `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model)                                                           |
 | `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                                                                                   |
+| `e spawn … --runtime <name>`                   | Pick the container engine (`docker`, `podman`, `nerdctl`, `finch`); default `$E_RUNTIME`, else the first one on `PATH`           |
 | `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                  |
+
+## Environment variables
+
+Host-side knobs the `e` process reads (`src/utils/env.ts`); none of them is
+injected into a container.
+
+| Variable                         | Effect                                                                                                            |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `E_RUNTIME`                      | Container engine to use when `--runtime` is not passed: `docker`, `podman`, `nerdctl`, or `finch`                 |
+| `E_WORKTREES_DIR`                | Where run worktrees are created; must be a path the engine can bind-mount (see [Platform notes](#platform-notes)) |
+| `DOCKER_HOST` / `CONTAINER_HOST` | Engine socket for the browser terminal (`unix://` or `npipe://`); also honoured by the engine CLIs themselves     |
+| `OMNIROUTE_URL`                  | Where `e` reaches the local OmniRoute gateway (default `http://127.0.0.1:20128`)                                  |
+| `EGRESS_API_URL`                 | Where `e` reaches the egress blacklist API (default `http://127.0.0.1:20129`)                                     |
+| `LOCAL_LLAMA_URL`                | Where `e llamacpp download` reaches llama.cpp (default `http://127.0.0.1:9931`)                                   |
+| `VERBOSE=true`                   | Debug logging (same as `-v`)                                                                                      |
+| `SHOULD_WRITE_LOG_FILE=true`     | Mirror every log line to `log.txt` in the working directory                                                       |

@@ -14,12 +14,18 @@ export interface HardwareSignals {
 }
 
 /**
- * Picks the best-supported GPU vendor from host signals, purely. Docker GPU
- * passthrough (nvidia-container-toolkit, ROCm, SYCL/`/dev/dri`) only works on
- * Linux hosts, so any other platform (macOS, Windows) falls back to `cpu`
- * regardless of what hardware is present.
+ * Picks the best-supported GPU vendor from host signals, purely. Container GPU
+ * passthrough is engine- and platform-specific: on Linux the
+ * nvidia-container-toolkit, ROCm (`/dev/kfd`), and SYCL (`/dev/dri`) paths all
+ * work; on Windows only NVIDIA does, through Docker Desktop's WSL 2 backend
+ * (the compose `deploy.resources.reservations.devices` spec is honoured there),
+ * so an NVIDIA GPU counts and everything else is `cpu`; on macOS no engine
+ * passes a GPU into a container, so it is always `cpu`.
  */
 export function chooseVendor(signals: HardwareSignals): HardwareVendor {
+  if (signals.platform === 'win32') {
+    return signals.nvidiaSmiAvailable ? 'nvidia' : 'cpu';
+  }
   if (signals.platform !== 'linux') return 'cpu';
   if (signals.nvidiaSmiAvailable) return 'nvidia';
   if (signals.amdKfdPresent || signals.rocminfoAvailable) return 'amd';

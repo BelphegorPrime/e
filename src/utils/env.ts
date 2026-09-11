@@ -18,6 +18,20 @@ export class Env {
    */
   static readonly TTY_HEADLESS_VAR = 'E_TTY_HEADLESS';
 
+  /**
+   * The container runtime to use when `--runtime` is not passed - one of the
+   * registry names (`docker`, `podman`, `nerdctl`, `finch`; see
+   * `runtime/registry.ts`). Unset: the first one found on `PATH`.
+   */
+  static readonly RUNTIME_VAR = 'E_RUNTIME';
+
+  /**
+   * Where run worktrees are created. Must be a path the container engine can
+   * bind-mount - on macOS/Windows that means a path shared into the engine's
+   * VM. Unset: a platform default (see `runs/worktreesDir.ts`).
+   */
+  static readonly WORKTREES_DIR_VAR = 'E_WORKTREES_DIR';
+
   /** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
   get localLlamaUrl(): string {
     return process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
@@ -31,6 +45,18 @@ export class Env {
   /** Host-published base URL of the OmniRoute dashboard (see `renderCompose`). */
   get omniRoutedUrl(): string {
     return process.env.OMNIROUTE_URL ?? `http://127.0.0.1:${OMNIROUTE_PORT}`;
+  }
+
+  /** The `E_RUNTIME` runtime name, or undefined when unset or blank. */
+  get runtime(): string | undefined {
+    const value = process.env[Env.RUNTIME_VAR]?.trim();
+    return value ? value : undefined;
+  }
+
+  /** The `E_WORKTREES_DIR` override, or undefined when unset or blank. */
+  get worktreesDir(): string | undefined {
+    const value = process.env[Env.WORKTREES_DIR_VAR]?.trim();
+    return value ? value : undefined;
   }
 
   /** Whether `log` should mirror every line to `log.txt` in the working directory. */

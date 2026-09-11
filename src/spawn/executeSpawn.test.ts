@@ -20,6 +20,7 @@ import type { Agent } from '../agent/index.js';
 
 class StubGit implements Git {
   removedWorktrees: string[] = [];
+  addedWorktrees: WorktreeSpec[] = [];
   constructor(private repo: boolean) {}
   isRepo(): boolean {
     return this.repo;
@@ -42,7 +43,9 @@ class StubGit implements Git {
   branchExists(): boolean {
     return false;
   }
-  addWorktree(_spec: WorktreeSpec): void {}
+  addWorktree(spec: WorktreeSpec): void {
+    this.addedWorktrees.push(spec);
+  }
   isDirty(): boolean {
     return false;
   }
@@ -206,6 +209,28 @@ test('--keep-worktree reaches the orchestrator: a clean worktree is left in plac
       scratch: new RunScratch(),
     });
     assert.equal(removed.removedWorktrees.length, 1);
+  });
+});
+
+test('worktreesDir reaches the orchestrator: the run worktree is cut under it', async () => {
+  await withDemoStore(async root => {
+    const git = new StubGit(true);
+    const worktreesDir = path.join(os.tmpdir(), 'e-custom-worktrees');
+    // `--name` pins the slug, so the expected path needs no slugify knowledge.
+    await executeSpawn(
+      facts({ root, worktreesDir, name: 'custom-run' }),
+      emptyPlan,
+      {
+        git,
+        runtime: new RecordingRuntime(),
+        scratch: new RunScratch(),
+      }
+    );
+    assert.equal(git.addedWorktrees.length, 1);
+    assert.equal(
+      git.addedWorktrees[0].path,
+      path.join(worktreesDir, 'e', 'demo', 'custom-run-1')
+    );
   });
 });
 

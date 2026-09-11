@@ -5,41 +5,129 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
+  localSocketFromHost,
   resolveEngineSocketPath,
   runContainerPattern,
   UnixSocketEngineApi,
 } from './containerApi.js';
 
-test('resolveEngineSocketPath prefers DOCKER_HOST, then docker, then podman', () => {
+test('resolveEngineSocketPath prefers DOCKER_HOST, then docker, then podman (Linux)', () => {
   const existing = new Set([
     '/custom.sock',
     '/var/run/docker.sock',
     '/run/user/1000/podman/podman.sock',
   ]);
   const exists = (p: string) => existing.has(p);
+  const linux = (
+    environment: Record<string, string | undefined>,
+    probe: (p: string) => boolean = exists
+  ) => resolveEngineSocketPath(environment, probe, 'linux', '/home/dev');
+  assert.equal(linux({ DOCKER_HOST: 'unix:///custom.sock' }), '/custom.sock');
+  assert.equal(linux({ DOCKER_HOST: 'unix:///missing.sock' }), undefined);
   assert.equal(
-    resolveEngineSocketPath({ DOCKER_HOST: 'unix:///custom.sock' }, exists),
-    '/custom.sock'
-  );
-  assert.equal(
-    resolveEngineSocketPath({ DOCKER_HOST: 'unix:///missing.sock' }, exists),
-    undefined
-  );
-  assert.equal(
-    resolveEngineSocketPath({ DOCKER_HOST: 'tcp://1.2.3.4:2375' }, exists),
+    linux({ DOCKER_HOST: 'tcp://1.2.3.4:2375' }),
     '/var/run/docker.sock'
   );
-  assert.equal(resolveEngineSocketPath({}, exists), '/var/run/docker.sock');
+  assert.equal(linux({}), '/var/run/docker.sock');
   assert.equal(
-    resolveEngineSocketPath(
-      { XDG_RUNTIME_DIR: '/run/user/1000' },
-      (p: string) => p.includes('podman')
+    linux({ XDG_RUNTIME_DIR: '/run/user/1000' }, (p: string) =>
+      p.includes('podman')
     ),
     '/run/user/1000/podman/podman.sock'
   );
+  // Rootless Docker's user socket comes before the Podman user socket.
   assert.equal(
-    resolveEngineSocketPath({}, () => false),
+    linux({ XDG_RUNTIME_DIR: '/run/user/1000' }, (p: string) =>
+      p.startsWith('/run/user/1000/')
+    ),
+    '/run/user/1000/docker.sock'
+  );
+  assert.equal(
+    linux({}, () => false),
     undefined
+  );
+});
+
+test("resolveEngineSocketPath honours Podman's CONTAINER_HOST after DOCKER_HOST", () => {
+  const exists = (p: string) => p === '/podman.sock';
+  assert.equal(
+    resolveEngineSocketPath(
+      { CONTAINER_HOST: 'unix:///podman.sock' },
+      exists,
+      'linux',
+      '/home/dev'
+    ),
+    '/podman.sock'
+  );
+  // A DOCKER_HOST that is a remote engine is skipped, CONTAINER_HOST still counts.
+  assert.equal(
+    resolveEngineSocketPath(
+      { DOCKER_HOST: 'ssh://box', CONTAINER_HOST: 'unix:///podman.sock' },
+      exists,
+      'linux',
+      '/home/dev'
+    ),
+    '/podman.sock'
+  );
+});
+
+test('resolveEngineSocketPath probes the macOS desktop engines under the home dir', () => {
+  const home = '/Users/dev';
+  const mac = (present: string[]) =>
+    resolveEngineSocketPath({}, p => present.includes(p), 'darwin', home);
+  assert.equal(
+    mac([`${home}/.docker/run/docker.sock`, '/var/run/docker.sock']),
+    `${home}/.docker/run/docker.sock`
+  );
+  assert.equal(
+    mac([`${home}/.orbstack/run/docker.sock`]),
+    `${home}/.orbstack/run/docker.sock`
+  );
+  assert.equal(
+    mac([`${home}/.colima/default/docker.sock`]),
+    `${home}/.colima/default/docker.sock`
+  );
+  assert.equal(mac([`${home}/.rd/docker.sock`]), `${home}/.rd/docker.sock`);
+  assert.equal(
+    mac([`${home}/.local/share/containers/podman/machine/podman.sock`]),
+    `${home}/.local/share/containers/podman/machine/podman.sock`
+  );
+  assert.equal(mac([]), undefined);
+});
+
+test('resolveEngineSocketPath uses named pipes on Windows, including DOCKER_HOST=npipe://', () => {
+  const dockerPipe = '\\\\.\\pipe\\docker_engine';
+  const podmanPipe = '\\\\.\\pipe\\podman-machine-default';
+  assert.equal(
+    localSocketFromHost('npipe:////./pipe/docker_engine'),
+    dockerPipe
+  );
+  assert.equal(
+    resolveEngineSocketPath(
+      {},
+      p => p === dockerPipe,
+      'win32',
+      'C:\\Users\\dev'
+    ),
+    dockerPipe
+  );
+  assert.equal(
+    resolveEngineSocketPath(
+      {},
+      p => p === podmanPipe,
+      'win32',
+      'C:\\Users\\dev'
+    ),
+    podmanPipe
+  );
+  assert.equal(
+    resolveEngineSocketPath(
+      { DOCKER_HOST: 'npipe:////./pipe/custom' },
+      p => p === '\\\\.\\pipe\\custom',
+      'win32',
+      'C:\\Users\\dev'
+    ),
+    '\\\\.\\pipe\\custom'
   );
 });
 

@@ -13,9 +13,22 @@ permissions:
 
 jobs:
   check:
-    name: Lint, format, typecheck, test
-    runs-on: ubuntu-latest
+    name: Lint, format, typecheck, test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Linux is the gate. macOS and Windows run the same suite to surface
+    # portability regressions (paths, sockets, file modes) without blocking a
+    # merge yet; flip continue-on-error off once they are consistently green.
+    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      # Prettier's check compares byte-for-byte; keep LF endings on Windows
+      # runners instead of letting git convert them on checkout.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@v4
 

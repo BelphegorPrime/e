@@ -18,6 +18,7 @@ import {
   type ReadinessPolicy,
 } from './runSidecarOrchestrator.js';
 import { ProductionPullRequestManager } from './runPrManager.js';
+import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
 
 export type { ReadinessPolicy } from './runSidecarOrchestrator.js';
 
@@ -66,6 +67,7 @@ export interface RunSpawnParams {
   configMounts?: Mount[];
   readiness?: ReadinessPolicy;
   gitPlatform?: GitPlatform;
+  /** Where worktrees are created; default: the platform rule in `worktreesDir.ts`. */
   worktreesDir?: string;
   /** Leave the worktree in place after the run instead of removing a clean one. */
   keepWorktree?: boolean;
@@ -98,7 +100,7 @@ export async function runSpawn(
   const readinessIntervalMs =
     params.readiness?.intervalMs ?? DEFAULT_READINESS_INTERVAL_MS;
 
-  const worktreesDir = params.worktreesDir ?? '/tmp/e-worktrees';
+  const worktreesDir = params.worktreesDir ?? defaultWorktreesDir();
 
   // Construct production managers from the primitive deps.
   const branchNamer = new ProductionBranchNamer(deps.git, worktreesDir);
@@ -122,7 +124,7 @@ export async function runSpawn(
 
     // Generate branch name and create worktree atomically (collision-retry inside the namer).
     ({ branch } = await branchNamer.nextBranch(params.agent, slug));
-    worktreePath = `${worktreesDir}/${branch}`;
+    worktreePath = worktreePathFor(worktreesDir, branch);
     const runName = branch.replace(/\//g, '-');
 
     // Prepare sidecar specs. With the local stack present, sidecars join the
