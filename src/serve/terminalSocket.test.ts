@@ -61,6 +61,18 @@ function open(url: string, origin?: string): Promise<Client> {
   });
 }
 
+/**
+ * Resolves once the server has handled every frame sent before the call.
+ * Frames on one connection are processed in order and `ws` answers a ping
+ * with a pong automatically, so the pong is a barrier for earlier frames.
+ */
+function flushed(socket: WebSocket): Promise<void> {
+  return new Promise(resolve => {
+    socket.once('pong', () => resolve());
+    socket.ping();
+  });
+}
+
 test(
   'terminal WebSocket relays output, input and resize for one session',
   { timeout: 10_000 },
@@ -125,8 +137,13 @@ test(
         'status'
       );
 
+      // Sent while the container is still starting: queued, applied on attach.
+      // Wait for the server to have handled both frames before the container
+      // appears; otherwise the poll can attach first and the resize lands
+      // only after the status frame this test waits for.
       socket.send(JSON.stringify({ type: 'resize', cols: 100, rows: 30 }));
       socket.send('garbage that is not json');
+      await flushed(socket);
       engine.state.containers.push({ id: 'c1', name: 'e-pi-demo-1' });
       const attached = await client.next();
       assert.equal(
@@ -138,11 +155,13 @@ test(
         { container: 'e-pi-demo-1', cols: 100, rows: 30 },
       ]);
 
-      const typed: Buffer[] = [];
-      engine.state.attached?.fromBrowser.on('data', chunk => typed.push(chunk));
+      const fromBrowser = engine.state.attached?.fromBrowser;
+      assert.ok(fromBrowser);
+      const typed = new Promise<Buffer>(resolve =>
+        fromBrowser.once('data', resolve)
+      );
       socket.send(Buffer.from('pwd\r'), { binary: true });
-      await new Promise(resolve => setTimeout(resolve, 10));
-      assert.equal(Buffer.concat(typed).toString(), 'pwd\r');
+      assert.equal((await typed).toString(), 'pwd\r');
 
       engine.state.attached?.toBrowser.write('/workspace');
       const output = await client.next();
