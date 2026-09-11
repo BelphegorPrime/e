@@ -197,10 +197,12 @@ function trackDetachedServer(server: Server, host: string, port: number): void {
   process.once('SIGTERM', shutdown);
 }
 
-/** Dependency injection point for the BFF's live llama.cpp views (ADR-0010). */
+/** Dependency injection point for the BFF's live views (ADR-0010). */
 export interface ServeAppDeps {
   /** Base URL of the local llama.cpp router, e.g. `http://127.0.0.1:9931`. */
   llamaBaseUrl?: string;
+  /** Base URL of the egress container API (ADR-0012), e.g. `http://127.0.0.1:20129`. */
+  egressApiUrl?: string;
   fetchImpl?: typeof fetch;
   /**
    * Git read source for the branch-backed runs index (ADR-0010). Defaults to
@@ -215,6 +217,7 @@ export function createServeApp(
 ): Express {
   const {
     llamaBaseUrl = env.localLlamaUrl,
+    egressApiUrl = env.egressApiUrl,
     fetchImpl = fetch,
     git = new HostGit(),
   } = deps;
@@ -316,6 +319,49 @@ export function createServeApp(
 
   // Match both status and logs endpoints
   app.get('/api/runs/*', handleRunRequest);
+
+  // Egress query + mutation API proxy (ADR-0012). The BFF forwards to the
+  // egress container's own HTTP listener — same proxy shape as /api/runs/*.
+  const handleEgressRequest: express.RequestHandler = async (
+    request,
+    response
+  ) => {
+    const restPath = request.path.replace(/^\/api\/egress\//, '');
+    if (!restPath) {
+      response.status(404).json({ error: 'Not found' });
+      return;
+    }
+    if (!egressApiUrl) {
+      response.status(503).json({ error: 'Egress API not configured' });
+      return;
+    }
+    try {
+      const upstreamUrl = `${egressApiUrl}/${restPath}`;
+      const init: RequestInit = {
+        method: request.method,
+        headers: {},
+      };
+      if (request.method === 'POST' || request.method === 'DELETE') {
+        init.headers = { 'content-type': 'application/json' };
+        init.body = JSON.stringify(request.body);
+      }
+      const res = await fetchImpl(upstreamUrl, init);
+      const body = await res.text();
+      response.status(res.status);
+      const contentType = res.headers.get('content-type');
+      if (contentType?.includes('application/json')) {
+        response.json(JSON.parse(body));
+      } else {
+        response.send(body);
+      }
+    } catch (error) {
+      response
+        .status(502)
+        .json({ error: `Egress API error: ${errorMessage(error)}` });
+    }
+  };
+
+  app.use('/api/egress/*', handleEgressRequest);
 
   app.use('/api', (_request, response) => {
     response.status(404).json({ error: 'Not found' });

@@ -24,6 +24,16 @@ export const EGRESS_BLACKLIST_IP_MOUNT = '/etc/egress.d/iptables.rules';
 /** The dnsmasq log file, written inside the mounted log dir. */
 export const EGRESS_DNSMASQ_LOG = `${EGRESS_LOG_MOUNT}/dnsmasq.log`;
 
+/** The port the egress HTTP API listens on inside the container (ADR-0012). */
+export const EGRESS_API_PORT = 20129;
+
+/** Default port for the egress API as published on the host (ADR-0012). */
+export const EGRESS_API_HOST_PORT = 20129;
+
+// Re-export structured types and helpers from submodules.
+export type { EgressLogEntry, SquashedEntry, LogQuery } from './logParser.js';
+export { appendBlacklistDomain, removeBlacklistDomain } from './blacklist.js';
+
 /** A normalized blacklisted destination set, split by enforcement mechanism. */
 export interface EgressBlacklist {
   /** Domains to sinkhole (matched with subdomains by dnsmasq's `address=/d/` form). */
