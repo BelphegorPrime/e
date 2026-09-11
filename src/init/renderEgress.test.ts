@@ -10,7 +10,7 @@ import {
 test('renderEgressDockerfile: alpine base with dnsmasq + iptables, entrypoint set', () => {
   const df = renderEgressDockerfile();
   assert.match(df, /FROM alpine:/);
-  assert.match(df, /apk add --no-cache dnsmasq iptables/);
+  assert.match(df, /apk add --no-cache .*\bdnsmasq\b.*\biptables\b/);
   assert.match(df, /ENTRYPOINT \["\/egress-entrypoint.sh"\]/);
   assert.doesNotMatch(df, /VOLUME.*\/etc\/egress\.d/);
 });
@@ -39,6 +39,7 @@ test('renderEgressFiles: renders exactly the four build-context files', () => {
     'Dockerfile',
     'blacklist.example',
     'dnsmasq.conf',
+    'egress-api.js',
     'entrypoint.sh',
   ]);
 });

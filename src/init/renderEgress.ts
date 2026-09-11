@@ -292,10 +292,10 @@ apply_ip_rules() {
   # own netns rules (e.g. the embedded-DNS path Docker wires in the same netns).
   iptables -N EGRESS 2>/dev/null || iptables -F EGRESS
   iptables -C OUTPUT -j EGRESS 2>/dev/null || iptables -I OUTPUT -j EGRESS
-  if [ -f "\\${IP_BLACKLIST}" ]; then
-    sh "\\${IP_BLACKLIST}" || true
+  if [ -f "\${IP_BLACKLIST}" ]; then
+    sh "\${IP_BLACKLIST}" || true
   fi
-  echo "egress: applied iptables blacklist \\${IP_BLACKLIST}" >&2
+  echo "egress: applied iptables blacklist \${IP_BLACKLIST}" >&2
 }
 
 apply_ip_rules
@@ -313,7 +313,7 @@ mkdir -p "{{{logMount}}}"
 # engine's embedded DNS at 127.0.0.11 in the same netns); --conf-dir reads the
 # mounted *.blacklist for sinkhole address lines.
 exec dnsmasq -k -d \\
-  --conf-file="\\${DNSMASQ_CONF}" \\
+  --conf-file="\${DNSMASQ_CONF}" \\
   --conf-dir=/etc/egress.d/,*.blacklist \\
   --log-queries \\
   --log-facility="{{{logMount}}}/dnsmasq.log"
