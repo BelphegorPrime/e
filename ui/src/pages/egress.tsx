@@ -22,6 +22,18 @@ export function EgressPage() {
   const logsState = useSquashedEgressLogs();
   const blacklistState = useBlacklist();
   const [domain, setDomain] = useState('');
+  const [expandedDomains, setExpandedDomains] = useState<Set<string>>(
+    new Set()
+  );
+
+  const toggleDomain = (d: string) => {
+    setExpandedDomains(prev => {
+      const next = new Set(prev);
+      if (next.has(d)) next.delete(d);
+      else next.add(d);
+      return next;
+    });
+  };
 
   const handleAdd = async () => {
     if (!domain) return;
@@ -70,7 +82,6 @@ export function EgressPage() {
                   <TableHead>Domain</TableHead>
                   <TableHead>Requests</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Last Seen</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -82,7 +93,19 @@ export function EgressPage() {
                 ) : (
                   logsState.logs.map(log => (
                     <TableRow key={log.domain}>
-                      <TableCell className="font-mono">{log.domain}</TableCell>
+                      <TableCell className="font-mono">
+                        <div
+                          className={
+                            expandedDomains.has(log.domain)
+                              ? 'cursor-pointer break-all'
+                              : 'max-w-[320px] cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap'
+                          }
+                          title={log.domain}
+                          onClick={() => toggleDomain(log.domain)}
+                        >
+                          {log.domain}
+                        </div>
+                      </TableCell>
                       <TableCell>{log.count}</TableCell>
                       <TableCell>
                         {blacklistState.domains.includes(log.domain) ? (

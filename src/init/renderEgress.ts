@@ -26,12 +26,19 @@
  *  - `blacklist.example` — a commented template documenting the format.
  */
 
-import {
-  EGRESS_BLACKLIST_IP_MOUNT,
-  EGRESS_LOG_MOUNT,
-  EGRESS_API_PORT,
-} from '../egress/index.js';
 import Mustache from 'mustache';
+
+/**
+ * Container-side paths and ports baked into the rendered egress files. The
+ * Dockerfile, entrypoint and API script below read these fixed locations; the
+ * host path of each mount comes from the spawn plan / scratch.
+ */
+const EGRESS_LOG_MOUNT = '/var/log/egress';
+// Named `.rules` (not `.blacklist`) so dnsmasq's `conf-dir=*.blacklist` glob
+// never tries to parse the iptables script as a dnsmasq config file.
+const EGRESS_BLACKLIST_IP_MOUNT = '/etc/egress.d/iptables.rules';
+/** The port the egress HTTP API listens on inside the container (ADR-0012). */
+const EGRESS_API_PORT = 20129;
 
 const DOCKERFILE_TEMPLATE = `# The egress gateway container (ADR-0011). A single global service; all
 # stack services and run agents share its network namespace, so a blacklist here
@@ -175,6 +182,26 @@ function isLocalhost(domain) {
   return LOCAL_NAMES.some(l => norm === l || norm.endsWith('.' + l));
 }
 
+// One record per domain over the whole log — NOT per consecutive run, which
+// yields thousands of rows for a handful of domains. Keyed on the normalized
+// name so 'Example.com.' and 'example.com' roll up together.
+function squashEntries(entries) {
+  const byDomain = new Map();
+  for (const e of entries) {
+    if (isLocalhost(e.domain)) continue;
+    const domain = e.domain.toLowerCase().replace(/\\.$/, '');
+    const existing = byDomain.get(domain);
+    if (existing) {
+      existing.count++;
+      if (e.timestamp < existing.firstSeen) existing.firstSeen = e.timestamp;
+      if (e.timestamp > existing.lastSeen) existing.lastSeen = e.timestamp;
+    } else {
+      byDomain.set(domain, {domain, count: 1, firstSeen: e.timestamp, lastSeen: e.timestamp});
+    }
+  }
+  return [...byDomain.values()].sort((a, b) => b.count - a.count);
+}
+
 function applyQuery(entries, q) {
   let result = entries;
   if (q.since) {
@@ -218,20 +245,7 @@ function handleRequest(req, res) {
 
   if (pathname === '/logs/squashed') {
     try {
-      const entries = readLog();
-      const squashed = [];
-      let current = null;
-      for (const e of entries) {
-        if (isLocalhost(e.domain)) continue;
-        if (current && current.domain === e.domain) {
-          current.count++;
-          current.lastSeen = e.timestamp;
-        } else {
-          current = {domain: e.domain, count: 1, firstSeen: e.timestamp, lastSeen: e.timestamp};
-          squashed.push(current);
-        }
-      }
-      sendJson(res, 200, squashed);
+      sendJson(res, 200, squashEntries(readLog()));
     } catch (err) {
       sendJson(res, 500, {error: String(err)});
     }

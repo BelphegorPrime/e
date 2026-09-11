@@ -159,6 +159,88 @@ test('renderEgressApiJs: DELETE matches the address= directive by its embedded d
   assert.match(api, /address=\\\/\(\[\^\/\]\+\)\\\//);
 });
 
+test('renderEgressApiJs: squashEntries rolls a domain up once over the whole log, not once per consecutive run', () => {
+  const api = renderEgressApiJs();
+  const m =
+    /\/\/ One record per domain[\s\S]*?\nfunction squashEntries\(entries\) \{[\s\S]*?\n\}\n/.exec(
+      api
+    );
+  assert.ok(m, 'squashEntries not found in rendered script');
+  const squashEntries = new Function(
+    'entries',
+    `const LOCAL_NAMES = ['localhost', 'localhost.localdomain'];
+     function isLocalhost(domain) {
+       const norm = domain.toLowerCase().replace(/\\.$/, '');
+       return LOCAL_NAMES.some(l => norm === l || norm.endsWith('.' + l));
+     }
+     ${m[0]}
+     return squashEntries(entries);`
+  ) as (entries: unknown[]) => Array<{
+    domain: string;
+    count: number;
+    firstSeen: string;
+    lastSeen: string;
+  }>;
+
+  const at = (domain: string, second: string) => ({
+    timestamp: `2026-09-07T15:00:${second}.000Z`,
+    runID: '',
+    domain,
+    protocol: 'DNS',
+    action: 'allow',
+  });
+
+  // Interleaved traffic: a run-length squash would emit five records here.
+  const out = squashEntries([
+    at('a.example', '01'),
+    at('b.example', '02'),
+    at('a.example', '03'),
+    at('b.example', '04'),
+    at('a.example', '05'),
+  ]);
+  assert.deepEqual(out, [
+    {
+      domain: 'a.example',
+      count: 3,
+      firstSeen: '2026-09-07T15:00:01.000Z',
+      lastSeen: '2026-09-07T15:00:05.000Z',
+    },
+    {
+      domain: 'b.example',
+      count: 2,
+      firstSeen: '2026-09-07T15:00:02.000Z',
+      lastSeen: '2026-09-07T15:00:04.000Z',
+    },
+  ]);
+
+  // Case and trailing-dot spellings are the same name to dnsmasq.
+  assert.deepEqual(
+    squashEntries([
+      at('A.Example.', '01'),
+      at('a.example', '02'),
+      at('a.example.', '03'),
+    ]),
+    [
+      {
+        domain: 'a.example',
+        count: 3,
+        firstSeen: '2026-09-07T15:00:01.000Z',
+        lastSeen: '2026-09-07T15:00:03.000Z',
+      },
+    ]
+  );
+
+  // Localhost resolves inside the stack — noise, not egress signal.
+  assert.deepEqual(
+    squashEntries([
+      at('localhost', '01'),
+      at('db.localhost.', '02'),
+      at('a.example', '03'),
+    ]).map(r => r.domain),
+    ['a.example']
+  );
+});
+
 test('renderBlacklistExample: documents the dnsmasq address= directive for both address families, not a bare domain', () => {
   const example = renderBlacklistExample();
   assert.match(example, /address=\/example\.com\/0\.0\.0\.0/);
