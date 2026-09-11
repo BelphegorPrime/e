@@ -55,7 +55,7 @@ export function registerInitCommand(program: Command): void {
  * interactive flow, `--yes`, and a piped/CI run all share one tested core.
  */
 async function runInit(opts: InitCommandOptions): Promise<void> {
-  const root = opts.dir ? path.resolve(opts.dir) : undefined;
+  const root = opts.dir ? path.resolve(opts.dir) : path.resolve('.');
 
   // Ask only when there is a terminal to ask on: `--yes`, or a non-TTY
   // stdin/stdout (a pipe or CI), falls back to defaults so the command never
@@ -66,9 +66,8 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
   // Seed from any existing config so a re-init preserves the configured
   // favorite instead of silently resetting it — mirrors how the `.env` and
   // Dockerfiles are never clobbered. A fresh store reads back the default.
-  const resolvedRoot = root ?? path.resolve('.');
-  const config = readConfig(resolvedRoot);
-  const envFile = envFilePath(resolvedRoot);
+  const config = readConfig(root);
+  const envFile = envFilePath(root);
   const existingEnvContent = fs.existsSync(envFile)
     ? fs.readFileSync(envFile, 'utf8')
     : undefined;
@@ -94,8 +93,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
   );
 
   // Default to current directory when no --dir provided, so the init target is selectable.
-  state.root = resolvedRoot;
-  log.info(`Initializing into [${resolvedRoot}]`);
+  log.info(`Initializing into [${root}]`);
 
   const wizard: Wizard = interactive ? interactiveWizard() : defaultsWizard;
   const answers = await wizard.ask({
