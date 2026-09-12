@@ -3,7 +3,9 @@
 **Status:** Accepted. _Amended 2026-09:_ with the local stack present, the
 agent and its sidecars share the global `e-egress` network namespace
 (ADR-0011) instead of a private per-run network; the per-run network remains
-the fallback without the stack.
+the fallback without the stack. _Amended 2026-09-13:_ "host-orchestrated" is
+not a licence for a manager class per concern - see **One implementor is not a
+seam** below.
 
 Extending ADR-0001 and ADR-0002, a Run is no longer a single container. It is a
 **primary agent container** plus zero or more per-run **Sidecars**:
@@ -79,3 +81,30 @@ sequenceDiagram
   bridge inside their sidecar image (ADR-0006).
 - VPN / egress routing is a future sidecar; it intersects the deferred
   egress-hardening gap in ADR-0002 and gets its own decision.
+
+## One implementor is not a seam
+
+_Added 2026-09-13 (issue #115)._ This decision was read as calling for an
+interface per lifecycle concern, and the Run orchestration grew one for each:
+`NetworkManager`, `WorktreeManager`, `PullRequestManager`, `SidecarOrchestrator`,
+`BranchNamer`, and earlier `ResourceCleanupManager` and `LogCapture`. Every one
+had exactly one implementor, no test double, and no test of its own; `runSpawn`
+constructed them itself, so nothing could substitute them anyway. Several
+wrapped a synchronous port call in `async` and added nothing else, and one was
+an `export const` alias for the class beside it.
+
+A seam is a place where behaviour can be altered without editing in that place.
+That needs something that actually varies across it: **one adapter is a
+hypothetical seam, two is a real one.** The Host ports earn theirs - `Git` has
+`HostGit` and `InMemoryGit`, `ContainerRunner` has the real runtime plus two
+test adapters - and the Run orchestration is itself a deep module behind a
+small interface. The managers in between were neither.
+
+They are gone. `runSpawn` calls `Git`, `ContainerRunner` and `PullRequest`
+directly; what carried real behaviour survives as free functions
+(`isSidecarReady`, `waitForAllReady` in `runSidecars.ts`; `nextRunName`), which
+is also what finally made that behaviour testable without driving a whole Run.
+
+The decision this ADR records is unchanged: a Run is still a host-orchestrated
+group of containers, brought up and torn down in one `finally`. Only the claim
+that each step of that needs its own interface is withdrawn.

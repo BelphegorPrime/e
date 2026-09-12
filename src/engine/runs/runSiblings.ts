@@ -76,7 +76,7 @@ import {
   type ChildHandle,
   type ChildLauncher,
 } from './childRun.js';
-import type { ReadinessPolicy } from './runSidecarOrchestrator.js';
+import type { ReadinessPolicy } from './runSidecars.js';
 import type { RunRole } from './runRole.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';

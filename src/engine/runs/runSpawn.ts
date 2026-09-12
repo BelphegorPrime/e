@@ -15,13 +15,8 @@ import {
   sidecarContainerFor,
   type RunName,
 } from '../../core/identity/runName.js';
-import { ProductionWorktreeManager } from './runWorktree.js';
-import { ProductionNetworkManager } from './runNetworks.js';
-import {
-  DockerSidecarOrchestrator,
-  type ReadinessPolicy,
-} from './runSidecarOrchestrator.js';
-import { ProductionPullRequestManager } from './runPrManager.js';
+
+import { waitForAllReady, type ReadinessPolicy } from './runSidecars.js';
 import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
 import { runRoleInstructions, type RunRole } from './runRole.js';
 import {
@@ -48,7 +43,7 @@ import {
 } from './runBroker.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';
-export type { ReadinessPolicy } from './runSidecarOrchestrator.js';
+export type { ReadinessPolicy } from './runSidecars.js';
 
 /** The exit code of a canceled run (SIGTERM's 128 + 15), so no commit path takes it for a success. */
 export const CANCELED_EXIT_CODE = 143;
@@ -246,11 +241,6 @@ export async function runSpawn(
 
   const worktreesDir = params.worktreesDir ?? defaultWorktreesDir();
 
-  // Construct production managers from the primitive deps.
-  const worktreeManager = new ProductionWorktreeManager(deps.git);
-  const networkManager = new ProductionNetworkManager(deps.runtime);
-  const sidecarOrchestrator = new DockerSidecarOrchestrator(deps.runtime);
-
   // Track what was started so best-effort teardown never touches
   // resources that were never created (e.g. when createNetwork fails).
   let branch: string | undefined;
@@ -384,16 +374,16 @@ export async function runSpawn(
     // Create the run network only when sidecars exist and no netns is shared.
     network = specs.length > 0 ? runNetwork : undefined;
     if (network) {
-      await networkManager.createNetwork(network);
+      deps.runtime.createNetwork(network);
       openedNetwork = true;
     }
 
     // Start sidecars and wait for each to be ready (probe first, sleep on miss).
     if (specs.length > 0) {
-      await sidecarOrchestrator.startAll(specs);
+      for (const spec of specs) deps.runtime.startSidecar(spec);
       startedSpecs = specs;
 
-      const { notReady } = await sidecarOrchestrator.waitForAllReady(specs, {
+      const { notReady } = await waitForAllReady(deps.runtime, specs, {
         attempts: readinessAttempts,
         intervalMs: readinessIntervalMs,
         sleep,
@@ -562,17 +552,19 @@ export async function runSpawn(
       const log = deps.git.runLog(branch);
       const title =
         log.length > 0 ? log[0].subject : `e: run output for ${branch}`;
-      const prResult = await new ProductionPullRequestManager(
-        deps.pullRequest
-      ).create({
-        platform: params.gitPlatform,
-        head: branch,
-        base: baseBranch,
-        title,
-        body: params.prompt,
-      });
-      pullRequestUrl = prResult.url || undefined;
-      pullRequestWarning = prResult.warning;
+      // A PR/MR that cannot be opened is a warning, never a failed run: the
+      // branch is pushed and the work is safe either way.
+      try {
+        pullRequestUrl = deps.pullRequest.create({
+          platform: params.gitPlatform,
+          head: branch,
+          base: baseBranch,
+          title,
+          body: params.prompt,
+        });
+      } catch (error) {
+        pullRequestWarning = `could not open a ${params.gitPlatform} merge request for ${branch}: ${errorMessage(error)}`;
+      }
     }
 
     report({
@@ -602,12 +594,8 @@ export async function runSpawn(
     // Best-effort teardown: never mask a result or an aborting error.
     try {
       if (consumer && !consumerStopped) await consumer.stop();
-      if (startedSpecs.length > 0) {
-        await sidecarOrchestrator.stopAll(startedSpecs);
-      }
-      if (openedNetwork) {
-        await networkManager.removeNetwork(network as string);
-      }
+      for (const spec of startedSpecs) deps.runtime.removeContainer(spec.name);
+      if (openedNetwork) deps.runtime.removeNetwork(network as string);
       if (!params.keepWorktree) {
         for (const dispose of scratch) dispose();
       }
@@ -616,7 +604,7 @@ export async function runSpawn(
         !params.keepWorktree &&
         !deps.git.isDirty(worktreePath)
       ) {
-        await worktreeManager.removeWorktree(worktreePath);
+        deps.git.removeWorktree(worktreePath);
       }
     } catch {
       // Teardown is best-effort.
