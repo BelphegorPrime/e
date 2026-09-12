@@ -18,8 +18,9 @@ order the first time; later they work as recipes.
 
 Conventions used throughout:
 
-- One-shot runs use `e spawn -d <agent> "<prompt>"`. Without `-d` the harness
-  TUI opens and the prompt is not passed.
+- A prompt makes a run one-shot: `e spawn <agent> "<prompt>"`. Without a
+  prompt the harness TUI opens. `-d` (`--detached`) only makes the one-shot
+  intent explicit and errors when the prompt is missing.
 - `~/.e` is the machine Store; replace it with `<project>/.e` when you follow
   [Tutorial 9](./09-stores-export-import.md).
 - Vocabulary (Store, Harness, Agent, Provider, Skill, Sidecar, Run) is defined

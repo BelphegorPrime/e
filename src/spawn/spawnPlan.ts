@@ -173,7 +173,7 @@ export interface SpawnFacts {
   env: string[];
   /** `-p` port publishes. */
   port?: string[];
-  /** `--detached`: run a one-shot detached prompt instead of starting the interactive TUI. */
+  /** `--detached`: one-shot made explicit; refused without a prompt (see {@link isInteractiveRun}). */
   detached?: boolean;
   /**
    * `E_TTY_HEADLESS`: this spawn has no host TTY (it was started by the `serve`
@@ -222,6 +222,25 @@ export interface SpawnFacts {
   maxSiblings: number;
 }
 
+/** True when the positional prompt carries anything but whitespace. */
+function hasPrompt(prompt: string): boolean {
+  return prompt.trim() !== '';
+}
+
+/**
+ * Decides, purely, whether a run is interactive (the harness TUI) or one-shot
+ * (the prompt on the harness's command line). The prompt is the switch, as
+ * every user-facing surface documents it: `e spawn <agent> "<prompt>"` runs
+ * one-shot, `e spawn <agent>` opens the TUI. `--detached` never flips it: with
+ * a prompt it is the same one-shot run, without one {@link validateSpawn}
+ * refuses the spawn, so `-d` can never silently open a TUI. Callers with no
+ * prompt by construction - the browser terminal's headless child (ADR-0014) -
+ * therefore stay interactive.
+ */
+export function isInteractiveRun(facts: Pick<SpawnFacts, 'prompt'>): boolean {
+  return !hasPrompt(facts.prompt);
+}
+
 /**
  * The pure, fail-fast validation that must pass before the (expensive) model
  * resolution and any build. Throws with a clear message on the first problem:
@@ -229,12 +248,19 @@ export interface SpawnFacts {
  *  - a provider on a harness with no config adapter;
  *  - `--mcp` against a harness with no MCP client (opencode);
  *  - baked or `--skill` skills against a harness that supports none;
- *  - a `-e` that names a role-contract variable (`E_ROLE`, `E_BROKER_URL`).
+ *  - a `-e` that names a role-contract variable (`E_ROLE`, `E_BROKER_URL`);
+ *  - `--detached` without a prompt (there is nothing to run one-shot).
  * Server/skill *existence* is checked by the edge during gather (it needs disk).
  */
 export function validateSpawn(facts: SpawnFacts): void {
   const { agent, harness } = facts;
   const caps = harnessCapabilities(harness);
+
+  // `-d` promises a one-shot run; without a prompt the only alternative would
+  // be to open the TUI silently, so the contradiction is refused up front.
+  if (facts.detached && !hasPrompt(facts.prompt)) {
+    throw new Error('A prompt is required for detached runs.');
+  }
 
   // A sibling is a child by definition; the two markers must agree.
   if (facts.sibling && (facts.role ?? 'parent') !== 'child') {

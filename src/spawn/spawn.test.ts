@@ -10,6 +10,7 @@ import {
   resolveRemoteTarget,
   type SpawnCommandOptions,
 } from './spawn.js';
+import { validateSpawn } from './spawnPlan.js';
 import { Env } from '../utils/env.js';
 import {
   agentDir,
@@ -233,15 +234,19 @@ test('--skill accepts comma-separated and repeated names, each checked on disk',
   });
 });
 
-test('--detached needs a prompt', () => {
+test("--detached is gathered as a flag; the prompt check is validateSpawn's (pure)", () => {
   withStore(root => {
+    const bare = gather(root, undefined, [], { detached: true });
+    assert.equal(bare.detached, true);
+    assert.equal(bare.prompt, '');
     assert.throws(
-      () => gather(root, undefined, [], { detached: true }),
+      () => validateSpawn(bare),
       /A prompt is required for detached runs\./
     );
     const facts = gather(root, 'go', [], { detached: true });
     assert.equal(facts.detached, true);
     assert.equal(facts.prompt, 'go');
+    assert.doesNotThrow(() => validateSpawn(facts));
   });
 });
 

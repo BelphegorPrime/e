@@ -351,6 +351,68 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
   }
 });
 
+test('a prompt without --detached runs one-shot: the harness gets the prompt, no TTY', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    const result = await executeSpawn(
+      facts({ root, prompt: 'print hello' }),
+      emptyPlan,
+      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+    );
+    assert.equal(result.ran, true);
+    assert.equal(runtime.options?.interactive, false);
+    assert.deepEqual(runtime.ranCommand?.slice(0, 2), ['demo', '-p']);
+    assert.match(runtime.ranCommand?.[2] ?? '', /print hello/);
+  });
+});
+
+test('--detached with a prompt behaves exactly like the prompt alone', async () => {
+  await withDemoStore(async root => {
+    const plain = new RecordingRuntime();
+    await executeSpawn(facts({ root, prompt: 'print hello' }), emptyPlan, {
+      git: new StubGit(true),
+      runtime: plain,
+      scratch: new RunScratch(),
+    });
+    const explicit = new RecordingRuntime();
+    await executeSpawn(
+      facts({ root, prompt: 'print hello', detached: true }),
+      emptyPlan,
+      { git: new StubGit(true), runtime: explicit, scratch: new RunScratch() }
+    );
+    assert.equal(explicit.options?.interactive, plain.options?.interactive);
+    assert.deepEqual(explicit.ranCommand, plain.ranCommand);
+  });
+});
+
+test('no prompt opens the harness TUI: interactive run, no one-shot command', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    const result = await executeSpawn(facts({ root, prompt: '' }), emptyPlan, {
+      git: new StubGit(true),
+      runtime,
+      scratch: new RunScratch(),
+    });
+    assert.equal(result.ran, true);
+    assert.equal(runtime.options?.interactive, true);
+    assert.deepEqual(runtime.ranCommand, ['demo']);
+  });
+});
+
+test("the browser terminal's headless child (no prompt, E_TTY_HEADLESS) stays interactive", async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    await executeSpawn(
+      facts({ root, prompt: '', headlessTty: true, name: 'from-browser' }),
+      emptyPlan,
+      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+    );
+    assert.equal(runtime.options?.interactive, true);
+    assert.equal(runtime.options?.headlessTty, true);
+    assert.deepEqual(runtime.ranCommand, ['demo']);
+  });
+});
+
 test('the role reaches the orchestrator: a child run is launched with the child prompt', async () => {
   await withDemoStore(async root => {
     const runtime = new RecordingRuntime();

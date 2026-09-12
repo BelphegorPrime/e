@@ -107,7 +107,7 @@ you route in OmniRoute without a rebuild.
 
 ```bash
 cd /path/to/repo
-e spawn -d pi "Add a README section that lists the npm scripts and what each does"
+e spawn pi "Add a README section that lists the npm scripts and what each does"
 ```
 
 On the first spawn against a fresh stack `e` notices that `OPENAI_API_KEY` is

@@ -47,7 +47,7 @@ repository uses this Store.
 Spawn against a Store from elsewhere with `--dir`:
 
 ```bash
-e spawn --dir /path/to/infra-repo -d pi "Bump the base images"
+e spawn --dir /path/to/infra-repo pi "Bump the base images"
 ```
 
 ## Export a Store

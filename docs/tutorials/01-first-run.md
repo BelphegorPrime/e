@@ -106,18 +106,19 @@ speaks and how each one receives the Provider.
 
 ## Step 3: run a one-shot task
 
-Go into the repository you want changed and spawn. The `-d` flag makes the run
-one-shot: the prompt is handed to the harness, the container exits when the
-agent is done.
+Go into the repository you want changed and spawn. A prompt makes the run
+one-shot: it is handed to the harness, and the container exits when the agent
+is done.
 
 ```bash
 cd /path/to/your/repo
-e spawn -d pi-anthropic "Add a CONTRIBUTING.md that explains how to run the tests"
+e spawn pi-anthropic "Add a CONTRIBUTING.md that explains how to run the tests"
 ```
 
-Without `-d`, `e spawn <agent>` opens the harness's interactive TUI in the
-container and the prompt is not passed along; use that mode to chat with the
-agent inside its worktree.
+Without a prompt, `e spawn <agent>` opens the harness's interactive TUI in the
+container; use that mode to chat with the agent inside its worktree. `-d`
+(`--detached`) makes the one-shot intent explicit and fails fast when the
+prompt is missing, which is what scripts and other agents should pass.
 
 What happens, in order:
 
@@ -149,7 +150,7 @@ was printed at the end of the run.
 To poke around the exact filesystem the agent saw, keep the worktree:
 
 ```bash
-e spawn -d --keep-worktree pi-anthropic "Try upgrading to express 5 and note what breaks"
+e spawn --keep-worktree pi-anthropic "Try upgrading to express 5 and note what breaks"
 ```
 
 The worktree path is under the platform's worktrees directory (see
@@ -158,7 +159,7 @@ The worktree path is under the platform's worktrees directory (see
 
 ## Step 5: talk to the agent instead
 
-Same Agent, no prompt, no `-d`:
+Same Agent, no prompt:
 
 ```bash
 e spawn pi-anthropic

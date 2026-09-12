@@ -45,7 +45,7 @@ Run with it:
 
 ```bash
 cd /path/to/repo
-e spawn -d --mcp everything pi-anthropic "Call the MCP tool named 'echo' with the text 'hello from e' and write the reply into MCP-CHECK.md"
+e spawn --mcp everything pi-anthropic "Call the MCP tool named 'echo' with the text 'hello from e' and write the reply into MCP-CHECK.md"
 ```
 
 The Sidecar image is built once (`e-mcp-everything`), started before the agent, and
@@ -108,7 +108,7 @@ cat > ~/.e/mcp/company-docs/mcp.json <<'JSON'
 }
 JSON
 echo 'COMPANY_DOCS_TOKEN=...' >> ~/.e/.env
-e spawn -d --mcp company-docs claude-gw "Using the company-docs MCP server, find who owns the billing service and write it to OWNERS.md"
+e spawn --mcp company-docs claude-gw "Using the company-docs MCP server, find who owns the billing service and write it to OWNERS.md"
 ```
 
 `${VAR}` in `url` or `headers` is resolved by the harness at runtime from the

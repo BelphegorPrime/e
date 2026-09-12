@@ -4,6 +4,7 @@ import {
   orderEnvFiles,
   decideImageAction,
   resolveSpawnTarget,
+  isInteractiveRun,
   validateSpawn,
   planSpawn,
   type SpawnFacts,
@@ -169,6 +170,21 @@ test('resolveSpawnTarget: an unquoted unknown prompt keeps all its words in orde
   );
 });
 
+// isInteractiveRun is pure: the prompt decides the run mode. A prompt means a
+// one-shot run (the documented `e spawn <agent> "<prompt>"` contract); no
+// prompt means the harness TUI. `--detached` plays no part here.
+test('isInteractiveRun: a prompt makes the run one-shot', () => {
+  assert.equal(isInteractiveRun({ prompt: 'fix the bug' }), false);
+});
+
+test('isInteractiveRun: no prompt opens the TUI', () => {
+  assert.equal(isInteractiveRun({ prompt: '' }), true);
+});
+
+test('isInteractiveRun: a whitespace-only prompt is no prompt', () => {
+  assert.equal(isInteractiveRun({ prompt: '   ' }), true);
+});
+
 // --- validateSpawn (pure, fail-fast) ---
 
 test('validateSpawn: rejects a provider protocol the harness does not speak', () => {
@@ -211,6 +227,21 @@ test('validateSpawn: rejects --mcp against a harness with no MCP wiring (opencod
     mcpServers: [containerMcp],
   });
   assert.throws(() => validateSpawn(f), /has no MCP client/);
+});
+
+test('validateSpawn: --detached without a prompt is refused (same rule as isInteractiveRun)', () => {
+  assert.throws(
+    () => validateSpawn(facts({ prompt: '', detached: true })),
+    /A prompt is required for detached runs\./
+  );
+  assert.throws(
+    () => validateSpawn(facts({ prompt: '   ', detached: true })),
+    /A prompt is required for detached runs\./
+  );
+  assert.doesNotThrow(() =>
+    validateSpawn(facts({ prompt: 'go', detached: true }))
+  );
+  assert.doesNotThrow(() => validateSpawn(facts({ prompt: '' })));
 });
 
 test('validateSpawn: passes for a plain default agent', () => {

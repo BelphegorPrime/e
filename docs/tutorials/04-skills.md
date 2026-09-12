@@ -59,7 +59,7 @@ The directory name is the Skill's name; `e` checks the `SKILL.md` exists
 before it builds anything, and lists the available names when it does not:
 
 ```bash
-e spawn -d --skill does-not-exist pi-anthropic "hi"
+e spawn --skill does-not-exist pi-anthropic "hi"
 # Unknown skill "does-not-exist". Available: changelog-note, conventional-commits, spawn-brother, web-search. ...
 ```
 
@@ -67,14 +67,14 @@ e spawn -d --skill does-not-exist pi-anthropic "hi"
 
 ```bash
 cd /path/to/repo
-e spawn -d --skill changelog-note pi-anthropic "Rename the helper in src/util.ts from fmt to formatDate and update its callers"
+e spawn --skill changelog-note pi-anthropic "Rename the helper in src/util.ts from fmt to formatDate and update its callers"
 ```
 
 Several at once, either way:
 
 ```bash
-e spawn -d --skill changelog-note,conventional-commits pi-anthropic "..."
-e spawn -d --skill changelog-note --skill conventional-commits pi-anthropic "..."
+e spawn --skill changelog-note,conventional-commits pi-anthropic "..."
+e spawn --skill changelog-note --skill conventional-commits pi-anthropic "..."
 ```
 
 Check the branch: `CHANGELOG-NOTES.md` should be in the run's commits, the
@@ -98,7 +98,7 @@ cat > ~/.e/agents/pi-anthropic/agent.json <<'JSON'
   "skills": ["web-search", "changelog-note"]
 }
 JSON
-e spawn -d --rebuild pi-anthropic "List the skills you have available, then exit"
+e spawn --rebuild pi-anthropic "List the skills you have available, then exit"
 ```
 
 Baked Skills are copied into the derived image, so a changed Skill or a

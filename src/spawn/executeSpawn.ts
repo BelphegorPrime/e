@@ -12,6 +12,7 @@ import {
 import { filterEnvContent } from '../utils/dotenv.js';
 import {
   decideImageAction,
+  isInteractiveRun,
   orderEnvFiles,
   type SpawnFacts,
   type SpawnPlan,
@@ -244,8 +245,10 @@ export async function executeSpawn(
   // `runtime-broker` alias resolves for it too; in the shared egress
   // namespace everyone is on loopback and no network is joined.
   const sibling = facts.sibling;
+  // One-shot or TUI follows the prompt (see isInteractiveRun).
+  const interactive = isInteractiveRun(facts);
   const runOptions: RunOptions = {
-    interactive: !facts.detached,
+    interactive,
     headlessTty: facts.headlessTty,
     rm: facts.rm,
     port: facts.port,
@@ -265,7 +268,7 @@ export async function executeSpawn(
       name: facts.name,
       harness: facts.harness,
       prompt: facts.prompt,
-      interactive: !facts.detached,
+      interactive,
       model: plan.runtimeModel,
       mcpArgs: plan.mcpArgs,
       gitPlatform: deps.gitPlatform,

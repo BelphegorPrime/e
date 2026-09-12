@@ -29,7 +29,7 @@ Run something that reaches out:
 
 ```bash
 cd /path/to/repo
-e spawn -d pi "Search the web for the latest express release notes and summarize them in NOTES.md"
+e spawn pi "Search the web for the latest express release notes and summarize them in NOTES.md"
 ```
 
 Then ask the egress API:

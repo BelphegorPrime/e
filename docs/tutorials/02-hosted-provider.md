@@ -1,7 +1,7 @@
 # Tutorial 2: Agents for every Harness on a hosted Provider
 
-Goal: define Agents for pi, Claude Code, and Codex that all talk to hosted
-endpoints, understand how each Harness receives its Provider, and rebuild an
+Goal: define Agents for pi, Claude Code, and Codex that all use hosted
+Providers, understand how each Harness receives its Provider, and rebuild an
 Agent after changing it.
 
 Prerequisite: [Tutorial 1](./01-first-run.md) (a Store exists).
@@ -31,7 +31,7 @@ echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 - `model` is a concrete id, or `auto` / `auto/coding`, which the harness
   resolves at run start against the endpoint's `/v1/models`
   ([ADR-0007](../adr/0007-auto-model-delivery.md)). Use a concrete id for a
-  first run so a failure is about the endpoint, not model resolution.
+  first run so a failure is about the Provider, not model resolution.
 
 ## What each Harness speaks and how it is configured
 
@@ -106,9 +106,9 @@ Try each one:
 
 ```bash
 cd /path/to/repo
-e spawn -d pi-gw "Print the git remote URL and exit"
-e spawn -d claude-gw "Print the git remote URL and exit"
-e spawn -d codex-gw "Print the git remote URL and exit"
+e spawn pi-gw "Print the git remote URL and exit"
+e spawn claude-gw "Print the git remote URL and exit"
+e spawn codex-gw "Print the git remote URL and exit"
 ```
 
 The first spawn per Harness builds its base image; each Agent then gets a
@@ -135,7 +135,7 @@ Switch `pi-gw` to another model:
 
 ```bash
 sed -i 's/"model": "claude-sonnet-4-5"/"model": "claude-opus-5"/' ~/.e/agents/pi-gw/agent.json
-e spawn -d --rebuild pi-gw "Which model are you? Answer in one line and exit"
+e spawn --rebuild pi-gw "Which model are you? Answer in one line and exit"
 ```
 
 Without `--rebuild` the old `models.json` stays baked in the derived image and

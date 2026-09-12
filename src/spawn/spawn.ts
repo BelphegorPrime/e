@@ -66,7 +66,7 @@ export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   mcp?: string[];
   /** `--skill <name...>`: Skills to add for this run (comma-separated or repeated). */
   skill?: string[];
-  /** `--detached`: run a one-shot detached prompt instead of starting the interactive TUI. */
+  /** `--detached`: one-shot made explicit; `validateSpawn` refuses it without a prompt. */
   detached?: boolean;
   /** `--keep-worktree`: leave the run's worktree in place after the container exits. */
   keepWorktree?: boolean;
@@ -245,11 +245,6 @@ export function gatherSpawnFacts(
     resolveSkill(name, root);
   }
 
-  const detached = Boolean(opts.detached);
-  if (detached && !resolved.prompt.length) {
-    throw new Error('A prompt is required for detached runs.');
-  }
-
   return {
     root,
     agent,
@@ -263,7 +258,8 @@ export function gatherSpawnFacts(
     name: opts.name,
     env: opts.env ?? [],
     port: opts.port,
-    detached,
+    // The mode follows the prompt (isInteractiveRun); `-d` only makes it explicit.
+    detached: Boolean(opts.detached),
     headlessTty: env.headlessTty,
     rm: opts.rm,
     keepWorktree: Boolean(opts.keepWorktree),
@@ -355,7 +351,7 @@ export function registerSpawnCommand(program: Command): void {
     )
     .option(
       '-d, --detached',
-      'run a one-shot detached prompt instead of starting the interactive TUI'
+      'run one-shot and fail without a prompt (a prompt alone already runs one-shot; no prompt opens the harness TUI)'
     )
     .option('--rm', 'automatically remove the container when it exits', true)
     .option('--no-rm', 'keep the container after it exits')

@@ -30,7 +30,7 @@ Limits, all host-enforced:
 
 ```bash
 cd /path/to/repo
-e spawn -d --skill spawn-brother pi-anthropic \
+e spawn --skill spawn-brother pi-anthropic \
   "Split the migration of src/api/ to the new validation library by module. Delegate each module to a brother with a precise task, then integrate their results and make the test suite pass."
 ```
 
