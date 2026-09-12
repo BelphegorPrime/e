@@ -15,6 +15,9 @@ import {
   type InitState,
 } from './initPlan.js';
 
+/** Plan paths are host paths; compare POSIX-style so Windows separators pass. */
+const posix = (file: string): string => file.split(path.sep).join('/');
+
 const HARNESS_NAMES = Object.keys(HARNESSES);
 
 /** A fresh-state fixture: temp root, default favorite, no models, no `.env`. */
@@ -281,24 +284,28 @@ test('planInit: steps are ordered - harnesses, shipped servers, bootstrap, then 
   assert.equal(dockerfile.clobber, 'never');
   assert.equal(agent.clobber, 'never');
   assert.ok(
-    dockerfile.file.endsWith('.e/harnesses/' + first.name + '/Dockerfile')
+    posix(dockerfile.file).endsWith(
+      '.e/harnesses/' + first.name + '/Dockerfile'
+    )
   );
-  assert.ok(agent.file.endsWith('.e/agents/' + first.name + '/agent.json'));
+  assert.ok(
+    posix(agent.file).endsWith('.e/agents/' + first.name + '/agent.json')
+  );
 
   // Bootstrap and Compose are derived state (always rewritten).
   const bootstrap = plan.steps.find(s => s.kind === 'bootstrap');
   const compose = plan.steps.find(s => s.kind === 'compose');
   assert.equal(bootstrap?.write.clobber, 'always');
   assert.equal(compose?.write.clobber, 'always');
-  assert.ok(bootstrap?.write.file.endsWith('.e/bootstrap.sh'));
-  assert.ok(compose?.write.file.endsWith('.e/compose.yaml'));
+  assert.ok(posix(bootstrap?.write.file).endsWith('.e/bootstrap.sh'));
+  assert.ok(posix(compose?.write.file).endsWith('.e/compose.yaml'));
 });
 test('planInit: ships the searxng MCP server with the other shipped servers', () => {
   const plan = planInit(state(), {});
   const writesStep = plan.steps.find(
     step =>
       step.kind === 'writes' &&
-      step.writes.some(w => w.file.includes('.e/mcp/searxng/'))
+      step.writes.some(w => posix(w.file).includes('.e/mcp/searxng/'))
   );
   assert.ok(
     writesStep,
@@ -306,8 +313,8 @@ test('planInit: ships the searxng MCP server with the other shipped servers', ()
   );
   assert.ok(writesStep.kind === 'writes');
   const files = writesStep.writes
-    .filter(w => w.file.includes('.e/mcp/searxng/'))
-    .map(w => w.file);
+    .filter(w => posix(w.file).includes('.e/mcp/searxng/'))
+    .map(w => posix(w.file));
   assert.ok(files.some(f => f.endsWith('/Dockerfile')));
   assert.ok(files.some(f => f.endsWith('/mcp.json')));
   assert.ok(writesStep.writes.every(w => w.clobber === 'never'));
@@ -317,10 +324,10 @@ test('planInit: all paths live under the requested root', () => {
   const plan = planInit({ ...state(), root: '/tmp/fake-e-root' }, {});
   for (const step of plan.steps) {
     for (const write of 'writes' in step ? step.writes : [step.write]) {
-      assert.ok(write.file.startsWith('/tmp/fake-e-root'));
+      assert.ok(posix(write.file).startsWith('/tmp/fake-e-root'));
     }
   }
-  assert.ok(plan.env.file.startsWith('/tmp/fake-e-root'));
+  assert.ok(posix(plan.env.file).startsWith('/tmp/fake-e-root'));
 });
 
 test('planInit: seeds the egress build context and blacklist template (never clobbered)', () => {
@@ -328,11 +335,11 @@ test('planInit: seeds the egress build context and blacklist template (never clo
   const egressStep = plan.steps.find(
     step =>
       step.kind === 'writes' &&
-      step.writes.some(w => w.file.includes('.e/egress/'))
+      step.writes.some(w => posix(w.file).includes('.e/egress/'))
   );
   assert.ok(egressStep, 'expected an egress write step');
   assert.ok(egressStep.kind === 'writes');
-  const files = egressStep.writes.map(w => w.file);
+  const files = egressStep.writes.map(w => posix(w.file));
   assert.ok(files.some(f => f.endsWith('.e/egress/Dockerfile')));
   assert.ok(files.some(f => f.endsWith('.e/egress/entrypoint.sh')));
   assert.ok(files.some(f => f.endsWith('.e/egress/dnsmasq.conf')));
@@ -348,11 +355,11 @@ test('planInit: seeds the runtime-broker build context (never clobbered)', () =>
   const brokerStep = plan.steps.find(
     step =>
       step.kind === 'writes' &&
-      step.writes.some(w => w.file.includes('.e/broker/'))
+      step.writes.some(w => posix(w.file).includes('.e/broker/'))
   );
   assert.ok(brokerStep, 'expected a broker write step');
   assert.ok(brokerStep.kind === 'writes');
-  const files = brokerStep.writes.map(w => w.file);
+  const files = brokerStep.writes.map(w => posix(w.file));
   assert.ok(files.some(f => f.endsWith('.e/broker/Dockerfile')));
   assert.ok(files.some(f => f.endsWith('.e/broker/broker.mjs')));
   for (const write of brokerStep.writes) {

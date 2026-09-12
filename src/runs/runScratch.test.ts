@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import path from 'path';
 import { RunScratch } from './runScratch.js';
 
 test('file: writes the content and returns an existing path', () => {
   const scratch = new RunScratch();
   try {
     const p = scratch.file('provider.env', 'KEY=value\n');
-    assert.ok(p.endsWith('/provider.env'));
+    assert.equal(path.basename(p), 'provider.env');
     assert.equal(fs.readFileSync(p, 'utf8'), 'KEY=value\n');
   } finally {
     scratch.dispose();

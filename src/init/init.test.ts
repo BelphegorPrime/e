@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import {
   parseHarnessChoice,
   parseModelChoice,
@@ -375,6 +375,12 @@ test('renderBootstrap: a model id with quotes cannot break the script or its JSO
   assert.equal(JSON.parse(unquoted).defaultModel, `ollama/it's "odd"/model`);
 });
 
+/**
+ * The stubbed curl/sleep are `#!/bin/sh` scripts on PATH; spawning without a
+ * shell on Windows resolves only `.exe`/`.com`, so the real curl would run.
+ */
+const needsShellShims = process.platform === 'win32' && 'sh shims on PATH';
+
 /** Runs a rendered bootstrap against a stubbed curl, returning output or exit status. */
 function runBootstrapProviderScript(
   runtimes: readonly LocalRuntime[],
@@ -417,7 +423,7 @@ esac
         env: {
           ...process.env,
           INITIAL_PASSWORD: 'test-password',
-          PATH: `${directory}:${process.env.PATH ?? ''}`,
+          PATH: `${directory}${delimiter}${process.env.PATH ?? ''}`,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       }),
@@ -437,17 +443,28 @@ esac
   }
 }
 
-test('renderBootstrap: registers a missing provider through the OmniRoute API', () => {
-  const result = runBootstrapProviderScript(['llamacpp', 'ollama'], '[]');
-  assert.match(result.output ?? '', /provider registered/);
-  assert.match(result.output ?? '', /bootstrap complete/);
-});
+test(
+  'renderBootstrap: registers a missing provider through the OmniRoute API',
+  { skip: needsShellShims },
+  () => {
+    const result = runBootstrapProviderScript(['llamacpp', 'ollama'], '[]');
+    assert.match(result.output ?? '', /provider registered/);
+    assert.match(result.output ?? '', /bootstrap complete/);
+  }
+);
 
-test('renderBootstrap: skips a provider OmniRoute already knows', () => {
-  const result = runBootstrapProviderScript(['llamacpp'], 'llama.cpp (local)');
-  assert.match(result.output ?? '', /provider already registered/);
-  assert.match(result.output ?? '', /bootstrap complete/);
-});
+test(
+  'renderBootstrap: skips a provider OmniRoute already knows',
+  { skip: needsShellShims },
+  () => {
+    const result = runBootstrapProviderScript(
+      ['llamacpp'],
+      'llama.cpp (local)'
+    );
+    assert.match(result.output ?? '', /provider already registered/);
+    assert.match(result.output ?? '', /bootstrap complete/);
+  }
+);
 
 test('renderCompose: picks the CUDA image and reserves an nvidia GPU for the nvidia vendor', () => {
   const compose = renderCompose('nvidia');
