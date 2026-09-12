@@ -37,7 +37,6 @@ import type { SpawnRequest } from '../broker/types.js';
 import type { Git } from '../git/index.js';
 import { env } from '../utils/env.js';
 import { reportDirFor, writeRunReport } from './runArtifacts.js';
-import type { RunReport } from './runArtifacts.js';
 import { log } from '../utils/log.js';
 import { selfInvocation, type SelfInvocation } from '../utils/selfInvoke.js';
 import type { ReadinessPolicy } from './runSidecarOrchestrator.js';

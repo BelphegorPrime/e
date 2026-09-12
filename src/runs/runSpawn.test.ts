@@ -1460,7 +1460,7 @@ writeStatus({ status: 'running', branch });
       assert.deepEqual(
         [...(result.mergedSiblings ?? [])]
           .sort((x, y) => x.id.localeCompare(y.id))
-          .map(({ logTail, ...rest }) => rest),
+          .map(({ logTail: _, ...rest }) => rest),
         [
           {
             id: 'sib-001',

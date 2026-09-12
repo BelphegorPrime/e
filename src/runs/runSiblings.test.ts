@@ -12,7 +12,6 @@ import {
 } from '../broker/spool.js';
 import { Env } from '../utils/env.js';
 import type { Git, MergeOutcome } from '../git/index.js';
-import { reportDirFor, writeRunReport } from './runArtifacts.js';
 import {
   SiblingConsumer,
   assertCliEntry,
