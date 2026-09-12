@@ -1,5 +1,7 @@
 # 10 - Test sleep helper yields to the event loop
 
+**GitHub:** [#128](https://github.com/BelphegorPrime/e/issues/128)
+
 **Root cause found 2026-09-12 while building the ticket 08 end-to-end test:** a
 test run with a real broker HTTP server hung indefinitely. The test-support
 sleep helper resolves as a microtask with no timer, so the sibling consumer's

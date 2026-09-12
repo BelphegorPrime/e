@@ -1,5 +1,7 @@
 # 11 - Request id format is validated with an unhelpful error
 
+**GitHub:** [#129](https://github.com/BelphegorPrime/e/issues/129)
+
 **Root cause found 2026-09-12 while building the ticket 08 end-to-end test:** a
 spool write with id `gc-001` failed with `Invalid request id "gc-001".` and no
 hint about the required shape. The broker generates ids itself

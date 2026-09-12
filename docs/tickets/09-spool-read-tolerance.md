@@ -1,5 +1,7 @@
 # 09 - Host poll loop survives a malformed status file
 
+**GitHub:** [#127](https://github.com/BelphegorPrime/e/issues/127)
+
 **Root cause found 2026-09-12 while building the ticket 08 end-to-end test:** a
 scripted child writing its status non-atomically put a truncated
 `status/<id>.json` on the spool; the host's polling side crashed instead of
