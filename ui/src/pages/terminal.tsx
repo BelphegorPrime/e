@@ -343,7 +343,7 @@ export function TerminalPage() {
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               Agent
               <select
-                className="h-9 rounded-md border border-input bg-transparent px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="h-9 rounded-md border border-input bg-transparent px-2 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                 value={agent}
                 onChange={event => setAgent(event.target.value)}
                 disabled={agents.length === 0}

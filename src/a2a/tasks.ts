@@ -21,7 +21,7 @@ import {
   writeRequest,
   writeStatus,
 } from '../broker/spool.js';
-import { TERMINAL_TASK_STATES } from '../broker/taskState.js';
+import { isTerminalTaskState } from '../broker/taskState.js';
 import type { SiblingRecord, TaskState } from '../broker/types.js';
 import { env } from '../utils/env.js';
 import { log } from '../utils/log.js';
@@ -308,7 +308,7 @@ export class A2aTasks {
   cancel(id: unknown): WireTask {
     const entry = this.entry(id);
     const record = this.record(entry);
-    if (TERMINAL_TASK_STATES.includes(record.taskState)) {
+    if (isTerminalTaskState(record.taskState)) {
       throw new JsonRpcError(
         A2A_ERROR_CODES.taskNotCancelable,
         `Task ${entry.id} is already ${record.taskState}.`
@@ -336,7 +336,7 @@ export class A2aTasks {
   ): () => void {
     const entry = this.entry(id);
     const record = this.record(entry);
-    if (TERMINAL_TASK_STATES.includes(record.taskState)) {
+    if (isTerminalTaskState(record.taskState)) {
       for (const event of this.finalEvents(entry, record)) listener(event);
       return () => undefined;
     }
@@ -359,10 +359,7 @@ export class A2aTasks {
     if (!entry) {
       throw new JsonRpcError(
         A2A_ERROR_CODES.taskNotFound,
-        `Unknown task ${typeof id === 'string' ? `"${id}"` : ''}.`.replace(
-          ' .',
-          '.'
-        )
+        `Unknown task${typeof id === 'string' ? ` "${id}"` : ''}.`
       );
     }
     return entry;
@@ -394,17 +391,17 @@ export class A2aTasks {
       const record = this.record(entry);
       if (record.taskState !== entry.lastState) {
         entry.lastState = record.taskState;
-        const events = TERMINAL_TASK_STATES.includes(record.taskState)
+        const events = isTerminalTaskState(record.taskState)
           ? this.finalEvents(entry, record)
           : [this.statusEvent(entry, record, false)];
         for (const listener of [...entry.listeners]) {
           for (const event of events) listener(event);
         }
-        if (TERMINAL_TASK_STATES.includes(record.taskState)) {
+        if (isTerminalTaskState(record.taskState)) {
           entry.listeners.clear();
         }
       }
-      if (!TERMINAL_TASK_STATES.includes(record.taskState)) live = true;
+      if (!isTerminalTaskState(record.taskState)) live = true;
     }
     if (!live && this.poll) {
       clearInterval(this.poll);

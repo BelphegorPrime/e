@@ -17,9 +17,10 @@ import { SseParser } from './events.js';
 import type { SiblingRecord, StatusResponse } from './types.js';
 import { attentionSince } from './watch.js';
 
+import { errorMessage } from '../utils/errors.js';
 function unreachable(base: string, err: unknown): number {
   console.error(
-    `spawn-brother: the runtime-broker at ${base} did not answer (${(err as Error).message}). ` +
+    `spawn-brother: the runtime-broker at ${base} did not answer (${errorMessage(err)}). ` +
       'Sibling spawning is unavailable in this run: record the task as a file in the worktree instead.'
   );
   return 3;
@@ -144,7 +145,7 @@ main(process.argv.slice(2)).then(
   code => process.exit(code),
   err => {
     console.error(
-      `spawn-brother: ${(err as Error).message}\n\n${SPAWN_BROTHER_USAGE}`
+      `spawn-brother: ${errorMessage(err)}\n\n${SPAWN_BROTHER_USAGE}`
     );
     process.exit(2);
   }

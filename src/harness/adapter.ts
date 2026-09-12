@@ -173,13 +173,6 @@ export interface FileHarnessAdapter {
  */
 export type HarnessAdapter = EnvHarnessAdapter | FileHarnessAdapter;
 
-export const isEnvAdapter = (
-  adapter: HarnessAdapter
-): adapter is EnvHarnessAdapter => adapter.kind === 'env';
-export const isFileAdapter = (
-  adapter: HarnessAdapter
-): adapter is FileHarnessAdapter => adapter.kind === 'file';
-
 /**
  * Claude Code's adapter. Claude speaks only the Anthropic Messages API and is
  * configured purely through env vars: `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`,

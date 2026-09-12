@@ -99,8 +99,8 @@ log/timing views are an incremental addition to the same namespace.
 ## Status
 
 Decided in the architecture review. The UI now has dashboard, runs, activity,
-agents, OmniRoute, egress and settings pages; `serve` exposes `/api/runs/*`,
-`/api/omniroute/models` and `/api/egress/*`, and runs the OmniRoute embed proxy (a
+agents, OmniRoute, egress and settings pages; `serve` exposes `/api/runs/*`
+and `/api/egress/*`, and runs the OmniRoute embed proxy (a
 1:1 mirror of OmniRoute on `--port + 1` with the framing headers stripped) that
 the OmniRoute page frames. The security fixes tracked as
 issues [#24](https://github.com/BelphegorPrime/e/issues/24) and

@@ -69,9 +69,14 @@ export function taskStateOf(record: TaskStateInput): TaskState {
   }
 }
 
+/** True when nothing more will happen to a task: completed, failed, canceled or rejected. */
+export function isTerminalTaskState(state: TaskState): boolean {
+  return TERMINAL_TASK_STATES.includes(state);
+}
+
 /** True when a task state asks something of its requester: terminal, or waiting for input. */
 export function needsAttention(state: TaskState): boolean {
-  return state === 'input-required' || TERMINAL_TASK_STATES.includes(state);
+  return state === 'input-required' || isTerminalTaskState(state);
 }
 
 /** True when the host is done with a request: nothing to cancel any more. */

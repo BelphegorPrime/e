@@ -9,9 +9,10 @@
 import { randomUUID } from 'node:crypto';
 import type { TaskState } from '../broker/types.js';
 import {
+  A2A_ERROR_CODES,
+  A2A_METHODS,
   A2A_PROTOCOL_VERSION,
   A2A_VERSION_HEADER,
-  A2A_METHODS,
   fromWireState,
   partsText,
   taskFromResult,
@@ -20,6 +21,7 @@ import {
 } from './wire.js';
 import type { JsonRpcResponse } from './jsonRpc.js';
 
+import { errorMessage } from '../utils/errors.js';
 /** Where a remote agent listens and what to send along. */
 export interface A2aEndpoint {
   url: string;
@@ -157,7 +159,7 @@ export class A2aClient {
       return { kind: 'message', message: record as unknown as WireMessage };
     }
     throw new A2aRemoteError(
-      -32006,
+      A2A_ERROR_CODES.invalidAgentResponse,
       `${endpoint.url} answered message/send with neither a task nor a message`
     );
   }
@@ -168,7 +170,7 @@ export class A2aClient {
     );
     if (!task) {
       throw new A2aRemoteError(
-        -32006,
+        A2A_ERROR_CODES.invalidAgentResponse,
         `${endpoint.url} answered tasks/get without a task`
       );
     }
@@ -184,7 +186,7 @@ export class A2aClient {
       const result = await this.call(endpoint, A2A_METHODS.cancelTask, { id });
       return { ok: true, task: taskFromResult(result) };
     } catch (err) {
-      return { ok: false, error: (err as Error).message };
+      return { ok: false, error: errorMessage(err) };
     }
   }
 

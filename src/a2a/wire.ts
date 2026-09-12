@@ -231,9 +231,6 @@ export interface WireSendMessageParams {
   tenant?: string;
 }
 
-/** `message/send` result: the task the message created (or a bare 0.x Task). */
-export type WireSendMessageResult = { task: WireTask } | WireTask;
-
 export interface WireAgentSkill {
   id: string;
   name: string;

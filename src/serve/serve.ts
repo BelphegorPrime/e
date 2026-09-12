@@ -19,7 +19,6 @@ import { log } from '../utils/log.js';
 import { env } from '../utils/env.js';
 import { resolveFreePortBlock } from '../utils/port.js';
 import { E_VERSION } from '../version.js';
-import { type ModelsResponse } from '../modelStatus.js';
 import {
   isRemoteAgent,
   listAgents as listStoreAgents,
@@ -53,6 +52,7 @@ import {
 } from '../a2a/server.js';
 import { AGENT_CARD_PATH } from '../a2a/wire.js';
 
+import { errorMessage } from '../utils/errors.js';
 /** The JSON-RPC endpoint of the A2A facade (ADR-0015), outside `/api` so the card can name it plainly. */
 export const A2A_RPC_PATH = '/a2a';
 
@@ -69,10 +69,6 @@ export interface ServeProbes {
   isAlive?: (pid: number) => boolean;
   /** True when `url` answers a health probe. */
   probeHealth?: (url: string) => Promise<boolean>;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -261,9 +257,6 @@ function trackDetachedServer(server: Server, host: string, port: number): void {
 
 /** Dependency injection point for the BFF's live views (ADR-0010). */
 export interface ServeAppDeps {
-  /** Base URL of the local llama.cpp router, e.g. `http://127.0.0.1:9931`. */
-  // TODO: Check if we need this property at all. We now have more ai runtimes.
-  llamaBaseUrl?: string;
   /** Base URL of the egress container API (ADR-0012), e.g. `http://127.0.0.1:20129`. */
   egressApiUrl?: string;
   /**
@@ -293,6 +286,35 @@ export interface ServeAppDeps {
   a2a?: { tasks: A2aTasks; access: A2aAccess; url: string };
   /** Where run spools live (`<worktreesDir>/.broker/<runName>`), for the siblings view; default: the platform rule. */
   worktreesDir?: string;
+}
+
+/** The A2A handlers' deps: live when configured and allowed, otherwise the reason the endpoint is off. */
+function a2aServerDeps(
+  a2a: ServeAppDeps['a2a'],
+  listAgents: () => AgentSummary[]
+): A2aServerDeps {
+  if (a2a === undefined) {
+    return {
+      access: {
+        enabled: false,
+        reason: 'The A2A endpoint is not configured.',
+      },
+    };
+  }
+  const { access } = a2a;
+  if (!access.enabled) return { access };
+  return {
+    access,
+    tasks: a2a.tasks,
+    card: () =>
+      renderAgentCard({
+        url: a2a.url,
+        version: E_VERSION,
+        // Remote A2A agents are not offered: that would be proxying.
+        agents: listAgents().filter(agent => agent.transport !== 'a2a'),
+        bearer: access.requireBearer,
+      }),
+  };
 }
 
 /** The runs a `/api/runs/*` path may end in: the sibling view of a run with a broker (ADR-0015). */
@@ -343,7 +365,6 @@ export function createServeApp(
   deps: ServeAppDeps = {}
 ): Express {
   const {
-    llamaBaseUrl = env.localLlamaUrl,
     egressApiUrl = env.egressApiUrl,
     fetchImpl = fetch,
     omniRouteEmbedPort = null,
@@ -360,28 +381,7 @@ export function createServeApp(
   // e as an A2A agent (ADR-0015): the card at its well-known path, one
   // JSON-RPC endpoint. Both are delegations - a task is `e spawn` in a
   // headless child - so the BFF still holds no orchestration of its own.
-  const a2aDeps: A2aServerDeps = a2a
-    ? {
-        tasks: a2a.tasks,
-        access: a2a.access,
-        card: () =>
-          renderAgentCard({
-            url: a2a.url,
-            version: E_VERSION,
-            agents: listAgents().filter(agent => agent.transport !== 'a2a'),
-            bearer: a2a.access.enabled && a2a.access.requireBearer,
-          }),
-      }
-    : {
-        tasks: undefined as unknown as A2aTasks,
-        access: {
-          enabled: false,
-          reason: 'The A2A endpoint is not configured.',
-        },
-        card: () => {
-          throw new Error('unreachable');
-        },
-      };
+  const a2aDeps = a2aServerDeps(a2a, listAgents);
   app.get(AGENT_CARD_PATH, agentCardHandler(a2aDeps));
   app.post(
     A2A_RPC_PATH,
@@ -481,25 +481,6 @@ export function createServeApp(
     }
   });
 
-  // Observer-first model view (ADR-0010): a raw snapshot of llama.cpp's
-  // `/models` payload, so the UI can render download/load progress without
-  // reaching the stack itself.
-  app.get('/api/omniroute/models', async (_request, response) => {
-    try {
-      const res = await fetchImpl(`${llamaBaseUrl}/models`);
-      if (!res.ok) {
-        response
-          .status(502)
-          .json({ error: `llama.cpp returned HTTP ${res.status}` });
-        return;
-      }
-      const body = (await res.json()) as ModelsResponse;
-      response.json(body);
-    } catch {
-      response.status(503).json({ error: 'llama.cpp stack is not running' });
-    }
-  });
-
   // Branch-backed runs index (ADR-0010): runs _are_ git branches
   // (`e/<agent>/<slug>-N` per ADR-0003), so everything here reads git. No
   // write endpoints and no live timing or streaming logs yet - the namespace
@@ -514,7 +495,8 @@ export function createServeApp(
 
   // Covers `/api/runs/e/<agent>/<slug>-N` (per-run status) and
   // `/api/runs/e/<agent>/<slug>-N/logs`. The handler extracts the branch from
-  // request.path because Express 4 route params cannot capture slashes.
+  // request.path: a branch name spans several segments, which the `*splat`
+  // param would hand over as an array.
   const handleRunRequest = (
     request: express.Request,
     response: express.Response
@@ -597,7 +579,7 @@ export function createServeApp(
   };
 
   // Match both status and logs endpoints
-  app.get('/api/runs/*', handleRunRequest);
+  app.get('/api/runs/*splat', handleRunRequest);
 
   // Egress query + mutation API proxy (ADR-0012). The BFF forwards the path,
   // query string and JSON body to the egress container's own HTTP listener;
@@ -653,14 +635,14 @@ export function createServeApp(
     }
   };
 
-  app.all('/api/egress/*', handleEgressRequest);
+  app.all('/api/egress/*splat', handleEgressRequest);
 
   app.use('/api', (_request, response) => {
     response.status(404).json({ error: 'Not found' });
   });
 
   app.use(express.static(uiDirectory));
-  app.get('*', (_request, response) => {
+  app.get('/{*splat}', (_request, response) => {
     response.sendFile('index.html', { root: uiDirectory });
   });
 

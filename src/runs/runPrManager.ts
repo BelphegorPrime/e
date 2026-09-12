@@ -1,6 +1,7 @@
 import type { PullRequest } from '../github/index.js';
 import { GitPlatform } from '../store/config.js';
 
+import { errorMessage } from '../utils/errors.js';
 /** Clean seam for PR/MR management in runs. */
 export interface PullRequestManager {
   /** Create a pull request/merge request. */
@@ -36,7 +37,7 @@ export class ProductionPullRequestManager implements PullRequestManager {
     } catch (error) {
       return {
         url: '',
-        warning: `could not open a ${params.platform} merge request for ${params.head}: ${(error as Error).message}`,
+        warning: `could not open a ${params.platform} merge request for ${params.head}: ${errorMessage(error)}`,
       };
     }
   }

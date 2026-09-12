@@ -9,14 +9,20 @@
  * a process.
  */
 
-import type { SpawnRequest } from '../broker/types.js';
+import type { SiblingStatusPatch, SpawnRequest } from '../broker/types.js';
 import { writeStatus } from '../broker/spool.js';
 import type { SiblingProcess } from '../runs/runSiblings.js';
 import { log } from '../utils/log.js';
-import { A2aClient, taskAnswer, wireTaskState } from './client.js';
+import {
+  A2aClient,
+  taskAnswer,
+  wireTaskState,
+  type A2aEndpoint,
+} from './client.js';
 import { resolveRemoteHeaders, type RemoteA2aAgent } from './remoteAgent.js';
 import { partsText } from './wire.js';
 
+import { errorMessage } from '../utils/errors.js';
 export interface RemoteSiblingOptions {
   agent: RemoteA2aAgent;
   request: SpawnRequest;
@@ -48,23 +54,18 @@ export function remoteSiblingProcess(
   const now = options.now ?? (() => new Date());
   const cancel = new AbortController();
   let remoteTaskId: string | undefined;
-  const report = (patch: Record<string, unknown>): void => {
+  const report = (patch: Omit<SiblingStatusPatch, 'updatedAt'>): void => {
     writeStatus(spoolDir, request.id, {
-      status: 'running',
       ...patch,
       updatedAt: now().toISOString(),
-    } as Parameters<typeof writeStatus>[2]);
+    });
   };
+  // Resolved once: the cancel path reuses the same headers.
+  const endpoint = resolveEndpoint(agent, options.storeEnv);
 
   const exited = (async (): Promise<number> => {
-    let endpoint;
-    try {
-      endpoint = {
-        url: agent.url,
-        headers: resolveRemoteHeaders(agent, options.storeEnv),
-      };
-    } catch (err) {
-      report({ status: 'failed', error: (err as Error).message });
+    if (endpoint instanceof Error) {
+      report({ status: 'failed', error: endpoint.message });
       return 1;
     }
     report({ status: 'running' });
@@ -123,7 +124,7 @@ export function remoteSiblingProcess(
           return 1;
       }
     } catch (err) {
-      const message = (err as Error).message;
+      const message = errorMessage(err);
       log.warn(
         `Sibling ${request.id}: remote agent ${agent.name} (${agent.url}) failed: ${message}`
       );
@@ -139,11 +140,7 @@ export function remoteSiblingProcess(
     exited,
     kill: () => {
       cancel.abort();
-      if (remoteTaskId !== undefined) {
-        const endpoint = {
-          url: agent.url,
-          headers: safeHeaders(agent, options.storeEnv),
-        };
+      if (remoteTaskId !== undefined && !(endpoint instanceof Error)) {
         void client.cancelTask(endpoint, remoteTaskId).then(outcome => {
           if (!outcome.ok) {
             log.debug(
@@ -156,13 +153,14 @@ export function remoteSiblingProcess(
   };
 }
 
-function safeHeaders(
+/** The agent's endpoint with its headers resolved, or the error naming the unset `${VAR}`. */
+function resolveEndpoint(
   agent: RemoteA2aAgent,
   env: Record<string, string | undefined>
-): Record<string, string> {
+): A2aEndpoint | Error {
   try {
-    return resolveRemoteHeaders(agent, env);
-  } catch {
-    return {};
+    return { url: agent.url, headers: resolveRemoteHeaders(agent, env) };
+  } catch (err) {
+    return err instanceof Error ? err : new Error(String(err));
   }
 }

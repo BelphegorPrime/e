@@ -6,7 +6,8 @@ hands-on guide to building it and trying a harness locally. For the concepts
 (Harness, Agent, Provider, Sidecar, Run, …) see [CONTEXT.md](./CONTEXT.md); for
 the design rationale see [docs/adr/](./docs/adr/); for the agent-facing guide
 to delegating work with `e` and `e spawn` see
-[docs/agents/e.md](./docs/agents/e.md). Jump to [Usage examples](#usage-examples)
+[docs/agents/e.md](./docs/agents/e.md). New here? Start with the step-by-step
+[Tutorials](#tutorials). Jump to [Usage examples](#usage-examples)
 for everyday commands, or to [Working on this repository](#working-on-this-repository)
 if you are here to change `e` itself.
 
@@ -44,6 +45,21 @@ own isolated run and can itself spawn further agents (`e spawn` is not limited
 to one parent/child level). The docs below are the hands-on build guide; an AI
 agent that needs to know how to delegate, what a spawned run provides, and how
 results flow back should read [docs/agents/e.md](./docs/agents/e.md).
+
+## Tutorials
+
+Hands-on walkthroughs in [docs/tutorials/](./docs/tutorials/), each ending
+with something you can inspect. Read them in order the first time:
+
+1. [Your first run](./docs/tutorials/01-first-run.md) - install, `e init`, one Agent on a hosted key, a run branch to diff.
+2. [Agents for every Harness on a hosted Provider](./docs/tutorials/02-hosted-provider.md) - pi, Claude Code, and Codex on one gateway; protocols, delivery, `--rebuild`.
+3. [Run agents on local models](./docs/tutorials/03-local-models.md) - the OmniRoute stack with llama.cpp or Ollama, model downloads, the default Agents.
+4. [Give an agent a Skill](./docs/tutorials/04-skills.md) - write a Skill, add it per run, bake it into an Agent.
+5. [Wire an MCP server into a run](./docs/tutorials/05-mcp-servers.md) - container Sidecars and remote servers with a token.
+6. [Let an agent fan out into sibling runs](./docs/tutorials/06-sibling-runs.md) - `spawn-brother`, the broker, merge-back, reports.
+7. [The web UI, browser terminal, and `e` as an A2A agent](./docs/tutorials/07-serve-and-a2a.md) - `e serve`, runs from the browser, Agent2Agent tasks, remote agents.
+8. [Watch and block what agents talk to](./docs/tutorials/08-egress-blacklist.md) - the egress log and DNS blacklist API.
+9. [Several Stores, and moving one](./docs/tutorials/09-stores-export-import.md) - per-project Stores, `e export` / `e import`.
 
 ## Install
 
@@ -212,7 +228,7 @@ at the root:
   `dist/ui`, which `e serve` reads and `pkg.assets` embeds in each standalone
   binary.
 - `scripts/` - build preflight helpers (e.g. the `prebuild:bin` UI-assets gate).
-- `docs/` - ADRs, security analysis, research notes.
+- `docs/` - ADRs, security analysis, research notes, tutorials.
 
 ## Build
 

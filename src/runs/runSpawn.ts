@@ -43,6 +43,7 @@ import {
   type BrokerPlan,
 } from './runBroker.js';
 
+import { errorMessage } from '../utils/errors.js';
 export type { ReadinessPolicy } from './runSidecarOrchestrator.js';
 
 /** The exit code of a canceled run (SIGTERM's 128 + 15), so no commit path takes it for a success. */
@@ -217,7 +218,7 @@ function checkpointParent(git: Git, parent: ParentRun, slug: string): string {
       // Nothing of the sibling exists yet; the parent keeps its work (staged
       // by the attempt) and the request fails with the reason attached.
       throw new Error(
-        `Could not checkpoint ${parent.branch} before spawning ${slug}: ${(err as Error).message}`,
+        `Could not checkpoint ${parent.branch} before spawning ${slug}: ${errorMessage(err)}`,
         { cause: err }
       );
     }
@@ -539,7 +540,7 @@ export async function runSpawn(
           deps.git.push(branch);
           pushed = true;
         } catch (err) {
-          pushWarning = `could not push ${branch}: ${(err as Error).message}`;
+          pushWarning = `could not push ${branch}: ${errorMessage(err)}`;
         }
       }
     }
@@ -585,7 +586,7 @@ export async function runSpawn(
       ...(consumer ? { siblings: consumer.outcomes } : {}),
     };
   } catch (err) {
-    report({ status: 'failed', branch, error: (err as Error).message });
+    report({ status: 'failed', branch, error: errorMessage(err) });
     throw err;
   } finally {
     // Best-effort teardown: never mask a result or an aborting error.

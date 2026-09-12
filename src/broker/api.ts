@@ -40,6 +40,7 @@ import type {
   StatusResponse,
 } from './types.js';
 
+import { errorMessage } from '../utils/errors.js';
 export interface BrokerApiOptions {
   /** The spool directory (the bind mount inside the container). */
   spoolDir: string;
@@ -126,10 +127,6 @@ function decodeSegment(segment: string): string | null {
   } catch {
     return null;
   }
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** Builds the request handler; `http.createServer(createBrokerApi({ spoolDir }))`. */

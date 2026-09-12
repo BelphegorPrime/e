@@ -19,7 +19,6 @@ import {
 import type { Git, RunCommit, RunRef, MergeOutcome } from '../git/index.js';
 import { TerminalSessions } from './terminalSessions.js';
 import { fakeEngine, scriptedSpawner } from './terminalSessions.testSupport.js';
-import type { ModelsResponse } from '../modelStatus.js';
 import { E_VERSION } from '../version.js';
 import type { A2aAccess } from '../a2a/access.js';
 import { A2aTasks } from '../a2a/tasks.js';
@@ -106,121 +105,6 @@ test('serve app exposes API routes and the UI fallback', async () => {
     const missingApi = await fetch(`${baseUrl}/api/missing`);
     assert.equal(missingApi.status, 404);
     assert.deepEqual(await missingApi.json(), { error: 'Not found' });
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close(error => (error ? reject(error) : resolve()));
-    });
-    await fs.rm(uiDirectory, { recursive: true, force: true });
-  }
-});
-
-test('serve app exposes llama.cpp model status via /api/omniroute/models', async () => {
-  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
-  await fs.writeFile(
-    path.join(uiDirectory, 'index.html'),
-    '<!doctype html><title>e</title>'
-  );
-  const models: ModelsResponse = {
-    data: [
-      {
-        id: 'org/model-a',
-        status: {
-          value: 'downloading',
-          progress: { url: { done: 500, total: 1000 } },
-        },
-      },
-    ],
-  };
-  const server = await startServeServer(
-    createServeApp(uiDirectory, {
-      llamaBaseUrl: 'http://llama-fake',
-      fetchImpl: (async (input: string | URL | Request) => {
-        assert.equal(String(input), 'http://llama-fake/models');
-        return {
-          ok: true,
-          status: 200,
-          json: async () => models,
-        } as unknown as Response;
-      }) as typeof fetch,
-    }),
-    '127.0.0.1',
-    0
-  );
-  const address = server.address();
-  assert.ok(address && typeof address !== 'string');
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-
-  try {
-    const res = await fetch(`${baseUrl}/api/omniroute/models`);
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), models);
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close(error => (error ? reject(error) : resolve()));
-    });
-    await fs.rm(uiDirectory, { recursive: true, force: true });
-  }
-});
-
-test('serve app reports 503 when the llama.cpp stack is unreachable', async () => {
-  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
-  await fs.writeFile(
-    path.join(uiDirectory, 'index.html'),
-    '<!doctype html><title>e</title>'
-  );
-  const server = await startServeServer(
-    createServeApp(uiDirectory, {
-      llamaBaseUrl: 'http://llama-fake',
-      fetchImpl: (async () => {
-        throw new Error('connection refused');
-      }) as typeof fetch,
-    }),
-    '127.0.0.1',
-    0
-  );
-  const address = server.address();
-  assert.ok(address && typeof address !== 'string');
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-
-  try {
-    const res = await fetch(`${baseUrl}/api/omniroute/models`);
-    assert.equal(res.status, 503);
-    assert.deepEqual(await res.json(), {
-      error: 'llama.cpp stack is not running',
-    });
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close(error => (error ? reject(error) : resolve()));
-    });
-    await fs.rm(uiDirectory, { recursive: true, force: true });
-  }
-});
-
-test('serve app reports 502 when llama.cpp answers with a non-OK status', async () => {
-  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
-  await fs.writeFile(
-    path.join(uiDirectory, 'index.html'),
-    '<!doctype html><title>e</title>'
-  );
-  const server = await startServeServer(
-    createServeApp(uiDirectory, {
-      llamaBaseUrl: 'http://llama-fake',
-      fetchImpl: (async () =>
-        ({ ok: false, status: 500 }) as unknown as Response) as typeof fetch,
-    }),
-    '127.0.0.1',
-    0
-  );
-  const address = server.address();
-  assert.ok(address && typeof address !== 'string');
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-
-  try {
-    const res = await fetch(`${baseUrl}/api/omniroute/models`);
-    assert.equal(res.status, 502);
-    assert.deepEqual(await res.json(), {
-      error: 'llama.cpp returned HTTP 500',
-    });
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close(error => (error ? reject(error) : resolve()));

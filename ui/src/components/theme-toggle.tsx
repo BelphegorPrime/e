@@ -30,8 +30,8 @@ export function ThemeToggle() {
             aria-pressed={active}
             onClick={() => setTheme(option.value)}
             className={cn(
-              'rounded-sm p-1.5 text-muted-foreground transition-colors hover:text-foreground',
-              active && 'bg-background text-foreground shadow-sm'
+              'rounded-xs p-1.5 text-muted-foreground transition-colors hover:text-foreground',
+              active && 'bg-background text-foreground shadow-xs'
             )}
           >
             <option.icon className="size-4" />

@@ -51,6 +51,7 @@ import { siblingSummaryLine } from '../runs/runSiblings.js';
 import { mergeLanded } from '../runs/runMergeBack.js';
 import { CANCELED_EXIT_CODE } from '../runs/runSpawn.js';
 
+import { errorMessage } from '../utils/errors.js';
 /** How long a canceled `e spawn` may take to stop its container and tear down before it is exited by force. */
 const CANCEL_GRACE_MS = 60_000;
 
@@ -113,7 +114,7 @@ async function obtainLocalApiKey(
       const reason =
         error instanceof LocalApiKeyError
           ? error.message
-          : `OmniRoute is not reachable at ${env.omniRoutedUrl}: ${(error as Error).message}`;
+          : `OmniRoute is not reachable at ${env.omniRoutedUrl}: ${errorMessage(error)}`;
       log.warn(
         `Could not create an OmniRoute API key automatically (${reason}). If the stack was set up with a different OMNIROUTE_INITIAL_PASSWORD, restore it in .e/.env or remove the omniroute-data volume to reset the dashboard login.`
       );
@@ -498,7 +499,7 @@ export function registerSpawnCommand(program: Command): void {
           process.exit(result.exitCode);
         } catch (err) {
           scratch.dispose();
-          log.error((err as Error).message);
+          log.error(errorMessage(err));
           process.exit(1);
         }
       }

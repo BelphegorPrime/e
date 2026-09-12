@@ -4,6 +4,7 @@ import { importConfiguration } from './import.js';
 import { log } from '../utils/log.js';
 import { findRoot } from '../store/root.js';
 
+import { errorMessage } from '../utils/errors.js';
 export function registerExportCommand(program: Command): void {
   program
     .command('export')
@@ -17,9 +18,7 @@ export function registerExportCommand(program: Command): void {
         const outputPath = await exportConfiguration(options);
         log.info(`✓ Configuration exported to: ${outputPath}`);
       } catch (error) {
-        log.error(
-          `Export failed: ${error instanceof Error ? error.message : String(error)}`
-        );
+        log.error(`Export failed: ${errorMessage(error)}`);
         process.exit(1);
       }
     });
@@ -49,9 +48,7 @@ export function registerImportCommand(program: Command): void {
 
         log.info('✓ Configuration imported successfully');
       } catch (error) {
-        log.error(
-          `Import failed: ${error instanceof Error ? error.message : String(error)}`
-        );
+        log.error(`Import failed: ${errorMessage(error)}`);
         process.exit(1);
       }
     });

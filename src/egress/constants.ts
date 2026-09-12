@@ -7,9 +7,6 @@
  * module means a path or port changes in exactly one place.
  */
 
-/** The image tag the shared egress container is built from (ADR-0011). */
-export const EGRESS_IMAGE = 'e-egress';
-
 /** Directory the compose file mounts for dnsmasq's query log. */
 export const EGRESS_LOG_MOUNT = '/var/log/egress';
 

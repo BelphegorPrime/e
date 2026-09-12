@@ -4,6 +4,7 @@ import {
   TERMINAL_SIBLING_STATES,
   TERMINAL_TASK_STATES,
   isTerminalSiblingState,
+  isTerminalTaskState,
   needsAttention,
   taskStateOf,
 } from './taskState.js';
@@ -57,6 +58,14 @@ test('needsAttention: terminal states and input-required, nothing else', () => {
   assert.equal(needsAttention('input-required'), true);
   assert.equal(needsAttention('submitted'), false);
   assert.equal(needsAttention('working'), false);
+});
+
+test('isTerminalTaskState: completed, failed, canceled, rejected; not input-required', () => {
+  for (const state of TERMINAL_TASK_STATES)
+    assert.equal(isTerminalTaskState(state), true);
+  assert.equal(isTerminalTaskState('input-required'), false);
+  assert.equal(isTerminalTaskState('submitted'), false);
+  assert.equal(isTerminalTaskState('working'), false);
 });
 
 test('isTerminalSiblingState: done, failed, canceled, rejected', () => {

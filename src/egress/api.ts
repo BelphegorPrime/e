@@ -30,6 +30,7 @@ import type {
   StatusResponse,
 } from './types.js';
 
+import { errorMessage } from '../utils/errors.js';
 /** Everything the handler touches outside its own process, so tests can swap it. */
 export interface EgressApiOptions {
   /** The dnsmasq query log (default: the mounted log). */
@@ -98,10 +99,6 @@ function decodeSegment(segment: string): string | null {
   } catch {
     return null;
   }
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** Builds the request handler; `http.createServer(createEgressApi())`. */

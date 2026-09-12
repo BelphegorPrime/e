@@ -2,6 +2,7 @@ import type { Agent } from '../agent/index.js';
 import type { Git } from '../git/index.js';
 import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
 
+import { errorMessage } from '../utils/errors.js';
 /** Clean seam for run branch naming and collision resolution. */
 export interface BranchNamer {
   /** Cut the next available run branch from `base`, creating its worktree. */
@@ -40,7 +41,7 @@ export class ProductionBranchNamer implements BranchNamer {
         });
         return { branch, counter };
       } catch (err) {
-        const isCollision = /already exists/i.test((err as Error).message);
+        const isCollision = /already exists/i.test(errorMessage(err));
         if (!isCollision || attempt >= maxAttempts) {
           throw err;
         }

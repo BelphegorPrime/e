@@ -7,6 +7,7 @@
 
 import { JSON_RPC_ERROR_CODES } from './wire.js';
 
+import { errorMessage } from '../utils/errors.js';
 export type JsonRpcId = string | number | null;
 
 export interface JsonRpcRequest {
@@ -62,11 +63,7 @@ export function rpcErrorFrom(id: JsonRpcId, err: unknown): JsonRpcResponse {
   if (err instanceof JsonRpcError) {
     return rpcError(id, err.code, err.message, err.data);
   }
-  return rpcError(
-    id,
-    JSON_RPC_ERROR_CODES.internalError,
-    err instanceof Error ? err.message : String(err)
-  );
+  return rpcError(id, JSON_RPC_ERROR_CODES.internalError, errorMessage(err));
 }
 
 /**

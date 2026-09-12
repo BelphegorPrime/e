@@ -28,6 +28,7 @@ import { SPAWN_BROTHER_SCRIPT, runReportPath } from '../broker/constants.js';
 import type { MergeBack, SiblingRecord } from '../broker/types.js';
 import type { Git } from '../git/index.js';
 
+import { errorMessage } from '../utils/errors.js';
 /** The parent run a sibling merges back into. */
 export interface MergeBackParent {
   /** Host path of the parent's worktree (the agent's live `/workspace`). */
@@ -91,7 +92,7 @@ export function mergeBackSibling(
       return {
         status: 'held',
         files: [],
-        reason: `your work could not be checkpointed before the merge: ${(err as Error).message}`,
+        reason: `your work could not be checkpointed before the merge: ${errorMessage(err)}`,
       };
     }
   }
@@ -103,7 +104,7 @@ export function mergeBackSibling(
       mergeMessage(sibling)
     );
   } catch (err) {
-    const message = (err as Error).message;
+    const message = errorMessage(err);
     // The sibling `e spawn` process checkpoints this same worktree (ticket
     // 04); two git processes on one index collide on `index.lock`. Transient:
     // held, retried on the next landing or at the run's end.
@@ -163,7 +164,7 @@ export function concludeMergeBack(
   } catch (err) {
     return {
       ...previous,
-      reason: `the resolution could not be committed: ${(err as Error).message}`,
+      reason: `the resolution could not be committed: ${errorMessage(err)}`,
     };
   }
 }

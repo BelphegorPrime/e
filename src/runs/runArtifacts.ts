@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Mount } from '../runtime/index.js';
 
+import { errorMessage } from '../utils/errors.js';
 /**
  * Names that are never synced, as an allowlist entry or inside a copied tree:
  * git metadata and env files (`.env`, `.env.local`, ...), the ADR-0002 line.
@@ -161,7 +162,7 @@ export function syncArtifacts(opts: ArtifactSyncOptions): ArtifactSyncResult {
     } catch (err) {
       // A half-copied tree would be worse than none: the sibling regenerates.
       fs.rmSync(dest, { recursive: true, force: true });
-      result.failed.push({ entry, error: (err as Error).message });
+      result.failed.push({ entry, error: errorMessage(err) });
       continue;
     }
     result.copied.push(entry);

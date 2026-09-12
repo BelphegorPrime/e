@@ -78,6 +78,7 @@ import { selfInvocation, type SelfInvocation } from '../utils/selfInvoke.js';
 import type { ReadinessPolicy } from './runSidecarOrchestrator.js';
 import type { RunRole } from './runRole.js';
 
+import { errorMessage } from '../utils/errors.js';
 /** A launched sibling process, as the consumer sees it. */
 export interface SiblingProcess {
   /** Resolves with the exit code once the process is gone (1 when it failed to start or was killed). */
@@ -448,14 +449,14 @@ export class SiblingConsumer {
       this.end(
         request.id,
         'failed',
-        `could not start the sibling process: ${(err as Error).message}`
+        `could not start the sibling process: ${errorMessage(err)}`
       );
       return;
     }
     this.inFlight.set(request.id, { child, polls: 0, logFile });
     child.exited.then(
       code => this.onExit(request.id, code, logFile),
-      err => this.onExit(request.id, 1, logFile, (err as Error).message)
+      err => this.onExit(request.id, 1, logFile, errorMessage(err))
     );
   }
 
@@ -594,7 +595,7 @@ export class SiblingConsumer {
       report = writeSiblingReport(parent.worktreePath, record, merge);
     } catch (err) {
       log.warn(
-        `Sibling ${record.id}: could not write its report into ${parent.worktreePath}: ${(err as Error).message}`
+        `Sibling ${record.id}: could not write its report into ${parent.worktreePath}: ${errorMessage(err)}`
       );
     }
     const status: SettledState =

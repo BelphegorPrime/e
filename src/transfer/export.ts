@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import {
   eBaseDir,
   envFilePath,
@@ -72,7 +72,7 @@ export async function exportConfiguration(
     // Create zip archive
     log.info(`Creating archive: ${outputPath}`);
     const output = fs.createWriteStream(outputPath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
 
     await new Promise<void>((resolve, reject) => {
       output.on('close', resolve);

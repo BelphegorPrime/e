@@ -15,7 +15,8 @@ export interface A2aAccessInput {
 }
 
 export type A2aAccess =
-  | { enabled: true; requireBearer: boolean; token?: string }
+  | { enabled: true; requireBearer: false }
+  | { enabled: true; requireBearer: true; token: string }
   | { enabled: false; reason: string };
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);

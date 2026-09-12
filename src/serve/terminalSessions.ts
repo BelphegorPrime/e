@@ -7,6 +7,7 @@ import { env } from '../utils/env.js';
 import { log } from '../utils/log.js';
 import { selfInvocation } from '../utils/selfInvoke.js';
 
+import { errorMessage } from '../utils/errors.js';
 /**
  * Lifecycle of a browser-started run (ADR-0014):
  *  - `starting`: the `e spawn` child is building images, creating the
@@ -198,7 +199,7 @@ class TerminalSession {
     } catch (error) {
       if (!this.attachFailureLogged) {
         this.attachFailureLogged = true;
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         log.warn(`Terminal session ${this.info.id}: ${message}`);
         this.broadcast({ type: 'error', message });
       }

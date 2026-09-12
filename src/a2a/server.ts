@@ -31,11 +31,23 @@ import {
   type WireStreamResult,
 } from './wire.js';
 
-export interface A2aServerDeps {
+/** The endpoint is on: the access decision, the tasks and the card. */
+export interface A2aLiveDeps {
+  access: Extract<A2aAccess, { enabled: true }>;
   tasks: A2aTasks;
   /** The card, rendered per request so a new Store agent shows up without a restart. */
   card: () => WireAgentCard;
-  access: A2aAccess;
+}
+
+/** The endpoint is off (not configured, or bound beyond loopback without a token): only the reason. */
+export interface A2aOffDeps {
+  access: Extract<A2aAccess, { enabled: false }>;
+}
+
+export type A2aServerDeps = A2aLiveDeps | A2aOffDeps;
+
+function isLive(deps: A2aServerDeps): deps is A2aLiveDeps {
+  return deps.access.enabled;
 }
 
 function sendRpc(res: Response, response: JsonRpcResponse): void {
@@ -45,7 +57,7 @@ function sendRpc(res: Response, response: JsonRpcResponse): void {
 /** `GET /.well-known/agent-card.json`; 404 while the endpoint is disabled. */
 export function agentCardHandler(deps: A2aServerDeps): RequestHandler {
   return (_req, res) => {
-    if (!deps.access.enabled) {
+    if (!isLive(deps)) {
       res.status(404).json({ error: deps.access.reason });
       return;
     }
@@ -53,26 +65,12 @@ export function agentCardHandler(deps: A2aServerDeps): RequestHandler {
   };
 }
 
-/** Access refused: the JSON-RPC error to send, or undefined when the request may proceed. */
-function refusal(
-  req: Request,
-  access: A2aAccess
-): { status: number; body: unknown } | undefined {
-  if (!access.enabled) {
-    return { status: 503, body: { error: access.reason } };
-  }
-  if (
-    access.requireBearer &&
-    !bearerMatches(req.header('authorization'), access.token ?? '')
-  ) {
-    return {
-      status: 401,
-      body: {
-        error: 'A bearer token (E_A2A_TOKEN) is required on this endpoint.',
-      },
-    };
-  }
-  return undefined;
+/** True when the request carries the bearer token the live endpoint requires (or none is required). */
+function authorized(req: Request, access: A2aLiveDeps['access']): boolean {
+  return (
+    !access.requireBearer ||
+    bearerMatches(req.header('authorization'), access.token)
+  );
 }
 
 /**
@@ -81,9 +79,14 @@ function refusal(
  */
 export function a2aRpcHandler(deps: A2aServerDeps): RequestHandler {
   return (req, res) => {
-    const refused = refusal(req, deps.access);
-    if (refused) {
-      res.status(refused.status).json(refused.body);
+    if (!isLive(deps)) {
+      res.status(503).json({ error: deps.access.reason });
+      return;
+    }
+    if (!authorized(req, deps.access)) {
+      res.status(401).json({
+        error: 'A bearer token (E_A2A_TOKEN) is required on this endpoint.',
+      });
       return;
     }
     const raw =

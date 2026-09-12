@@ -25,7 +25,6 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
 
 /** All catalog model ids, selected by default when a user hasn't chosen otherwise. */
 export const MODELS = MODEL_CATALOG.map(m => m.id);
-export const DEFAULT_MODEL = MODELS[0];
 
 export type ModelStatusValue =
   'unloaded' | 'loading' | 'loaded' | 'downloading' | 'sleeping';

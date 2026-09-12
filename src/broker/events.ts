@@ -10,6 +10,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import { errorMessage } from '../utils/errors.js';
 export interface StatusEventStreamOptions {
   /** The current state; sent whenever its JSON differs from the last one sent. */
   snapshot: () => unknown;
@@ -52,7 +53,7 @@ export function streamStatusEvents(
       json = JSON.stringify(options.snapshot());
     } catch (err) {
       json = JSON.stringify({
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
     }
     if (json === last) return;
