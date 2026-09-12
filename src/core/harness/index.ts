@@ -13,7 +13,7 @@ import {
   piAdapter,
   PI_PROVIDER_ID,
 } from './adapter.js';
-import { imageTag as eImageTag } from '../identity/naming.js';
+import { imageTag as eImageTag } from '../identity/imageTag.js';
 import { SHIPPED_SKILL_COLLECTIONS } from '../skill/index.js';
 
 /** A coding harness that runs inside a container built from its own Dockerfile. */

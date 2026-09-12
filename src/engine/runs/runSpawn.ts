@@ -10,7 +10,11 @@ import type {
 import type { Harness } from '../../core/harness/index.js';
 import type { Agent } from '../../core/agent/index.js';
 import { slugify } from '../../core/identity/slugify.js';
-import { ProductionBranchNamer } from './runBranchNamer.js';
+import { nextRunName } from './nextRunName.js';
+import {
+  sidecarContainerFor,
+  type RunName,
+} from '../../core/identity/runName.js';
 import { ProductionWorktreeManager } from './runWorktree.js';
 import { ProductionNetworkManager } from './runNetworks.js';
 import {
@@ -243,7 +247,6 @@ export async function runSpawn(
   const worktreesDir = params.worktreesDir ?? defaultWorktreesDir();
 
   // Construct production managers from the primitive deps.
-  const branchNamer = new ProductionBranchNamer(deps.git, worktreesDir);
   const worktreeManager = new ProductionWorktreeManager(deps.git);
   const networkManager = new ProductionNetworkManager(deps.runtime);
   const sidecarOrchestrator = new DockerSidecarOrchestrator(deps.runtime);
@@ -289,10 +292,17 @@ export async function runSpawn(
       : deps.git.headSha();
     const baseBranch = deps.git.currentBranch() || 'main';
 
-    // Generate branch name and create worktree atomically (collision-retry inside the namer).
-    ({ branch } = await branchNamer.nextBranch(params.agent, slug, base));
-    worktreePath = worktreePathFor(worktreesDir, branch);
-    const runName = branch.replace(/\//g, '-');
+    // Cut the branch and create the worktree atomically (collision-retry inside
+    // `nextRunName`); every other name this run uses is derived from its identity.
+    const run: RunName = await nextRunName(
+      deps.git,
+      params.agent,
+      slug,
+      base,
+      worktreesDir
+    );
+    branch = run.branch;
+    worktreePath = worktreePathFor(worktreesDir, run);
     // A sibling has its identity now: the parent's status shows the branch
     // before any image build or container.
     report({ status: 'starting', branch });
@@ -304,7 +314,7 @@ export async function runSpawn(
     // into the worktree itself, so they can never land in the branch.
     const artifactMounts: Mount[] = [];
     if (params.parent) {
-      const artifactsDir = artifactsDirFor(worktreesDir, runName);
+      const artifactsDir = artifactsDirFor(worktreesDir, run);
       scratch.push(() => removeArtifacts(artifactsDir));
       const synced = syncArtifacts({
         parentWorktree: params.parent.worktreePath,
@@ -313,17 +323,17 @@ export async function runSpawn(
       });
       if (synced.copied.length > 0) {
         log.debug(
-          `Synced ${synced.copied.join(', ')} from ${params.parent.branch} into ${runName}`
+          `Synced ${synced.copied.join(', ')} from ${params.parent.branch} into ${run.name}`
         );
       }
       for (const entry of synced.refused) {
         log.warn(
-          `Not syncing "${entry}" into ${runName}: not a real path inside the parent worktree`
+          `Not syncing "${entry}" into ${run.name}: not a real path inside the parent worktree`
         );
       }
       for (const failure of synced.failed) {
         log.warn(
-          `Could not sync "${failure.entry}" into ${runName} (${failure.error}); the sibling can regenerate it`
+          `Could not sync "${failure.entry}" into ${run.name} (${failure.error}); the sibling can regenerate it`
         );
       }
       artifactMounts.push(...synced.mounts);
@@ -334,10 +344,10 @@ export async function runSpawn(
     // is logged and filtered too and the agent reaches them on loopback.
     // Without the stack they fall back to a private per-run network.
     const netns = params.runOptions.netns;
-    const runNetwork = netns ? undefined : `${runName}-net`;
+    const runNetwork = netns ? undefined : run.network;
     const sidecarPlans = params.sidecars ?? [];
     const specs: SidecarSpec[] = sidecarPlans.map(plan => ({
-      name: `${runName}-mcp-${plan.alias}`,
+      name: sidecarContainerFor(run, plan.alias),
       alias: plan.alias,
       image: plan.image,
       port: plan.port,
@@ -351,11 +361,11 @@ export async function runSpawn(
     // owns its spool: the run's identity goes in before the broker starts, the
     // broker spools sibling requests there, and the directory goes with the run.
     if (params.broker) {
-      const spool = brokerSpoolDirFor(worktreesDir, runName);
+      const spool = brokerSpoolDirFor(worktreesDir, run);
       brokerSpool = spool;
       scratch.push(() => removeBrokerSpool(spool));
       prepareBrokerSpool(spool, {
-        name: runName,
+        name: run.name,
         branch,
         agent: params.agent.name,
         role,
@@ -363,7 +373,7 @@ export async function runSpawn(
       });
       specs.unshift(
         brokerSidecarSpec(params.broker, {
-          runName,
+          run,
           netns,
           network: runNetwork,
           spoolDir: brokerSpool,
@@ -423,7 +433,7 @@ export async function runSpawn(
 
     const runOptions: RunOptions = {
       ...params.runOptions,
-      name: runName,
+      name: run.name,
       networks: joinedNetworks,
       volumes: [
         { host: worktreePath, container: '/workspace' },
@@ -483,8 +493,8 @@ export async function runSpawn(
     // Execute the agent container in the foreground. A cancel while it runs
     // removes the container, so `run` returns (non-zero) and teardown follows.
     const onAbort = (): void => {
-      log.warn(`Run ${runName} canceled: stopping its container`);
-      deps.runtime.removeContainer(runName);
+      log.warn(`Run ${run.name} canceled: stopping its container`);
+      deps.runtime.removeContainer(run.name);
     };
     params.abort?.addEventListener('abort', onAbort, { once: true });
     let exitCode: number;

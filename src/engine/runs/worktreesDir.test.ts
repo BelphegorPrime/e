@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { resolveWorktreesDir, worktreePathFor } from './worktreesDir.js';
+import { forParts } from '../../core/identity/runName.js';
 
 const base = {
   homedir: '/home/dev',
@@ -68,7 +69,7 @@ test('resolveWorktreesDir: E_WORKTREES_DIR overrides every platform default', ()
 
 test('worktreePathFor: nests the branch segments under the worktrees dir', () => {
   assert.equal(
-    worktreePathFor('/tmp/e-worktrees', 'e/demo/fix-login-1'),
+    worktreePathFor('/tmp/e-worktrees', forParts('demo', 'fix-login', 1)),
     path.join('/tmp/e-worktrees', 'e', 'demo', 'fix-login-1')
   );
 });

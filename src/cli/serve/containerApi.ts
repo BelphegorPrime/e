@@ -121,17 +121,6 @@ export function resolveEngineSocketPath(
   return engineSocketCandidates(platform, homedir, environment).find(exists);
 }
 
-/**
- * The container name a run's primary container gets: the run branch
- * `e/<agent>/<slug>-N` with slashes replaced (see `runSpawn`), anchored as an
- * engine-side regex so a slug that merely prefixes another does not match.
- */
-export function runContainerPattern(agent: string, slug: string): string {
-  const escape = (value: string) =>
-    value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return `^/?e-${escape(agent)}-${escape(slug)}-[0-9]+$`;
-}
-
 interface ContainerSummary {
   Id: string;
   Names: string[];

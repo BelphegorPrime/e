@@ -1,6 +1,13 @@
 /** Docker network that owns the egress container's namespace. */
 export const STACK_NETWORK = 'e-net';
 
+/**
+ * The shared egress container (ADR-0011). Started once by the local stack's
+ * Compose file; a Run joins its network namespace rather than creating a
+ * private network, so every container's traffic is logged and filtered.
+ */
+export const EGRESS_CONTAINER = 'e-egress';
+
 /** Docker volume holding OmniRoute's persistent state. */
 export const OMNIROUTE_VOLUME = 'omniroute-data';
 

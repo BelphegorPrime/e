@@ -36,6 +36,7 @@ import {
 } from '../../sidecars/broker/contract/spool.js';
 import type { StatusResponse } from '../../sidecars/broker/contract/types.js';
 import { brokerSpoolDirFor } from '../../engine/runs/runBroker.js';
+import { forParts } from '../../core/identity/runName.js';
 
 test('detachedServeArguments preserves command arguments and removes detached flags', () => {
   assert.deepEqual(
@@ -531,10 +532,14 @@ test('/api/runs: a local-only run reports local and unpushed', async () => {
       };
       assert.deepEqual(body.runs, [
         {
+          // A run index entry is a RunName plus its tip metadata, so the
+          // dashed run name and the private network travel with it.
           branch: 'e/claudeCode/fix-typos-1',
           agent: 'claudeCode',
           slug: 'fix-typos',
           counter: 1,
+          name: 'e-claudeCode-fix-typos-1',
+          network: 'e-claudeCode-fix-typos-1-net',
           sha: 'bbb',
           committerDate: '2025-01-01T09:00:00+00:00',
           subject: 'older run',
@@ -1246,7 +1251,7 @@ test('the siblings of a run with a broker come from its spool, as a snapshot and
   const worktreesDir = fsSync.mkdtempSync(
     path.join(os.tmpdir(), 'e-serve-wt-')
   );
-  const spool = brokerSpoolDirFor(worktreesDir, 'e-pi-task-1');
+  const spool = brokerSpoolDirFor(worktreesDir, forParts('pi', 'task', 1));
   ensureSpool(spool);
   writeRunInfo(spool, {
     name: 'e-pi-task-1',

@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import type { RunName } from '../../core/identity/runName.js';
 import { Env } from '../../shared/utils/env.js';
 
 /**
@@ -55,11 +56,11 @@ export function defaultWorktreesDir(): string {
 }
 
 /**
- * The host path of the worktree for run `branch` (`e/<agent>/<slug>-N`) under
- * `worktreesDir`. The branch's `/` segments become nested directories with
- * the platform's separator, so the path is valid for git and for the engine's
- * `-v host:container` on Windows too.
+ * The host path of `run`'s worktree under `worktreesDir`. The branch's `/`
+ * segments become nested directories with the platform's separator, so the
+ * path is valid for git and for the engine's `-v host:container` on Windows
+ * too.
  */
-export function worktreePathFor(worktreesDir: string, branch: string): string {
-  return path.join(worktreesDir, ...branch.split('/'));
+export function worktreePathFor(worktreesDir: string, run: RunName): string {
+  return path.join(worktreesDir, ...run.branch.split('/'));
 }

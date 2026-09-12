@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Duplex, Readable } from 'node:stream';
 import type { EngineApi } from './containerApi.js';
-import { runContainerPattern } from './containerApi.js';
+import { namePattern } from '../../core/identity/runName.js';
 import { env } from '../../shared/utils/env.js';
 import { log } from '../../shared/utils/log.js';
 import { selfInvocation } from '../../shared/utils/selfInvoke.js';
@@ -232,7 +232,7 @@ class TerminalSession {
     this.polling = true;
     try {
       const container = await this.deps.engine.findContainer(
-        runContainerPattern(this.info.agent, this.info.slug)
+        namePattern(this.info.agent, this.info.slug)
       );
       if (!container || this.info.phase !== 'starting') return;
       const stream = await this.deps.engine.attach(container.name);

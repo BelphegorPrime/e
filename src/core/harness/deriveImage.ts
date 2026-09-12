@@ -15,7 +15,7 @@ import type {
   Provider,
   RenderedConfigFile,
 } from './adapter.js';
-import { imageTag } from '../identity/naming.js';
+import { imageTag } from '../identity/imageTag.js';
 import { NODE_HOME } from './renderDockerfile.js';
 
 /** The baked provider config block of a derived Dockerfile (a file harness). */

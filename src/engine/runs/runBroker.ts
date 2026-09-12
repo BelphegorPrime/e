@@ -20,6 +20,10 @@ import {
   writeRunInfo,
 } from '../../sidecars/broker/contract/spool.js';
 import type { BrokerRunInfo } from '../../sidecars/broker/contract/types.js';
+import {
+  brokerContainerFor,
+  type RunName,
+} from '../../core/identity/runName.js';
 import type { SidecarSpec } from '../../ports/runtime/index.js';
 
 /** The broker sidecar a spawn plans (present only when the run wants siblings). */
@@ -42,11 +46,8 @@ export function defaultBrokerPlan(): BrokerPlan {
  * host path every container engine is known to bind-mount (see
  * `worktreesDir.ts`); the `.broker` segment keeps it apart from worktrees.
  */
-export function brokerSpoolDirFor(
-  worktreesDir: string,
-  runName: string
-): string {
-  return path.join(worktreesDir, '.broker', runName);
+export function brokerSpoolDirFor(worktreesDir: string, run: RunName): string {
+  return path.join(worktreesDir, '.broker', run.name);
 }
 
 /** Creates the spool layout and records the run's identity for the broker to serve. */
@@ -70,15 +71,15 @@ export function removeBrokerSpool(spoolDir: string): void {
  */
 export function brokerSidecarSpec(
   plan: BrokerPlan,
-  run: { runName: string; netns?: string; network?: string; spoolDir: string }
+  host: { run: RunName; netns?: string; network?: string; spoolDir: string }
 ): SidecarSpec {
   return {
-    name: `${run.runName}-broker`,
+    name: brokerContainerFor(host.run),
     alias: plan.alias,
     image: plan.image,
     port: plan.port,
-    netns: run.netns,
-    network: run.network,
-    volumes: [{ host: run.spoolDir, container: BROKER_SPOOL_MOUNT }],
+    netns: host.netns,
+    network: host.network,
+    volumes: [{ host: host.spoolDir, container: BROKER_SPOOL_MOUNT }],
   };
 }

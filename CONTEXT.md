@@ -194,6 +194,10 @@ Container configuration options (`src/ports/runtime/index.ts`):
 **ContainerRuntime**:
 Runtime instance driving one Docker-CLI-compatible executable (`src/ports/runtime/index.ts`)
 
+**Run name**:
+A Run's identity, derived once from its branch and owned by one module (`src/core/identity/runName.ts`, ADR-0003): `branch` (`e/<agent>/<slug>-N`, the durable artifact), the parsed `agent`/`slug`/`counter`, `name` (the branch with `/`→`-`: the worktree directory and the container `--name`), and `network` (`<name>-net`, the private per-run network). The branch is the identity, so `fromBranch` is the one constructor and `forParts(agent, slug, counter)` only spells the branch out first; it is plain, serializable data, so the per-run container names are free functions beside it (`sidecarContainerFor`, `brokerContainerFor`) and `namePattern(agent, slug)` matches the primary container of any Run of that Agent and slug, whatever its counter. Every host path takes a Run name rather than a hand-mangled string (`worktreePathFor`, `artifactsDirFor`, `brokerSpoolDirFor`), and the runs index is a Run name plus its tip metadata.
+_Avoid_: re-deriving any of these by hand (the rule lived in seven places before)
+
 **Worktrees dir**:
 The host directory run worktrees are created in (`src/engine/runs/worktreesDir.ts`): `E_WORKTREES_DIR`, else the platform default - the temp dir on Linux, `~/Library/Caches/e/worktrees` on macOS, `%LOCALAPPDATA%\e\worktrees` on Windows - chosen so the engine's VM can bind-mount it
 

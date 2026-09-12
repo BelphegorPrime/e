@@ -32,6 +32,7 @@ import {
 } from '../../core/store/paths.js';
 import { isInitialized } from '../../core/store/config.js';
 import { Env } from '../../shared/utils/env.js';
+import { EGRESS_CONTAINER } from '../../shared/constants.js';
 import {
   spawnSiblingProcess,
   type SiblingLauncher,
@@ -258,7 +259,7 @@ export async function executeSpawn(
     port: facts.port,
     env: plan.agentEnv,
     envFile: envFiles,
-    netns: facts.localStackPresent ? 'e-egress' : undefined,
+    netns: facts.localStackPresent ? EGRESS_CONTAINER : undefined,
     networks:
       sibling?.parent.network && !facts.localStackPresent
         ? [sibling.parent.network]

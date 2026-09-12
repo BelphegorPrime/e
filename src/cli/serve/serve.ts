@@ -9,11 +9,8 @@ import type { Command } from 'commander';
 import { resolveUiDirectory } from './assets.js';
 import type { Git } from '../../ports/git/index.js';
 import { HostGit } from '../../ports/git/host.js';
-import {
-  buildRunIndex,
-  parseRunBranch,
-  resolveRunRef,
-} from '../../engine/runs/runIndex.js';
+import { buildRunIndex, resolveRunRef } from '../../engine/runs/runIndex.js';
+import { fromBranch } from '../../core/identity/runName.js';
 import { eBaseDir } from '../../core/store/paths.js';
 import { log } from '../../shared/utils/log.js';
 import { env } from '../../shared/utils/env.js';
@@ -541,7 +538,7 @@ export function createServeApp(
         : siblingsRequested
           ? restPath.slice(0, -SIBLINGS_SUFFIX.length)
           : restPath;
-    const identity = parseRunBranch(branchName);
+    const identity = fromBranch(branchName);
     if (!identity) {
       response.status(404).json({ error: 'Not found' });
       return;
@@ -550,10 +547,7 @@ export function createServeApp(
     // spool on the host, the same records the broker serves, as a snapshot or
     // as Server-Sent Events. A run without a spool has no siblings.
     if (siblingsRequested || siblingEventsRequested) {
-      const spool = brokerSpoolDirFor(
-        worktreesDir,
-        branchName.replace(/\//g, '-')
-      );
+      const spool = brokerSpoolDirFor(worktreesDir, identity);
       const snapshot = (): StatusResponse => ({
         run: readRunInfo(spool),
         siblings: listRecords(spool),

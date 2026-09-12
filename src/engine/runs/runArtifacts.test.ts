@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_SIBLING_ARTIFACTS } from '../../core/store/config.js';
+import { forParts } from '../../core/identity/runName.js';
 import {
   artifactsDirFor,
   copyArtifact,
@@ -70,7 +71,7 @@ test('planArtifactSync: drops absolute and escaping paths, normalizes and de-dup
 
 test('artifactsDirFor: under the worktrees dir, apart from the worktrees', () => {
   assert.equal(
-    artifactsDirFor('/wt', 'e-demo-task-1'),
+    artifactsDirFor('/wt', forParts('demo', 'task', 1)),
     path.join('/wt', '.artifacts', 'e-demo-task-1')
   );
 });

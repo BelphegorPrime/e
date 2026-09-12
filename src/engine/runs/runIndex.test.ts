@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RunRef } from '../../ports/git/index.js';
-import { buildRunIndex, parseRunBranch, resolveRunRef } from './runIndex.js';
+import { buildRunIndex, resolveRunRef } from './runIndex.js';
 
 const refs: RunRef[] = [
   {
@@ -29,39 +29,6 @@ const refs: RunRef[] = [
     subject: 'remote-only run',
   },
 ];
-
-test('parseRunBranch parses local and remote run short names', () => {
-  assert.deepEqual(parseRunBranch('e/claudeCode/fix-typos-2'), {
-    branch: 'e/claudeCode/fix-typos-2',
-    agent: 'claudeCode',
-    slug: 'fix-typos',
-    counter: 2,
-  });
-  assert.deepEqual(parseRunBranch('origin/e/cheap-codex/tidy-tests-1'), {
-    branch: 'e/cheap-codex/tidy-tests-1',
-    agent: 'cheap-codex',
-    slug: 'tidy-tests',
-    counter: 1,
-  });
-});
-
-test('parseRunBranch keeps digits inside the slug', () => {
-  assert.deepEqual(parseRunBranch('e/demo/fix-issue-404-7'), {
-    branch: 'e/demo/fix-issue-404-7',
-    agent: 'demo',
-    slug: 'fix-issue-404',
-    counter: 7,
-  });
-});
-
-test('parseRunBranch rejects non-run branches', () => {
-  assert.equal(parseRunBranch('e/README'), undefined);
-  assert.equal(parseRunBranch('main'), undefined);
-  assert.equal(parseRunBranch('e/agent'), undefined);
-  assert.equal(parseRunBranch('e/agent/slug'), undefined);
-  // A remote segment of `e` collides with the run namespace itself.
-  assert.equal(parseRunBranch('e/e/agent/slug-1'), undefined);
-});
 
 test('buildRunIndex merges local and remote twins, local metadata wins', () => {
   const runs = buildRunIndex(refs);

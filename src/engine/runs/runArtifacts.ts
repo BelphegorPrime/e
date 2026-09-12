@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Mount } from '../../core/mount.js';
+import type { RunName } from '../../core/identity/runName.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';
 /**
@@ -59,8 +60,8 @@ export function planArtifactSync(entries: readonly string[]): string[] {
  * one host path every container engine is known to bind-mount (see
  * `worktreesDir.ts`), apart from the worktrees themselves.
  */
-export function artifactsDirFor(worktreesDir: string, runName: string): string {
-  return path.join(worktreesDir, '.artifacts', runName);
+export function artifactsDirFor(worktreesDir: string, run: RunName): string {
+  return path.join(worktreesDir, '.artifacts', run.name);
 }
 
 /**

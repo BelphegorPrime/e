@@ -45,7 +45,7 @@ import {
   roleEnv,
   type RunRole,
 } from '../runs/runRole.js';
-import { imageTag } from '../../core/identity/naming.js';
+import { imageTag } from '../../core/identity/imageTag.js';
 import { skillMountSpec } from '../../core/skill/index.js';
 import { skillDir } from '../../core/store/paths.js';
 

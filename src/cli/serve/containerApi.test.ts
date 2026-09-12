@@ -7,9 +7,9 @@ import { test } from 'node:test';
 import {
   localSocketFromHost,
   resolveEngineSocketPath,
-  runContainerPattern,
   UnixSocketEngineApi,
 } from './containerApi.js';
+import { namePattern } from '../../core/identity/runName.js';
 
 test('resolveEngineSocketPath prefers DOCKER_HOST, then docker, then podman (Linux)', () => {
   const existing = new Set([
@@ -131,15 +131,6 @@ test('resolveEngineSocketPath uses named pipes on Windows, including DOCKER_HOST
   );
 });
 
-test('runContainerPattern anchors the run name and escapes regex characters', () => {
-  const pattern = new RegExp(runContainerPattern('smart.pi', 'fix-login'));
-  assert.ok(pattern.test('/e-smart.pi-fix-login-1'));
-  assert.ok(pattern.test('e-smart.pi-fix-login-12'));
-  assert.ok(!pattern.test('/e-smartXpi-fix-login-1'));
-  assert.ok(!pattern.test('/e-smart.pi-fix-login-extra-1'));
-  assert.ok(!pattern.test('/e-smart.pi-fix-login-1-mcp-everything'));
-});
-
 /** A fake engine on a unix socket: list, attach (hijack) and resize. */
 async function startFakeEngine(): Promise<{
   socketPath: string;
@@ -221,10 +212,10 @@ test('UnixSocketEngineApi lists by exact run name, hijacks attach and resizes', 
   const engine = await startFakeEngine();
   const api = new UnixSocketEngineApi(engine.socketPath);
   try {
-    const found = await api.findContainer(runContainerPattern('pi', 'demo'));
+    const found = await api.findContainer(namePattern('pi', 'demo'));
     assert.deepEqual(found, { id: 'aaa', name: 'e-pi-demo-1' });
     assert.equal(
-      await api.findContainer(runContainerPattern('pi', 'nothing')),
+      await api.findContainer(namePattern('pi', 'nothing')),
       undefined
     );
 
