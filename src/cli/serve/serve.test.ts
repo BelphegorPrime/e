@@ -16,12 +16,8 @@ import {
   type ServeAppDeps,
   type ServeState,
 } from './serve.js';
-import type {
-  Git,
-  RunCommit,
-  RunRef,
-  MergeOutcome,
-} from '../../ports/git/index.js';
+import type { RunCommit, RunRef } from '../../ports/git/index.js';
+import { InMemoryGit } from '../../ports/git/memory.js';
 import { TerminalSessions } from './terminalSessions.js';
 import { fakeEngine, scriptedSpawner } from './terminalSessions.testSupport.js';
 import { E_VERSION } from '../../shared/version.js';
@@ -377,64 +373,6 @@ test('shouldReuseDetachedServe: a live entry short-circuits to already serving',
   assert.equal(result, true);
 });
 
-/** Scripted `Git` fake for the branch-backed runs index routes. */
-class FakeGit implements Git {
-  refs: RunRef[];
-  commits: Record<string, RunCommit[]> = {};
-  throwsOn?: string;
-
-  constructor(
-    opts: {
-      refs?: RunRef[];
-      commits?: Record<string, RunCommit[]>;
-      throwsOn?: string;
-    } = {}
-  ) {
-    this.refs = opts.refs ?? [];
-    this.commits = opts.commits ?? {};
-    this.throwsOn = opts.throwsOn;
-  }
-
-  isRepo(): boolean {
-    return true;
-  }
-  headSha(): string {
-    return 'base';
-  }
-  currentBranch(): string {
-    return 'main';
-  }
-  listRunBranches(): string[] {
-    return this.refs.map(ref => ref.name);
-  }
-  listRunRefs(): RunRef[] {
-    if (this.throwsOn) throw new Error(this.throwsOn);
-    return this.refs;
-  }
-  runLog(branch: string): RunCommit[] {
-    return this.commits[branch] ?? [];
-  }
-  branchExists(branch: string): boolean {
-    return this.refs.some(ref => ref.name === branch);
-  }
-  addWorktree(): void {}
-  isDirty(): boolean {
-    return false;
-  }
-  commitAll(): void {}
-  hasCommitsBeyondBase(): boolean {
-    return false;
-  }
-  push(): void {}
-  removeWorktree(): void {}
-  merge(): MergeOutcome {
-    return { status: 'merged' };
-  }
-  mergeInProgress(): boolean {
-    return false;
-  }
-}
-
 /** Boots the app on an ephemeral port with a temp UI dir and runs `fn`. */
 async function withServeApp(
   deps: ServeAppDeps,
@@ -499,31 +437,34 @@ const runCommits: Record<string, RunCommit[]> = {
 };
 
 test('/api/runs lists the branch-backed runs index, newest first', async () => {
-  await withServeApp({ git: new FakeGit({ refs: runRefs }) }, async baseUrl => {
-    const res = await fetch(`${baseUrl}/api/runs`);
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as {
-      runs: Array<{
-        branch: string;
-        agent: string;
-        counter: number;
-        pushed: boolean;
-      }>;
-    };
-    assert.deepEqual(
-      body.runs.map(run => [run.branch, run.agent, run.counter, run.pushed]),
-      [
-        ['e/claudeCode/fix-typos-2', 'claudeCode', 2, true],
-        ['e/claudeCode/fix-typos-1', 'claudeCode', 1, false],
-      ]
-    );
-  });
+  await withServeApp(
+    { git: new InMemoryGit({ refs: runRefs }) },
+    async baseUrl => {
+      const res = await fetch(`${baseUrl}/api/runs`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        runs: Array<{
+          branch: string;
+          agent: string;
+          counter: number;
+          pushed: boolean;
+        }>;
+      };
+      assert.deepEqual(
+        body.runs.map(run => [run.branch, run.agent, run.counter, run.pushed]),
+        [
+          ['e/claudeCode/fix-typos-2', 'claudeCode', 2, true],
+          ['e/claudeCode/fix-typos-1', 'claudeCode', 1, false],
+        ]
+      );
+    }
+  );
 });
 
 test('/api/runs: a local-only run reports local and unpushed', async () => {
   await withServeApp(
     {
-      git: new FakeGit({ refs: [runRefs[2]!] }), // local twin only
+      git: new InMemoryGit({ refs: [runRefs[2]!] }), // local twin only
     },
     async baseUrl => {
       const res = await fetch(`${baseUrl}/api/runs`);
@@ -553,7 +494,7 @@ test('/api/runs: a local-only run reports local and unpushed', async () => {
 
 test('/api/runs/<branch> reports per-run status', async () => {
   await withServeApp(
-    { git: new FakeGit({ refs: runRefs, commits: runCommits }) },
+    { git: new InMemoryGit({ refs: runRefs, log: runCommits }) },
     async baseUrl => {
       const res = await fetch(`${baseUrl}/api/runs/e/claudeCode/fix-typos-2`);
       assert.equal(res.status, 200);
@@ -574,7 +515,7 @@ test('/api/runs/<branch> reports per-run status', async () => {
 
 test('/api/runs/<branch>/logs returns the branch commit history', async () => {
   await withServeApp(
-    { git: new FakeGit({ refs: runRefs, commits: runCommits }) },
+    { git: new InMemoryGit({ refs: runRefs, log: runCommits }) },
     async baseUrl => {
       const res = await fetch(
         `${baseUrl}/api/runs/e/claudeCode/fix-typos-2/logs`
@@ -605,7 +546,7 @@ test('/api/runs reads a remote-only run from its remote-tracking ref', async () 
     ],
   };
   await withServeApp(
-    { git: new FakeGit({ refs: [remoteOnly], commits }) },
+    { git: new InMemoryGit({ refs: [remoteOnly], log: commits }) },
     async baseUrl => {
       const status = await fetch(
         `${baseUrl}/api/runs/e/cheap-codex/tidy-tests-1`
@@ -646,7 +587,7 @@ test('/api/runs reads a remote-only run from its remote-tracking ref', async () 
 
 test('/api/runs returns 404 for an unknown or non-run branch', async () => {
   await withServeApp(
-    { git: new FakeGit({ refs: runRefs, commits: runCommits }) },
+    { git: new InMemoryGit({ refs: runRefs, log: runCommits }) },
     async baseUrl => {
       for (const route of [
         '/api/runs/e/claudeCode/never-ran-9',
@@ -664,7 +605,12 @@ test('/api/runs returns 404 for an unknown or non-run branch', async () => {
 
 test('/api/runs reports 500 when git enumeration fails', async () => {
   await withServeApp(
-    { git: new FakeGit({ refs: runRefs, throwsOn: 'not a repository' }) },
+    {
+      git: new InMemoryGit({
+        refs: runRefs,
+        fail: { listRunRefs: 'not a repository' },
+      }),
+    },
     async baseUrl => {
       const res = await fetch(`${baseUrl}/api/runs`);
       assert.equal(res.status, 500);
@@ -1266,11 +1212,11 @@ test('the siblings of a run with a broker come from its spool, as a snapshot and
     prompt: 'p',
     requestedAt: 't',
   });
-  const git = {
-    listRunRefs: (): RunRef[] => [
+  const git = new InMemoryGit({
+    refs: [
       { name: 'e/pi/task-1', sha: 'abc', committerDate: 't', subject: 's' },
     ],
-  } as unknown as Git;
+  });
   const { baseUrl, close } = await serveWith({ git, worktreesDir });
   try {
     const snapshot = await fetch(`${baseUrl}/api/runs/e/pi/task-1/siblings`);

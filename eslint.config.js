@@ -16,6 +16,10 @@ export default tseslint.config(
       // Local e state and packaged binaries are not source.
       '.e/',
       'command/',
+      // Agent worktrees are whole checkouts nested inside this one; linting
+      // them lints the repo three more times and reports their errors as ours.
+      '.claude/worktrees/',
+      '**/.claude/worktrees/',
       'src/sidecars/egress/bundle.generated.ts',
       'src/sidecars/broker/bundle.generated.ts',
     ],

@@ -135,12 +135,6 @@ export class HostGit implements Git {
       });
   }
 
-  branchExists(branch: string): boolean {
-    // `--quiet` keeps a missing ref from writing to stderr; any exit code
-    // other than 0 means the ref does not resolve.
-    return this.refResolves(`${branch}^{commit}`);
-  }
-
   addWorktree(spec: WorktreeSpec): void {
     // `-b <branch>` makes the branch; git refuses if it already exists, and
     // refuses if `path` is non-empty - giving us atomic create for free.

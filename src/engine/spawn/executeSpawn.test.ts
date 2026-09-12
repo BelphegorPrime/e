@@ -3,13 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type {
-  Git,
-  MergeOutcome,
-  RunCommit,
-  RunRef,
-  WorktreeSpec,
-} from '../../ports/git/index.js';
+import { InMemoryGit } from '../../ports/git/memory.js';
 import {
   ContainerRuntime,
   type RunOptions,
@@ -28,53 +22,6 @@ import {
 
 // The preflight guards (a git repo, foreground) run before any build, so they
 // are reachable with a fake git and an untouched runtime.
-
-class StubGit implements Git {
-  removedWorktrees: string[] = [];
-  addedWorktrees: WorktreeSpec[] = [];
-  constructor(private repo: boolean) {}
-  isRepo(): boolean {
-    return this.repo;
-  }
-  headSha(): string {
-    return 'basesha';
-  }
-  currentBranch(): string {
-    return 'main';
-  }
-  listRunBranches(): string[] {
-    return [];
-  }
-  listRunRefs(): RunRef[] {
-    return [];
-  }
-  runLog(): RunCommit[] {
-    return [];
-  }
-  branchExists(): boolean {
-    return false;
-  }
-  addWorktree(spec: WorktreeSpec): void {
-    this.addedWorktrees.push(spec);
-  }
-  isDirty(): boolean {
-    return false;
-  }
-  commitAll(): void {}
-  hasCommitsBeyondBase(): boolean {
-    return false;
-  }
-  push(): void {}
-  removeWorktree(worktreePath: string): void {
-    this.removedWorktrees.push(worktreePath);
-  }
-  merge(): MergeOutcome {
-    return { status: 'merged' };
-  }
-  mergeInProgress(): boolean {
-    return false;
-  }
-}
 
 const harness: Harness = {
   name: 'demo',
@@ -121,7 +68,7 @@ const untouched = new ContainerRuntime('true');
 test('errors before any build when not in a git repository', async () => {
   const scratch = new RunScratch();
   const result = await executeSpawn(facts(), emptyPlan, {
-    git: new StubGit(false),
+    git: new InMemoryGit({ repo: false }),
     runtime: untouched,
     scratch,
   });
@@ -206,7 +153,7 @@ test('a sidecar with credentials gets its own env-file; one without gets none', 
         ],
         sidecarCredentials: { gh: 'GITHUB_TOKEN=abc\n' },
       },
-      { git: new StubGit(true), runtime, scratch }
+      { git: new InMemoryGit(), runtime, scratch }
     );
     assert.equal(result.ran, true);
     const [gh, plain] = runtime.sidecars;
@@ -220,7 +167,7 @@ test('a sidecar with credentials gets its own env-file; one without gets none', 
 
 test('--keep-worktree reaches the orchestrator: a clean worktree is left in place', async () => {
   await withDemoStore(async root => {
-    const kept = new StubGit(true);
+    const kept = new InMemoryGit();
     await executeSpawn(facts({ root, keepWorktree: true }), emptyPlan, {
       git: kept,
       runtime: new RecordingRuntime(),
@@ -228,7 +175,7 @@ test('--keep-worktree reaches the orchestrator: a clean worktree is left in plac
     });
     assert.deepEqual(kept.removedWorktrees, []);
 
-    const removed = new StubGit(true);
+    const removed = new InMemoryGit();
     await executeSpawn(facts({ root }), emptyPlan, {
       git: removed,
       runtime: new RecordingRuntime(),
@@ -240,7 +187,7 @@ test('--keep-worktree reaches the orchestrator: a clean worktree is left in plac
 
 test('worktreesDir reaches the orchestrator: the run worktree is cut under it', async () => {
   await withDemoStore(async root => {
-    const git = new StubGit(true);
+    const git = new InMemoryGit();
     const worktreesDir = path.join(os.tmpdir(), 'e-custom-worktrees');
     // `--name` pins the slug, so the expected path needs no slugify knowledge.
     await executeSpawn(
@@ -252,9 +199,9 @@ test('worktreesDir reaches the orchestrator: the run worktree is cut under it', 
         scratch: new RunScratch(),
       }
     );
-    assert.equal(git.addedWorktrees.length, 1);
+    assert.equal(git.worktrees.length, 1);
     assert.equal(
-      git.addedWorktrees[0].path,
+      git.worktrees[0].path,
       path.join(worktreesDir, 'e', 'demo', 'custom-run-1')
     );
   });
@@ -274,7 +221,7 @@ test('does not attach the agent to a Compose network when the stack is present',
     fs.writeFileSync(path.join(tmp, '.e', 'compose.yaml'), 'services: {}\n');
     const withStack = new RecordingRuntime();
     const result = await executeSpawn(facts({ root: tmp }), emptyPlan, {
-      git: new StubGit(true),
+      git: new InMemoryGit(),
       runtime: withStack,
       scratch: new RunScratch(),
     });
@@ -286,7 +233,7 @@ test('does not attach the agent to a Compose network when the stack is present',
     const plain = new RecordingRuntime();
     fs.rmSync(path.join(tmp, '.e', 'compose.yaml'));
     await executeSpawn(facts({ root: tmp }), emptyPlan, {
-      git: new StubGit(true),
+      git: new InMemoryGit(),
       runtime: plain,
       scratch: new RunScratch(),
     });
@@ -331,7 +278,7 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
     const result = await executeSpawn(
       facts({ root: tmp, baseEnvFile: base, userEnvFile: user }),
       plan,
-      { git: new StubGit(true), runtime, scratch }
+      { git: new InMemoryGit(), runtime, scratch }
     );
 
     assert.equal(result.ran, true);
@@ -360,7 +307,7 @@ test('a prompt runs one-shot: the harness gets the prompt, no TTY', async () => 
     const result = await executeSpawn(
       facts({ root, prompt: 'print hello' }),
       emptyPlan,
-      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
     );
     assert.equal(result.ran, true);
     assert.equal(runtime.options?.interactive, false);
@@ -373,7 +320,7 @@ test('no prompt opens the harness TUI: interactive run, no one-shot command', as
   await withDemoStore(async root => {
     const runtime = new RecordingRuntime();
     const result = await executeSpawn(facts({ root, prompt: '' }), emptyPlan, {
-      git: new StubGit(true),
+      git: new InMemoryGit(),
       runtime,
       scratch: new RunScratch(),
     });
@@ -389,7 +336,7 @@ test("the browser terminal's headless child (no prompt, E_TTY_HEADLESS) stays in
     await executeSpawn(
       facts({ root, prompt: '', headlessTty: true, name: 'from-browser' }),
       emptyPlan,
-      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
     );
     assert.equal(runtime.options?.interactive, true);
     assert.equal(runtime.options?.headlessTty, true);
@@ -403,7 +350,7 @@ test('the role reaches the orchestrator: a child run is launched with the child 
     await executeSpawn(
       facts({ root, role: 'child' }),
       { ...emptyPlan, agentEnv: ['E_ROLE=child'] },
-      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
     );
     // The plan's `-e` env is passed through untouched (the plan decided it) ...
     assert.deepEqual(runtime.options?.env, ['E_ROLE=child']);
@@ -422,7 +369,7 @@ test('a planned broker seeds .e/broker on demand, builds e-broker, and starts th
         ...emptyPlan,
         broker: defaultBrokerPlan(),
       },
-      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
     );
     assert.equal(result.ran, true);
     // Build context written without e init having done so.
@@ -452,7 +399,7 @@ test('an edited .e/broker/Dockerfile is never clobbered by a spawn', async () =>
         broker: defaultBrokerPlan(),
       },
       {
-        git: new StubGit(true),
+        git: new InMemoryGit(),
         runtime: new RecordingRuntime(),
         scratch: new RunScratch(),
       }
@@ -497,7 +444,7 @@ test('a sibling spawn joins the parent network, syncs the configured artifacts, 
         },
       }),
       emptyPlan,
-      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
     );
     assert.equal(result.ran, true);
     assert.deepEqual(runtime.options?.networks, ['e-demo-parent-1-net']);

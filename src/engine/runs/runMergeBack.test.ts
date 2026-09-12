@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HostGit } from '../../ports/git/host.js';
 import { git, initRepo } from '../../ports/git/host.testSupport.js';
-import type { Git, MergeOutcome } from '../../ports/git/index.js';
+import { InMemoryGit } from '../../ports/git/memory.js';
 import type { SiblingRecord } from '../../sidecars/broker/contract/types.js';
 import {
   checkpointMessage,
@@ -192,67 +192,17 @@ test('a sibling whose branch adds nothing is up-to-date', () => {
 });
 
 /** A `Git` scripted for the paths real git is hard to stage: refusals and failures. */
-class ScriptedGit implements Git {
-  commits: string[] = [];
-  merges: string[] = [];
-  constructor(
-    private readonly script: {
-      dirty?: boolean;
-      merging?: boolean;
-      merge?: MergeOutcome | Error;
-      commitFails?: string;
-    }
-  ) {}
-  isRepo() {
-    return true;
-  }
-  headSha() {
-    return 'sha';
-  }
-  currentBranch() {
-    return 'main';
-  }
-  listRunBranches() {
-    return [];
-  }
-  listRunRefs() {
-    return [];
-  }
-  runLog() {
-    return [];
-  }
-  branchExists() {
-    return true;
-  }
-  addWorktree() {}
-  isDirty() {
-    return this.script.dirty ?? false;
-  }
-  commitAll(_path: string, message: string) {
-    if (this.script.commitFails) throw new Error(this.script.commitFails);
-    this.commits.push(message);
-  }
-  hasCommitsBeyondBase() {
-    return true;
-  }
-  push() {}
-  removeWorktree() {}
-  merge(_path: string, branch: string): MergeOutcome {
-    this.merges.push(branch);
-    const outcome = this.script.merge ?? { status: 'merged' };
-    if (outcome instanceof Error) throw outcome;
-    return outcome;
-  }
-  mergeInProgress() {
-    return this.script.merging ?? false;
-  }
-}
 
 const sib = { id: 'sib-001', branch: 'e/researcher/look-1' };
 
 test('a refusal over files in flight is held with those files named, for the parent to clear', () => {
-  const scripted = new ScriptedGit({
-    merge: { status: 'refused', files: ['src/a.ts', 'src/b.ts'] },
+  const scripted = new InMemoryGit({
+    merge: {
+      'e/researcher/look-1': {
+        status: 'refused',
+        files: ['src/a.ts', 'src/b.ts'],
+      },
+    },
   });
   const merge = mergeBackSibling(scripted, parent, sib);
   assert.equal(merge.status, 'held');
@@ -261,7 +211,10 @@ test('a refusal over files in flight is held with those files named, for the par
 });
 
 test('a checkpoint that cannot be committed holds the merge before git is asked to merge anything', () => {
-  const scripted = new ScriptedGit({ dirty: true, commitFails: 'hook failed' });
+  const scripted = new InMemoryGit({
+    dirty: true,
+    fail: { commitAll: 'hook failed' },
+  });
   const merge = mergeBackSibling(scripted, parent, sib);
   assert.equal(merge.status, 'held');
   assert.match(merge.reason ?? '', /could not be checkpointed.*hook failed/);
@@ -269,12 +222,14 @@ test('a checkpoint that cannot be committed holds the merge before git is asked 
 });
 
 test('any other git refusal is failed with the reason; a resolution that cannot be committed keeps the conflict', () => {
-  const scripted = new ScriptedGit({ merge: new Error('unknown ref') });
+  const scripted = new InMemoryGit({
+    merge: { 'e/researcher/look-1': new Error('unknown ref') },
+  });
   assert.deepEqual(mergeBackSibling(scripted, parent, sib), {
     status: 'failed',
     reason: 'git refused to merge e/researcher/look-1: unknown ref',
   });
-  const stuck = new ScriptedGit({ merging: true, commitFails: 'hook' });
+  const stuck = new InMemoryGit({ merging: true, fail: { commitAll: 'hook' } });
   const kept = concludeMergeBack(stuck, parent, sib, {
     status: 'conflict',
     files: ['x'],

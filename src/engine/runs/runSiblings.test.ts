@@ -16,7 +16,7 @@ import {
   writeStatus,
 } from '../../sidecars/broker/contract/spool.js';
 import { Env } from '../../shared/utils/env.js';
-import type { Git, MergeOutcome } from '../../ports/git/index.js';
+import { InMemoryGit } from '../../ports/git/memory.js';
 import {
   SiblingConsumer,
   siblingSummaryLine,
@@ -103,83 +103,9 @@ function consumer(
     launch: launcher.launch,
     sleep: async () => {},
     now: () => new Date('2026-09-12T12:00:00.000Z'),
-    git: new ScriptedGit(),
+    git: new InMemoryGit(),
     ...overrides,
   });
-}
-
-/**
- * A `Git` for the merge-back seams: records checkpoints and merges in call
- * order, answers each branch's merge from a script (an outcome, a list of
- * outcomes consumed one per attempt, or an error to throw), and keeps a
- * conflict "in progress" until the next `commitAll` concludes it.
- */
-class ScriptedGit implements Git {
-  calls: string[] = [];
-  merges: { branch: string; message?: string }[] = [];
-  commits: string[] = [];
-  dirty = false;
-  merging = false;
-  constructor(
-    private readonly script: Record<
-      string,
-      MergeOutcome | Error | (MergeOutcome | Error)[]
-    > = {}
-  ) {}
-  isRepo() {
-    return true;
-  }
-  headSha() {
-    return 'sha';
-  }
-  currentBranch() {
-    return 'main';
-  }
-  listRunBranches() {
-    return [];
-  }
-  listRunRefs() {
-    return [];
-  }
-  runLog() {
-    return [];
-  }
-  branchExists() {
-    return true;
-  }
-  addWorktree() {}
-  isDirty() {
-    return this.dirty;
-  }
-  commitAll(_path: string, message: string) {
-    this.calls.push(`commit ${message}`);
-    this.commits.push(message);
-    this.dirty = false;
-    this.merging = false;
-  }
-  hasCommitsBeyondBase() {
-    return true;
-  }
-  push() {}
-  removeWorktree() {}
-  merge(_path: string, branch: string, message?: string): MergeOutcome {
-    this.calls.push(`merge ${branch}`);
-    this.merges.push({ branch, message });
-    const scripted = this.script[branch];
-    let outcome: MergeOutcome | Error | undefined;
-    if (Array.isArray(scripted)) {
-      outcome = scripted.length > 1 ? scripted.shift() : scripted[0];
-    } else {
-      outcome = scripted;
-    }
-    if (outcome instanceof Error) throw outcome;
-    const result = outcome ?? { status: 'merged' };
-    if (result.status === 'conflict') this.merging = true;
-    return result;
-  }
-  mergeInProgress() {
-    return this.merging;
-  }
 }
 
 test('childCliArgs: a one-shot spawn of the requested agent, passthrough before --, the prompt after', () => {
@@ -623,18 +549,21 @@ const reportOf = (spool: string, id: string) =>
 test('a done sibling is merged into the parent worktree; status and report carry the outcome', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit();
+    const git = new InMemoryGit();
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
     c.tick();
     await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
 
-    assert.deepEqual(git.merges, [
-      {
-        branch: 'e/researcher/look-1',
-        message: 'e: merge back e/researcher/look-1',
-      },
-    ]);
+    assert.deepEqual(
+      git.merges.map(m => ({ branch: m.branch, message: m.message })),
+      [
+        {
+          branch: 'e/researcher/look-1',
+          message: 'e: merge back e/researcher/look-1',
+        },
+      ]
+    );
     assert.deepEqual(c.outcomes, [
       {
         id: 'sib-001',
@@ -659,17 +588,25 @@ test('a done sibling is merged into the parent worktree; status and report carry
 test('a dirty parent is checkpointed before the merge, so its WIP is folded in and the merge is the last index write', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit();
-    git.dirty = true;
+    const git = new InMemoryGit({ dirty: true });
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
     c.tick();
     await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
 
-    assert.deepEqual(git.calls, [
-      'commit e: checkpoint e/demo/parent-1 before merging e/researcher/look-1',
-      'merge e/researcher/look-1',
-    ]);
+    // The dirty parent is checkpointed before git is asked to merge anything.
+    assert.deepEqual(
+      git.calls.filter(call => call === 'commitAll' || call === 'merge'),
+      ['commitAll', 'merge']
+    );
+    assert.deepEqual(
+      git.commits.map(commit => commit.message),
+      ['e: checkpoint e/demo/parent-1 before merging e/researcher/look-1']
+    );
+    assert.deepEqual(
+      git.merges.map(m => m.branch),
+      ['e/researcher/look-1']
+    );
     assert.equal(c.outcomes[0].merge.status, 'merged');
   });
 });
@@ -677,8 +614,10 @@ test('a dirty parent is checkpointed before the merge, so its WIP is folded in a
 test('a conflict is left in progress (never resolved by the host), holds the next sibling, and concludes on the parent signal; the held one then merges', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit({
-      'e/researcher/look-1': { status: 'conflict', files: ['src/a.ts'] },
+    const git = new InMemoryGit({
+      merge: {
+        'e/researcher/look-1': { status: 'conflict', files: ['src/a.ts'] },
+      },
     });
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
@@ -694,7 +633,10 @@ test('a conflict is left in progress (never resolved by the host), holds the nex
     assert.match(report, /`src\/a\.ts`/);
     assert.match(report, /spawn-brother\.mjs --merge sib-001/);
     // Nothing was committed or resolved on the parent's behalf.
-    assert.deepEqual(git.commits, []);
+    assert.deepEqual(
+      git.commits.map(commit => commit.message),
+      []
+    );
 
     // The second sibling finishes into a worktree mid-merge: held, no attempt.
     await finishSibling(spool, launcher, 'sib-002', 'e/researcher/look-2');
@@ -713,9 +655,12 @@ test('a conflict is left in progress (never resolved by the host), holds the nex
     signalMerge(spool, 'sib-001', 't');
     c.tick();
     assert.equal(hasMergeSignal(spool, 'sib-001'), false);
-    assert.deepEqual(git.commits, [
-      'e: merge back e/researcher/look-1 (conflict resolved in e/demo/parent-1)',
-    ]);
+    assert.deepEqual(
+      git.commits.map(commit => commit.message),
+      [
+        'e: merge back e/researcher/look-1 (conflict resolved in e/demo/parent-1)',
+      ]
+    );
     assert.deepEqual(readStatus(spool, 'sib-001')?.merge, { status: 'merged' });
     assert.deepEqual(readStatus(spool, 'sib-002')?.merge, { status: 'merged' });
     assert.deepEqual(
@@ -735,11 +680,13 @@ test('a conflict is left in progress (never resolved by the host), holds the nex
 test('a merge refused over files in flight is held with the files named; the parent signals, the host retries', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit({
-      'e/researcher/look-1': [
-        { status: 'refused', files: ['src/a.ts', 'src/b.ts'] },
-        { status: 'merged' },
-      ],
+    const git = new InMemoryGit({
+      merge: {
+        'e/researcher/look-1': [
+          { status: 'refused', files: ['src/a.ts', 'src/b.ts'] },
+          { status: 'merged' },
+        ],
+      },
     });
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
@@ -770,12 +717,14 @@ test('a merge refused over files in flight is held with the files named; the par
 test('finish (the parent run ended, its work committed): held merges get their last retry; a conflict the run commit concluded is merged', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit({
-      'e/researcher/look-1': { status: 'conflict', files: ['x'] },
-      'e/researcher/look-2': [
-        { status: 'refused', files: ['y'] },
-        { status: 'merged' },
-      ],
+    const git = new InMemoryGit({
+      merge: {
+        'e/researcher/look-1': { status: 'conflict', files: ['x'] },
+        'e/researcher/look-2': [
+          { status: 'refused', files: ['y'] },
+          { status: 'merged' },
+        ],
+      },
     });
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
@@ -810,8 +759,8 @@ test('finish (the parent run ended, its work committed): held merges get their l
 test('finish leaves a conflict still in progress alone: only the parent could have resolved it', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit({
-      'e/researcher/look-1': { status: 'conflict', files: ['x'] },
+    const git = new InMemoryGit({
+      merge: { 'e/researcher/look-1': { status: 'conflict', files: ['x'] } },
     });
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
@@ -819,14 +768,17 @@ test('finish leaves a conflict still in progress alone: only the parent could ha
     await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
     c.finish();
     assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'conflict');
-    assert.deepEqual(git.commits, []);
+    assert.deepEqual(
+      git.commits.map(commit => commit.message),
+      []
+    );
   });
 });
 
 test('a failed sibling, a non-zero exit, and a process that dies unreported are skipped, not merged, with reports', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit();
+    const git = new InMemoryGit();
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
     request(spool, 'sib-002');
@@ -884,7 +836,7 @@ test('a request the parent run ended on is canceled and reported, so the agent f
 test('a signal for a sibling with nothing to retry is consumed, not left in the spool', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit();
+    const git = new InMemoryGit();
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
     c.tick();
@@ -901,13 +853,15 @@ test('a signal for a sibling with nothing to retry is consumed, not left in the 
 test('a git lock collision (the sibling process checkpointing the same worktree) holds the merge instead of failing it, and a later landing retries it', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit({
-      'e/researcher/look-1': [
-        new Error(
-          "git failed (merge): fatal: Unable to create '/wt/.git/index.lock': File exists.\nAnother git process seems to be running in this repository"
-        ),
-        { status: 'merged' },
-      ],
+    const git = new InMemoryGit({
+      merge: {
+        'e/researcher/look-1': [
+          new Error(
+            "git failed (merge): fatal: Unable to create '/wt/.git/index.lock': File exists.\nAnother git process seems to be running in this repository"
+          ),
+          { status: 'merged' },
+        ],
+      },
     });
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
@@ -1002,7 +956,7 @@ test('cancel: a request not yet picked up is canceled on the next tick, never la
 test('cancel: a sibling in flight is asked to stop and is canceled when it exits, even if it reported done first', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit();
+    const git = new InMemoryGit();
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
     c.tick();
@@ -1035,7 +989,7 @@ test('cancel: a sibling in flight is asked to stop and is canceled when it exits
 test('cancel: a stale cancel for a settled sibling is consumed and changes nothing', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit();
+    const git = new InMemoryGit();
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001');
     c.tick();
@@ -1052,7 +1006,7 @@ test('cancel: a stale cancel for a settled sibling is consumed and changes nothi
 test('a remote A2A agent sibling (ADR-0015): its answer lands in the status and the report; the merge-back is skipped for lack of a branch', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
-    const git = new ScriptedGit();
+    const git = new InMemoryGit();
     const c = consumer(spool, launcher, { git });
     request(spool, 'sib-001', 'remote-researcher');
     c.tick();

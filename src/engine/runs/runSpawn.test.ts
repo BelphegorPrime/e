@@ -3,13 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type {
-  Git,
-  MergeOutcome,
-  RunCommit,
-  RunRef,
-  WorktreeSpec,
-} from '../../ports/git/index.js';
+import { InMemoryGit } from '../../ports/git/memory.js';
 import type { PullRequest, PullRequestSpec } from '../../ports/github/index.js';
 import type { Harness } from '../../core/harness/index.js';
 import type { Agent } from '../../core/agent/index.js';
@@ -41,138 +35,6 @@ import {
 import type { ChildLaunch, ChildLauncher } from './childRun.js';
 import { Env } from '../../shared/utils/env.js';
 
-/** A `Git` fake that records what the orchestrator asked it to do. */
-class FakeGit implements Git {
-  repo: boolean;
-  dirty: boolean;
-  hasCommits: boolean;
-  existingBranches: string[];
-  /** Branch names that throw on `addWorktree` (simulating a create collision). */
-  collideBranches: Set<string>;
-  /** When set, every `addWorktree` throws with this (non-collision) message. */
-  addWorktreeError?: string;
-  /** When set, `push` throws with this message. */
-  pushFails?: string;
-  /** When set, `commitAll` throws this instead of committing (e.g. a hook that never passes). */
-  commitFails?: string;
-  /** Run-branch log the fake returns (newest first); empty by default. */
-  log: RunCommit[];
-  /** Scripted `merge` outcome per branch (merge-back, ticket 07); unscripted branches merge cleanly. */
-  mergeOutcomes: Record<string, MergeOutcome>;
-
-  calls: string[] = [];
-  listedPrefixes: string[] = [];
-  worktrees: WorktreeSpec[] = [];
-  removed: string[] = [];
-  commits: { path: string; message: string }[] = [];
-  pushed: string[] = [];
-  merges: { worktreePath: string; branch: string; message?: string }[] = [];
-  /** Per-worktree tips: `headSha(path)` answers these; `commitAll(path)` advances them. */
-  worktreeHeads: Record<string, string> = {};
-
-  constructor(
-    opts: {
-      repo?: boolean;
-      dirty?: boolean;
-      hasCommits?: boolean;
-      existingBranches?: string[];
-      collideBranches?: string[];
-      addWorktreeError?: string;
-      pushFails?: string;
-      commitFails?: string;
-      log?: RunCommit[];
-      mergeOutcomes?: Record<string, MergeOutcome>;
-    } = {}
-  ) {
-    this.repo = opts.repo ?? true;
-    this.dirty = opts.dirty ?? false;
-    this.hasCommits = opts.hasCommits ?? true;
-    this.existingBranches = opts.existingBranches ?? [];
-    this.collideBranches = new Set(opts.collideBranches ?? []);
-    this.addWorktreeError = opts.addWorktreeError;
-    this.pushFails = opts.pushFails;
-    this.commitFails = opts.commitFails;
-    this.log = opts.log ?? [];
-    this.mergeOutcomes = opts.mergeOutcomes ?? {};
-  }
-
-  isRepo(): boolean {
-    this.calls.push('isRepo');
-    return this.repo;
-  }
-  headSha(worktreePath?: string): string {
-    this.calls.push('headSha');
-    if (worktreePath === undefined) return 'basesha';
-    return this.worktreeHeads[worktreePath] ?? 'wt-tip';
-  }
-  currentBranch(): string {
-    return 'main';
-  }
-  listRunBranches(prefix: string): string[] {
-    this.calls.push('listRunBranches');
-    this.listedPrefixes.push(prefix);
-    return this.existingBranches;
-  }
-  listRunRefs(): RunRef[] {
-    this.calls.push('listRunRefs');
-    return [];
-  }
-  runLog(): RunCommit[] {
-    this.calls.push('runLog');
-    return this.log;
-  }
-  branchExists(): boolean {
-    this.calls.push('branchExists');
-    return false;
-  }
-  addWorktree(spec: WorktreeSpec): void {
-    this.calls.push('addWorktree');
-    if (this.addWorktreeError) throw new Error(this.addWorktreeError);
-    if (this.collideBranches.has(spec.branch)) {
-      throw new Error(`branch ${spec.branch} already exists`);
-    }
-    this.worktrees.push(spec);
-  }
-  isDirty(): boolean {
-    this.calls.push('isDirty');
-    return this.dirty;
-  }
-  commitAll(worktreePath: string, message: string): void {
-    this.calls.push('commitAll');
-    if (this.commitFails) throw new Error(this.commitFails);
-    this.commits.push({ path: worktreePath, message });
-    this.worktreeHeads[worktreePath] = `checkpoint-${this.commits.length}`;
-    this.dirty = false;
-    this.merging = false;
-  }
-  hasCommitsBeyondBase(): boolean {
-    this.calls.push('hasCommitsBeyondBase');
-    return this.hasCommits;
-  }
-  push(branch: string): void {
-    this.calls.push('push');
-    if (this.pushFails) throw new Error(this.pushFails);
-    this.pushed.push(branch);
-  }
-  removeWorktree(worktreePath: string): void {
-    this.calls.push('removeWorktree');
-    this.removed.push(worktreePath);
-  }
-  merge(worktreePath: string, branch: string, message?: string): MergeOutcome {
-    this.calls.push('merge');
-    this.merges.push({ worktreePath, branch, message });
-    const outcome = this.mergeOutcomes[branch] ?? { status: 'merged' };
-    if (outcome.status === 'conflict') this.merging = true;
-    return outcome;
-  }
-  /** A scripted conflict stays in progress until the next `commitAll` concludes it. */
-  merging = false;
-  mergeInProgress(): boolean {
-    this.calls.push('mergeInProgress');
-    return this.merging;
-  }
-}
-
 /** A `PullRequest` fake that records what the orchestrator asked it to open. */
 class FakePullRequest implements PullRequest {
   url?: string;
@@ -195,7 +57,7 @@ const harness = demoHarness;
 const agent = demoAgent;
 
 function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
-  const git = overrides.git ?? new FakeGit();
+  const git = overrides.git ?? new InMemoryGit();
   const runtime = (overrides.runtime ?? new FakeRuntime()) as FakeRuntime;
   const deps: RunSpawnDeps = {
     git,
@@ -204,7 +66,7 @@ function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
     // Instant, recorded sleep so readiness polling never actually waits.
     sleep: overrides.sleep ?? makeSleep(runtime),
   };
-  return { deps, git: git as FakeGit, runtime };
+  return { deps, git: git as InMemoryGit, runtime };
 }
 
 /**
@@ -334,7 +196,7 @@ test('does not modify the working tree in place: worktree lives under worktreesD
 });
 
 test('commits when the worktree is dirty', async () => {
-  const { deps, git } = makeDeps({ git: new FakeGit({ dirty: true }) });
+  const { deps, git } = makeDeps({ git: new InMemoryGit({ dirty: true }) });
   const result = await runSpawn(deps, makeParams());
   assert.equal(git.commits.length, 1);
   assert.equal(git.commits[0].path, git.worktrees[0].path);
@@ -342,7 +204,7 @@ test('commits when the worktree is dirty', async () => {
 });
 
 test('leaves the agent commits alone when the worktree is clean', async () => {
-  const { deps, git } = makeDeps({ git: new FakeGit({ dirty: false }) });
+  const { deps, git } = makeDeps({ git: new InMemoryGit({ dirty: false }) });
   await runSpawn(deps, makeParams());
   assert.equal(git.commits.length, 0);
 });
@@ -350,24 +212,28 @@ test('leaves the agent commits alone when the worktree is clean', async () => {
 test('always removes the worktree and keeps the branch, even on a clean exit-0 run', async () => {
   const { deps, git } = makeDeps();
   await runSpawn(deps, makeParams());
-  assert.deepEqual(git.removed, [git.worktrees[0].path]);
+  assert.deepEqual(git.removedWorktrees, [git.worktrees[0].path]);
 });
 
 test('removes the worktree even when the agent exits non-zero, and preserves the exit code', async () => {
   const { deps, git } = makeDeps({ runtime: new FakeRuntime(2) });
   const result = await runSpawn(deps, makeParams());
   assert.equal(result.exitCode, 2);
-  assert.deepEqual(git.removed, [git.worktrees[0].path]);
+  assert.deepEqual(git.removedWorktrees, [git.worktrees[0].path]);
   assert.equal(git.commits.length, 0);
 });
 
 test('never force-removes a worktree that is still dirty: a commit failure leaves the work in place', async () => {
   const { deps, git } = makeDeps({
-    git: new FakeGit({ dirty: true, commitFails: 'pre-commit hook failed' }),
+    git: new InMemoryGit({
+      dirty: true,
+      fail: { commitAll: 'pre-commit hook failed' },
+    }),
   });
   await assert.rejects(runSpawn(deps, makeParams()), /pre-commit hook failed/);
-  assert.deepEqual(git.removed, []);
-  assert.equal(git.dirty, true);
+  assert.deepEqual(git.removedWorktrees, []);
+  // The failed commit leaves the worktree as it was: still dirty, still there.
+  assert.equal(git.isDirty(git.worktrees[0]!.path), true);
 });
 
 test('--name overrides the slug and flows into the branch', async () => {
@@ -380,8 +246,8 @@ test('--name overrides the slug and flows into the branch', async () => {
 test('numbers the run from the next counter after existing branches', async () => {
   const slug = slugify('Fix the flaky test');
   const { deps, git } = makeDeps({
-    git: new FakeGit({
-      existingBranches: [`e/demo/${slug}-1`, `e/demo/${slug}-2`],
+    git: new InMemoryGit({
+      branches: [`e/demo/${slug}-1`, `e/demo/${slug}-2`],
     }),
   });
   const result = await runSpawn(deps, makeParams());
@@ -392,7 +258,7 @@ test('numbers the run from the next counter after existing branches', async () =
 test('counter considers remote-tracking branches', async () => {
   const slug = slugify('Fix the flaky test');
   const { deps } = makeDeps({
-    git: new FakeGit({ existingBranches: [`origin/e/demo/${slug}-4`] }),
+    git: new InMemoryGit({ branches: [`origin/e/demo/${slug}-4`] }),
   });
   const result = await runSpawn(deps, makeParams());
   assert.equal(result.branch, `e/demo/${slug}-5`);
@@ -402,7 +268,7 @@ test('bumps the counter and retries on an atomic-create collision', async () => 
   const slug = slugify('Fix the flaky test');
   const { deps, git } = makeDeps({
     // A concurrent spawn already took -1 between our enumeration and create.
-    git: new FakeGit({ collideBranches: [`e/demo/${slug}-1`] }),
+    git: new InMemoryGit({ collide: [`e/demo/${slug}-1`] }),
   });
   const result = await runSpawn(deps, makeParams());
 
@@ -414,7 +280,7 @@ test('bumps the counter and retries on an atomic-create collision', async () => 
 
 test('rethrows a non-collision worktree failure immediately without retrying', async () => {
   const { deps, git } = makeDeps({
-    git: new FakeGit({ addWorktreeError: 'fatal: permission denied' }),
+    git: new InMemoryGit({ fail: { addWorktree: 'fatal: permission denied' } }),
   });
   await assert.rejects(runSpawn(deps, makeParams()), /permission denied/);
   // Exactly one attempt - no counter-bump storm on a genuine error.
@@ -437,7 +303,9 @@ test('does not push when the run exits non-zero', async () => {
 });
 
 test('does not push when the run exits 0 but produced no commits', async () => {
-  const { deps, git } = makeDeps({ git: new FakeGit({ hasCommits: false }) });
+  const { deps, git } = makeDeps({
+    git: new InMemoryGit({ hasCommitsBeyondBase: false }),
+  });
   const result = await runSpawn(deps, makeParams());
   assert.equal(git.pushed.length, 0);
   assert.equal(result.pushed, false);
@@ -445,7 +313,7 @@ test('does not push when the run exits 0 but produced no commits', async () => {
 
 test('a push failure is non-fatal: branch kept, warning surfaced, exit code unchanged', async () => {
   const { deps, git } = makeDeps({
-    git: new FakeGit({ pushFails: 'no configured remote' }),
+    git: new InMemoryGit({ fail: { push: 'no configured remote' } }),
   });
   const result = await runSpawn(deps, makeParams());
 
@@ -454,7 +322,7 @@ test('a push failure is non-fatal: branch kept, warning surfaced, exit code unch
   assert.match(result.pushWarning ?? '', /no configured remote/);
   assert.equal(git.pushed.length, 0);
   // The worktree is still cleaned up and the branch (locally) preserved.
-  assert.deepEqual(git.removed, [git.worktrees[0].path]);
+  assert.deepEqual(git.removedWorktrees, [git.worktrees[0].path]);
 });
 
 // --- PR/MR creation after a successful push -----------------------------------
@@ -480,7 +348,7 @@ test('opens a PR/MR into the spawn-time branch when a platform is configured', a
 
 test('titles the PR/MR with the run git log tip when one exists', async () => {
   const pr = new FakePullRequest();
-  const git = new FakeGit({
+  const git = new InMemoryGit({
     log: [
       { sha: 'c2', subject: 'feat: fix the flaky test', committerDate: 't2' },
       { sha: 'c1', subject: 'base', committerDate: 't1' },
@@ -518,7 +386,7 @@ test('a PR/MR failure is non-fatal: warning surfaced, push/exit code unchanged',
 test('no PR/MR without a push (push failure leaves nothing to open)', async () => {
   const pr = new FakePullRequest();
   const { deps } = makeDeps({
-    git: new FakeGit({ pushFails: 'no remote' }),
+    git: new InMemoryGit({ fail: { push: 'no remote' } }),
     pullRequest: pr,
   });
   const result = await runSpawn(deps, makeParams({ gitPlatform: 'github' }));
@@ -584,8 +452,8 @@ test('with the egress netns, sidecars join it, are probed on its loopback, and n
 test('counter ignores sibling slugs that merely share the prefix and counts any remote', async () => {
   const slug = slugify('Fix the flaky test');
   const { deps } = makeDeps({
-    git: new FakeGit({
-      existingBranches: [
+    git: new InMemoryGit({
+      branches: [
         `e/demo/${slug}-typo-9`,
         `upstream/e/demo/${slug}-2`,
         `e/demo/${slug}-1`,
@@ -687,7 +555,7 @@ test('readiness miss aborts before the agent: no run, no commit, no push, group 
     git.worktrees[0].branch.replace(/\//g, '-') + '-mcp-everything',
   ]);
   assert.equal(runtime.removedNetworks.length, 1);
-  assert.deepEqual(git.removed, [git.worktrees[0].path]);
+  assert.deepEqual(git.removedWorktrees, [git.worktrees[0].path]);
 });
 
 test('readiness requires the healthcheck too: port open but healthcheck failing → miss', async () => {
@@ -717,7 +585,7 @@ test('createNetwork failure aborts fail-fast: no sidecar started, no agent, work
   assert.equal(runtime.startedSidecars.length, 0);
   assert.equal(runtime.ran, false);
   // The worktree existed by then, so it is still removed in the finally.
-  assert.deepEqual(git.removed, [git.worktrees[0].path]);
+  assert.deepEqual(git.removedWorktrees, [git.worktrees[0].path]);
 });
 
 test('tears the group down even when the agent exits non-zero', async () => {
@@ -729,7 +597,7 @@ test('tears the group down even when the agent exits non-zero', async () => {
   assert.equal(result.exitCode, 2);
   assert.equal(runtime.removedContainers.length, 1);
   assert.equal(runtime.removedNetworks.length, 1);
-  assert.deepEqual(git.removed, [git.worktrees[0].path]);
+  assert.deepEqual(git.removedWorktrees, [git.worktrees[0].path]);
 });
 
 test('best-effort teardown never masks the run result when removal throws', async () => {
@@ -959,7 +827,7 @@ const parent = {
 
 test('a sibling checkpoints a dirty parent worktree, then branches from that commit', async () => {
   const { deps, git, runtime } = makeDeps({
-    git: new FakeGit({ dirty: true }),
+    git: new InMemoryGit({ dirty: true }),
   });
   const result = await runSpawn(deps, makeParams({ parent, role: 'child' }));
 
@@ -971,15 +839,19 @@ test('a sibling checkpoints a dirty parent worktree, then branches from that com
   });
   // ... and it lands before the sibling's worktree is cut from it.
   assert.ok(git.calls.indexOf('commitAll') < git.calls.indexOf('addWorktree'));
-  assert.equal(git.worktrees[0].base, 'checkpoint-1');
-  assert.equal(result.base, 'checkpoint-1');
+  assert.equal(git.worktrees[0].base, 'commit-1');
+  assert.equal(result.base, 'commit-1');
   // The sibling's container runs against the sibling's worktree, as always.
   assert.equal(runtime.options?.volumes?.[0].host, git.worktrees[0].path);
 });
 
 test('a clean parent is not committed; the sibling branches from its current tip', async () => {
-  const { deps, git } = makeDeps({ git: new FakeGit({ dirty: false }) });
-  git.worktreeHeads[parent.worktreePath] = 'parent-tip';
+  const { deps, git } = makeDeps({
+    git: new InMemoryGit({
+      dirty: false,
+      worktreeHeads: { [parent.worktreePath]: 'parent-tip' },
+    }),
+  });
   const result = await runSpawn(deps, makeParams({ parent, role: 'child' }));
   assert.ok(!git.calls.includes('commitAll'));
   assert.equal(git.worktrees[0].base, 'parent-tip');
@@ -988,7 +860,10 @@ test('a clean parent is not committed; the sibling branches from its current tip
 
 test('a checkpoint that cannot be committed fails the request before anything of the sibling exists', async () => {
   const { deps, git, runtime } = makeDeps({
-    git: new FakeGit({ dirty: true, commitFails: 'pre-commit hook failed' }),
+    git: new InMemoryGit({
+      dirty: true,
+      fail: { commitAll: 'pre-commit hook failed' },
+    }),
   });
   await assert.rejects(
     runSpawn(deps, makeParams({ parent, role: 'child' })),
@@ -999,8 +874,7 @@ test('a checkpoint that cannot be committed fails the request before anything of
 });
 
 test('a checkpoint refuses while a merge-back is in progress in the parent worktree (committing would conclude it, markers and all)', async () => {
-  const git = new FakeGit({ dirty: true });
-  git.merging = true;
+  const git = new InMemoryGit({ dirty: true, merging: true });
   const { deps } = makeDeps({ git });
   await assert.rejects(
     runSpawn(deps, makeParams({ parent })),
@@ -1235,9 +1109,9 @@ test('a run with a broker launches sibling requests as child spawns while its ag
 test('a merge held until the run ends is retried after the output commit and before the push', async () => {
   await withWorktreesDir(async worktreesDir => {
     const { deps, git, runtime } = makeDeps({
-      git: new FakeGit({
+      git: new InMemoryGit({
         // Held over files in flight on exit; clean when retried at the end.
-        mergeOutcomes: {
+        merge: {
           'e/researcher/look-1': { status: 'refused', files: ['src/a.ts'] },
         },
       }),
@@ -1253,7 +1127,7 @@ test('a merge held until the run ends is retried after the output commit and bef
       });
       // The parent still writes while the sibling is merged: the first
       // attempt is refused; a report lands in the worktree either way.
-      git.dirty = true;
+      git.setDirty(true);
       return { exited: Promise.resolve(0), kill: () => {} };
     };
     runtime.onRun = async () => {
@@ -1268,7 +1142,7 @@ test('a merge held until the run ends is retried after the output commit and bef
       while (readStatus(spool, 'sib-001')?.merge?.status !== 'held') {
         await new Promise(resolve => setImmediate(resolve));
       }
-      git.mergeOutcomes['e/researcher/look-1'] = { status: 'merged' };
+      git.setMerge('e/researcher/look-1', { status: 'merged' });
     };
     const result = await runSpawn(
       { ...deps, sleep: yielding },
@@ -1373,7 +1247,7 @@ test('a sibling that fails before its container reports failed with the reason',
     const spool = path.join(worktreesDir, 'spool');
     ensureSpool(spool);
     const { deps } = makeDeps({
-      git: new FakeGit({ dirty: true, commitFails: 'hook failed' }),
+      git: new InMemoryGit({ dirty: true, fail: { commitAll: 'hook failed' } }),
     });
     await assert.rejects(
       runSpawn(
@@ -1417,7 +1291,7 @@ test('abort before the container: no run, no commit, exit code 143, worktree rem
   assert.match(result.error ?? '', /canceled before the container started/);
   assert.equal(runtime.ran, false);
   assert.equal(git.commits.length, 0);
-  assert.equal(git.removed.length, 1);
+  assert.equal(git.removedWorktrees.length, 1);
 });
 
 test('abort while the container runs: the container is removed by name, nothing is committed or pushed, the exit code is non-zero', async () => {
@@ -1427,7 +1301,7 @@ test('abort while the container runs: the container is removed by name, nothing 
     controller.abort();
   };
   const { deps, git } = makeDeps({ runtime });
-  git.dirty = true;
+  git.setDirty(true);
   const result = await runSpawn(deps, makeParams({ abort: controller.signal }));
   assert.equal(result.ran, true);
   assert.deepEqual(runtime.removedContainers, ['e-demo-fix-flaky-test-1']);
@@ -1455,7 +1329,7 @@ test('the report markers (an A2A task): status goes into the spool with the bran
       assert.equal(running?.branch, 'e/demo/fix-flaky-test-1');
     };
     const { deps, git } = makeDeps({ runtime, pullRequest: pr });
-    git.dirty = true;
+    git.setDirty(true);
     const result = await runSpawn(
       deps,
       makeParams({

@@ -39,9 +39,6 @@ export interface Git {
    */
   runLog(branch: string): RunCommit[];
 
-  /** True if `branch` (a local or remote-tracking ref) resolves to a commit. */
-  branchExists(branch: string): boolean;
-
   /**
    * Create a worktree at `path`, checking out a new `branch` from `base`.
    * Atomic: fails (throws) if the branch or the path already exists, so two

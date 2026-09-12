@@ -5,3 +5,5 @@ command
 # Third-party agent skills, vendored as-is
 .agents
 src/egress/bundle.generated.ts
+# Agent worktrees: whole checkouts nested inside this one
+.claude/worktrees

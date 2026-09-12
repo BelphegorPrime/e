@@ -122,21 +122,6 @@ test('HostGit.listRunBranches matches flat run-branch names and nothing else', (
   }
 });
 
-test('HostGit.branchExists resolves local branches and misses unknown ones', () => {
-  const repo = seedRepo();
-  const originalCwd = process.cwd();
-  try {
-    process.chdir(repo);
-    const host = new HostGit();
-    assert.equal(host.branchExists('main'), true);
-    assert.equal(host.branchExists('e/cheapCodex/spawn-helper-1'), true);
-    assert.equal(host.branchExists('no/such-branch'), false);
-  } finally {
-    process.chdir(originalCwd);
-    fs.rmSync(repo, { recursive: true, force: true });
-  }
-});
-
 test('HostGit.isDirty reports a clean worktree as clean and a modified one as dirty', () => {
   const repo = seedRepo();
   const originalCwd = process.cwd();
@@ -261,7 +246,9 @@ test('HostGit.addWorktree creates the branch and the path; a live branch is refu
     process.chdir(repo);
     const host = new HostGit();
     host.addWorktree({ branch: 'e/agent/adder-1', path: wt, base: 'main' });
-    assert.equal(host.branchExists('e/agent/adder-1'), true);
+    assert.ok(
+      host.listRunBranches('e/agent/adder').includes('e/agent/adder-1')
+    );
     assert.ok(fs.existsSync(wt));
     // A duplicate branch must refuse (atomic-create guarantee), not silently overwrite.
     assert.throws(() =>
@@ -285,7 +272,9 @@ test('HostGit.removeWorktree removes the path and leaves the branch', () => {
     assert.ok(fs.existsSync(wt));
     host.removeWorktree(wt);
     assert.ok(!fs.existsSync(wt));
-    assert.equal(host.branchExists('e/agent/remover-1'), true);
+    assert.ok(
+      host.listRunBranches('e/agent/remover').includes('e/agent/remover-1')
+    );
   } finally {
     process.chdir(originalCwd);
     fs.rmSync(wt, { recursive: true, force: true });
