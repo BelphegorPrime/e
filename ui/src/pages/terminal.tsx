@@ -235,7 +235,7 @@ function TerminalView({ session, onStatus }: TerminalViewProps) {
 
 /** Tiny transport badge: container MCP servers run as sidecar containers. */
 function McpBadge({ entry }: { entry: McpOption }) {
-  const badge = entry.transport === 'container' ? 'sidecar' : 'remote'
+  const badge = entry.transport === 'container' ? 'sidecar' : 'remote';
   return (
     <span className="ml-auto shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
       {badge}
