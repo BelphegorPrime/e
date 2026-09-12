@@ -268,13 +268,18 @@ export interface AgentSummary {
   harness: string;
   /** The provider's configured model id (`auto` included), or null for a default agent. */
   model: string | null;
+  /** True when the agent runs on the store's `defaultHarness`; the picker lists those first. */
+  default: boolean;
 }
 
 function storeAgents(): AgentSummary[] {
-  return listStoreAgents(findRoot()).map(agent => ({
+  const root = findRoot();
+  const { defaultHarness } = readConfig(root);
+  return listStoreAgents(root).map(agent => ({
     name: agent.name,
     harness: agent.harness,
     model: agent.provider?.model ?? null,
+    default: agent.harness === defaultHarness,
   }));
 }
 
@@ -311,19 +316,11 @@ export function createServeApp(
 
   app.get('/api/agents', (_request, response) => {
     try {
-      const root = findRoot();
-      const config = readConfig(root);
-
-      const agents = listAgents()
-        .map(agent => ({
-          ...agent,
-          default: agent.harness === config.defaultHarness,
-        }))
-        .sort((a, b) => {
-          if (a.default && !b.default) return -1;
-          if (!a.default && b.default) return 1;
-          return 0;
-        });
+      const agents = [...listAgents()].sort((a, b) => {
+        if (a.default && !b.default) return -1;
+        if (!a.default && b.default) return 1;
+        return 0;
+      });
 
       response.json({ agents });
     } catch (error) {

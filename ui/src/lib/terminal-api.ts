@@ -3,6 +3,8 @@ export interface AgentSummary {
   name: string;
   harness: string;
   model: string | null;
+  /** True for agents on the store's default harness; the BFF sorts them first. */
+  default: boolean;
 }
 
 /** Lifecycle of a browser-started run (ADR-0014); mirrors the BFF type. */

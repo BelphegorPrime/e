@@ -803,7 +803,15 @@ test('terminal routes list agents, start, inspect and remove sessions', async ()
   const server = await startServeServer(
     createServeApp(uiDirectory, {
       terminal,
-      listAgents: () => [{ name: 'smart-pi', harness: 'pi', model: 'auto' }],
+      listAgents: () => [
+        {
+          name: 'slow-cc',
+          harness: 'claude-code',
+          model: null,
+          default: false,
+        },
+        { name: 'smart-pi', harness: 'pi', model: 'auto', default: true },
+      ],
     }),
     '127.0.0.1',
     0
@@ -816,8 +824,17 @@ test('terminal routes list agents, start, inspect and remove sessions', async ()
     assert.equal(((await info.json()) as { terminal: boolean }).terminal, true);
 
     const agents = await fetch(`${baseUrl}/api/agents`);
+    // The default-harness agent sorts first regardless of store order.
     assert.deepEqual(await agents.json(), {
-      agents: [{ name: 'smart-pi', harness: 'pi', model: 'auto' }],
+      agents: [
+        { name: 'smart-pi', harness: 'pi', model: 'auto', default: true },
+        {
+          name: 'slow-cc',
+          harness: 'claude-code',
+          model: null,
+          default: false,
+        },
+      ],
     });
 
     const bad = await fetch(`${baseUrl}/api/terminal/sessions`, {
