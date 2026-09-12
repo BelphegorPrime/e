@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 import type {
@@ -35,9 +36,17 @@ import {
   readRunInfo,
   readStatus,
   writeRequest,
+  writeRunInfo,
   writeStatus,
 } from '../broker/spool.js';
-import type { SiblingLaunch, SiblingLauncher } from './runSiblings.js';
+import { createBrokerApi } from '../broker/api.js';
+import { DEPTH_LIMIT_MESSAGE } from '../broker/constants.js';
+import {
+  SiblingConsumer,
+  spawnSiblingProcess,
+  type SiblingLaunch,
+  type SiblingLauncher,
+} from './runSiblings.js';
 import { Env } from '../utils/env.js';
 
 /** A `Git` fake that records what the orchestrator asked it to do. */
@@ -58,6 +67,8 @@ class FakeGit implements Git {
   log: RunCommit[];
   /** Scripted `merge` outcome per branch (merge-back, ticket 07); unscripted branches merge cleanly. */
   mergeOutcomes: Record<string, MergeOutcome>;
+  /** Per-branch files to materialize into the worktree on a clean merge (the fake records merges without touching the tree, so tests wanting merged content on disk opt in). */
+  branchFiles?: Record<string, Record<string, string>>;
 
   calls: string[] = [];
   listedPrefixes: string[] = [];
@@ -81,6 +92,7 @@ class FakeGit implements Git {
       commitFails?: string;
       log?: RunCommit[];
       mergeOutcomes?: Record<string, MergeOutcome>;
+      branchFiles?: Record<string, Record<string, string>>;
     } = {}
   ) {
     this.repo = opts.repo ?? true;
@@ -93,6 +105,7 @@ class FakeGit implements Git {
     this.commitFails = opts.commitFails;
     this.log = opts.log ?? [];
     this.mergeOutcomes = opts.mergeOutcomes ?? {};
+    this.branchFiles = opts.branchFiles;
   }
 
   isRepo(): boolean {
@@ -159,7 +172,15 @@ class FakeGit implements Git {
   merge(worktreePath: string, branch: string, message?: string): MergeOutcome {
     this.calls.push('merge');
     this.merges.push({ worktreePath, branch, message });
-    return this.mergeOutcomes[branch] ?? { status: 'merged' };
+    const outcome = this.mergeOutcomes[branch] ?? { status: 'merged' };
+    if (outcome.status === 'merged' && this.branchFiles?.[branch]) {
+      for (const [rel, content] of Object.entries(this.branchFiles[branch])) {
+        const dest = path.join(worktreePath, rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, content);
+      }
+    }
+    return outcome;
   }
 }
 
@@ -1177,6 +1198,34 @@ test('a run with a broker launches sibling requests as child spawns while its ag
     assert.equal(readStatus(spool, 'sib-001')?.status, 'done');
     // run.json carries the fan-out bound for the broker's own synchronous check.
     assert.equal(readRunInfo(spool)?.maxSiblings, 2);
+
+    // Merge-back (ticket 07): the sibling's branch was folded into the
+    // parent's worktree and the result rides back on the run.
+    assert.deepEqual(git.merges, [
+      {
+        worktreePath: git.worktrees[0].path,
+        branch: 'e/researcher/look-into-x-1',
+        message: 'e: merge back e/researcher/look-into-x-1',
+      },
+    ]);
+    assert.deepEqual(result.mergedSiblings, [
+      {
+        id: 'sib-001',
+        branch: 'e/researcher/look-into-x-1',
+        status: 'done',
+        exitCode: 0,
+        mergeStatus: 'merged',
+      },
+    ]);
+    // The parent agent's report landed next to the worktrees.
+    const report = path.join(
+      worktreesDir,
+      'e-runs',
+      'e-researcher-look-into-x-1',
+      'report.md'
+    );
+    assert.equal(fs.existsSync(report), true);
+    assert.match(fs.readFileSync(report, 'utf8'), /Merged/);
   });
 });
 
@@ -1283,4 +1332,250 @@ test('a run with a broker refuses to start without an explicit sibling launcher'
   );
   assert.equal(runtime.ran, false);
   assert.deepEqual(runtime.startedSidecars, []);
+});
+
+// End-to-end (ticket 08): the loop with no launcher fakes. A parent run asks
+// a real broker over HTTP, the broker spools the request, and a real `node -e`
+// process plays the child: it observes its sibling environment, spawns a child
+// of its own through the broker (depth two, never three), reports done with
+// its branch, and the parent's run ends with both branches merged into its
+// worktree, reports written, before any of the run returns.
+test('e2e: parent spawns a real child via the broker; the child spawns a sibling; both merge back before the parent ends', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const slug = slugify('Fix the flaky test');
+    const runName = `e-demo-${slug}-1`;
+    const spool = path.join(worktreesDir, '.broker', runName);
+    ensureSpool(spool);
+    writeRunInfo(spool, {
+      name: runName,
+      branch: `e/demo/${slug}-1`,
+      agent: 'demo',
+      role: 'parent',
+      maxSiblings: 3,
+    });
+
+    // The real broker HTTP endpoint (in production the e-broker sidecar).
+    const server = http.createServer(createBrokerApi({ spoolDir: spool }));
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const brokerUrl = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const observe = path.join(worktreesDir, 'observed');
+      const git = new FakeGit({
+        branchFiles: {
+          'e/researcher/sib-001': { 'from-parents-child.txt': 'sib work\n' },
+          'e/researcher/sib-002': { 'from-grandchild.txt': 'gc work\n' },
+        },
+      });
+      const { deps, runtime } = makeDeps({ git });
+      const launches: SiblingLaunch[] = [];
+
+      // A real child `e spawn` process. It reports for itself: running first,
+      // done with its branch at the end. The sib-001 one also spawns a child
+      // of its own through the broker - the depth-two case.
+      const CHILD_SCRIPT = `
+const fs = require('fs');
+const pathMod = require('path');
+const spool = process.env.E_SPAWN_SPOOL;
+const id = process.env.E_SPAWN_SIBLING_ID;
+const branch = 'e/researcher/' + id;
+// Atomic status writes (tmp + rename), exactly like the spool helpers, so
+// the host's polls never read a half-written file.
+function writeStatus(patch) {
+  const file = pathMod.join(spool, 'status', id + '.json');
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify({ ...patch, updatedAt: new Date().toISOString() }));
+  fs.renameSync(tmp, file);
+}
+const obs = {
+  spawnRole: process.env.E_SPAWN_ROLE,
+  id,
+  branch,
+  parentBranch: process.env.E_SPAWN_PARENT_BRANCH,
+  parentWorktree: process.env.E_SPAWN_PARENT_WORKTREE,
+  brokerUrl: process.env.E_BROKER_URL || null,
+  serveDetachedSet: process.env.E_SERVE_DETACHED !== undefined,
+  ttyHeadlessSet: process.env.E_TTY_HEADLESS !== undefined,
+};
+fs.writeFileSync(process.env.E_OBSERVE + '-' + id + '.json', JSON.stringify(obs));
+fs.mkdirSync(pathMod.join(spool, 'status'), { recursive: true });
+writeStatus({ status: 'running', branch });
+(async () => {
+  if (id === 'sib-001') {
+    const res = await fetch(process.env.E_BROKER_URL + '/spawn', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agent: 'researcher', prompt: 'one more layer' }),
+    });
+    fs.writeFileSync(process.env.E_OBSERVE + '-gc.json', JSON.stringify(await res.json()));
+  }
+  writeStatus({ status: 'done', branch, exitCode: 0 });
+})();
+`;
+      const launch: SiblingLauncher = l => {
+        launches.push(l);
+        return spawnSiblingProcess(l, {
+          command: process.execPath,
+          prefix: ['-e', CHILD_SCRIPT],
+        });
+      };
+
+      runtime.onRun = async () => {
+        // The parent agent asks the broker over its real HTTP endpoint, then
+        // keeps working until both sibling generations have reported done.
+        const res = await fetch(`${brokerUrl}/spawn`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent: 'researcher', prompt: 'look into X' }),
+        });
+        assert.equal(res.status, 202);
+        for (;;) {
+          const a = readStatus(spool, 'sib-001')?.status;
+          const b = readStatus(spool, 'sib-002')?.status;
+          if (a === 'done' && b === 'done') break;
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      };
+
+      const result = await runSpawn(
+        { ...deps, sleep: yielding },
+        makeParams({
+          worktreesDir,
+          broker: brokerPlan,
+          readiness: fastReadiness,
+          keepWorktree: true,
+          siblingHost: {
+            launch,
+            readiness: { attempts: 2000, intervalMs: 1 },
+            passthroughEnv: { E_OBSERVE: observe, E_BROKER_URL: brokerUrl },
+          },
+        })
+      );
+
+      assert.equal(result.ran, true);
+      // Both generations ran as real processes and were merged back.
+      assert.equal(launches.length, 2);
+      assert.deepEqual(
+        [...(result.mergedSiblings ?? [])]
+          .sort((x, y) => x.id.localeCompare(y.id))
+          .map(({ logTail, ...rest }) => rest),
+        [
+          {
+            id: 'sib-001',
+            branch: 'e/researcher/sib-001',
+            status: 'done',
+            exitCode: 0,
+            mergeStatus: 'merged',
+          },
+          {
+            id: 'sib-002',
+            branch: 'e/researcher/sib-002',
+            status: 'done',
+            exitCode: 0,
+            mergeStatus: 'merged',
+          },
+        ]
+      );
+
+      // The child process saw its environment: a child role, the sibling
+      // markers, the parent's identity - and none of the parent's serving
+      // markers leaked through.
+      const childObs = JSON.parse(
+        fs.readFileSync(`${observe}-sib-001.json`, 'utf8')
+      ) as Record<string, unknown>;
+      assert.equal(childObs.spawnRole, 'child');
+      assert.equal(childObs.id, 'sib-001');
+      assert.equal(childObs.branch, 'e/researcher/sib-001');
+      assert.equal(childObs.parentWorktree, git.worktrees[0].path);
+      assert.equal(childObs.brokerUrl, brokerUrl);
+      assert.equal(childObs.serveDetachedSet, false);
+      assert.equal(childObs.ttyHeadlessSet, false);
+
+      // The child spawned a child of its own through the broker: depth two,
+      // not three - the broker handed it the next id and it ran and merged
+      // like any sibling, because nothing ever reaches depth three.
+      const gcAccepted = JSON.parse(
+        fs.readFileSync(`${observe}-gc.json`, 'utf8')
+      ) as Record<string, unknown>;
+      assert.equal(gcAccepted.id, 'sib-002');
+      assert.equal(gcAccepted.status, 'requested');
+
+      // The merged branches materialized in the parent's worktree.
+      assert.equal(
+        fs.readFileSync(
+          path.join(git.worktrees[0].path, 'from-parents-child.txt'),
+          'utf8'
+        ),
+        'sib work\n'
+      );
+      assert.equal(
+        fs.readFileSync(
+          path.join(git.worktrees[0].path, 'from-grandchild.txt'),
+          'utf8'
+        ),
+        'gc work\n'
+      );
+
+      // Both runs left reports beside the worktrees.
+      for (const branch of ['e/researcher/sib-001', 'e/researcher/sib-002']) {
+        const report = path.join(
+          worktreesDir,
+          'e-runs',
+          branch.replace(/\//g, '-'),
+          'report.md'
+        );
+        assert.equal(fs.existsSync(report), true);
+        assert.match(fs.readFileSync(report, 'utf8'), /Merged/);
+      }
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+});
+
+// End-to-end depth cap (ticket 08): a spool whose run is itself a child
+// refuses every request synchronously - a child has no broker of its own, so
+// nothing can reach depth three - and the refusal rides the spool like any
+// other failed status, without anything being launched.
+test('e2e: a child-role spool refuses every request (depth three is unreachable) without launching anything', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, '.broker', 'e-researcher-deep-2');
+    ensureSpool(spool);
+    writeRunInfo(spool, {
+      name: 'e-researcher-deep-2',
+      branch: 'e/researcher/deep-2',
+      agent: 'researcher',
+      role: 'child',
+      maxSiblings: 3,
+    });
+    writeRequest(spool, {
+      id: 'sib-003',
+      agent: 'researcher',
+      prompt: 'one more layer',
+      requestedAt: 't',
+    });
+    let launches = 0;
+    const consumer = new SiblingConsumer({
+      spoolDir: spool,
+      parent: {
+        worktreePath: path.join(worktreesDir, 'e', 'researcher', 'deep-1'),
+        branch: 'e/researcher/deep-1',
+        role: 'child',
+      },
+      maxSiblings: 3,
+      readiness: { attempts: 3, intervalMs: 1 },
+      launch: () => {
+        launches += 1;
+        throw new Error('a child must never launch a sibling');
+      },
+      sleep: async () => {},
+    });
+    consumer.tick();
+    assert.equal(launches, 0);
+    const refused = readStatus(spool, 'sib-003');
+    assert.equal(refused?.status, 'failed');
+    assert.equal(refused?.error, DEPTH_LIMIT_MESSAGE);
+  });
 });

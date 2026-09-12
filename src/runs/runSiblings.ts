@@ -28,12 +28,16 @@ import { DEPTH_LIMIT_MESSAGE, SPOOL_LOGS_DIR } from '../broker/constants.js';
 import {
   countInFlight,
   listRequestIds,
+  readRecord,
   readRequest,
   readStatus,
   writeStatus,
 } from '../broker/spool.js';
 import type { SpawnRequest } from '../broker/types.js';
+import type { Git } from '../git/index.js';
 import { env } from '../utils/env.js';
+import { reportDirFor, writeRunReport } from './runArtifacts.js';
+import type { RunReport } from './runArtifacts.js';
 import { log } from '../utils/log.js';
 import { selfInvocation, type SelfInvocation } from '../utils/selfInvoke.js';
 import type { ReadinessPolicy } from './runSidecarOrchestrator.js';
@@ -93,6 +97,19 @@ export interface SiblingConsumerOptions {
   launch: SiblingLauncher;
   sleep: (ms: number) => Promise<void>;
   now?: () => Date;
+  git?: Git;
+  worktreesDir?: string;
+}
+
+export interface SiblingMergeResult {
+  id: string;
+  branch?: string;
+  status: 'done' | 'failed';
+  exitCode?: number;
+  error?: string;
+  mergeStatus: 'merged' | 'up-to-date' | 'conflict' | 'not-done' | 'error';
+  conflictFiles?: string[];
+  logTail?: string;
 }
 
 /** The CLI arguments that spawn a sibling: `spawn <agent> --detached [passthrough...] -- <prompt>`. */
@@ -179,7 +196,17 @@ export class SiblingConsumer {
   private stopping = false;
   private loop: Promise<void> | undefined;
 
+  private readonly mergedSiblings: SiblingMergeResult[] = [];
+
+  /** Refused merges (overlapping WIP in the parent) awaiting one retry on the parent's clear signal. */
+  private readonly heldPending = new Map<string, string>();
+
   constructor(private readonly opts: SiblingConsumerOptions) {}
+
+  /** Sibling runs folded back into the parent worktree, in exit order. */
+  get results(): readonly SiblingMergeResult[] {
+    return this.mergedSiblings;
+  }
 
   /** Begins polling the spool; idempotent. */
   start(): void {
@@ -300,14 +327,138 @@ export class SiblingConsumer {
   ): void {
     this.inFlight.delete(id);
     const status = readStatus(this.opts.spoolDir, id)?.status;
-    if (status === 'done' || status === 'failed') return;
+    if (status === 'done' || status === 'failed') {
+      this.mergeBack(id, logFile);
+      return;
+    }
     const tail = logTail(logFile);
-    this.fail(
-      id,
+    const error =
       reason ??
-        `sibling process exited with code ${code} before reporting a result${tail ? `: ${tail}` : ''}`,
-      code
+      `sibling process exited with code ${code} before reporting a result${tail ? `: ${tail}` : ''}`;
+    this.fail(id, error, code);
+    this.mergedSiblings.push({
+      id,
+      status: 'failed',
+      exitCode: code,
+      error,
+      mergeStatus: 'not-done',
+      ...(tail ? { logTail: tail } : {}),
+    });
+  }
+
+  /**
+   * Fold a finished sibling back into the parent worktree (ticket 07).
+   * A clean merge leaves the worktree updated and reports `merged`;
+   * a conflict is held in progress with markers the parent agent
+   * must clear — never auto-resolved.
+   */
+  private mergeBack(id: string, logFile: string): void {
+    const record = readRecord(this.opts.spoolDir, id);
+    const status = record?.status ?? 'failed';
+    const tail = logTail(logFile);
+    const result: SiblingMergeResult = {
+      id,
+      branch: record?.branch,
+      status: status as SiblingMergeResult['status'],
+      ...(record?.exitCode !== undefined ? { exitCode: record.exitCode } : {}),
+      ...(record?.error !== undefined ? { error: record.error } : {}),
+      mergeStatus: 'not-done',
+      ...(tail ? { logTail: tail } : {}),
+    };
+    if (status === 'done' && record?.branch && this.opts.git) {
+      const runName = record.branch.replace(/\//g, '-');
+      const reportDir = reportDirFor(
+        this.opts.worktreesDir ?? path.dirname(this.opts.parent.worktreePath),
+        runName
+      );
+      try {
+        const outcome = this.opts.git.merge(
+          this.opts.parent.worktreePath,
+          record.branch,
+          `e: merge back ${record.branch}`
+        );
+        result.mergeStatus = outcome.status;
+        if (outcome.status === 'conflict') {
+          result.conflictFiles = outcome.files;
+          writeRunReport(reportDir, {
+            branch: record.branch,
+            status: 'done',
+            exitCode: record?.exitCode,
+            mergeStatus: 'conflict',
+            conflictFiles: outcome.files,
+            logTail: tail || undefined,
+          });
+        } else {
+          writeRunReport(reportDir, {
+            branch: record.branch,
+            status: 'done',
+            exitCode: record?.exitCode,
+            mergeStatus: outcome.status,
+            logTail: tail || undefined,
+          });
+        }
+      } catch (err) {
+        result.mergeStatus = 'error';
+        result.logTail = (err as Error).message ?? 'merge refused';
+        // The parent's overlapping WIP stands in the way; hold the merge for
+        // the one retry the parent's own commit (its clear signal) triggers.
+        this.heldPending.set(id, logFile);
+        writeRunReport(reportDir, {
+          branch: record.branch,
+          status: 'done',
+          exitCode: record?.exitCode,
+          mergeStatus: 'error',
+          logTail: result.logTail,
+        });
+      }
+    } else if (record?.branch && this.opts.git) {
+      result.mergeStatus = 'not-done';
+      // A sibling that failed after getting its branch still leaves a report:
+      // the parent agent reads why from the same place it reads merges. A
+      // sibling that never got a branch has nothing to report - its failure
+      // lives in the spool record.
+      const runName = record.branch.replace(/\//g, '-');
+      const reportDir = reportDirFor(
+        this.opts.worktreesDir ?? path.dirname(this.opts.parent.worktreePath),
+        runName
+      );
+      writeRunReport(reportDir, {
+        branch: record.branch,
+        status: record.status as 'done' | 'failed',
+        exitCode: record.exitCode,
+        error: record.error,
+        mergeStatus: 'not-done',
+        logTail: tail || undefined,
+      });
+    } else {
+      result.mergeStatus = 'not-done';
+    }
+    this.recordResult(result);
+  }
+
+  /**
+   * Retries the merges that git refused while the parent had overlapping WIP
+   * (ticket 07: "host retries on signal"). Called once after the parent run
+   * has committed its own work - the parent run ending is the architecture's
+   * only signal channel - so a merge that was refused because local changes
+   * stood in the way now lands. Conflicts stay where they are: they resolve
+   * only when the parent resolves and commits the markers itself, which the
+   * retry must never do for it.
+   */
+  retryHeld(): void {
+    for (const [id, logFile] of [...this.heldPending]) {
+      this.heldPending.delete(id);
+      this.mergeBack(id, logFile);
+    }
+  }
+
+  /** Records a sibling's disposition, replacing any earlier one for the same sibling. */
+  private recordResult(result: SiblingMergeResult): void {
+    const index = this.mergedSiblings.findIndex(
+      entry => entry.id === result.id
     );
+    if (index === -1) this.mergedSiblings.push(result);
+    else this.mergedSiblings[index] = result;
   }
 
   private fail(id: string, error: string, exitCode?: number): void {

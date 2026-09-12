@@ -177,3 +177,78 @@ export function syncArtifacts(opts: ArtifactSyncOptions): ArtifactSyncResult {
 export function removeArtifacts(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
+
+/**
+ * Where a child run delivers its merge-back report and any sibling scratch the
+ * host keeps behind: under the worktrees dir, the one host path every
+ * container engine is known to bind-mount (see `worktreesDir.ts`), in an
+ * `e-runs/<runName>` directory. `runName` is the run branch with slashes
+ * replaced by dashes, the same shape the host uses for container/network names
+ * (see `runSpawn`).
+ */
+export function reportDirFor(worktreesDir: string, runName: string): string {
+  return path.join(worktreesDir, 'e-runs', runName);
+}
+
+/**
+ * What the host records for a finished sibling run so the parent agent can
+ * consume it without reading git internals. `status` is the sibling's
+ * terminal state as the parent saw it; `mergeStatus` is the outcome of
+ * folding the sibling's branch back into the parent worktree.
+ */
+export interface RunReport {
+  /** The sibling's run branch (`e/<agent>/<slug>-N`). */
+  branch: string;
+  status: 'done' | 'failed';
+  exitCode?: number;
+  /** Why the sibling failed before reporting a result, if it did. */
+  error?: string;
+  mergeStatus: 'merged' | 'up-to-date' | 'conflict' | 'not-done' | 'error';
+  /** Conflicted files the parent must clear, when the merge was held pending. */
+  conflictFiles?: string[];
+  /** The sibling's log tail, for context when a merge failed or the run errored. */
+  logTail?: string;
+}
+
+/**
+ * Renders the human/MCP-readable markdown report a finished sibling leaves on
+ * the host for its parent agent. Written atomically so a concurrent reader
+ * (or the agent polling the spool) never sees a half-written file.
+ */
+export function writeRunReport(dir: string, report: RunReport): string {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'report.md');
+  const lines: string[] = [
+    `<!-- e-run report: ${report.branch} -->`,
+    '',
+    `## ${
+      report.mergeStatus === 'conflict' ||
+      (report.status === 'done' &&
+        report.mergeStatus !== 'merged' &&
+        report.mergeStatus !== 'up-to-date')
+        ? 'Merge held pending'
+        : report.status === 'done'
+          ? 'Merged'
+          : 'Merge failed'
+    }`,
+    '',
+    `- status: ${report.status}`,
+    ...(report.exitCode !== undefined
+      ? [`- exit code: ${report.exitCode}`]
+      : []),
+    `- merge: ${report.mergeStatus}`,
+  ];
+  if (report.mergeStatus === 'conflict' && report.conflictFiles?.length) {
+    lines.push(
+      '- the merge is held in progress; clear these files in the worktree and commit the resolution (the host never auto-resolves):'
+    );
+    for (const f of report.conflictFiles) {
+      lines.push(`  - \`${f}\``);
+    }
+  }
+  if (report.error) lines.push(`- error: ${report.error}`);
+  if (report.logTail) lines.push(`- log tail: ${report.logTail}`);
+  lines.unshift(`# Run report: ${report.branch}`);
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+  return file;
+}
