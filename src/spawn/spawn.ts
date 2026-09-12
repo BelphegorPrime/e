@@ -38,7 +38,8 @@ import { localStack } from '../runtime/stack.js';
 import { log } from '../utils/log.js';
 import { env } from '../utils/env.js';
 
-interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
+/** The parsed `e spawn` CLI options, as Commander hands them to the action. */
+export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   runtime?: string;
   rebuild?: boolean;
   dir?: string;
@@ -181,8 +182,9 @@ function resolveMcpServer(name: string, root: string | undefined): McpServer {
  * and skill *now* (existence checked, throwing a clear error), so a bad name
  * fails fast - before the model fetch, any build, or a worktree. The resolved
  * model is *not* gathered here (it needs a network call - see the action).
+ * Exported for its tests; the action is its only production caller.
  */
-function gatherSpawnFacts(
+export function gatherSpawnFacts(
   target: string | undefined,
   prompt: string[],
   opts: SpawnCommandOptions
