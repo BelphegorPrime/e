@@ -1,6 +1,6 @@
 # 01 - Env injection: E_ROLE and E_BROKER_URL
 
-**Shipped 2026-09-12.** Implemented in `src/runs/runRole.ts` (the contract:
+**Shipped 2026-09-12.** Implemented in `src/engine/runs/runRole.ts` (the contract:
 names, `parseRunRole`, `brokerUrl`, `roleEnv`, `runRoleInstructions`),
 injected by `planSpawn` as the last `-e` entries of `agentEnv` (host wins over
 a user `-e` and over every env-file), named in the one-shot launch prompt by

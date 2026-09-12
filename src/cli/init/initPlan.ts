@@ -1,0 +1,666 @@
+import path from 'path';
+import { randomBytes } from 'node:crypto';
+import { renderDockerfile } from '../../core/harness/renderDockerfile.js';
+import { renderEnvTemplate } from '../../core/harness/renderEnvTemplate.js';
+import { renderCompose } from './renderCompose.js';
+import { renderBootstrap } from './renderBootstrap.js';
+import {
+  EGRESS_FILES,
+  renderEgressFiles,
+} from '../../sidecars/egress/render.js';
+import { renderBrokerFiles } from '../../sidecars/broker/render.js';
+import { HARNESSES, envHarnessSections } from '../../core/harness/index.js';
+import { renderDefaultAgent } from '../../core/agent/index.js';
+import { parseDotenv } from '../../shared/utils/dotenv.js';
+import { STACK_NETWORK } from '../../shared/constants.js';
+import { SHIPPED_MCP_SERVERS } from '../../core/mcp/index.js';
+import { SHIPPED_SKILLS } from '../../core/skill/index.js';
+import type { HardwareVendor } from '../../ports/hardware/index.js';
+import type { ModelCatalogEntry } from '../../core/modelStatus.js';
+import type { GitPlatform } from '../../core/store/config.js';
+import {
+  LOCAL_RUNTIMES,
+  composeModelCatalog,
+  type LocalRuntime,
+} from '../../core/localRuntimes.js';
+import {
+  agentDir,
+  agentFilePath,
+  bootstrapScriptPath,
+  brokerDir,
+  dockerComposePath,
+  dockerfilePath,
+  egressBlacklistPath,
+  egressIptablesPath,
+  egressDir,
+  envFilePath,
+  harnessDir,
+  mcpDir,
+  skillDir,
+} from '../../core/store/paths.js';
+
+/**
+ * The OmniRoute stack secrets the local Compose stack interpolates from
+ * `.e/.env` (see `renderCompose`). No fallbacks exist in the template, so an
+ * unseeded variable makes the stack unusable rather than known-default;
+ * `e init` seeds these with fresh random values.
+ */
+export const OMNIROUTE_STACK_SECRETS = [
+  'OMNIROUTE_INITIAL_PASSWORD',
+  'JWT_SECRET',
+  'API_KEY_SECRET',
+] as const;
+
+/** Seeder for each stack secret (caller picks the fresh random value). */
+const STACK_SECRET_GENERATORS: ReadonlyArray<readonly [string, () => string]> =
+  [
+    ['OMNIROUTE_INITIAL_PASSWORD', () => randomBytes(16).toString('hex')],
+    ['JWT_SECRET', () => randomBytes(32).toString('hex')],
+    ['API_KEY_SECRET', () => randomBytes(32).toString('hex')],
+  ];
+
+/**
+ * Generates fresh random values for the OmniRoute stack secrets, purely: a key
+ * already set to a non-blank value keeps its value, so a re-init never rotates
+ * a password or secret the user already configured (or a previous init
+ * generated). Only unset/blank keys get a random value.
+ */
+export function seedStackSecrets(
+  env: Record<string, string>
+): Record<string, string> {
+  const seeded: Record<string, string> = {};
+  for (const [key, generate] of STACK_SECRET_GENERATORS) {
+    const current = (env[key] ?? '').trim();
+    seeded[key] = current !== '' ? current : generate();
+  }
+  return seeded;
+}
+
+/** Everything the planner knows about the disk before answering a wizard. */
+export interface InitState {
+  /** The directory to initialize into (the current directory when not provided). */
+  root?: string;
+  /** Favorite-harness names in prompt order. */
+  harnessNames: string[];
+  /** The configured favorite, kept when the user answers blank. */
+  currentDefaultHarness: string;
+  /** The configured model selection, kept when the user answers blank. */
+  currentModels: string[];
+  /** Configured local runtime selection, kept when the wizard answer is blank. */
+  currentLocalRuntimes: LocalRuntime[];
+  /** Existing `.e/.env` raw content, if any (a missing file prompts for every key). */
+  existingEnvContent?: string;
+  /** Per-runtime model catalogs; the plan shows the union of the selected runtimes'. */
+  runtimeCatalogs: Readonly<Record<LocalRuntime, readonly ModelCatalogEntry[]>>;
+  /** All git platforms offered by this init, in prompt order. */
+  gitPlatforms: GitPlatform[];
+  /** The configured git platform, kept when a re-init doesn't change it (`--yes`). */
+  currentGitPlatform?: GitPlatform;
+  /** The configured sibling-artifact allowlist (ADR-0013), kept as is by a re-init. */
+  currentSiblingArtifacts: string[];
+  /** The configured fan-out bound for siblings (ADR-0013), kept as is by a re-init. */
+  currentMaxSiblings: number;
+  /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
+  hardware: HardwareVendor;
+  /**
+   * `-f/--force`: downgrade every never-clobber rule to an unconditional
+   * overwrite, so re-running init replaces hand-edited files instead of
+   * keeping them and showing a diff.
+   */
+  force?: boolean;
+}
+
+/** Raw wizard answers; the planner resolves blanks and keeps configured values. */
+export interface InitAnswers {
+  /** A 1-based index, an exact harness name, or ''/undefined to keep the current favorite. */
+  harness?: string;
+  /** Raw selection text ('', 'all', 'none', '1,3') or a pre-resolved id list from the raw-mode selector. */
+  models?: string | string[];
+  /** Raw runtime selection text or ids from a keyboard selector. */
+  localRuntimes?: string | LocalRuntime[];
+  /** Collected API-key values to fill into blank `.env` lines (blank answers omitted). */
+  apiKeys?: Record<string, string>;
+  /**
+   * The OmniRoute dashboard sign-in password, when the interactive wizard
+   * asked for one. Blank (or undefined) leaves the key unset, so planInit's
+   * seeder generates a fresh random value - user input wins over random only
+   * when the user actually typed one.
+   */
+  omniroutePassword?: string;
+  /** A 1-based index, an exact platform name, or ''/undefined (blank disables PR/MR). */
+  gitPlatform?: string;
+  /** Preferred shell for completion setup (e.g. 'bash', 'zsh', 'fish'). */
+  shell?: string;
+  /** Installation directory. */
+  root?: string;
+}
+
+/** One filesystem write the plan prescribes, in prescribed order. */
+export interface InitWrite {
+  /** Directory to create (recursively) before writing; parent of {@link file}. */
+  directory: string;
+  /** Absolute path of the file to write. */
+  file: string;
+  /** Rendered content. */
+  content: string;
+  /**
+   * `never` - a `writeIfAbsent` (never clobber a hand edit, show a diff);
+   * `always` - an unconditional overwrite (bootstrap script, config).
+   */
+  clobber: 'never' | 'always';
+}
+
+/** An ordered build step; harness steps log a banner, plain batches log per write. */
+export type InitStep =
+  | { kind: 'harness'; name: string; writes: InitWrite[] }
+  | { kind: 'writes'; writes: InitWrite[] }
+  | { kind: 'bootstrap'; write: InitWrite }
+  | { kind: 'compose'; write: InitWrite };
+
+/** The full, ordered description of what `e init` will do - pure and testable. */
+export interface InitPlan {
+  /** Ordered build steps (harness files, shipped MCP/skills, bootstrap, compose). */
+  steps: InitStep[];
+  /** The final `.env` write outcome (body, and how it differs from disk). */
+  env: {
+    file: string;
+    content: string;
+    /** No `.env` existed before: the file is created. */
+    created: boolean;
+    /** The file existed and its body changed: the file is rewritten. */
+    changed: boolean;
+  };
+  /** The config.json payload the init records (overwrite semantics). */
+  config: {
+    defaultHarness: string;
+    models: string[];
+    localRuntimes: LocalRuntime[];
+    gitPlatform?: GitPlatform;
+    siblingArtifacts: string[];
+    maxSiblings: number;
+  };
+  /** Resolved choices (post-answers; blank keeps the configured current). */
+  defaultHarness: string;
+  models: string[];
+  localRuntimes: LocalRuntime[];
+  /** Configured git platform for PR/MR creation, or undefined to disable. */
+  gitPlatform?: GitPlatform;
+  /** Merged env values: existing + collected + seeded stack secrets. */
+  envValues: Record<string, string>;
+  /** The seeded OmniRoute stack secret additions (never rotates a set key). */
+  secrets: Record<string, string>;
+  /** The detected GPU vendor, echoed back for the executor's log line. */
+  hardware: HardwareVendor;
+}
+
+/**
+ * Builds the ordered `e init` plan for a disk state and wizard answers, purely.
+ * Everything the action writes - and the order, and the never-clobber rules -
+ * is decided here and asserted by tests; the executor only applies {@link InitWrite}
+ * specs and logs. Re-init subtlety: `.env` sections are appended, not rewritten,
+ * and `applyEnvValues` fills blank `KEY=` lines only, so a hand-edited or
+ * already-seeded `.env` survives untouched. `--force` (InitState.force) opts
+ * out of every never-clobber rule: all writes become unconditional overwrites
+ * and the `.env` re-renders from the canonical template.
+ */
+export function planInit(state: InitState, answers: InitAnswers): InitPlan {
+  const {
+    root: stateRoot,
+    harnessNames,
+    currentDefaultHarness,
+    currentModels,
+    currentLocalRuntimes,
+    hardware,
+  } = state;
+  // The wizard's TUI or readline prompt may override the install directory.
+  const root = answers.root ?? stateRoot;
+  // `--force` turns every never-clobber write into an unconditional overwrite;
+  // the resolved rule rides inside each plan write so the executor stays a
+  // pure apply step. `.env` forces a canonical re-render (see buildEnvWrite).
+  const clobberRule: InitWrite['clobber'] = state.force ? 'always' : 'never';
+  const existingValues = state.existingEnvContent
+    ? parseDotenv(state.existingEnvContent)
+    : {};
+
+  // Resolve the choices: a blank or unanswered prompt keeps the configured
+  // current, so `--yes` and a non-TTY fallback match the interactive flow.
+  const defaultHarness =
+    answers.harness === undefined
+      ? currentDefaultHarness
+      : (parseHarnessChoice(
+          answers.harness,
+          harnessNames,
+          currentDefaultHarness
+        ) ?? currentDefaultHarness);
+  const localRuntimes = resolveLocalRuntimes(
+    answers.localRuntimes,
+    currentLocalRuntimes
+  );
+  // The model prompt is index-aligned with the union of the selected runtimes'
+  // catalogs, so resolution must use that same merged catalog.
+  const catalog = composeModelCatalog(localRuntimes, state.runtimeCatalogs);
+  const models = resolveModels(answers.models, catalog, currentModels);
+  const gitPlatform = resolveGitPlatform(
+    answers.gitPlatform,
+    state.gitPlatforms,
+    state.currentGitPlatform
+  );
+
+  // Merge collected API keys and the wizard's OmniRoute password, then seed the
+  // stack secrets (never rotating what is already set). Agents are rendered
+  // with these merged values, as is the `.env` body, matching the historic
+  // write order. A user-typed password lands in envValues before seeding, so
+  // seedStackSecrets keeps it; a blank answer leaves the key unset and the
+  // seeder generates a fresh random password.
+  const envValues = {
+    ...existingValues,
+    ...(answers.apiKeys ?? {}),
+    ...(answers.omniroutePassword
+      ? { OMNIROUTE_INITIAL_PASSWORD: answers.omniroutePassword }
+      : {}),
+  };
+  const secrets = seedStackSecrets(envValues);
+  const fullEnv = { ...envValues, ...secrets };
+
+  const steps: InitStep[] = [];
+
+  // Step 1 - each harness's Dockerfile + default agent (never clobbered).
+  for (const harness of Object.values(HARNESSES)) {
+    steps.push({
+      kind: 'harness',
+      name: harness.name,
+      writes: [
+        {
+          directory: harnessDir(harness.name, root),
+          file: dockerfilePath(harness.name, root),
+          content: renderDockerfile(harness.dockerfile),
+          clobber: clobberRule,
+        },
+        {
+          directory: agentDir(harness.name, root),
+          file: agentFilePath(harness.name, root),
+          content: renderDefaultAgent(harness.name, fullEnv),
+          clobber: clobberRule,
+        },
+      ],
+    });
+  }
+
+  // Step 2 - shipped MCP servers, then shipped skills (never clobbered).
+  const mcpWrites: InitWrite[] = [];
+  for (const [name, render] of Object.entries(SHIPPED_MCP_SERVERS)) {
+    const dir = mcpDir(name, root);
+    for (const [fileName, content] of Object.entries(render())) {
+      mcpWrites.push({
+        directory: dir,
+        file: path.join(dir, fileName),
+        content,
+        clobber: clobberRule,
+      });
+    }
+  }
+  const skillWrites: InitWrite[] = [];
+  for (const [name, render] of Object.entries(SHIPPED_SKILLS)) {
+    const dir = skillDir(name, root);
+    for (const [relPath, content] of Object.entries(render())) {
+      const file = path.join(dir, relPath);
+      skillWrites.push({
+        directory: path.dirname(file),
+        file,
+        content,
+        clobber: clobberRule,
+      });
+    }
+  }
+  if (mcpWrites.length > 0 || skillWrites.length > 0) {
+    steps.push({ kind: 'writes', writes: [...mcpWrites, ...skillWrites] });
+  }
+
+  // Step 2b - the shared egress gateway build context + blacklist template
+  // (never clobbered). The image is built once and runs as a global compose
+  // service shared by all stack services and agents (ADR-0011).
+  const egressWrites: InitWrite[] = [];
+  const egressCtx = egressDir(root);
+  const egressFiles = renderEgressFiles();
+  for (const [fileName, content] of Object.entries(egressFiles)) {
+    egressWrites.push({
+      directory: egressCtx,
+      file: path.join(egressCtx, fileName),
+      content,
+      clobber: clobberRule,
+    });
+  }
+  // The two host-editable policy files compose bind-mounts into the egress
+  // container. Both must exist before `compose up`: a missing bind-mount
+  // source would be created as a directory.
+  const egressBlacklistFile = egressBlacklistPath(root);
+  egressWrites.push({
+    directory: path.dirname(egressBlacklistFile),
+    file: egressBlacklistFile,
+    content: egressFiles[EGRESS_FILES.blacklistExample],
+    clobber: clobberRule,
+  });
+  const egressIptablesFile = egressIptablesPath(root);
+  egressWrites.push({
+    directory: path.dirname(egressIptablesFile),
+    file: egressIptablesFile,
+    content: egressFiles[EGRESS_FILES.iptablesExample],
+    clobber: clobberRule,
+  });
+  steps.push({ kind: 'writes', writes: egressWrites });
+
+  // Step 2c - the runtime-broker build context (ADR-0013), seeded like the
+  // egress one. Built into `e-broker` and started per run when the run
+  // carries the spawn-brother skill.
+  const brokerCtx = brokerDir(root);
+  const brokerWrites: InitWrite[] = Object.entries(renderBrokerFiles()).map(
+    ([fileName, content]) => ({
+      directory: brokerCtx,
+      file: path.join(brokerCtx, fileName),
+      content,
+      clobber: clobberRule,
+    })
+  );
+  steps.push({ kind: 'writes', writes: brokerWrites });
+
+  // Step 3 - selected runtimes' derived bootstrap state (provider registration
+  // only; model downloads happen on demand via `e <runtime> download <model>`).
+  if (localRuntimes.length > 0) {
+    const bootstrapFile = bootstrapScriptPath(root);
+    steps.push({
+      kind: 'bootstrap',
+      write: {
+        directory: path.dirname(bootstrapFile),
+        file: bootstrapFile,
+        content: renderBootstrap(localRuntimes, models[0] ?? ''),
+        clobber: 'always',
+      },
+    });
+  }
+
+  // Step 4 - derived Compose state. Re-render so a re-init can change runtime selection.
+  steps.push({
+    kind: 'compose',
+    write: {
+      directory: path.dirname(dockerComposePath(root)),
+      file: dockerComposePath(root),
+      content: renderCompose(hardware, localRuntimes),
+      clobber: 'always',
+    },
+  });
+
+  return {
+    steps,
+    env: buildEnvWrite(
+      root,
+      state.existingEnvContent,
+      fullEnv,
+      state.force ?? false
+    ),
+    config: {
+      defaultHarness,
+      models,
+      localRuntimes,
+      gitPlatform,
+      // Not asked by the wizard; edited by hand in config.json, so a re-init
+      // must carry it over rather than reset it.
+      siblingArtifacts: state.currentSiblingArtifacts,
+      maxSiblings: state.currentMaxSiblings,
+    },
+    defaultHarness,
+    models,
+    localRuntimes,
+    gitPlatform,
+    envValues: fullEnv,
+    secrets,
+    hardware,
+  };
+}
+
+/** Resolves an extensible runtime multi-select; blank keeps the current set. */
+export function resolveLocalRuntimes(
+  answer: InitAnswers['localRuntimes'],
+  current: LocalRuntime[]
+): LocalRuntime[] {
+  if (answer === undefined) return current;
+  if (Array.isArray(answer)) return answer;
+  const trimmed = answer.trim();
+  if (trimmed === '') return current;
+  if (trimmed.toLowerCase() === 'all') return LOCAL_RUNTIMES.map(r => r.id);
+  if (trimmed.toLowerCase() === 'none') return [];
+  const parts = trimmed
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return current;
+  const selected = new Set<LocalRuntime>();
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return current;
+    const runtime = LOCAL_RUNTIMES[Number(part) - 1];
+    if (!runtime) return current;
+    selected.add(runtime.id);
+  }
+  return [...selected];
+}
+
+/**
+ * Resolves a model multi-select answer, purely: a pre-resolved id list passes
+ * through, a raw answer is parsed with `parseModelChoice`, and a blank or
+ * unanswered prompt keeps the `current` selection.
+ */
+function resolveModels(
+  answer: InitAnswers['models'],
+  catalog: ModelCatalogEntry[],
+  current: string[]
+): string[] {
+  if (answer === undefined) return current;
+  if (Array.isArray(answer)) return answer;
+  return parseModelChoice(answer, catalog, current) ?? current;
+}
+
+/**
+ * Resolves the git-platform answer, purely: an unanswered prompt (a `--yes`
+ * re-init) keeps the configured `current`; a blank answer disables PR/MR
+ * creation (undefined); a named or 1-based-indexed choice selects it.
+ */
+function resolveGitPlatform(
+  answer: InitAnswers['gitPlatform'] | undefined,
+  platforms: GitPlatform[],
+  current: GitPlatform | undefined
+): GitPlatform | undefined {
+  if (answer === undefined) return current;
+  const trimmed = answer.trim();
+  if (trimmed === '') return undefined;
+  return parseGitPlatformChoice(trimmed, platforms) as GitPlatform | undefined;
+}
+
+/**
+ * Builds the planned `.env` write, purely: a missing file renders the full
+ * template (with the e-net section) and every collected value replaces the
+ * template's placeholder for that key; an existing file gains only the
+ * sections it lacks, and collected values fill blank `KEY=` lines only, so a
+ * hand-edited `.env` is never clobbered. With `force` an existing file also
+ * re-renders from the canonical template (collected/hand-set values are
+ * preserved, ordering and header reset), honoring `-f`'s overwrite promise.
+ * The `created`/`changed` outcome tells the executor whether to write or
+ * report the file up to date.
+ */
+function buildEnvWrite(
+  root: string | undefined,
+  existingContent: string | undefined,
+  envValues: Record<string, string>,
+  force: boolean
+): InitPlan['env'] {
+  const file = envFilePath(root);
+  const sections = [
+    ...envHarnessSections(),
+    // The OmniRoute stack section: compose interpolates these from `.e/.env`
+    // (no fallbacks), so an old `.e/.env` gains the lines on re-init too.
+    { name: STACK_NETWORK, env: [...OMNIROUTE_STACK_SECRETS] },
+  ];
+
+  let content: string;
+  if (existingContent === undefined || force) {
+    // The template pre-fills the two global keys with local-stack defaults;
+    // a key the user just typed must win over that placeholder.
+    content = applyEnvValues(
+      renderEnvTemplate({ harnesses: sections }),
+      envValues,
+      { overwrite: true }
+    );
+    if (existingContent !== undefined) {
+      // A hand-added key the template does not model would vanish on the
+      // canonical re-render; append it so `--force` replaces structure but
+      // never a configured value.
+      const present = new Set(
+        [...content.matchAll(/^([A-Za-z_][A-Za-z0-9_]*)=/gm)].map(m => m[1])
+      );
+      const extras = Object.entries(envValues).filter(
+        ([key]) => !present.has(key)
+      );
+      if (extras.length > 0) {
+        content = content.endsWith('\n') ? content : content + '\n';
+        content +=
+          extras.map(([key, value]) => `${key}=${value}`).join('\n') + '\n';
+      }
+    }
+  } else {
+    const missing = sections.filter(
+      section => !existingContent.includes(`# --- ${section.name} ---`)
+    );
+    // Sections whose keys are all global render to nothing; appending that
+    // would only grow the file by a newline on every re-init.
+    const addition = renderEnvTemplate({
+      harnesses: missing,
+      includeHeader: false,
+    });
+    if (addition.trim() === '') {
+      content = existingContent;
+    } else {
+      const separator = existingContent.endsWith('\n') ? '\n' : '\n\n';
+      content = existingContent + separator + addition;
+    }
+    content = applyEnvValues(content, envValues);
+  }
+
+  return {
+    file,
+    content,
+    created: existingContent === undefined,
+    changed: existingContent !== undefined && content !== existingContent,
+  };
+}
+
+/**
+ * Resolves a favorite-harness prompt answer, purely: a blank answer takes the
+ * `fallback`, an exact name or a 1-based list index selects that harness, and
+ * anything else is unrecognized (`undefined`, so the glue re-prompts).
+ */
+export function parseHarnessChoice(
+  input: string,
+  names: string[],
+  fallback: string
+): string | undefined {
+  const trimmed = input.trim();
+  if (trimmed === '') return fallback;
+  if (names.includes(trimmed)) return trimmed;
+  if (/^\d+$/.test(trimmed)) {
+    const idx = Number(trimmed) - 1;
+    if (idx >= 0 && idx < names.length) return names[idx];
+  }
+  return undefined;
+}
+
+/**
+ * Resolves a git-platform prompt answer, purely: a blank answer is the
+ * interactive prompt's "disable" sentinel (handled by the caller), an exact
+ * name or a 1-based index selects that platform, and anything else is
+ * unrecognized (`undefined`, so the glue re-prompts).
+ */
+export function parseGitPlatformChoice(
+  input: string,
+  platforms: readonly string[]
+): string | undefined {
+  const trimmed = input.trim();
+  if (trimmed === '') return undefined;
+  if (platforms.includes(trimmed)) return trimmed;
+  if (/^\d+$/.test(trimmed)) {
+    const idx = Number(trimmed) - 1;
+    if (idx >= 0 && idx < platforms.length) return platforms[idx]!;
+  }
+  return undefined;
+}
+
+/**
+ * Resolves a model multi-select prompt answer, purely: a blank answer keeps
+ * `fallback`, `"all"`/`"none"` select every/no catalog entry, and a
+ * comma-separated list of 1-based indices selects those models (deduplicated).
+ * Anything else - an unknown token, an out-of-range index - is unrecognized
+ * (`undefined`, so the glue re-prompts).
+ */
+export function parseModelChoice(
+  input: string,
+  catalog: ModelCatalogEntry[],
+  fallback: string[]
+): string[] | undefined {
+  const trimmed = input.trim();
+  if (trimmed === '') return fallback;
+  if (trimmed.toLowerCase() === 'all') return catalog.map(m => m.id);
+  if (trimmed.toLowerCase() === 'none') return [];
+
+  const parts = trimmed
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return undefined;
+
+  const ids = new Set<string>();
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return undefined;
+    const idx = Number(part) - 1;
+    if (idx < 0 || idx >= catalog.length) return undefined;
+    ids.add(catalog[idx].id);
+  }
+  return [...ids];
+}
+
+/**
+ * The API keys `e init` should still prompt for, purely: the `required` keys
+ * minus any already set to a non-blank value in the existing `.env` content.
+ * A missing file (`undefined`) or a key present but blank (`KEY=`) still
+ * prompts; a filled key is skipped so a re-init never re-asks for it.
+ */
+export function keysToPrompt(
+  required: string[],
+  existingEnv: Record<string, string> | undefined
+): string[] {
+  if (existingEnv === undefined) {
+    return required;
+  }
+  return required.filter(key => (existingEnv[key] ?? '').trim() === '');
+}
+
+/**
+ * `KEY=` (blank) becomes `KEY=<value>` when a non-empty value was collected for
+ * it. Already-filled keys and keys with no collected value are left untouched,
+ * so re-running `init` never clobbers a hand-edited `.env`. With `overwrite`
+ * (a freshly rendered template) a collected value also replaces a pre-filled
+ * placeholder.
+ */
+export function applyEnvValues(
+  content: string,
+  values: Record<string, string>,
+  options: { overwrite?: boolean } = {}
+): string {
+  return content
+    .split('\n')
+    .map(line => {
+      const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+      if (!match) return line;
+      const [, key, current] = match;
+      if (current !== '' && !options.overwrite) return line;
+      const value = values[key];
+      return value ? `${key}=${value}` : line;
+    })
+    .join('\n');
+}

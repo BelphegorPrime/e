@@ -47,6 +47,41 @@ resolver down.
 as `/api/runs/*`. No write layer, no auth surface of its own; this is the one
 delegated mutation ADR-0010 allows.
 
+## Request paths
+
+The module that owns the log and blacklist files owns their read and write
+shape. `serve` only proxies.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as web UI
+    participant S as e serve (BFF)
+    participant A as egress API (in e-egress)
+    participant F as mounted files
+    participant D as dnsmasq
+
+    rect rgba(128,128,128,0.12)
+    Note over UI,D: query - stateless, reads and squashes per call
+    UI->>S: GET /api/egress/logs/squashed
+    S->>A: GET /logs/squashed
+    A->>F: read the mounted dnsmasq log
+    A->>A: drop localhost and stack-internal names,<br/>roll up to one row per normalized domain
+    A-->>UI: [{domain, count, firstSeen, lastSeen}] sorted by count
+    end
+
+    rect rgba(128,128,128,0.12)
+    Note over UI,D: mutation - the only write the UI may make
+    UI->>S: POST /api/egress/blacklist/domains {domain}
+    S->>A: POST /blacklist/domains
+    A->>A: validate as a DNS name
+    Note right of A: anything else could inject dnsmasq<br/>directives and take the shared resolver down
+    A->>F: append address=/domain/0.0.0.0 and .../::
+    A->>D: SIGHUP the entrypoint, which restarts dnsmasq
+    Note right of D: dnsmasq does not re-read --conf-dir on HUP,<br/>the block applies in about a second,<br/>without recreating the shared netns
+    end
+```
+
 ## Consequences
 
 - **Small interface, deep implementation**: the container hides dnsmasq log

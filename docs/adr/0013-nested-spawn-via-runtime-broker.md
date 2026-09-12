@@ -68,6 +68,78 @@ whatever the agent left).
 - Child never becomes ready → spawn call returns failure report to parent; non-fatal to parent.
 - Child crash/hang mid-run → parent continues; report surfaces failure. Parent may request another brother.
 
+## The full sibling round trip
+
+The broker holds **no** container socket and **no** credentials (the ticket-02
+amendment above). It is an HTTP front for a host-owned spool directory, which
+is why the ADR-0002 trust line survives nested spawn.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as parent agent<br/>(in its container)
+    participant B as runtime-broker<br/>(sidecar, no socket)
+    participant SP as spool<br/>(host-owned dir)
+    participant H as host e process<br/>(SiblingConsumer)
+    participant G as git
+    participant C as sibling run
+
+    A->>B: POST /spawn {agent, prompt}
+    alt depth 2 reached
+        B-->>A: 403
+    else fan-out cap full (maxSiblings, default 3)
+        B-->>A: 429
+    else accepted
+        B->>SP: write requests/<id>.json
+        B-->>A: accepted, returns immediately (non-blocking)
+    end
+
+    H->>SP: pick up the accepted request
+    H->>G: <b>checkpoint</b>: git commit -a on the parent worktree
+    Note right of G: the worktree IS the live /workspace mount,<br/>so this moves zero file content
+    H->>C: launch a child e spawn from headSha(parent worktree)
+    H->>C: <b>artifact sync</b>: reflink or copy allowlisted<br/>build artifacts beside the worktree
+    Note right of C: never .git, never .env (ADR-0002)
+    H->>SP: status/<id>.json = starting, then running
+
+    loop while working
+        A->>B: GET /status or /status/events (SSE)
+        B->>SP: read status/<id>.json
+        B-->>A: record + taskState (ADR-0015)
+    end
+
+    C-->>H: exits
+    H->>G: checkpoint the parent's WIP again
+    H->>G: <b>merge-back</b>: merge the sibling branch as a merge commit
+    alt merged / up-to-date
+        H->>SP: merge: merged, report written
+        Note over A: the files are simply there in /workspace
+    else conflict or held
+        H->>SP: merge: conflict|held, taskState: input-required
+        A->>A: resolve by <b>editing the files</b> (never git)
+        A->>B: POST /merge/<id>
+        B->>SP: signals/<id>.json
+        H->>G: conclude or retry the merge
+    end
+    H->>A: report at e-runs/<id>/report.md in the worktree
+```
+
+### Why the depth cap holds
+
+```mermaid
+flowchart TB
+    p["<b>parent</b> run<br/>E_ROLE=parent<br/>has its own broker"]
+    s1["<b>sibling</b><br/>E_ROLE=child"]
+    s2["<b>sibling</b><br/>E_ROLE=child"]
+    s3["<b>sibling</b><br/>E_ROLE=child"]
+    p --> s1
+    p --> s2
+    p --> s3
+    s1 -.->|"a sibling has no broker of its own;<br/>its requests go through the parent's<br/>and become siblings"| p
+    note["nothing ever reaches depth 3"]
+    s3 --- note
+```
+
 ## Consequences
 
 - **Agent sandbox unchanged**: no docker socket, no host git credentials, no `.git` inside container (ADR-0002 lines preserved). The broker is the only new trust boundary, scoped to run network.

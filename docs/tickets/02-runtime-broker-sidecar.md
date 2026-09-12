@@ -11,12 +11,12 @@ broker starts) with every request and the host's `status/<id>.json`;
 a runtime and git; consuming the spool (assigning a branch, depth and cap,
 checkpoint, merge-back) is tickets 03-07.
 
-Where things live: `src/broker/` (constants, spool, API, server entry, the
+Where things live: `src/sidecars/broker/` (constants, spool, API, server entry, the
 skill and its script; the server and the script are type-checked TS bundled by
-`scripts/build-broker.mjs` into `bundle.generated.ts`), `src/init/renderBroker.ts`
+`scripts/build-broker.mjs` into `bundle.generated.ts`), `src/sidecars/broker/render.ts`
 (the `.e/broker/` build context: `node:24-alpine`, `USER node`, `EXPOSE 20130`,
 no volume, no socket; seeded by `e init` and on demand by the first spawn that
-needs it), `src/runs/runBroker.ts` (spool dir, `SidecarSpec` with the bind
+needs it), `src/engine/runs/runBroker.ts` (spool dir, `SidecarSpec` with the bind
 mount, container `<runName>-broker`, alias `runtime-broker`), `planSpawn`
 (`SpawnPlan.broker` is set exactly when the run carries the `spawn-brother`
 skill, baked or `--skill`), `runSpawn` (starts it first among the sidecars,

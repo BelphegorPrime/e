@@ -16,6 +16,22 @@ Every command resolves the Store root in this order:
 So a Store inside a project is picked up automatically when you work in that
 project, and `~/.e` serves everything else.
 
+```mermaid
+flowchart TB
+    cmd["any e command"]
+    d1{"--dir given?"}
+    d2{"an ancestor of cwd<br/>contains a .e ?"}
+    home["~/.e<br/><i>the machine Store</i>"]
+    proj["&lt;project&gt;/.e<br/><i>versioned with the project</i>"]
+    given["that path"]
+
+    cmd --> d1
+    d1 -->|yes| given
+    d1 -->|no| d2
+    d2 -->|yes| proj
+    d2 -->|no| home
+```
+
 ## A per-project Store
 
 Useful when a project needs its own Agents, Skills, or a different git
@@ -48,6 +64,12 @@ Spawn against a Store from elsewhere with `--dir`:
 
 ```bash
 e spawn --dir /path/to/infra-repo pi "Bump the base images"
+```
+
+```mermaid
+flowchart LR
+    a["<b>machine A</b><br/>&lt;root&gt;/.e"] -->|"e export"| zip[/"a Store archive<br/><i>agents, harnesses, skills,<br/>mcp, config</i>"/]
+    zip -->|"e import --dir &lt;path&gt;"| b["<b>machine B</b><br/>&lt;root&gt;/.e"]
 ```
 
 ## Export a Store

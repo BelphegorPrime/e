@@ -32,6 +32,39 @@ command action (it had grown to ~400 lines of untested wiring before this).
    rendered file into `RunScratch` and wire the resulting paths, then hand the
    run's lifecycle to `runSpawn`.
 
+### The pipeline as a picture
+
+Everything that _decides what a run is_ is pure. The effects sit in exactly two
+places: one edge that reads, one executor that writes.
+
+```mermaid
+flowchart LR
+    cmd["e spawn argv"] --> gather
+
+    subgraph impure1["edge - I/O"]
+        gather["<b>gatherSpawnFacts</b><br/>resolve the Agent and Harness,<br/>parse .e/.env, check every requested<br/>MCP server and Skill on disk"]
+    end
+
+    subgraph pure["<b>pure and testable</b> - no container, no runtime, no network"]
+        direction TB
+        facts[("SpawnFacts")]
+        validate["<b>validateSpawn</b><br/>fail-fast on the cheap errors:<br/>unspoken protocol, no adapter, --mcp on a<br/>harness with no MCP client, skills where<br/>none are supported, promptless with no TTY"]
+        plan["<b>planSpawn</b><br/>composes the whole SpawnPlan as data:<br/>provider delivery, sidecars vs. remote vs. flag,<br/>the config overlay, the derived-image plan,<br/>skill mounts, every credential file's content"]
+        planv[("SpawnPlan")]
+    end
+
+    subgraph impure2["executor - the only writes"]
+        exec["<b>executeSpawn</b><br/>preflight guards, build the images,<br/>materialize rendered files into RunScratch"]
+        runspawn["<b>runSpawn</b><br/>worktree, run, commit, push, teardown"]
+    end
+
+    gather --> facts --> validate --> plan --> planv --> exec --> runspawn
+```
+
+Builds happen in `executeSpawn`, _before_ any worktree, which preserves the
+ADR-0005 "build before worktree" invariant by construction rather than by
+convention.
+
 ## Consequences
 
 - **The interface is the test surface.** `validateSpawn` and `planSpawn` are

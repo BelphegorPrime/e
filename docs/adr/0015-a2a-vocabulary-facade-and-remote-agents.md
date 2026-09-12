@@ -30,7 +30,7 @@ The spool protocol between broker and host stays what it is (files, four
 routes, Node built-ins only). It gains what A2A's lifecycle has and it lacked:
 
 - Every sibling record carries `taskState`, the A2A state derived once, in
-  `src/broker/taskState.ts`, from the run state and the merge-back:
+  `src/sidecars/broker/contract/taskState.ts`, from the run state and the merge-back:
   `requested` → `submitted`; `starting`/`running` → `working`; `done` →
   `completed`, or `failed` when it exited non-zero, or `input-required` while
   its merge-back is `conflict` or `held` (waiting on the parent);
@@ -67,7 +67,7 @@ wants in `metadata.agent`. A task is exactly one run: `serve` launches a
 headless `e spawn <agent> -- <prompt>` child (the ADR-0014 pattern)
 carrying `E_SPAWN_REPORT_SPOOL` / `E_SPAWN_REPORT_ID`, so the run writes the
 same status records a sibling would - into a spool `serve` owns - and the task
-is rendered from them (`src/a2a/tasks.ts`). The artifact of a completed task
+is rendered from them (`src/engine/a2a/tasks.ts`). The artifact of a completed task
 is the run branch, whether it was pushed, and the PR/MR URL. Tasks take no
 follow-up messages: a run has no input channel once started, and the card
 says so.
@@ -112,6 +112,57 @@ the same answer at a higher cost:
 - The broker bundle is Node built-ins only and dependency-free; an A2A SDK
   would break that for a subset of the protocol.
 
+## The three things, and the one not done
+
+```mermaid
+flowchart TB
+    subgraph one["<b>1. the broker adopts A2A's vocabulary</b>"]
+        direction TB
+        spool["the spool protocol is unchanged:<br/>files, four routes, Node built-ins only"]
+        ts["every sibling record carries <b>taskState</b>,<br/>derived once in contract/taskState.ts"]
+        newstates["two new run states: canceled, rejected<br/>POST /cancel/&lt;id&gt; spooled as cancels/&lt;id&gt;.json"]
+    end
+
+    subgraph two["<b>2. a facade on serve</b> - e as an A2A agent"]
+        direction TB
+        card["/.well-known/agent-card.json<br/>one skill per harness agent in the Store"]
+        rpc["POST /a2a - JSON-RPC 1.0 binding<br/>SendMessage, SendStreamingMessage, GetTask,<br/>ListTasks, CancelTask, SubscribeToTask"]
+        task["an A2A task <b>is one run</b>:<br/>a headless e spawn child reporting into<br/>a spool serve owns"]
+        auth["loopback + bearer E_A2A_TOKEN;<br/>off beyond loopback without one"]
+    end
+
+    subgraph three["<b>3. remote agents in the Store</b>"]
+        direction TB
+        ra["agent.json with transport: a2a<br/>a url instead of a harness"]
+        noimg["no image, no worktree, no branch<br/>merge.status: skipped"]
+        ans["the answer is the status's answer field<br/>and the report's ## Answer section"]
+    end
+
+    notdone["<b>deliberately not done</b><br/>push notifications are refused"]
+
+    one --> two --> three
+    three -.-> notdone
+```
+
+### Where each piece sits
+
+```mermaid
+flowchart LR
+    peer["an external A2A peer"] -->|JSON-RPC + SSE| facade
+    subgraph serveproc["e serve"]
+        facade["A2A facade<br/>engine/a2a/"]
+        spoolb[("its own spool<br/>&lt;worktreesDir&gt;/.a2a/serve-&lt;pid&gt;<br/>a2a-NNN ids, no broker")]
+    end
+    facade --> child["headless e spawn child<br/>E_SPAWN_REPORT_SPOOL / _ID"]
+    child --> spoolb --> facade
+
+    agentInRun["an agent inside a run"] -->|"e spawn &lt;remote&gt;"| remoteA["a Store agent with transport: a2a"]
+    remoteA -->|"the host talks A2A in-process"| elsewhere["an agent hosted elsewhere"]
+```
+
+Interoperability is verified against the reference `@a2a-js/sdk` in
+`src/engine/a2a/interop.test.ts`.
+
 ## Consequences
 
 - **One lifecycle vocabulary.** The skill, the reports, the web UI and any
@@ -141,7 +192,7 @@ the same answer at a higher cost:
   in proto-JSON form, `A2A-Version: 1.0`) and reads the 0.x spellings too. The
   spec's own error codes (-32001 … -32009) are used where they apply.
 - **Interoperability is tested against the reference SDK**, not the prose of
-  the spec: `src/a2a/interop.test.ts` drives the facade with `@a2a-js/sdk`'s
+  the spec: `src/engine/a2a/interop.test.ts` drives the facade with `@a2a-js/sdk`'s
   client (card, send, stream, get, list, cancel, bearer) and `e`'s client
   against the SDK's server (top-level spawn, sibling, cancel). The SDK is a
   dev dependency only; nothing of it ships. That test is what caught the 1.0

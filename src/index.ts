@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { registerSpawnCommand } from './spawn/spawn.js';
-import { registerInitCommand } from './init/index.js';
-import { registerServeCommand } from './serve/serve.js';
-import { registerRuntimeCommands } from './runtime/command.js';
+import { registerSpawnCommand } from './cli/spawn.js';
+import { registerInitCommand } from './cli/init/index.js';
+import { registerServeCommand } from './cli/serve/serve.js';
+import { registerRuntimeCommands } from './cli/runtime.js';
 import {
   registerExportCommand,
   registerImportCommand,
-} from './transfer/index.js';
-import { registerCompletion } from './completion/index.js';
-import { registerLintCommand } from './lint/index.js';
-import { E_VERSION } from './version.js';
+} from './cli/transfer/index.js';
+import { registerCompletion } from './cli/completion/index.js';
+import { registerLintCommand } from './cli/lint/index.js';
+import { E_VERSION } from './shared/version.js';
 
 const program = new Command();
 

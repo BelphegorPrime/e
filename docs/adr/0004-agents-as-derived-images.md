@@ -14,6 +14,27 @@ harness Dockerfiles, never overwrites hand edits, showing a diff instead.
 `e spawn` resolves to an Agent: a bare harness name resolves to that harness's
 default agent. A run branch is `e/<agent>/<slug>-N`.
 
+## The image layers
+
+```mermaid
+flowchart TB
+    subgraph decl["declaration - data in the Store"]
+        aj[".e/agents/&lt;name&gt;/agent.json<br/>harness + provider"]
+        hd[".e/harnesses/&lt;h&gt;/Dockerfile"]
+    end
+
+    base["<b>layer 1: harness base image</b><br/>the CLI + the code toolchain<br/>Node / Python / Go<br/><i>shared by every agent on this harness</i>"]
+    derived["<b>layer 2: agent image</b><br/>FROM the base<br/>bakes the static provider/model config"]
+    run["a Run executes the agent image<br/>on branch e/&lt;agent&gt;/&lt;slug&gt;-N"]
+
+    hd --> base --> derived --> run
+    aj -->|"e renders the derived Dockerfile<br/>and config from the declaration"| derived
+    aj -.->|"a bare harness name resolves<br/>to that harness's default agent"| derived
+```
+
+Rendering never overwrites hand edits: `e` shows a diff instead, the same rule
+`e init` already applies to harness Dockerfiles.
+
 ## Considered Options
 
 - **Runtime-only config over one shared per-harness image**, rejected: agents

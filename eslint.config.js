@@ -16,8 +16,8 @@ export default tseslint.config(
       // Local e state and packaged binaries are not source.
       '.e/',
       'command/',
-      'src/egress/bundle.generated.ts',
-      'src/broker/bundle.generated.ts',
+      'src/sidecars/egress/bundle.generated.ts',
+      'src/sidecars/broker/bundle.generated.ts',
     ],
   },
   {
@@ -47,6 +47,40 @@ export default tseslint.config(
       },
     },
   },
+  // ---------------------------------------------------------------------
+  // Layer boundaries (see README, "Source layout"). `src/` is a DAG:
+  //
+  //   shared -> sidecars -> core -> ports -> engine -> cli -> index.ts
+  //
+  // A layer may import anything below it and nothing above it. Each block
+  // below names the layers that are ABOVE the files it applies to, so an
+  // upward import fails the build instead of quietly reintroducing a cycle.
+  //
+  // Exempt: `src/index.ts` (the composition root, which wires every layer) and
+  // test files (an integration test may stand up the whole stack - e.g. the
+  // A2A interop test drives `cli/serve`).
+  // ---------------------------------------------------------------------
+  ...[
+    { dir: 'shared', above: ['sidecars', 'core', 'ports', 'engine', 'cli'] },
+    { dir: 'sidecars', above: ['core', 'ports', 'engine', 'cli'] },
+    { dir: 'core', above: ['ports', 'engine', 'cli'] },
+    { dir: 'ports', above: ['engine', 'cli'] },
+    { dir: 'engine', above: ['cli'] },
+  ].map(({ dir, above }) => ({
+    files: [`src/${dir}/**/*.ts`],
+    ignores: ['**/*.test.ts', '**/*.testSupport.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: above.map(up => ({
+            group: [`**/${up}/**`],
+            message: `Layer violation: src/${dir} may not import from src/${up} (allowed direction: shared -> sidecars -> core -> ports -> engine -> cli).`,
+          })),
+        },
+      ],
+    },
+  })),
   {
     rules: {
       'no-console': 'off',

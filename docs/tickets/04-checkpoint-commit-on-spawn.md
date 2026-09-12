@@ -1,7 +1,7 @@
 # 04 - Checkpoint commit on spawn
 
 **Shipped 2026-09-12.** `runSpawn` takes an optional `parent`
-(`{ worktreePath, branch }`, `src/runs/runSpawn.ts`). When present, the run
+(`{ worktreePath, branch }`, `src/engine/runs/runSpawn.ts`). When present, the run
 is a sibling: before its branch is cut, the host commits whatever is
 uncommitted in the parent worktree on the parent's own branch
 (`Git.commitAll`, message `e: checkpoint <parentBranch> before spawning

@@ -1,7 +1,7 @@
 # 07 - Merge-back flow
 
-**Shipped 2026-09-12.** `src/runs/runMergeBack.ts` is the primitive; the
-`SiblingConsumer` (`src/runs/runSiblings.ts`) drives it. When a sibling
+**Shipped 2026-09-12.** `src/engine/runs/runMergeBack.ts` is the primitive; the
+`SiblingConsumer` (`src/engine/runs/runSiblings.ts`) drives it. When a sibling
 process exits, its spool record is **settled**: a `done` sibling that exited
 0 is folded into the parent's live worktree - `mergeInProgress` check, then
 `Git.commitAll` of the parent's uncommitted work on its own branch
@@ -49,7 +49,7 @@ outcome; `e spawn` prints one line per sibling. Verified against real git in
 drain) and `runSpawn.e2e.test.ts` (the whole cycle over the real broker HTTP
 handler, ticket 08); the consumer's states and signals with a scripted git in
 `runSiblings.test.ts`; the broker route, spool signals and skill text in
-`src/broker/*.test.ts`.
+`src/sidecars/broker/**/*.test.ts`.
 
 Decided: the report is keyed by request id (`sib-NNN`), the identity the agent
 already holds from `POST /spawn`, not by branch - a sibling that never got a

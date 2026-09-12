@@ -21,7 +21,7 @@ export function resolveVersion({ explicit, tag, hash, fallback = '1.0.0' }) {
   return candidate;
 }
 
-/** The src/version.ts module text for `version`. */
+/** The src/shared/version.ts module text for `version`. */
 export function versionModule(version) {
   return `export const E_VERSION = '${version}';\n`;
 }
@@ -39,7 +39,7 @@ async function main() {
     tag: git(['describe', '--tags', '--exact-match', 'HEAD']),
     hash: git(['rev-parse', 'HEAD']),
   });
-  await fs.writeFile('src/version.ts', versionModule(version));
+  await fs.writeFile('src/shared/version.ts', versionModule(version));
   console.log(version);
 }
 

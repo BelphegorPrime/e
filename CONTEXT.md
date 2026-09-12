@@ -2,6 +2,62 @@
 
 The `e` command: builds and runs coding-agent harnesses inside containers, one isolated run at a time. This context owns the vocabulary of harnesses, runtimes, and runs.
 
+## The domain at a glance
+
+The entities this context owns and how they compose. A **Harness** is
+packaging; pairing it with a model configuration makes an **Agent**; executing
+an Agent makes a **Run**. Everything selectable lives in the **Store**.
+
+```mermaid
+flowchart TB
+    subgraph store["<b>Store</b> - .e/ or ~/.e, walked up from cwd"]
+        direction LR
+        sHarness["harnesses/&lt;h&gt;/Dockerfile"]
+        sAgent["agents/&lt;name&gt;/agent.json"]
+        sMcp["mcp/&lt;name&gt;/"]
+        sSkill["skills/&lt;name&gt;/"]
+        sConf["config.json - host-only<br/>.env - shared secrets"]
+    end
+
+    harness["<b>Harness</b><br/>a coding-agent CLI, containerized<br/>Claude Code, Codex, opencode, pi"]
+    agent["<b>Agent</b><br/>Harness + Provider, selected by name"]
+    remote["<b>Remote agent</b><br/>transport: a2a, a url, no image"]
+    provider["<b>Provider</b><br/>baseUrl, model, protocol, apiKeyEnv<br/>inline in the Agent, not a Store entity"]
+    adapter["<b>HarnessAdapter</b><br/>Env or File<br/>renders native config"]
+
+    run["<b>Run</b><br/>RunScratch + primary container + Sidecars"]
+    worktree["<b>worktree</b><br/>disposable checkout bind-mounted at /workspace"]
+    branch["<b>branch</b> e/&lt;agent&gt;/&lt;slug&gt;-N<br/><i>the durable artifact</i>"]
+    sidecar["<b>Sidecar</b><br/>composed alongside the agent container"]
+    mcp["<b>MCP server</b><br/>agent-to-tool, container transport"]
+    brokerN["<b>Runtime-broker</b><br/>sibling-spawn HTTP contract"]
+    skill["<b>Skill</b><br/>SKILL.md + resources"]
+    runtime["<b>Runtime</b><br/>docker, podman, nerdctl, finch"]
+
+    sHarness --> harness
+    sAgent --> agent
+    sAgent -.->|"transport: a2a"| remote
+    sMcp --> mcp
+    sSkill --> skill
+
+    harness -->|"1 harness, many agents"| agent
+    agent --- provider
+    harness --- adapter
+    adapter -->|"baked layer, image layer, runtime env"| run
+
+    agent -->|"a Run executes one Agent"| run
+    run --> worktree --> branch
+    run --> sidecar
+    sidecar --- mcp
+    sidecar --- brokerN
+    skill -.->|"selected per Run"| run
+    mcp -.->|"selected per Run"| run
+    runtime -->|"builds and runs the images"| run
+```
+
+Two rules hold the shape together: an Agent does **not** own its Sidecars
+(those are chosen per Run), and the branch outlives the worktree (ADR-0001).
+
 ## Language
 
 **Harness**:
@@ -13,7 +69,7 @@ A named, reusable pairing of a Harness with a specific model configuration (prov
 _Avoid_: harness (its packaging), bot, assistant
 
 **Remote agent**:
-A Store agent with `"transport": "a2a"` in its `agent.json` (ADR-0015; `src/a2a/remoteAgent.ts`): an agent hosted elsewhere that speaks the Agent2Agent protocol, named like any agent but with a `url` instead of a harness, optional `headers` whose `${VAR}` references resolve from `.e/.env` on the host at call time, and an optional `description`. It has no image, no worktree and no branch: `e spawn <remote> "<prompt>"` prints its answer; as a Sibling run the host talks A2A in-process and the answer is the `answer` field of the status and the `## Answer` section of the report, with `merge.status: skipped`. The mirror image of a `remote` MCP server.
+A Store agent with `"transport": "a2a"` in its `agent.json` (ADR-0015; `src/core/agent/remoteAgent.ts`): an agent hosted elsewhere that speaks the Agent2Agent protocol, named like any agent but with a `url` instead of a harness, optional `headers` whose `${VAR}` references resolve from `.e/.env` on the host at call time, and an optional `description`. It has no image, no worktree and no branch: `e spawn <remote> "<prompt>"` prints its answer; as a Sibling run the host talks A2A in-process and the answer is the `answer` field of the status and the `## Answer` section of the report, with `merge.status: skipped`. The mirror image of a `remote` MCP server.
 _Avoid_: proxy, gateway (it is a peer agent, not infrastructure)
 
 **Provider**:
@@ -35,30 +91,67 @@ _Avoid_: plugin, addon
 The next terms are the vocabulary of ADR-0013 (proposed; implemented through ticket 08: role contract, broker + skill, `Git.merge`, checkpoint, artifact sync, the host side that launches siblings, the merge-back, and the end-to-end test) and of ADR-0015 (the A2A task vocabulary, cancel, the event stream):
 
 **Runtime-broker**:
-A sidecar (image `e-broker`, build context `.e/broker/`, alias `runtime-broker`, port 20130) that exposes the sibling-spawn HTTP contract (`POST /spawn`, `GET /status`, `GET /status/events` as server-sent events, `POST /merge/<id>`, `POST /cancel/<id>`) to agent containers over the run's network, and nothing else. It holds **no** container-runtime socket and no credentials (ADR-0002): it spools each request as a file into the run's **spool**, a host-owned directory bind-mounted into it, and serves back the status the host writes there. The host `e` process stays the only party that runs containers or git (ADR-0013 as refined by ticket 02): the parent's `runSpawn` runs a `SiblingConsumer` (`src/runs/runSiblings.ts`) that picks accepted requests up from the spool and launches each as a child `e spawn` process carrying the `E_SPAWN_*` markers; the broker itself answers `403` (depth) and `429` (fan-out cap, `maxSiblings`) synchronously. Planned for a Run exactly when the Run carries the `spawn-brother` skill.
+A sidecar (image `e-broker`, build context `.e/broker/`, alias `runtime-broker`, port 20130) that exposes the sibling-spawn HTTP contract (`POST /spawn`, `GET /status`, `GET /status/events` as server-sent events, `POST /merge/<id>`, `POST /cancel/<id>`) to agent containers over the run's network, and nothing else. It holds **no** container-runtime socket and no credentials (ADR-0002): it spools each request as a file into the run's **spool**, a host-owned directory bind-mounted into it, and serves back the status the host writes there. The host `e` process stays the only party that runs containers or git (ADR-0013 as refined by ticket 02): the parent's `runSpawn` runs a `SiblingConsumer` (`src/engine/runs/runSiblings.ts`) that picks accepted requests up from the spool and launches each as a child `e spawn` process carrying the `E_SPAWN_*` markers; the broker itself answers `403` (depth) and `429` (fan-out cap, `maxSiblings`) synchronously. Planned for a Run exactly when the Run carries the `spawn-brother` skill.
 **Sibling run**:
 A child run requested from inside a parent run via its runtime-broker. Siblings execute on the parent run's private network + lifecycle and share its worktree branch only through the host's checkpoint-before-spawn + merge-back protocol (ADR-0001, ADR-0013). Depth is capped: children may request siblings, never children of children. Run states: `requested` → `starting` → `running` → `done` | `failed`, plus `canceled` (the parent's `POST /cancel/<id>`, or the parent run ending first) and `rejected` (the host refusing after the broker accepted) since ADR-0015; every record also carries its **Task state** (below).
 
 **Task state**:
-The Agent2Agent (A2A) lifecycle of a sibling record or an A2A task (ADR-0015; `src/broker/taskState.ts`), derived - never stored - from the run state and the Merge-back: `requested` → `submitted`; `starting`/`running` → `working`; `done` → `completed`, or `failed` when it exited non-zero, or `input-required` while its merge-back is `conflict` or `held`; `failed`/`canceled`/`rejected` as is. The one field an agent branches on (`taskState` in `GET /status`, the `--watch` script, the reports, the web UI's siblings view, the A2A facade's `Task.status.state` as `TASK_STATE_*`).
+The Agent2Agent (A2A) lifecycle of a sibling record or an A2A task (ADR-0015; `src/sidecars/broker/contract/taskState.ts`), derived - never stored - from the run state and the Merge-back: `requested` → `submitted`; `starting`/`running` → `working`; `done` → `completed`, or `failed` when it exited non-zero, or `input-required` while its merge-back is `conflict` or `held`; `failed`/`canceled`/`rejected` as is. The one field an agent branches on (`taskState` in `GET /status`, the `--watch` script, the reports, the web UI's siblings view, the A2A facade's `Task.status.state` as `TASK_STATE_*`).
 _Avoid_: status (the run state), phase
+
+```mermaid
+flowchart LR
+    subgraph runstates["<b>Run state</b> - what the sibling process is doing"]
+        direction TB
+        r1["requested"] --> r2["starting"] --> r3["running"] --> r4["done"]
+        r3 --> r5["failed"]
+        r1 -.-> r6["canceled"]
+        r3 -.-> r6
+        r1 -.-> r7["rejected"]
+    end
+
+    subgraph taskstates["<b>Task state</b> - the A2A lifecycle agents branch on"]
+        direction TB
+        t1["submitted"]
+        t2["working"]
+        t3["completed"]
+        t4["input-required"]
+        t5["failed"]
+        t6["canceled"]
+        t7["rejected"]
+    end
+
+    r1 ==> t1
+    r2 ==> t2
+    r3 ==> t2
+    r4 ==>|"exit 0, merge landed"| t3
+    r4 ==>|"exit non-zero"| t5
+    r4 ==>|"merge is conflict or held"| t4
+    r5 ==> t5
+    r6 ==> t6
+    r7 ==> t7
+```
+
+Task state is **derived, never stored** (`src/sidecars/broker/contract/taskState.ts`):
+one function of the run state and the merge-back outcome, so the two can never
+drift apart.
 **Checkpoint**:
-The host-side `git commit -a` of a parent worktree's WIP to its run branch immediately before spawning a sibling, so the sibling's worktree branch starts from the parent's current state (ADR-0001 only carries committed refs; ADR-0013). Zero file-content movement - the worktree is the live bind-mount of the parent's `/workspace`. The primitive is `runSpawn`'s `parent` option (`src/runs/runSpawn.ts`): `commitAll` on the parent worktree when dirty, then the sibling branches from `headSha(parentWorktree)`; the sibling `e spawn` process the host launches for a spooled request calls it.
+The host-side `git commit -a` of a parent worktree's WIP to its run branch immediately before spawning a sibling, so the sibling's worktree branch starts from the parent's current state (ADR-0001 only carries committed refs; ADR-0013). Zero file-content movement - the worktree is the live bind-mount of the parent's `/workspace`. The primitive is `runSpawn`'s `parent` option (`src/engine/runs/runSpawn.ts`): `commitAll` on the parent worktree when dirty, then the sibling branches from `headSha(parentWorktree)`; the sibling `e spawn` process the host launches for a spooled request calls it.
 **Merge-back**:
-The host-side merge of a sibling's branched work back into the parent worktree after the sibling exits (`src/runs/runMergeBack.ts`, driven by the `SiblingConsumer`). The host first checkpoints the parent's uncommitted work on its own branch (the fold of its WIP), then merges the sibling's branch as a merge commit whose files appear in the parent's live `/workspace` in place. Never uses git from inside the container. The primitive is `Git.merge` (`src/git/index.ts`): always a merge commit; a conflict is a returned outcome with the conflicted paths, the merge left in progress with its markers, never resolved by the host; a refusal over files in the way is a returned outcome too (`refused`, the paths git named). The outcome is published as `merge` (`merged` / `up-to-date` / `conflict` / `held` / `skipped` / `failed`, with `files` and `reason`; `skipped` covers a failed, non-zero, canceled or rejected sibling and a Remote agent without a branch) and `report` in the sibling's status, and as a **report** at `e-runs/<request id>/report.md` inside the parent worktree, where the agent reads it. A `conflict` or `held` merge waits for the parent's **merge signal** - `POST /merge/<id>` on the runtime-broker, `spawn-brother.mjs --merge <id>`, a `signals/<id>.json` in the spool - on which the host concludes the merge (`commitAll`) or checkpoints and retries; the parent run's end retries the held ones after its own commit.
+The host-side merge of a sibling's branched work back into the parent worktree after the sibling exits (`src/engine/runs/runMergeBack.ts`, driven by the `SiblingConsumer`). The host first checkpoints the parent's uncommitted work on its own branch (the fold of its WIP), then merges the sibling's branch as a merge commit whose files appear in the parent's live `/workspace` in place. Never uses git from inside the container. The primitive is `Git.merge` (`src/ports/git/index.ts`): always a merge commit; a conflict is a returned outcome with the conflicted paths, the merge left in progress with its markers, never resolved by the host; a refusal over files in the way is a returned outcome too (`refused`, the paths git named). The outcome is published as `merge` (`merged` / `up-to-date` / `conflict` / `held` / `skipped` / `failed`, with `files` and `reason`; `skipped` covers a failed, non-zero, canceled or rejected sibling and a Remote agent without a branch) and `report` in the sibling's status, and as a **report** at `e-runs/<request id>/report.md` inside the parent worktree, where the agent reads it. A `conflict` or `held` merge waits for the parent's **merge signal** - `POST /merge/<id>` on the runtime-broker, `spawn-brother.mjs --merge <id>`, a `signals/<id>.json` in the spool - on which the host concludes the merge (`commitAll`) or checkpoints and retries; the parent run's end retries the held ones after its own commit.
 _Avoid_: rebase, squash (a sibling is one merge node in the parent's history), auto-resolve
 **Run role**:
-A container's place in a Run's tree, `parent` or `child`, delivered as host-set env: `E_ROLE`, with `E_BROKER_URL` naming the runtime-broker endpoint (by alias `runtime-broker` on a private run network, on loopback in the shared egress namespace) - never an image layer or a marker file in the worktree (ADR-0013; `src/runs/runRole.ts`). The `e spawn` process learns the role it hands out from its internal `E_SPAWN_ROLE` marker; unset means `parent`.
+A container's place in a Run's tree, `parent` or `child`, delivered as host-set env: `E_ROLE`, with `E_BROKER_URL` naming the runtime-broker endpoint (by alias `runtime-broker` on a private run network, on loopback in the shared egress namespace) - never an image layer or a marker file in the worktree (ADR-0013; `src/engine/runs/runRole.ts`). The `e spawn` process learns the role it hands out from its internal `E_SPAWN_ROLE` marker; unset means `parent`.
 **Spool**:
 The host-owned directory of one Run (`<worktreesDir>/.broker/<runName>`) bind-mounted into its Runtime-broker at `/var/lib/e-broker`: `run.json` (the Run's identity, written by the host before the broker starts), `requests/<id>.json` (written by the broker for each `POST /spawn`), `status/<id>.json` (written by the host when it launches or gives up on a request, and by the sibling process itself: `starting` with its branch, `running`, `done`, `failed`; after the sibling exits the host adds the Merge-back's `merge` and `report`), `signals/<id>.json` (written by the broker for `POST /merge/<id>`, taken by the host when it retries that merge-back), `cancels/<id>.json` (written by the broker for `POST /cancel/<id>`, taken by the host when it stops or skips that sibling, ADR-0015), `logs/<id>.log` (the sibling process's output). Request ids are `sib-NNN`; the A2A facade's own spool (`<worktreesDir>/.a2a/serve-<pid>`) uses the same layout with `a2a-NNN` ids and no broker. The only channel between broker and host - no socket, no network from the host side; removed with the Run unless `--keep-worktree`.
 **Artifact sync**:
-The host-side copy of allowlisted build artifacts (`siblingArtifacts` in `config.json`, default `node_modules`) from a parent worktree into a Sibling run's scratch dir (`<worktreesDir>/.artifacts/<runName>`), bind-mounted at the same `/workspace/<entry>` path in the sibling's container - beside its worktree, never inside it (ADR-0013; `src/runs/runArtifacts.ts`). Reflink where the filesystem allows, plain copy otherwise; only real paths inside the worktree are synced (a symlinked entry is refused), and `.git`, `.env` and `.env.*` never travel (ADR-0002).
+The host-side copy of allowlisted build artifacts (`siblingArtifacts` in `config.json`, default `node_modules`) from a parent worktree into a Sibling run's scratch dir (`<worktreesDir>/.artifacts/<runName>`), bind-mounted at the same `/workspace/<entry>` path in the sibling's container - beside its worktree, never inside it (ADR-0013; `src/engine/runs/runArtifacts.ts`). Reflink where the filesystem allows, plain copy otherwise; only real paths inside the worktree are synced (a symlinked entry is refused), and `.git`, `.env` and `.env.*` never travel (ADR-0002).
 
 **Run**:
-A RunScratch + primary container + sidecars, the unit that executes an Agent. With the local stack present, agent and sidecars share the global `e-egress` network namespace (ADR-0011); otherwise sidecars sit on a private per-run network. The pure description of a run is a `SpawnPlan` (`src/spawn/spawnPlan.ts`); `runSpawn` (`src/runs/runSpawn.ts`) executes it. Container configuration is a `RunOptions` (below).
+A RunScratch + primary container + sidecars, the unit that executes an Agent. With the local stack present, agent and sidecars share the global `e-egress` network namespace (ADR-0011); otherwise sidecars sit on a private per-run network. The pure description of a run is a `SpawnPlan` (`src/engine/spawn/spawnPlan.ts`); `runSpawn` (`src/engine/runs/runSpawn.ts`) executes it. Container configuration is a `RunOptions` (below).
 
 **Runtime**:
-The container engine that builds and runs harness images - any engine whose CLI matches Docker's: `docker`, `podman`, `nerdctl`, or `finch` (the registry in `src/runtime/registry.ts`; desktop products such as Docker Desktop, OrbStack, Colima, Rancher Desktop, Podman Desktop, and Finch provide one of them). Selected by `--runtime`, then `E_RUNTIME`, then the first one on `PATH`. Engines with a different command surface (Apple `container`, Docker `sbx`) are not Runtimes; they would need their own `ContainerRunner` adapter.
+The container engine that builds and runs harness images - any engine whose CLI matches Docker's: `docker`, `podman`, `nerdctl`, or `finch` (the registry in `src/ports/runtime/registry.ts`; desktop products such as Docker Desktop, OrbStack, Colima, Rancher Desktop, Podman Desktop, and Finch provide one of them). Selected by `--runtime`, then `E_RUNTIME`, then the first one on `PATH`. Engines with a different command surface (Apple `container`, Docker `sbx`) are not Runtimes; they would need their own `ContainerRunner` adapter.
 _Avoid_: naming a desktop product as a runtime (it is the CLI it installs that counts)
 
 **Spawn**:
@@ -83,7 +176,7 @@ The `.e` directory holding e's on-disk state - **also called "eBaseDir" because 
 Bind mount structure: host -> container -> ro? boolean
 
 **RunOptions**:
-Container configuration options (`src/runtime/index.ts`):
+Container configuration options (`src/ports/runtime/index.ts`):
 
 - `name`: string?
 - `interactive`: boolean? (keep stdin open, allocate a TTY)
@@ -99,22 +192,22 @@ Container configuration options (`src/runtime/index.ts`):
 - `extraHosts`: string[]?
 
 **ContainerRuntime**:
-Runtime instance driving one Docker-CLI-compatible executable (`src/runtime/index.ts`)
+Runtime instance driving one Docker-CLI-compatible executable (`src/ports/runtime/index.ts`)
 
 **Worktrees dir**:
-The host directory run worktrees are created in (`src/runs/worktreesDir.ts`): `E_WORKTREES_DIR`, else the platform default - the temp dir on Linux, `~/Library/Caches/e/worktrees` on macOS, `%LOCALAPPDATA%\e\worktrees` on Windows - chosen so the engine's VM can bind-mount it
+The host directory run worktrees are created in (`src/engine/runs/worktreesDir.ts`): `E_WORKTREES_DIR`, else the platform default - the temp dir on Linux, `~/Library/Caches/e/worktrees` on macOS, `%LOCALAPPDATA%\e\worktrees` on Windows - chosen so the engine's VM can bind-mount it
 
 **RunScratch**:
 Temporary workspace
 
 **HarnessAdapter** (`EnvHarnessAdapter | FileHarnessAdapter`):
-Per-harness config translation (`src/harness/adapter.ts`)
+Per-harness config translation (`src/core/harness/adapter.ts`)
 
 **Protocol**:
 'openai-chat', 'anthropic-messages', 'openai-responses'
 
 **Host ports**:
-The `Git` and `PullRequest` interfaces (`src/git/index.ts`, `src/github/index.ts`), implemented host-side by `HostGit` and `HostPullRequest`
+The `Git` and `PullRequest` interfaces (`src/ports/git/index.ts`, `src/ports/github/index.ts`), implemented host-side by `HostGit` and `HostPullRequest`
 
 **Egress**:
 Network egress management
@@ -126,7 +219,7 @@ Model status tracking
 Server management and observation. The BFF for the web UI (ADR-0010); also hosts the browser terminal (below) and the **A2A facade** (below).
 
 **A2A facade**:
-`e` as an Agent2Agent agent (ADR-0015; `src/a2a/`): `e serve` publishes an agent card at `/.well-known/agent-card.json` (one **skill** per harness agent in the Store) and answers the A2A 1.0 JSON-RPC binding on `POST /a2a` (`SendMessage`, `SendStreamingMessage`, `GetTask`, `ListTasks`, `CancelTask`, `SubscribeToTask`, the 0.x slash names as aliases; push notifications refused; interoperability verified against the reference `@a2a-js/sdk` in `src/a2a/interop.test.ts`). An **A2A task** is one run: a headless `e spawn <agent> -- <prompt>` child carrying the report markers (`E_SPAWN_REPORT_SPOOL`, `E_SPAWN_REPORT_ID`) reports into a spool `serve` owns, and the task is rendered from that record; its artifact is the run branch, `pushed`, and the PR/MR URL. Open on loopback, bearer-protected with `E_A2A_TOKEN`, off beyond loopback without one. Tasks live in the `serve` process like Terminal sessions; the runs do not depend on it.
+`e` as an Agent2Agent agent (ADR-0015; `src/engine/a2a/`): `e serve` publishes an agent card at `/.well-known/agent-card.json` (one **skill** per harness agent in the Store) and answers the A2A 1.0 JSON-RPC binding on `POST /a2a` (`SendMessage`, `SendStreamingMessage`, `GetTask`, `ListTasks`, `CancelTask`, `SubscribeToTask`, the 0.x slash names as aliases; push notifications refused; interoperability verified against the reference `@a2a-js/sdk` in `src/engine/a2a/interop.test.ts`). An **A2A task** is one run: a headless `e spawn <agent> -- <prompt>` child carrying the report markers (`E_SPAWN_REPORT_SPOOL`, `E_SPAWN_REPORT_ID`) reports into a spool `serve` owns, and the task is rendered from that record; its artifact is the run branch, `pushed`, and the PR/MR URL. Open on loopback, bearer-protected with `E_A2A_TOKEN`, off beyond loopback without one. Tasks live in the `serve` process like Terminal sessions; the runs do not depend on it.
 _Avoid_: proxy (a task is a run `serve` started, not a forwarded request), API (the `/api` namespace is the UI's)
 
 **Terminal session**:

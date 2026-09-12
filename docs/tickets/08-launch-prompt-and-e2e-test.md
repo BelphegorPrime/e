@@ -1,9 +1,9 @@
 # 08 - Launch-prompt role guidance and end-to-end test
 
 **Shipped 2026-09-12.** The prompt half came with ticket 01: `launchPrompt`
-in `src/runs/runSpawn.ts` names the role and both variables for parent and
+in `src/engine/runs/runSpawn.ts` names the role and both variables for parent and
 child and forbids marker files. The end-to-end cycle is
-`src/runs/runSpawn.e2e.test.ts`, with the real pieces the host owns and fakes
+`src/engine/runs/runSpawn.e2e.test.ts`, with the real pieces the host owns and fakes
 only where a container would be: a real git repo and `HostGit`, the real
 broker HTTP handler (`createBrokerApi`) over the spool the parent run creates,
 and siblings that run the real `runSpawn` pipeline in-process from the markers

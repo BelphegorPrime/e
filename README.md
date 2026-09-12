@@ -22,29 +22,91 @@ primary one. `e` is named for Euler's number, the mathematical partner of `pi`:
 `e` stands around the harness and drives it, the same way the constants `e`
 and `π` sit side by side in Euler's identity.
 
-```text
-User
-  │
-  ▼
-pi
-  │
-  ▼
-e
-  │
-  ├── Agent A
-  │     ├── Agent A.1
-  │     └── Agent A.2
-  │
-  ├── Agent B
-  │
-  └── Agent C
+```mermaid
+flowchart TB
+    user["User"]
+    e1["<b>e</b><br/>image, worktree, provider config"]
+    pi["<b>pi</b> - or Claude Code, Codex, opencode<br/>the harness that thinks and edits"]
+    e2["<b>e</b> again<br/>via the run's runtime-broker"]
+
+    subgraph sibs["siblings - each with its own run, worktree and branch"]
+        direction LR
+        a["Agent A"]
+        b["Agent B"]
+        c["Agent C"]
+    end
+
+    user -->|"e spawn pi '&lt;task&gt;'"| e1
+    e1 -->|"starts the run"| pi
+    pi -->|"the spawn-brother skill"| e2
+    e2 --> a
+    e2 --> b
+    e2 --> c
+    sibs -.->|"merge commit + report"| pi
+    a -.->|"asks for more: joins this row,<br/>never a level below"| e2
 ```
 
-The user drives `pi`; `pi` delegates through `e`; each spawned agent runs its
-own isolated run and can itself spawn further agents (`e spawn` is not limited
-to one parent/child level). The docs below are the hands-on build guide; an AI
-agent that needs to know how to delegate, what a spawned run provides, and how
-results flow back should read [docs/agents/e.md](./docs/agents/e.md).
+The user drives `e`, not the harness: `e spawn pi "<task>"` builds the image,
+cuts the worktree, and starts `pi` inside the run. From in there the harness
+delegates _back_ through `e` - the `spawn-brother` skill posts to the run's
+runtime-broker - and each requested agent gets its own isolated run, worktree
+and branch, reporting back as a merge commit plus a report file.
+
+Fan-out is **two levels and no more**: every accepted request becomes a
+sibling under the parent that owns the broker, so an agent that asks for help
+of its own widens that same row instead of starting a third level
+(ADR-0013). The docs below are the hands-on build guide; an AI agent that
+needs to know how to delegate, what a spawned run provides, and how results
+flow back should read [docs/agents/e.md](./docs/agents/e.md).
+
+## Architecture at a glance
+
+One `e spawn` turns a **Store** definition into a **Run**: the host builds a
+derived image, cuts a git worktree, starts the agent container plus any
+sidecars, and collects the result as a git branch. The host process is the only
+party that ever runs a container engine or `git` (ADR-0002) - that trust line
+is the single most load-bearing fact about the design.
+
+```mermaid
+flowchart LR
+    subgraph store["<b>Store</b> (.e/ or ~/.e)"]
+        agents["agents/&lt;name&gt;/agent.json"]
+        harnesses["harnesses/&lt;h&gt;/Dockerfile"]
+        skills["skills/"]
+        mcps["mcp/"]
+        envf[".env + config.json"]
+    end
+
+    subgraph host["<b>host</b> - the e process"]
+        plan["plan a SpawnPlan<br/>(pure: ADR-0008)"]
+        build["build derived image<br/>(ADR-0004)"]
+        wt["create git worktree<br/>on e/&lt;agent&gt;/&lt;slug&gt;-N<br/>(ADR-0001, ADR-0003)"]
+        gitops["commit, push, open PR/MR<br/>(ADR-0002)"]
+    end
+
+    subgraph run["<b>Run</b> - a container group (ADR-0005)"]
+        agentc["agent container<br/>harness CLI on /workspace"]
+        broker["runtime-broker<br/>sidecar (ADR-0013)"]
+        mcpc["MCP sidecars<br/>(ADR-0006)"]
+    end
+
+    egress["<b>e-egress</b><br/>shared netns + dnsmasq blacklist<br/>(ADR-0011, ADR-0012)"]
+    omni["<b>OmniRoute</b><br/>AI gateway + llama.cpp<br/>(ADR-0010)"]
+    branch["git branch<br/><i>the durable artifact</i>"]
+
+    store --> plan --> build --> wt --> run
+    agentc -.->|"model API"| omni
+    agentc -.->|"all egress"| egress
+    omni --- egress
+    broker -.->|"sibling requests<br/>via host-owned spool"| host
+    agentc --> gitops --> branch
+
+    serve["<b>e serve</b><br/>BFF + web UI + A2A facade<br/>(ADR-0010, 0014, 0015)"]
+    serve -.->|"starts runs as<br/>headless e spawn children"| host
+```
+
+Read the layers of the codebase itself under [Source layout](#source-layout),
+and the reasoning behind each piece in [docs/adr/](./docs/adr/).
 
 ## Tutorials
 
@@ -223,12 +285,95 @@ behind the `ContainerRunner` port rather than a registry entry.
 Single-package repo - no npm workspaces. Everything the `e` binary needs lives
 at the root:
 
-- `src/` - the Node CLI (`e` commands: init, spawn, serve).
+- `src/` - the Node CLI (`e` commands: init, spawn, serve). Layered; see below.
 - `ui/` - the React front-end (webpack entry). Its build output is
   `dist/ui`, which `e serve` reads and `pkg.assets` embeds in each standalone
   binary.
 - `scripts/` - build preflight helpers (e.g. the `prebuild:bin` UI-assets gate).
 - `docs/` - ADRs, security analysis, research notes, tutorials.
+
+### Source layout
+
+`src/` is six layers. **A layer may import anything below it and nothing above
+it**, which makes the import graph a DAG with no cycles. `src/index.ts` is the
+composition root and is exempt. The rule is enforced by `no-restricted-imports`
+in `eslint.config.js`, so an upward import fails `npm run lint` rather than
+quietly reintroducing a cycle (test files are exempt: an integration test may
+stand up the whole stack).
+
+```mermaid
+flowchart TB
+    root["<b>src/index.ts</b> - composition root<br/>registers every command on commander"]
+
+    subgraph cli["<b>cli/</b> - user-facing commands"]
+        cliM["init - tui - serve - transfer - completion - lint<br/>spawn.ts - runtime.ts"]
+    end
+    subgraph engine["<b>engine/</b> - the run engine"]
+        engM["runs - spawn - a2a"]
+    end
+    subgraph ports["<b>ports/</b> - host adapters"]
+        portM["runtime - git - github - hardware"]
+    end
+    subgraph core["<b>core/</b> - domain vocabulary"]
+        coreM["agent - harness - skill - mcp - store<br/>identity - mount - modelStatus - localRuntimes"]
+    end
+    subgraph sidecars["<b>sidecars/</b> - code shipped into containers"]
+        sideM["broker - egress<br/>each: contract + server + render"]
+    end
+    subgraph shared["<b>shared/</b> - leaf utilities, no internal deps"]
+        shM["utils - constants - runRole - scaffold - version"]
+    end
+
+    root --> cli
+    cli -->|may import| engine
+    engine -->|may import| ports
+    ports -->|may import| core
+    core -->|may import| sidecars
+    sidecars -->|may import| shared
+```
+
+| Layer       | Owns                                                                                                 | Never                                     |
+| ----------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `cli/`      | Argument parsing, the command actions, the `serve` BFF and web UI wiring, the `init` wizard          | Being imported by anything but `index.ts` |
+| `engine/`   | Executing a run: worktrees, checkpoints, sibling fan-out, merge-back, the A2A task path              | Knowing about commander or HTTP routes    |
+| `ports/`    | The host's outside world: the container engine CLI, `git`, `gh`, hardware probing                    | Deciding _what_ a run is                  |
+| `core/`     | The vocabulary of CONTEXT.md as data and pure functions: Agent, Harness, Skill, MCP server, Store    | Running a container or shelling out       |
+| `sidecars/` | The two programs that run **inside** containers, and the host code that renders their build contexts | Importing host-only code                  |
+| `shared/`   | Logging, env parsing, error shaping, port probing, constants                                         | Importing any other layer                 |
+
+#### Why `sidecars/` is its own layer
+
+Most of `src/` compiles into the `e` binary and runs on the host. Two programs
+do not: the **runtime-broker** (ADR-0013) and the **egress API** (ADR-0012) are
+bundled by esbuild into dependency-free ESM scripts and seeded into container
+build contexts, where there is no `node_modules` and no `package.json`. They
+are real, type-checked TypeScript, never string templates. Each sidecar splits
+three ways so the boundary is visible in the path:
+
+```mermaid
+flowchart LR
+    subgraph host["host - the e binary"]
+        render["render.ts<br/>writes the build context"]
+        bundle["bundle.generated.ts<br/>esbuild output, gitignored"]
+        engineUse["engine + cli<br/>read the spool, plan the sidecar"]
+    end
+    subgraph both["contract/ - both sides"]
+        contract["types - constants - spool<br/>events - taskState"]
+    end
+    subgraph container["container - no node_modules"]
+        server["server/<br/>server.ts - api.ts - cli.ts"]
+    end
+
+    server -.->|"npm run build:broker<br/>build:egress-api"| bundle
+    bundle --> render
+    render -->|seeds .e/broker/, .e/egress/| container
+    contract --- host
+    contract --- container
+```
+
+`contract/` is the only code both sides share, so a port or a spool filename
+changes in exactly one place. `server/` may import `contract/` and `shared/`
+and nothing else - anything more would not survive bundling.
 
 ## Build
 
@@ -556,7 +701,7 @@ on it with `--watch` instead of polling, and cancel a sibling with `--cancel`.
 `e serve` publishes an [Agent2Agent](https://a2a-protocol.org) agent card at
 `/.well-known/agent-card.json` and speaks the A2A 1.0 JSON-RPC binding on
 `POST /a2a` (ADR-0015; verified against the official `@a2a-js/sdk` in both
-directions, `src/a2a/interop.test.ts`). Every harness agent in the Store is one skill; a task
+directions, `src/engine/a2a/interop.test.ts`). Every harness agent in the Store is one skill; a task
 is one run whose artifact is the branch, whether it was pushed, and the PR/MR
 URL. Any A2A client (an orchestrator, another agent) can therefore hand `e` a
 task:
@@ -630,14 +775,14 @@ Rules that bite:
 
 - **Tests follow code.** Every behaviour change ships with the test that would
   have caught it, in the `*.test.ts` next to the module (`node:test`, no other
-  runner). Real-git and real-broker tests exist (`src/git/host.test.ts`,
-  `src/runs/runSpawn.e2e.test.ts`); prefer them over fakes for anything that
+  runner). Real-git and real-broker tests exist (`src/ports/git/host.test.ts`,
+  `src/engine/runs/runSpawn.e2e.test.ts`); prefer them over fakes for anything that
   touches git or the spool. Do not run the suite with `--test-force-exit`; it
   silently drops tests.
 - **Ports, not shell-outs.** Git and the container engine are reached only
-  through the `Git` and `ContainerRunner` interfaces (`src/git/index.ts`,
-  `src/runtime/index.ts`), so every orchestrator test can drive a fake.
-  Container-shipped code (`src/broker/*`, `src/egress/*`) is real TypeScript
+  through the `Git` and `ContainerRunner` interfaces (`src/ports/git/index.ts`,
+  `src/ports/runtime/index.ts`), so every orchestrator test can drive a fake.
+  Container-shipped code (`src/sidecars/broker/*`, `src/sidecars/egress/*`) is real TypeScript
   bundled by esbuild (`bundle.generated.ts` is generated, never edited) and may
   import Node built-ins only.
 - **Host owns git and secrets** (ADR-0002): nothing under `src/` may hand a
@@ -695,7 +840,7 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 
 ## Environment variables
 
-Host-side knobs the `e` process reads (`src/utils/env.ts`); none of them is
+Host-side knobs the `e` process reads (`src/shared/utils/env.ts`); none of them is
 injected into a container.
 
 | Variable                         | Effect                                                                                                            |

@@ -6,6 +6,40 @@ agent to the Store.
 
 Prerequisite: one working Agent ([Tutorial 1](./01-first-run.md)).
 
+## The three surfaces `serve` exposes
+
+```mermaid
+flowchart LR
+    subgraph clients["who talks to it"]
+        direction TB
+        br["your browser"]
+        curl["curl / scripts"]
+        peer["another A2A agent"]
+    end
+
+    subgraph serveproc["<b>e serve</b> - loopback"]
+        direction TB
+        ui["the web UI<br/><i>Step 2</i>"]
+        api["/api/* - runs, agents, egress<br/><i>Step 3</i>"]
+        a2a["/a2a + /.well-known/agent-card.json<br/><i>Step 4</i>"]
+    end
+
+    runs["runs, each a headless<br/><b>e spawn</b> child"]
+
+    br --> ui
+    curl --> api
+    peer --> a2a
+    ui ==> runs
+    a2a ==> runs
+    api -.->|reads| runs
+
+    remote["<b>Step 5</b>: a Store agent with<br/>transport: a2a - the mirror image,<br/>e calling out instead of in"]
+    serveproc -.- remote
+```
+
+A run started here **outlives `serve`**: stopping the server leaves the child
+and its container running to completion.
+
 ## Step 1: start the server inside a repository
 
 `e serve` is a backend-for-frontend over the Store and git

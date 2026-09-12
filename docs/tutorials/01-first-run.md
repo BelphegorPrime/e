@@ -6,6 +6,26 @@ know the difference between a one-shot run and the interactive TUI.
 
 Time: 15 minutes plus the first image build.
 
+## What you are about to build
+
+```mermaid
+flowchart LR
+    init["<b>Step 1</b><br/>e init<br/><i>creates ~/.e</i>"]
+    agent["<b>Step 2</b><br/>an Agent with a<br/>hosted Provider"]
+    run["<b>Step 3</b><br/>e spawn agent 'prompt'"]
+    look["<b>Step 4</b><br/>git log the run branch"]
+    tui["<b>Step 5</b><br/>e spawn agent<br/><i>no prompt: the TUI</i>"]
+
+    init --> agent --> run --> look
+    agent --> tui
+
+    run -.->|"a prompt makes it one-shot"| oneshot["the harness runs once and exits"]
+    tui -.->|"no prompt needs a terminal"| interactive["the harness TUI opens"]
+```
+
+Your checkout is never touched: each run gets its own git worktree, and the
+branch it leaves behind is the thing you inspect at the end.
+
 ## Before you start
 
 - `git`, a container engine (`docker`, `podman`, `nerdctl`, or `finch`), and

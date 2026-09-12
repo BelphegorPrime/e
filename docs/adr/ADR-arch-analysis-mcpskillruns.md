@@ -20,7 +20,7 @@ The analyzed codebase follows a harness-based architecture with clear separation
 
 ### Current State Analysis
 
-#### 1. MCP Module (`src/mcp/index.ts`) - SHALLOW
+#### 1. MCP Module (`src/core/mcp/index.ts`) - SHALLOW
 
 **Issues:**
 
@@ -41,7 +41,7 @@ interface McpServerBase { name: string; requiredEnv: string[] }
 └── isStringRecord() - validation
 ```
 
-#### 2. Skill Module (`src/skill/index.ts`) - DEEP
+#### 2. Skill Module (`src/core/skill/index.ts`) - DEEP
 
 **Strengths:**
 
@@ -58,7 +58,7 @@ interface SkillModule {
 }
 ```
 
-#### 3. Runs Module (`src/runs/runSpawn.ts`) - MIXED/NEEDS EXTRACTION
+#### 3. Runs Module (`src/engine/runs/runSpawn.ts`) - MIXED/NEEDS EXTRACTION
 
 **Issues:**
 
@@ -168,16 +168,16 @@ Each module follows the codebase-design principles:
 
 ## Files Created
 
-- `src/runs/runNetworks.ts` - Network management module
-- `src/runs/runSidecarOrchestrator.ts` - Sidecar orchestration module
-- `src/runs/runGit.ts` - Git operations module
-- `src/runs/runPrManager.ts` - PR/MR management and resource cleanup
-- `src/runs/runBranchNamer.ts` - Branch naming module
-- `src/runs/runLogCapture.ts` - Log capture module
-- `src/runs/runContainerExecution.ts` - Container execution module
-- `src/runs/runWorktree.ts` - Worktree management module
-- `src/runs/runResult.ts` - Result management module
-- `src/runs/runOrchestrator.ts` - Main orchestration module
+- `src/engine/runs/runNetworks.ts` - Network management module
+- `src/engine/runs/runSidecarOrchestrator.ts` - Sidecar orchestration module
+- `src/engine/runs/runGit.ts` - Git operations module
+- `src/engine/runs/runPrManager.ts` - PR/MR management and resource cleanup
+- `src/engine/runs/runBranchNamer.ts` - Branch naming module
+- `src/engine/runs/runLogCapture.ts` - Log capture module
+- `src/engine/runs/runContainerExecution.ts` - Container execution module
+- `src/engine/runs/runWorktree.ts` - Worktree management module
+- `src/engine/runs/runResult.ts` - Result management module
+- `src/engine/runs/runOrchestrator.ts` - Main orchestration module
 
 ## Testing Considerations
 
@@ -251,7 +251,7 @@ This ADR aligns with the following codebase-design principles:
 
 - [Codebase Design Skill Documentation](docs/skills/codebase-design.md)
 - [Project Context](CONTEXT.md)
-- [Existing Module Patterns](src/mcp/index.ts, src/skill/index.ts)
+- [Existing Module Patterns](src/core/mcp/index.ts, src/core/skill/index.ts)
 
 ## Decision Log
 

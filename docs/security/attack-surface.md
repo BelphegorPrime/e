@@ -122,7 +122,7 @@ unreachable from a Linux/Podman bridge. The run container joins no Compose
 network, so the untrusted agent still cannot reach Redis or llama.cpp directly.
 The compose template no longer
 ships fallback secrets, and `e init` seeds fresh random stack secrets into
-`.e/.env` (`seedStackSecrets` in `src/init/initPlan.ts`). `e spawn` passes `.e/.env` to
+`.e/.env` (`seedStackSecrets` in `src/cli/init/initPlan.ts`). `e spawn` passes `.e/.env` to
 `docker compose --env-file` so the ${VAR} interpolation picks the seeded
 values; the `spawn.ts` sign-in prompt and unconfigured-key check read
 `OMNIROUTE_INITIAL_PASSWORD` from the store env instead of the old literal.
@@ -173,9 +173,9 @@ reporting "already serving".
 - ADR-0002 (host orchestrates git; accepted egress + whole-file env injection)
 - ADR-0005 (container groups, sidecars, private networks)
 - ADR-0006 (per-harness config adapter; `.e/.env` as the secret source)
-- `src/init/renderCompose.ts`, `src/init/renderBootstrap.ts`,
-  `src/init/renderEgress.ts`, `src/harness/renderDockerfile.ts`,
-  `src/store/{config,paths,root}.ts`, `src/serve/serve.ts`, `src/egress/`
+- `src/cli/init/renderCompose.ts`, `src/cli/init/renderBootstrap.ts`,
+  `src/sidecars/egress/render.ts`, `src/core/harness/renderDockerfile.ts`,
+  `src/core/store/{config,paths,root}.ts`, `src/cli/serve/serve.ts`, `src/sidecars/egress/`
 - Issues: [#24](https://github.com/BelphegorPrime/e/issues/24) (env whitelist),
   [#25](https://github.com/BelphegorPrime/e/issues/25) (OmniRoute bind + secrets, done),
   [#26](https://github.com/BelphegorPrime/e/issues/26) (non-root container),

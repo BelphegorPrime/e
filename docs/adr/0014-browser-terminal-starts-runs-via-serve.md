@@ -75,6 +75,51 @@ terminal grants no capability the local user did not have. Exposing `serve`
 beyond loopback (`--host`) is where auth becomes a requirement - a separate
 decision, as ADR-0010 already states.
 
+## Session flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant BR as browser tab
+    participant S as e serve
+    participant CH as headless e spawn child
+    participant EN as container engine
+    participant CT as run container
+
+    BR->>S: POST /api/terminal/sessions {agent, name?}
+    S->>CH: e spawn <agent> --name <slug><br/>in the directory serve was started in
+    Note right of CH: E_TTY_HEADLESS=1 -> run -d -it, then wait <id><br/>serve has no TTY and must not grow a native PTY:<br/>the e binary is a single pkg --sea executable
+
+    rect rgba(128,128,128,0.12)
+    Note over BR,CT: phase: starting
+    CH-->>S: stdout/stderr - image build, worktree, e's own messages
+    S-->>BR: relayed over the WebSocket
+    loop poll
+        S->>EN: is a container named e-<agent>-<slug>-N running?
+    end
+    end
+
+    rect rgba(128,128,128,0.12)
+    Note over BR,CT: phase: attached
+    S->>EN: hijack /containers/<name>/attach<br/>stdin+stdout+stderr+logs on the engine socket
+    EN-->>S: the container's TTY
+    S-->>BR: relay bytes both ways - the harness TUI in the browser
+    end
+
+    rect rgba(128,128,128,0.12)
+    Note over BR,CT: phase: exited
+    CT-->>CH: harness exits
+    CH->>CH: commit, push, PR/MR (ADR-0001, ADR-0002)
+    CH-->>S: exit code
+    S-->>BR: the final report
+    end
+```
+
+The BFF adds no orchestration of its own: the child does everything the CLI
+does, and never touches git or containers on the run's behalf. A run therefore
+**outlives `serve`** - killing the UI server leaves the child and its container
+running to completion.
+
 ## Consequences
 
 - **The UI has exactly two writes:** egress blacklisting (ADR-0010) and
@@ -82,7 +127,7 @@ decision, as ADR-0010 already states.
   (the egress API, `e spawn`); the BFF still holds no write logic.
 - **`E_TTY_HEADLESS` is an internal contract** between `serve` and its child,
   like `E_SERVE_DETACHED`; it is not a user-facing flag.
-- **Re-invoking `e` has one rule** (`selfInvocation` in `src/utils/selfInvoke.ts`):
+- **Re-invoking `e` has one rule** (`selfInvocation` in `src/shared/utils/selfInvoke.ts`):
   under plain Node the entry script is passed again, in the `pkg --sea`
   single-executable it is not - there `argv[1]` is the snapshot path of the
   embedded entry, which the executable would take for an unknown command. Both

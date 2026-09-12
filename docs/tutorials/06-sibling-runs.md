@@ -26,6 +26,35 @@ Limits, all host-enforced:
 - `node_modules` from the parent worktree is copied into each sibling
   (`siblingArtifacts` in `config.json`); `.env` and `.git` never are.
 
+### The round trip in one picture
+
+```mermaid
+flowchart TB
+    you["you: e spawn agent --skill spawn-brother"]
+    parent["<b>parent run</b><br/>E_ROLE=parent"]
+    broker["<b>runtime-broker</b> sidecar<br/><i>planned because the run<br/>carries the skill</i>"]
+    host["<b>the host e process</b><br/>the only party with git<br/>and a container engine"]
+    s1["sibling A"]
+    s2["sibling B"]
+    s3["sibling C"]
+    merge["merge commits land in the<br/>parent's live /workspace<br/>+ e-runs/&lt;id&gt;/report.md"]
+
+    you --> parent
+    parent -->|"spawn-brother.mjs &lt;agent&gt; 'task'"| broker
+    broker -->|"spools requests/&lt;id&gt;.json"| host
+    host -->|"checkpoint, then launch<br/>from that snapshot"| s1
+    host --> s2
+    host --> s3
+    s1 -->|"on exit"| merge
+    s2 --> merge
+    s3 --> merge
+    merge --> parent
+    broker -.->|"429 while the cap<br/>(default 3) is full"| parent
+```
+
+Siblings run **in parallel** and the request is non-blocking. Use `--watch`
+rather than a poll loop with sleeps.
+
 ## Step 1: start a run that may fan out
 
 ```bash

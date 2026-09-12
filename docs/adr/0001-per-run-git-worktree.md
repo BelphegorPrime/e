@@ -12,6 +12,33 @@ fallback. When the agent exits, `e` commits any leftover uncommitted changes
 keeps the branch**: the branch is the durable artifact, the checkout is
 disposable scaffolding.
 
+## The lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as user
+    participant E as e (host process)
+    participant G as git
+    participant C as agent container
+
+    U->>E: e spawn <agent> "<prompt>"
+    E->>G: is this a git repo?
+    Note over E,G: not a repo is an error, never a fallback
+    E->>G: branch e/<agent>/<slug>-N from local HEAD
+    Note right of G: committed state only,<br/>uncommitted edits do not carry over
+    G-->>E: a fresh worktree on that branch
+    E->>C: start, bind-mounting the worktree at /workspace
+    C->>C: the harness edits files (and may commit)
+    C-->>E: exit code
+    alt exit 0
+        E->>G: commit whatever is left uncommitted
+        E->>G: push the branch (a failure here is non-fatal)
+    end
+    E->>G: remove the worktree, keep the branch
+    Note over E,G: the branch is the durable artifact,<br/>the checkout was disposable scaffolding
+```
+
 ## Considered Options
 
 - **In-place bind mount of the working directory** (the original behavior),

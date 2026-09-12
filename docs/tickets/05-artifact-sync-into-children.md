@@ -1,6 +1,6 @@
 # 05 - Artifact sync into children
 
-**Shipped 2026-09-12.** `src/runs/runArtifacts.ts`: `planArtifactSync` (pure
+**Shipped 2026-09-12.** `src/engine/runs/runArtifacts.ts`: `planArtifactSync` (pure
 allowlist filter), `syncArtifacts` (copy + mounts), `copyArtifact` (the
 default copier), `artifactsDirFor`, `removeArtifacts`. `runSpawn` with a
 `parent` runs the sync right after the sibling's worktree exists and before

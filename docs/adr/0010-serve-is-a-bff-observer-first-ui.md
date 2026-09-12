@@ -80,6 +80,46 @@ separate login surface is deferred until a UI write path exists.
 indexing is cheap, durable, and already canonical (runs _are_ branches); live
 log/timing views are an incremental addition to the same namespace.
 
+## The shape of `serve`
+
+```mermaid
+flowchart TB
+    browser["<b>browser</b><br/>React UI from dist/ui"]
+
+    subgraph serveproc["<b>e serve</b> - the BFF, loopback"]
+        direction TB
+        assets["static assets"]
+        api["/api/* - the UI's namespace"]
+        proxy["/api/egress/* - proxy only (ADR-0012)"]
+        term["terminal sessions (ADR-0014)"]
+        a2a["/a2a + agent card (ADR-0015)"]
+    end
+
+    subgraph readonly["<b>read-only sources</b>"]
+        direction LR
+        runs["runs index<br/>from git refs (ADR-0003)"]
+        store["the Store<br/>agents, harnesses, skills, mcp"]
+        omni["<b>OmniRoute</b><br/>a core component, not optional:<br/>reachable models, provider status"]
+        egr["e-egress API"]
+    end
+
+    child["headless <b>e spawn</b> child<br/><i>outlives serve</i>"]
+
+    browser <--> serveproc
+    api --> runs
+    api --> store
+    api --> omni
+    proxy --> egr
+    term ==>|"starts a run"| child
+    a2a ==>|"a task is one run"| child
+
+    serveproc -.-x|"may not: edit the Store,<br/>switch models, touch git"| store
+```
+
+The UI is **observer-first**: it reads. Two amendments let it _start_ a run
+(ADR-0014, ADR-0015) and blacklist one domain (ADR-0012); it still cannot edit
+the Store, switch models, or touch git.
+
 ## Consequences
 
 - **`serve` grows a proxy layer, not a write layer.** The BFF's delta over

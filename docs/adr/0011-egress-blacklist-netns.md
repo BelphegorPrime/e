@@ -31,6 +31,41 @@ configured port is preferred; if occupied by another selected MCP or requested
 agent port, `e` selects a free port from `31000-31999`. Agent MCP configuration
 uses `http://localhost:<allocated-port>/mcp` when sharing the global namespace.
 
+### The namespace
+
+```mermaid
+flowchart TB
+    subgraph netns["<b>the e-egress network namespace</b> - one per local stack"]
+        direction TB
+        egress["<b>e-egress</b><br/>trusted, NET_ADMIN<br/>dnsmasq + iptables"]
+        omni["OmniRoute"]
+        redis["Redis"]
+        llama["llama.cpp (optional)"]
+        agent["<b>agent container</b><br/>no NET_ADMIN"]
+        mcp1["MCP sidecar :31000"]
+        mcp2["MCP sidecar :31001"]
+    end
+
+    enet["<b>e-net</b><br/>the compose network"]
+    internet["the internet"]
+
+    egress --- enet --- internet
+    agent -.->|"every packet<br/>leaves through egress"| egress
+    agent -->|"http://localhost:&lt;allocated-port&gt;/mcp"| mcp1
+    agent --> mcp2
+
+    policy[/".e/egress-blacklist - dnsmasq address= directives<br/>.e/egress-iptables.rules - for direct-IP that bypasses DNS"/]
+    policy -->|"bind-mounted, host-editable,<br/>seeded by e init and never clobbered"| egress
+```
+
+Attached containers are launched with `--network container:e-egress`; compose
+services use `network_mode: 'service:egress'`. Because namespace sharing
+removes Docker DNS isolation, **every service binds the same loopback**: MCP
+ports must therefore be unique, allocated from `31000-31999` when the
+configured one is taken.
+
+There is no per-run egress container, lifecycle, or namespace.
+
 ## Rationale
 
 A global gateway matches the local Compose lifecycle, avoids starting one

@@ -105,6 +105,23 @@ node ~/.agents/skills/spawn-brother/spawn-brother.mjs --cancel <id>  # stop a si
 - if you want to execute commands be aware that `&amp;` should be replaced with `&`
 - longdashes should never be used
 
+### Layer boundaries in `src/`
+
+`src/` is six layers and the import graph is a DAG:
+
+```
+shared -> sidecars -> core -> ports -> engine -> cli -> index.ts
+```
+
+A layer may import anything **below** it and nothing above it. `src/index.ts`
+is the composition root and is exempt, as are test files. The rule is enforced
+by `no-restricted-imports` in `eslint.config.js`, so an upward import fails
+`npm run lint`. If you need something from a higher layer, move the shared
+piece **down** rather than reaching up (that is how `Mount`, `RunRole` and
+`EGRESS_API_PORT` ended up where they are). `sidecars/*/server/` is bundled
+into containers with no `node_modules`: it may import only its own
+`contract/` and `shared/`. See README, "Source layout".
+
 ### Tests follow code
 
 Any code change (new feature, fix, refactor) must include corresponding test adjustments: add tests for the behaviour you add or change, update or remove tests for deleted code, and ensure `npm run test:coverage` passes. Tests live next to the code as `*.test.ts` (node:test); small modules may be covered through their consumer's test file (for example `renderCompose` through `init.test.ts`) instead of a sibling file. Never ship a behaviour change without a test that would have caught it. A change under `ui/` also gets `npm run build:dev && npm run smoke:ui` (headless Chrome against the built UI; see README, Test); fix or explain every finding.

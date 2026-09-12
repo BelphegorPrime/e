@@ -1,7 +1,7 @@
 # 03 - Host Git merge primitive
 
 **Shipped 2026-09-12.** `Git.merge(worktreePath, branch, message?)` in
-`src/git/index.ts`, implemented by `HostGit` (`src/git/host.ts`) as
+`src/ports/git/index.ts`, implemented by `HostGit` (`src/ports/git/host.ts`) as
 `git -C <worktree> merge --no-ff --no-edit [-m <message>] <branch>`. Two
 deliberate deviations from the sketch below: the method takes the worktree
 path like every other worktree-scoped call (`isDirty`, `commitAll`), and it
@@ -29,7 +29,7 @@ the scripted `Git` fakes next to their tests (`runSpawn.test.ts` scripts an
 outcome per branch and records every call; `executeSpawn.test.ts` and
 `serve.test.ts` merge cleanly).
 
-**What to build:** `Git.merge(branch)` added to `src/git/index.ts`, implemented in `HostGit` (`src/git/host.ts`), and mirrored in the in-memory test double. Merges a branch into the worktree's current branch; surfaces conflict markers rather than aborting silently.
+**What to build:** `Git.merge(branch)` added to `src/ports/git/index.ts`, implemented in `HostGit` (`src/ports/git/host.ts`), and mirrored in the in-memory test double. Merges a branch into the worktree's current branch; surfaces conflict markers rather than aborting silently.
 
 **Blocked by:** None - can start immediately.
 

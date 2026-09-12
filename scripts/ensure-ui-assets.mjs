@@ -4,7 +4,7 @@
 // assets are missing at .../dist/ui").
 //
 // The UI is built straight into dist/ui by webpack (build:ui); `serve` reads
-// it from there (src/serve/assets.ts) and pkg embeds it (pkg.assets). A missing
+// it from there (src/cli/serve/assets.ts) and pkg embeds it (pkg.assets). A missing
 // index.html therefore means build:ui never ran (packaging anyway would
 // produce a silently broken binary.
 

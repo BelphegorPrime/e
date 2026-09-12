@@ -23,6 +23,31 @@ The blacklist source is a plain file in the Store:
 cat ~/.e/egress-blacklist
 ```
 
+### Where the log and the block live
+
+```mermaid
+flowchart LR
+    agent["agent container<br/><i>no NET_ADMIN</i>"]
+    dnsmasq["dnsmasq<br/>in e-egress"]
+    log[/"the query log<br/>host-mounted"/]
+    bl[/".e/egress-blacklist<br/>host-mounted, host-editable"/]
+    api["the egress API<br/>ADR-0012"]
+    serve["e serve<br/><i>proxies, never writes</i>"]
+    you["you / the Egress page"]
+
+    agent -->|"every DNS query"| dnsmasq
+    dnsmasq --> log
+    bl -->|"address=/domain/0.0.0.0"| dnsmasq
+    log --> api
+    api --> bl
+    api --> serve --> you
+    you -->|"Step 2: block"| serve
+    api -.->|"SIGHUP restarts dnsmasq"| dnsmasq
+```
+
+The agent cannot edit the policy: the files are mounted into the trusted
+egress container, and the agent has no `NET_ADMIN`.
+
 ## Step 1: see what a run resolved
 
 Run something that reaches out:

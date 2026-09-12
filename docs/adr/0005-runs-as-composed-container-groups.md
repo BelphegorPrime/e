@@ -29,6 +29,36 @@ Failure semantics mirror the patterns already in `runSpawn`:
 Teardown is group-wide in the same `finally` that already drops the worktree:
 agent, sidecars, network, worktree.
 
+## Group lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant E as e (host)
+    participant N as run network
+    participant S as sidecars
+    participant A as agent container
+
+    E->>N: create the private per-run network
+    Note over E,N: with the local stack present the group instead shares<br/>the global e-egress namespace (ADR-0011)
+    E->>S: start each requested sidecar
+    loop until ready or timeout
+        E->>S: TCP port open? optional healthcheck from mcp.json?
+    end
+    alt a sidecar never becomes ready
+        E-->>E: abort the Run before the agent starts
+        Note right of E: fail-fast: no worktree commit, no branch push
+    end
+    E->>A: start the agent (the primary)
+    A->>S: use the sidecars over the run's network
+    opt a sidecar crashes mid-run
+        E-->>E: warn only, keep going
+        Note right of E: the primary may hold uncommitted work,<br/>killing it would lose it (ADR-0002)
+    end
+    A-->>E: exit (the primary's exit ends the Run)
+    E->>E: teardown in one finally: agent, sidecars, network, worktree
+```
+
 ## Considered Options
 
 - **Single container, MCP servers as in-image processes**, rejected:

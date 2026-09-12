@@ -13,6 +13,40 @@ On a successful run: agent **exit code 0 and commits beyond the base ref**, `e`
 pushes the branch to origin. A push failure (no remote, auth, rejected) is
 **non-fatal**: the branch is kept locally with a warning, never losing work.
 
+## The trust line
+
+Everything that needs a credential stays left of the boundary. The container
+gets a directory of files and nothing else.
+
+```mermaid
+flowchart LR
+    subgraph host["<b>host</b> - trusted"]
+        direction TB
+        keys["ssh keys, gh auth<br/>.e/.env secrets"]
+        gitops["git: worktree, commit,<br/>push, cleanup"]
+        engine["container engine socket"]
+    end
+
+    wt[("worktree<br/>bind-mounted at /workspace")]
+
+    subgraph sandbox["<b>agent container</b> - unsupervised, --dangerously-skip-permissions"]
+        direction TB
+        harness["the harness CLI"]
+        nogit["no git metadata<br/>no credentials<br/>no engine socket"]
+    end
+
+    keys --- gitops
+    gitops --> wt
+    wt <-->|"the only channel: file contents"| harness
+    engine -.->|starts, stops| sandbox
+    harness -.-x|"cannot reach"| keys
+    harness -.-x|"cannot reach"| engine
+```
+
+On success (exit 0 **and** commits beyond the base ref) the host pushes. A push
+failure is non-fatal: the branch is kept locally with a warning, so work is
+never lost.
+
 ## Considered Options
 
 - **Git inside the container**, rejected: it would require mounting push

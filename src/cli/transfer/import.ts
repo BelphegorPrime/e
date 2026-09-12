@@ -1,0 +1,135 @@
+import fs from 'fs';
+import path from 'path';
+import AdmZip from 'adm-zip';
+import {
+  eBaseDir,
+  envFilePath,
+  configFilePath,
+  dockerComposePath,
+  bootstrapScriptPath,
+} from '../../core/store/paths.js';
+import { log } from '../../shared/utils/log.js';
+import type { ContainerRunner } from '../../ports/runtime/index.js';
+import { resolveRuntime } from '../../ports/runtime/registry.js';
+import { OMNIROUTE_VOLUME } from '../../shared/constants.js';
+
+export interface ImportOptions {
+  file: string;
+  root?: string;
+  force?: boolean;
+  /**
+   * Runtime used for the volume operations; defaults to the resolved
+   * production runtime (and is injected by tests as a recording fake).
+   */
+  runner?: ContainerRunner;
+}
+
+/**
+ * Import omniroute configuration and .e state from a zip file.
+ * Restores:
+ * - .env secrets
+ * - config.json
+ * - compose.yaml
+ * - bootstrap.sh
+ * - omniroute-data volume contents
+ */
+export async function importConfiguration(
+  options: ImportOptions
+): Promise<void> {
+  const { file: zipPath, root, force = false } = options;
+  const baseDir = eBaseDir(root);
+
+  if (!fs.existsSync(zipPath)) {
+    throw new Error(`Import file not found: ${zipPath}`);
+  }
+
+  log.info(`Starting configuration import from: ${zipPath}`);
+
+  // Check if .e already has content
+  const envPath = envFilePath(root);
+  const configPath = configFilePath(root);
+  if (!force && (fs.existsSync(envPath) || fs.existsSync(configPath))) {
+    throw new Error(
+      'Configuration already exists. Use --force to overwrite, or export current config first.'
+    );
+  }
+
+  // If force is enabled, we should remove existing files before importing
+  if (force) {
+    if (fs.existsSync(envPath)) {
+      fs.unlinkSync(envPath);
+      log.info('Removed existing .env file');
+    }
+    if (fs.existsSync(configPath)) {
+      fs.unlinkSync(configPath);
+      log.info('Removed existing config.json file');
+    }
+  }
+
+  // Create temp dir for extraction
+  const tempDir = path.join(baseDir, '.import-temp');
+  if (fs.existsSync(tempDir)) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  try {
+    // Extract zip
+    log.info('Extracting archive...');
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(tempDir, true);
+
+    // Restore .e files
+    const filesToRestore = [
+      { arcPath: '.env', targetPath: envPath },
+      { arcPath: 'config.json', targetPath: configPath },
+      { arcPath: 'compose.yaml', targetPath: dockerComposePath(root) },
+      { arcPath: 'bootstrap.sh', targetPath: bootstrapScriptPath(root) },
+    ];
+
+    fs.mkdirSync(baseDir, { recursive: true });
+
+    for (const file of filesToRestore) {
+      const sourcePath = path.join(tempDir, file.arcPath);
+      if (fs.existsSync(sourcePath)) {
+        log.info(`Restoring ${file.arcPath}...`);
+        fs.copyFileSync(sourcePath, file.targetPath);
+      } else {
+        log.warn(`Missing in archive: ${file.arcPath}`);
+      }
+    }
+
+    // Restore volume data
+    const volumeDataDir = path.join(tempDir, 'omniroute-data');
+    if (fs.existsSync(volumeDataDir)) {
+      log.info('Restoring omniroute volume...');
+      // Resolved only now: an archive without volume data (the common
+      // `.env`-only case, and every file-level test) needs no container
+      // runtime on the host. `--runtime`/`E_RUNTIME`/auto-detect, like
+      // `e spawn` (never hardcoded docker).
+      const runner = options.runner ?? resolveRuntime();
+
+      // Check if volume exists; create if not
+      if (!runner.volumeExists(OMNIROUTE_VOLUME)) {
+        log.info(`Creating volume ${OMNIROUTE_VOLUME}...`);
+        runner.createVolume(OMNIROUTE_VOLUME);
+      } else {
+        log.info(`Volume ${OMNIROUTE_VOLUME} exists, will overwrite...`);
+      }
+
+      // Copy data into volume via temp container (wipe=destructive overwrite)
+      runner.copyDirToVolume(volumeDataDir, OMNIROUTE_VOLUME, true);
+
+      log.info('Volume data restored.');
+    } else {
+      log.warn('No omniroute-data found in archive.');
+    }
+
+    log.info('Import complete. Run docker compose to start services.');
+  } finally {
+    // Cleanup temp dir
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+}

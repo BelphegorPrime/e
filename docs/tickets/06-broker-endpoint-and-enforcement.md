@@ -1,7 +1,7 @@
 # 06 - Broker HTTP endpoint and depth/cap enforcement
 
 **Shipped 2026-09-12.** The host side of sibling requests is
-`src/runs/runSiblings.ts`: a `SiblingConsumer` the parent's `runSpawn` starts
+`src/engine/runs/runSiblings.ts`: a `SiblingConsumer` the parent's `runSpawn` starts
 once its broker is ready and stops when the agent's container exits. It polls
 the spool, and for every request the broker accepted it writes `starting` and
 launches a sibling as a child process of this very CLI: `e spawn <agent>

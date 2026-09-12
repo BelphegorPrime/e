@@ -1,0 +1,607 @@
+import { spawn, spawnSync } from 'child_process';
+import { log } from '../../shared/utils/log.js';
+import { runComposeStack } from './compose.js';
+// The mount *value* is core vocabulary (planning describes mounts before a
+// runtime exists); this module owns only its argv format.
+import type { Mount } from '../../core/mount.js';
+export type { Mount } from '../../core/mount.js';
+
+/** Formats a {@link Mount} into the runtime's `-v host:container[:ro]` value. */
+export function formatMount(m: Mount): string {
+  return m.ro ? `${m.host}:${m.container}:ro` : `${m.host}:${m.container}`;
+}
+
+export interface RunOptions {
+  name?: string;
+  /** Keep stdin open and allocate a TTY for an interactive harness session. */
+  interactive?: boolean;
+  /**
+   * With `interactive`: allocate the TTY inside the container but do not
+   * attach the host's stdio (`run -d -it`, then `wait`). For a caller that has
+   * no host TTY - the `serve` browser terminal - and attaches to the container
+   * through the engine API instead. Without `interactive` this has no effect.
+   */
+  headlessTty?: boolean;
+  port?: string[];
+  env?: string[];
+  rm?: boolean;
+  /** Bind mounts. */
+  volumes?: Mount[];
+  /** Working directory inside the container (-w). */
+  workdir?: string;
+  /**
+   * Env files loaded into the container (--env-file), in order. Later files
+   * override earlier ones for the same key; `-e` vars override all of them.
+   */
+  envFile?: string[];
+  /**
+   * Private networks to attach the container to (`--network`, repeatable). The
+   * primary agent joins its Run's private network so it can reach sidecars by
+   * their alias; a bare run leaves this unset and uses the default bridge.
+   * Mutually exclusive with {@link RunOptions.netns}.
+   */
+  networks?: string[];
+  /** Share another container's network namespace (`--network container:<name>`). */
+  netns?: string;
+  /** Hostname mappings added to the container (`--add-host`). */
+  extraHosts?: string[];
+}
+
+/**
+ * A **Sidecar** to bring up alongside the primary agent (ADR-0005): a
+ * container-transport MCP server in the global egress namespace. The `name` is
+ * unique per run; `alias` remains the configuration key, while the agent reaches
+ * the sidecar through `http://localhost:<port>/mcp`.
+ */
+export interface SidecarSpec {
+  /** Unique per-run container name, e.g. `<runName>-mcp-everything`. */
+  name: string;
+  /** Stable network alias the agent uses in the endpoint URL, e.g. `everything`. */
+  alias: string;
+  /** The sidecar's image tag (built from `.e/mcp/<name>/Dockerfile`). */
+  image: string;
+  /** Shared egress namespace container (`e-egress`) when the local stack runs. */
+  netns?: string;
+  /** Private per-run network, the fallback when no namespace is shared. */
+  network?: string;
+  /** TCP port the sidecar listens on - probed for readiness, reached by the agent. */
+  port: number;
+  /** Optional in-container readiness command; readiness also requires it to exit 0. */
+  healthcheck?: string[];
+  /** Env files delivering the sidecar's own credentials (never the agent's). */
+  envFile?: string[];
+  /** Bind mounts (the runtime-broker's spool; MCP sidecars mount nothing). */
+  volumes?: Mount[];
+}
+
+/**
+ * The run surface the orchestrator depends on. Kept minimal so a fake can
+ * stand in for a real runtime in tests. ADR-0005 grows it from "run one
+ * container" to "bring up a group, wait on the primary, tear all down": the
+ * network/sidecar/probe primitives below compose a Run's group, while `run`
+ * still executes the primary agent in the foreground.
+ */
+export interface ContainerRunner {
+  /** Runs the primary agent container in the foreground; resolves with its exit code. */
+  run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number>;
+
+  /** Create a private container network. Throws on failure. */
+  createNetwork(name: string): void;
+  /**
+   * Remove a network. Best-effort: never throws - it runs in teardown, where a
+   * failure must not mask the Run's result.
+   */
+  removeNetwork(name: string): void;
+
+  /** Start a sidecar detached on its network (with its alias). Throws if it fails to start. */
+  startSidecar(spec: SidecarSpec): void;
+
+  /** Stop and remove a container by name. Best-effort: never throws (teardown). */
+  removeContainer(name: string): void;
+
+  /** Probe from a throwaway container on `network`; true iff `host:port` accepts a connection. */
+  probeTcp(network: string, host: string, port: number): boolean;
+  /** Run `command` inside `container` (`exec`); true iff it exits 0. */
+  probeHealthcheck(container: string, command: string[]): boolean;
+  /** True if the named container is still running - used to detect a mid-run crash. */
+  isRunning(name: string): boolean;
+
+  /**
+   * Return `true` when the named Docker volume exists.
+   */
+  volumeExists(volumeName: string): boolean;
+
+  /**
+   * Create a Docker volume. No-op if it already exists. Throws when the
+   * runtime cannot be started or reports a failure.
+   */
+  createVolume(volumeName: string): void;
+
+  /**
+   * Copy the contents of a Docker volume into a host directory using a
+   * temporary Alpine container (`cp -a /source/. /dest/`). Throws on failure
+   * so an export never silently produces an empty archive.
+   */
+  copyVolumeToDir(volumeName: string, hostDir: string): void;
+
+  /**
+   * Copy the contents of a host directory into a Docker volume. When
+   * `wipe` is `true`, the volume is cleaned before the copy (`rm -rf /dest/*`)
+   * to match the import restore path. Throws on failure so an import never
+   * silently leaves a wiped volume behind.
+   */
+  copyDirToVolume(hostDir: string, volumeName: string, wipe?: boolean): void;
+}
+
+/** `wait <container>`: blocks until the container stops, printing its exit code. */
+export function waitArgs(container: string): string[] {
+  return ['wait', container];
+}
+
+/**
+ * Pure argv builders - one per runtime subcommand. Each returns the arguments
+ * that follow the runtime executable, so the corresponding method reduces to
+ * `spawnSync(this.command, xArgs(...))`. Extracted so every subcommand's argv is
+ * assertable without spawning a process (only `run`'s builder, {@link
+ * ContainerRuntime.buildRunArgs}, used to be reachable by a test).
+ */
+export function versionArgs(): string[] {
+  return ['--version'];
+}
+
+export function imageInspectArgs(imageTag: string): string[] {
+  return ['image', 'inspect', imageTag];
+}
+
+export function buildImageArgs(
+  imageTag: string,
+  contextDir: string,
+  dockerfile?: string
+): string[] {
+  const args = ['build', '-t', imageTag];
+  if (dockerfile) args.push('-f', dockerfile);
+  args.push(contextDir);
+  return args;
+}
+
+export function networkCreateArgs(name: string): string[] {
+  return ['network', 'create', name];
+}
+
+export function networkRemoveArgs(name: string): string[] {
+  return ['network', 'rm', name];
+}
+
+export function sidecarRunArgs(spec: SidecarSpec): string[] {
+  const args = ['run', '-d', '--name', spec.name];
+  if (spec.netns) {
+    args.push('--network', `container:${spec.netns}`);
+  } else if (spec.network) {
+    args.push('--network', spec.network, '--network-alias', spec.alias);
+  }
+  for (const f of spec.envFile ?? []) args.push('--env-file', f);
+  for (const v of spec.volumes ?? []) args.push('-v', formatMount(v));
+  args.push(spec.image);
+  return args;
+}
+
+export function containerRemoveArgs(name: string): string[] {
+  return ['rm', '-f', name];
+}
+
+export function tcpProbeArgs(
+  network: string,
+  host: string,
+  port: number
+): string[] {
+  // BusyBox `nc HOST PORT` (2s connect timeout) exits 0 on connect. Passed as
+  // argv, never through `sh -c`: `host` is a user-chosen MCP alias. Without
+  // `-i` the container's stdin is already closed, so nc exits once connected.
+  return [
+    'run',
+    '--rm',
+    '--network',
+    network,
+    'busybox',
+    'nc',
+    '-w',
+    '2',
+    host,
+    String(port),
+  ];
+}
+
+export function execArgs(container: string, command: string[]): string[] {
+  return ['exec', container, ...command];
+}
+
+export function runningInspectArgs(name: string): string[] {
+  return ['inspect', '-f', '{{.State.Running}}', name];
+}
+
+export function volumeInspectArgs(volumeName: string): string[] {
+  return ['volume', 'inspect', volumeName];
+}
+export function volumeCreateArgs(volumeName: string): string[] {
+  return ['volume', 'create', volumeName];
+}
+/** `alpine` copy run: volume -> host dir (`cp -a /source/. /dest/`). */
+export function volumeCopyOutArgs(
+  volumeName: string,
+  hostDir: string
+): string[] {
+  return [
+    'run',
+    '--rm',
+    '-v',
+    `${volumeName}:/source`,
+    '-v',
+    `${hostDir}:/dest`,
+    'alpine',
+    'sh',
+    '-c',
+    'cp -a /source/. /dest/',
+  ];
+}
+/** `alpine` copy run: host dir -> volume; `wipe` first clears the volume. */
+export function volumeCopyInArgs(
+  hostDir: string,
+  volumeName: string,
+  wipe?: boolean
+): string[] {
+  const rmGuard = wipe
+    ? 'rm -rf /dest/* /dest/..?* /dest/.[!.]* 2>/dev/null || true && '
+    : '';
+  return [
+    'run',
+    '--rm',
+    '-v',
+    `${hostDir}:/source`,
+    '-v',
+    `${volumeName}:/dest`,
+    'alpine',
+    'sh',
+    '-c',
+    `${rmGuard}cp -a /source/. /dest/`,
+  ];
+}
+
+/**
+ * A container runtime (docker, podman, ...).
+ *
+ * Docker and Podman share the same CLI surface, so a single concrete class
+ * covers both - the only thing that varies is the `command` executable, passed
+ * in at construction.
+ */
+export class ContainerRuntime implements ContainerRunner {
+  /**
+   * @param command The executable invoked for this runtime, e.g. "docker".
+   * @param spawnImpl Process spawner for the long-running `run`/`wait` calls;
+   *   tests inject a fake, production uses `child_process.spawn`.
+   */
+  constructor(
+    readonly command: string,
+    private readonly spawnImpl: typeof spawn = spawn
+  ) {}
+
+  /** Returns true if this runtime is installed and responds to `--version`. */
+  isAvailable(): boolean {
+    const result = spawnSync(this.command, versionArgs(), {
+      stdio: 'ignore',
+      shell: false,
+    });
+    log.debug(`Runtime ${this.command} available: ${result.status === 0}`);
+    return result.status === 0;
+  }
+
+  /** Returns true if an image with the given tag already exists locally. */
+  imageExists(imageTag: string): boolean {
+    const result = spawnSync(this.command, imageInspectArgs(imageTag), {
+      stdio: 'ignore',
+      shell: false,
+    });
+    log.debug(`Image ${imageTag} exists locally: ${result.status === 0}`);
+    return result.status === 0;
+  }
+
+  /**
+   * Builds an image from a build context, tagging it `imageTag`.
+   * The Dockerfile defaults to `<contextDir>/Dockerfile`.
+   * Throws on failure - the edge (the spawn action) owns the exit.
+   */
+  build(imageTag: string, contextDir: string, dockerfile?: string): void {
+    const args = buildImageArgs(imageTag, contextDir, dockerfile);
+
+    log.command(`> ${this.command} ${args.join(' ')}`);
+    log.debug(`Context: ${contextDir}, Dockerfile: ${dockerfile ?? 'default'}`);
+    const result = spawnSync(this.command, args, {
+      stdio: 'inherit',
+      shell: false,
+    });
+
+    if (result.error) {
+      throw new Error(
+        `Failed to start ${this.command}: ${result.error.message}`
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(`Image build failed (exit code ${result.status ?? 1}).`);
+    }
+    log.debug(`Built image ${imageTag} from ${contextDir}`);
+  }
+
+  /** Builds the argument list passed to the runtime. */
+  buildRunArgs(
+    image: string,
+    opts: RunOptions,
+    commandArgs: string[]
+  ): string[] {
+    const args = ['run'];
+
+    if (opts.interactive) {
+      if (opts.headlessTty) {
+        args.push('-d');
+      }
+      args.push('-it');
+    }
+    if (opts.rm) args.push('--rm');
+    if (opts.name) args.push('--name', opts.name);
+    if (opts.workdir) args.push('-w', opts.workdir);
+    // netns and networks are mutually exclusive: taking a shared netns replaces
+    // the agent's own network joins entirely (ADR-0011), so `netns` wins.
+    if (!opts.netns) {
+      for (const net of opts.networks ?? []) args.push('--network', net);
+    }
+    if (opts.netns) args.push('--network', `container:${opts.netns}`);
+    for (const host of opts.extraHosts ?? []) args.push('--add-host', host);
+    for (const f of opts.envFile ?? []) args.push('--env-file', f);
+
+    for (const v of opts.volumes ?? []) args.push('-v', formatMount(v));
+    for (const p of opts.port ?? []) args.push('-p', p);
+    for (const e of opts.env ?? []) args.push('-e', e);
+
+    args.push(image);
+    args.push(...commandArgs);
+
+    return args;
+  }
+
+  /**
+   * Runs a container, streaming stdio, and resolves with the container's exit
+   * code. It deliberately does not exit the process - the caller (the Run
+   * orchestrator) still has to commit, tear down the worktree, and report -
+   * so lifecycle control stays with the caller. Rejects only if the runtime
+   * process itself fails to start.
+   */
+  run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number> {
+    const runArgs = this.buildRunArgs(image, opts, commandArgs);
+    log.info(`Using runtime: ${this.command}`);
+    log.command(`> ${this.command} ${runArgs.join(' ')}`);
+
+    if (opts.interactive && opts.headlessTty) {
+      return this.runHeadless(runArgs);
+    }
+
+    return new Promise<number>((resolve, reject) => {
+      const child = this.spawnImpl(this.command, runArgs, {
+        stdio: 'inherit',
+        shell: false,
+      });
+
+      child.on('error', err => {
+        reject(new Error(`Failed to start ${this.command}: ${err.message}`));
+      });
+
+      child.on('exit', (code, signal) => {
+        resolve(signal ? 1 : (code ?? 0));
+      });
+    });
+  }
+
+  /**
+   * The headless-TTY variant of {@link ContainerRuntime.run}: `run -d -it`
+   * prints the container id and returns at once (the CLI refuses `-it` without
+   * a host TTY, but not when detaching), then `wait <id>` blocks until the
+   * container stops and prints its exit code. A caller with engine-API access
+   * attaches to the container's TTY in between. The container's exit code is
+   * the run's exit code, exactly as in the foreground variant; a failed `run`
+   * (or an unparsable `wait`) resolves 1 so the orchestrator skips the commit.
+   */
+  private async runHeadless(runArgs: string[]): Promise<number> {
+    const started = await this.capture(runArgs);
+    const containerId = started.stdout.trim().split('\n').pop() ?? '';
+    if (started.code !== 0 || containerId === '') {
+      return started.code === 0 ? 1 : started.code;
+    }
+    const waited = await this.capture(waitArgs(containerId));
+    const exitCode = Number.parseInt(waited.stdout.trim(), 10);
+    return waited.code === 0 && Number.isInteger(exitCode) ? exitCode : 1;
+  }
+
+  /** Runs `<command> <args>`, inheriting stderr, and captures stdout with the exit code. */
+  private capture(args: string[]): Promise<{ code: number; stdout: string }> {
+    return new Promise((resolve, reject) => {
+      const child = this.spawnImpl(this.command, args, {
+        stdio: ['ignore', 'pipe', 'inherit'],
+        shell: false,
+      });
+      let stdout = '';
+      child.stdout?.on('data', (chunk: Buffer | string) => {
+        stdout += chunk.toString();
+      });
+      child.on('error', err => {
+        reject(new Error(`Failed to start ${this.command}: ${err.message}`));
+      });
+      child.on('exit', (code, signal) => {
+        resolve({ code: signal ? 1 : (code ?? 0), stdout });
+      });
+    });
+  }
+
+  /**
+   * Starts a Compose stack in the background. `waitForBootstrap` is false for
+   * stacks with no local inference runtime, which intentionally omit the
+   * model-registration bootstrap service.
+   */
+  composeUp(
+    composeFile: string,
+    envFile?: string,
+    waitForBootstrap = true
+  ): void {
+    runComposeStack(this.command, composeFile, envFile, waitForBootstrap);
+  }
+
+  /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */
+  createNetwork(name: string): void {
+    log.debug(`Creating network: ${name}`);
+    const result = spawnSync(this.command, networkCreateArgs(name), {
+      stdio: 'ignore',
+      shell: false,
+    });
+    if (result.error) {
+      throw new Error(
+        `Failed to start ${this.command}: ${result.error.message}`
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `Failed to create network "${name}" (exit code ${result.status ?? 1}).`
+      );
+    }
+    log.debug(`Created network ${name}`);
+  }
+
+  /** Remove a network. Best-effort: swallows every failure so teardown never masks the run result. */
+  removeNetwork(name: string): void {
+    log.debug(`Removing network: ${name}`);
+    spawnSync(this.command, networkRemoveArgs(name), {
+      stdio: 'ignore',
+      shell: false,
+    });
+    log.debug(`Removed network ${name}`);
+  }
+
+  /**
+   * Start a sidecar detached on its private network, reachable by its alias. The
+   * image's own CMD runs the MCP server; only credentials are passed (by
+   * env-file). Throws if the container fails to start.
+   */
+  startSidecar(spec: SidecarSpec): void {
+    const args = sidecarRunArgs(spec);
+
+    log.command(`> ${this.command} ${args.join(' ')}`);
+    const result = spawnSync(this.command, args, {
+      stdio: ['ignore', 'ignore', 'inherit'],
+      shell: false,
+    });
+    if (result.error) {
+      throw new Error(
+        `Failed to start ${this.command}: ${result.error.message}`
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `Failed to start sidecar "${spec.name}" (exit code ${result.status ?? 1}).`
+      );
+    }
+  }
+
+  /** Force-remove a container by name (even if running). Best-effort: never throws (teardown). */
+  removeContainer(name: string): void {
+    spawnSync(this.command, containerRemoveArgs(name), {
+      stdio: 'ignore',
+      shell: false,
+    });
+    log.debug(`Removed container ${name}`);
+  }
+
+  /**
+   * Probe a TCP port over the private network from a throwaway sibling container,
+   * mirroring the DNS-by-alias path the agent will use. BusyBox `nc HOST PORT`
+   * (fed an empty stdin, 2s connect timeout) exits 0 on a successful connect. The
+   * `busybox` image is a tiny public image the runtime auto-pulls on first use.
+   */
+  probeTcp(network: string, host: string, port: number): boolean {
+    const result = spawnSync(this.command, tcpProbeArgs(network, host, port), {
+      stdio: 'ignore',
+      shell: false,
+    });
+    const ok = result.status === 0;
+    log.debug(
+      `TCP probe ${host}:${port} on ${network}: ${ok ? 'open' : 'closed'}`
+    );
+    return ok;
+  }
+
+  /** Run a readiness command inside the sidecar (`exec`); true iff it exits 0. */
+  probeHealthcheck(container: string, command: string[]): boolean {
+    const result = spawnSync(this.command, execArgs(container, command), {
+      stdio: 'ignore',
+      shell: false,
+    });
+    const ok = result.status === 0;
+    log.debug(
+      `Healthcheck ${container} ${command.join(' ')}: ${ok ? 'ready' : 'not ready'}`
+    );
+    return ok;
+  }
+
+  /** True if the named container is still running (`inspect` reports `Running: true`). */
+  isRunning(name: string): boolean {
+    const result = spawnSync(this.command, runningInspectArgs(name), {
+      encoding: 'utf8',
+      shell: false,
+    });
+    return result.status === 0 && result.stdout.trim() === 'true';
+  }
+
+  volumeExists(volumeName: string): boolean {
+    const result = spawnSync(this.command, volumeInspectArgs(volumeName), {
+      stdio: 'ignore',
+      shell: false,
+    });
+    return result.status === 0;
+  }
+
+  createVolume(volumeName: string): void {
+    this.runOrThrow(
+      volumeCreateArgs(volumeName),
+      `create volume ${volumeName}`
+    );
+  }
+
+  copyVolumeToDir(volumeName: string, hostDir: string): void {
+    this.runOrThrow(
+      volumeCopyOutArgs(volumeName, hostDir),
+      `copy volume ${volumeName} to ${hostDir}`
+    );
+  }
+
+  copyDirToVolume(hostDir: string, volumeName: string, wipe?: boolean): void {
+    this.runOrThrow(
+      volumeCopyInArgs(hostDir, volumeName, wipe),
+      `copy ${hostDir} into volume ${volumeName}`
+    );
+  }
+
+  /**
+   * Runs a runtime subcommand whose failure must surface (volume export /
+   * import): stderr passes through for the user, anything else is silent.
+   */
+  private runOrThrow(args: string[], what: string): void {
+    const result = spawnSync(this.command, args, {
+      stdio: ['ignore', 'ignore', 'inherit'],
+      shell: false,
+    });
+    if (result.error) {
+      throw new Error(
+        `Failed to start ${this.command} to ${what}: ${result.error.message}`
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `${this.command} failed to ${what} (exit code ${result.status ?? 1}).`
+      );
+    }
+  }
+}

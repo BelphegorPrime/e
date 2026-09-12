@@ -1,0 +1,457 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { HARNESSES } from '../../core/harness/index.js';
+import { MODEL_CATALOG } from '../../core/modelStatus.js';
+import { RUNTIME_CATALOGS } from '../../core/localRuntimes.js';
+import { GIT_PLATFORMS } from '../../core/store/config.js';
+import {
+  OMNIROUTE_STACK_SECRETS,
+  parseGitPlatformChoice,
+  planInit,
+  type InitAnswers,
+  type InitState,
+} from './initPlan.js';
+
+/** Plan paths are host paths; compare POSIX-style so Windows separators pass. */
+const posix = (file: string): string => file.split(path.sep).join('/');
+
+const HARNESS_NAMES = Object.keys(HARNESSES);
+
+/** A fresh-state fixture: temp root, default favorite, no models, no `.env`. */
+function state(overrides: Partial<InitState> = {}): InitState {
+  return {
+    root: fs.mkdtempSync(path.join(os.tmpdir(), 'e-plan-')),
+    harnessNames: HARNESS_NAMES,
+    currentDefaultHarness: 'pi',
+    currentModels: [],
+    currentLocalRuntimes: ['llamacpp'],
+    currentSiblingArtifacts: ['node_modules'],
+    currentMaxSiblings: 3,
+    existingEnvContent: undefined,
+    runtimeCatalogs: RUNTIME_CATALOGS,
+    gitPlatforms: [...GIT_PLATFORMS],
+    hardware: 'cpu',
+    ...overrides,
+  };
+}
+
+// The point of the plan: every write decision is pure and scriptable, so the
+// interactive wizard, `--yes`, and a piped/CI run share one tested core.
+
+test('planInit: blank or unanswered answers keep the configured current', () => {
+  const plan = planInit(state(), {});
+  assert.equal(plan.defaultHarness, 'pi');
+  assert.deepEqual(plan.models, []);
+  assert.deepEqual(plan.config, {
+    defaultHarness: 'pi',
+    models: [],
+    localRuntimes: ['llamacpp'],
+    gitPlatform: undefined,
+    siblingArtifacts: ['node_modules'],
+    maxSiblings: 3,
+  });
+});
+
+test('planInit: answers resolve through the same pure parsers the prompts use', () => {
+  const plan = planInit(state(), {
+    harness: '2',
+    models: 'all',
+  } satisfies InitAnswers);
+  assert.equal(plan.defaultHarness, HARNESS_NAMES[1]);
+  assert.deepEqual(
+    plan.models,
+    MODEL_CATALOG.map(m => m.id)
+  );
+});
+
+test('planInit: local runtime selection supports none and omits runtime provisioning', () => {
+  const plan = planInit(state(), { localRuntimes: 'none' });
+  assert.deepEqual(plan.localRuntimes, []);
+  assert.deepEqual(plan.config.localRuntimes, []);
+  assert.equal(
+    plan.steps.some(step => step.kind === 'bootstrap'),
+    false
+  );
+  const compose = plan.steps.find(step => step.kind === 'compose');
+  assert.ok(compose && !compose.write.content.includes('\n  llama:'));
+  assert.ok(compose && !compose.write.content.includes('\n  ollama:'));
+  assert.ok(compose && !compose.write.content.includes('\n  vllm:'));
+});
+
+test('planInit: local runtime selection accepts indexed multi-select', () => {
+  assert.deepEqual(planInit(state(), { localRuntimes: '1,1' }).localRuntimes, [
+    'llamacpp',
+  ]);
+  // Ollama + vLLM (indices 2 and 3) resolve to both runtimes.
+  const plan = planInit(state(), { localRuntimes: '2,3' });
+  assert.deepEqual(plan.localRuntimes, ['ollama', 'vllm']);
+});
+
+test('planInit: a model answer resolves against the selected runtimes catalog union', () => {
+  // "all" under llamacpp alone selects the llama catalog, not the union.
+  const all = planInit(state(), { localRuntimes: '1', models: 'all' });
+  assert.deepEqual(
+    all.models,
+    RUNTIME_CATALOGS.llamacpp.map(m => m.id)
+  );
+
+  // With Ollama selected, "all" covers Ollama's catalog.
+  const ollama = planInit(state(), { localRuntimes: '2', models: 'all' });
+  assert.deepEqual(
+    ollama.models,
+    RUNTIME_CATALOGS.ollama.map(m => m.id)
+  );
+
+  // Two runtimes: the union, llama first then ollama (deduplicated).
+  const both = planInit(state(), { localRuntimes: '1,2', models: 'all' });
+  assert.deepEqual(both.models, [
+    ...RUNTIME_CATALOGS.llamacpp.map(m => m.id),
+    ...RUNTIME_CATALOGS.ollama.map(m => m.id),
+  ]);
+});
+
+test('planInit: a named git platform is recorded in the config', () => {
+  const plan = planInit(state(), {
+    gitPlatform: 'gitlab',
+  } satisfies InitAnswers);
+  assert.equal(plan.gitPlatform, 'gitlab');
+  assert.deepEqual(plan.config, {
+    defaultHarness: 'pi',
+    models: [],
+    localRuntimes: ['llamacpp'],
+    gitPlatform: 'gitlab',
+    siblingArtifacts: ['node_modules'],
+    maxSiblings: 3,
+  });
+});
+
+test('planInit: a blank git-platform answer disables PR/MR creation', () => {
+  const plan = planInit(state({ currentGitPlatform: 'github' }), {
+    gitPlatform: '   ',
+  } satisfies InitAnswers);
+  assert.equal(plan.gitPlatform, undefined);
+});
+
+test('planInit: an unanswered platform keeps the configured current (a --yes re-init)', () => {
+  const plan = planInit(state({ currentGitPlatform: 'gitea' }), {});
+  assert.equal(plan.gitPlatform, 'gitea');
+});
+
+test('parseGitPlatformChoice: index, exact name, blank, and invalid', () => {
+  const platforms = ['github', 'gitlab', 'forgejo', 'gitea'];
+  assert.equal(parseGitPlatformChoice('2', platforms), 'gitlab');
+  assert.equal(parseGitPlatformChoice('forgejo', platforms), 'forgejo');
+  // A blank answer is the disable sentinel (valid, resolved by the caller).
+  assert.equal(parseGitPlatformChoice('', platforms), undefined);
+  assert.equal(parseGitPlatformChoice('  ', platforms), undefined);
+  // Anything else is unrecognized (re-prompt).
+  assert.equal(parseGitPlatformChoice('bitbucket', platforms), undefined);
+  assert.equal(parseGitPlatformChoice('5', platforms), undefined);
+  assert.equal(parseGitPlatformChoice('-1', platforms), undefined);
+});
+
+test('planInit: a raw-mode id list passes through untouched', () => {
+  const ids = MODEL_CATALOG.slice(0, 2).map(m => m.id);
+  const plan = planInit(state(), { models: ids } satisfies InitAnswers);
+  assert.deepEqual(plan.models, ids);
+});
+
+test('planInit: collected API keys merge into the env and fill blank lines', () => {
+  const plan = planInit(
+    state({
+      existingEnvContent:
+        '# --- pi ---\nANTHROPIC_API_KEY=\nOPENAI_API_KEY=filled\n',
+    }),
+    { apiKeys: { ANTHROPIC_API_KEY: 'sk-abc' } } satisfies InitAnswers
+  );
+  assert.equal(plan.envValues.ANTHROPIC_API_KEY, 'sk-abc');
+  assert.equal(plan.envValues.OPENAI_API_KEY, 'filled');
+  assert.match(plan.env.content, /ANTHROPIC_API_KEY=sk-abc/);
+  assert.match(plan.env.content, /OPENAI_API_KEY=filled/);
+});
+
+test('planInit: a fresh store writes typed API keys over the template placeholders', () => {
+  const plan = planInit(state(), {
+    apiKeys: { ANTHROPIC_API_KEY: 'sk-typed', OPENAI_API_KEY: 'sk-other' },
+  });
+  assert.equal(plan.env.created, true);
+  assert.match(plan.env.content, /^ANTHROPIC_API_KEY=sk-typed$/m);
+  assert.match(plan.env.content, /^OPENAI_API_KEY=sk-other$/m);
+  assert.doesNotMatch(plan.env.content, /local-development/);
+  // Untyped keys keep the local-stack placeholder.
+  const untouched = planInit(state(), {});
+  assert.match(untouched.env.content, /^ANTHROPIC_API_KEY=local-development$/m);
+});
+
+test('planInit: re-init on its own output is byte-identical (no newline creep)', () => {
+  const first = planInit(state(), {});
+  const replay = planInit(
+    {
+      ...state(),
+      existingEnvContent: first.env.content,
+      currentDefaultHarness: first.defaultHarness,
+      currentModels: first.models,
+    },
+    {}
+  );
+  assert.equal(replay.env.created, false);
+  assert.equal(replay.env.changed, false);
+  assert.equal(replay.env.content, first.env.content);
+});
+
+test('planInit: a fresh store creates the env with the omniroute section seeded', () => {
+  const plan = planInit(state(), {});
+  assert.equal(plan.env.created, true);
+  assert.equal(plan.env.changed, false);
+  assert.match(plan.env.content, /# --- e-net ---/);
+  for (const key of OMNIROUTE_STACK_SECRETS) {
+    assert.equal(
+      plan.envValues[key],
+      plan.secrets[key],
+      `${key} should be seeded on a fresh store`
+    );
+    assert.match(plan.envValues[key], /^[0-9a-f]+$/);
+  }
+});
+
+test('planInit: a user-provided omniroutePassword is kept and never rotated', () => {
+  const plan = planInit(state(), { omniroutePassword: 'chosen-pass' });
+  assert.equal(plan.envValues.OMNIROUTE_INITIAL_PASSWORD, 'chosen-pass');
+  assert.equal(plan.secrets.OMNIROUTE_INITIAL_PASSWORD, 'chosen-pass');
+  // Other stack secrets are still seeded randomly.
+  assert.match(plan.secrets.JWT_SECRET, /^[0-9a-f]+$/);
+});
+
+test('planInit: a blank omniroutePassword produces a random hex password', () => {
+  const plan = planInit(state(), { omniroutePassword: '' });
+  assert.match(plan.envValues.OMNIROUTE_INITIAL_PASSWORD, /^[0-9a-f]{32}$/);
+});
+
+test('planInit: re-init never rotates a set stack secret and stays up to date', () => {
+  // A hand-edited env keeps its own stack values on the next init.
+  const handEdited = state({
+    existingEnvContent: `OMNIROUTE_INITIAL_PASSWORD=user-picked\nJWT_SECRET=\nAPI_KEY_SECRET=\n`,
+  });
+  const second = planInit(handEdited, {});
+  assert.equal(second.envValues.OMNIROUTE_INITIAL_PASSWORD, 'user-picked');
+  assert.equal(second.secrets.OMNIROUTE_INITIAL_PASSWORD, 'user-picked');
+  assert.match(second.envValues.JWT_SECRET, /^[0-9a-f]{64}$/);
+  assert.match(second.envValues.API_KEY_SECRET, /^[0-9a-f]{64}$/);
+
+  // An env that already carries every section header is left byte-identical:
+  // the append + apply path is a pure no-op for a stable store.
+  const first = planInit(state(), {});
+  const withHeaders =
+    first.env.content +
+    Object.keys(HARNESSES)
+      .map(name => `# --- ${name} ---\n\n`)
+      .join('');
+  const replay = planInit(
+    {
+      ...state(),
+      existingEnvContent: withHeaders,
+      currentDefaultHarness: first.defaultHarness,
+      currentModels: first.models,
+    },
+    {}
+  );
+  assert.equal(replay.env.created, false);
+  assert.equal(replay.env.changed, false);
+  assert.equal(replay.env.content, withHeaders);
+});
+
+test('planInit: steps are ordered - harnesses, shipped servers, bootstrap, then compose', () => {
+  const plan = planInit(state(), {});
+  const kinds = plan.steps.map(step => step.kind);
+  assert.deepEqual(kinds, [
+    ...HARNESS_NAMES.map(() => 'harness'),
+    'writes', // shipped MCP servers + skills
+    'writes', // egress build context + blacklist template (ADR-0011)
+    'writes', // runtime-broker build context (ADR-0013)
+    'bootstrap',
+    'compose',
+  ]);
+
+  // The first harness pair: dockerfile before agents, both never clobbered.
+  const first = plan.steps[0];
+  assert.equal(first.kind, 'harness');
+  assert.equal(first.name, HARNESS_NAMES[0]);
+  // First harness's Dockerfile, then its default agent definition.
+  const [dockerfile, agent] = first.writes;
+  assert.equal(dockerfile.clobber, 'never');
+  assert.equal(agent.clobber, 'never');
+  assert.ok(
+    posix(dockerfile.file).endsWith(
+      '.e/harnesses/' + first.name + '/Dockerfile'
+    )
+  );
+  assert.ok(
+    posix(agent.file).endsWith('.e/agents/' + first.name + '/agent.json')
+  );
+
+  // Bootstrap and Compose are derived state (always rewritten).
+  const bootstrap = plan.steps.find(s => s.kind === 'bootstrap');
+  const compose = plan.steps.find(s => s.kind === 'compose');
+  assert.equal(bootstrap?.write.clobber, 'always');
+  assert.equal(compose?.write.clobber, 'always');
+  assert.ok(posix(bootstrap?.write.file).endsWith('.e/bootstrap.sh'));
+  assert.ok(posix(compose?.write.file).endsWith('.e/compose.yaml'));
+});
+test('planInit: ships the searxng MCP server with the other shipped servers', () => {
+  const plan = planInit(state(), {});
+  const writesStep = plan.steps.find(
+    step =>
+      step.kind === 'writes' &&
+      step.writes.some(w => posix(w.file).includes('.e/mcp/searxng/'))
+  );
+  assert.ok(
+    writesStep,
+    'expected a writes step containing the searxng MCP server'
+  );
+  assert.ok(writesStep.kind === 'writes');
+  const files = writesStep.writes
+    .filter(w => posix(w.file).includes('.e/mcp/searxng/'))
+    .map(w => posix(w.file));
+  assert.ok(files.some(f => f.endsWith('/Dockerfile')));
+  assert.ok(files.some(f => f.endsWith('/mcp.json')));
+  assert.ok(writesStep.writes.every(w => w.clobber === 'never'));
+});
+
+test('planInit: all paths live under the requested root', () => {
+  const plan = planInit({ ...state(), root: '/tmp/fake-e-root' }, {});
+  for (const step of plan.steps) {
+    for (const write of 'writes' in step ? step.writes : [step.write]) {
+      assert.ok(posix(write.file).startsWith('/tmp/fake-e-root'));
+    }
+  }
+  assert.ok(posix(plan.env.file).startsWith('/tmp/fake-e-root'));
+});
+
+test('planInit: seeds the egress build context and blacklist template (never clobbered)', () => {
+  const plan = planInit(state(), {});
+  const egressStep = plan.steps.find(
+    step =>
+      step.kind === 'writes' &&
+      step.writes.some(w => posix(w.file).includes('.e/egress/'))
+  );
+  assert.ok(egressStep, 'expected an egress write step');
+  assert.ok(egressStep.kind === 'writes');
+  const files = egressStep.writes.map(w => posix(w.file));
+  assert.ok(files.some(f => f.endsWith('.e/egress/Dockerfile')));
+  assert.ok(files.some(f => f.endsWith('.e/egress/entrypoint.sh')));
+  assert.ok(files.some(f => f.endsWith('.e/egress/dnsmasq.conf')));
+  assert.ok(files.some(f => f.endsWith('.e/egress-blacklist')));
+  assert.ok(files.some(f => f.endsWith('.e/egress-iptables.rules')));
+  for (const write of egressStep.writes) {
+    assert.equal(write.clobber, 'never');
+  }
+});
+
+test('planInit: seeds the runtime-broker build context (never clobbered)', () => {
+  const plan = planInit(state(), {});
+  const brokerStep = plan.steps.find(
+    step =>
+      step.kind === 'writes' &&
+      step.writes.some(w => posix(w.file).includes('.e/broker/'))
+  );
+  assert.ok(brokerStep, 'expected a broker write step');
+  assert.ok(brokerStep.kind === 'writes');
+  const files = brokerStep.writes.map(w => posix(w.file));
+  assert.ok(files.some(f => f.endsWith('.e/broker/Dockerfile')));
+  assert.ok(files.some(f => f.endsWith('.e/broker/broker.mjs')));
+  for (const write of brokerStep.writes) {
+    assert.equal(write.clobber, 'never');
+  }
+});
+
+test('planInit: config.json carries the configured sibling artifacts, defaulting to node_modules', () => {
+  assert.deepEqual(planInit(state(), {}).config.siblingArtifacts, [
+    'node_modules',
+  ]);
+  assert.deepEqual(
+    planInit(state({ currentSiblingArtifacts: ['node_modules', 'dist'] }), {})
+      .config.siblingArtifacts,
+    ['node_modules', 'dist']
+  );
+  // An explicitly empty list (sync disabled) survives a re-init too.
+  assert.deepEqual(
+    planInit(state({ currentSiblingArtifacts: [] }), {}).config
+      .siblingArtifacts,
+    []
+  );
+});
+
+test('planInit: config.json carries the configured fan-out bound for siblings', () => {
+  assert.equal(planInit(state(), {}).config.maxSiblings, 3);
+  assert.equal(
+    planInit(state({ currentMaxSiblings: 5 }), {}).config.maxSiblings,
+    5
+  );
+});
+
+test('planInit: --force turns every never-clobber write into an unconditional overwrite', () => {
+  const forced = planInit(state({ force: true }), {});
+  const writes = forced.steps.flatMap(step =>
+    step.kind === 'harness' || step.kind === 'writes'
+      ? step.writes
+      : [step.write]
+  );
+  assert.ok(writes.length > 0);
+  for (const write of writes) {
+    assert.equal(write.clobber, 'always');
+  }
+
+  // Force must not skip or reorder any step.
+  assert.deepEqual(
+    forced.steps.map(step => step.kind),
+    planInit(state(), {}).steps.map(step => step.kind)
+  );
+});
+
+test('planInit: without --force the container-file writes keep their never-clobber rule', () => {
+  const plan = planInit(state(), {});
+  const first = plan.steps[0];
+  assert.equal(first.kind, 'harness');
+  assert.equal(first.writes[0].clobber, 'never');
+});
+
+test('planInit: --force re-renders an existing .env from the canonical template, keeping values', () => {
+  const handEdited = state({
+    existingEnvContent:
+      'CUSTOM_KEEP=abc\nJWT_SECRET=rotated-secret\nOMNIROUTE_INITIAL_PASSWORD=user-picked\n',
+  });
+  const plain = planInit(handEdited, {});
+  // Without force: append-only, the hand-edited body is the prefix.
+  assert.ok(plain.env.content.startsWith(handEdited.existingEnvContent ?? ''));
+
+  const forced = planInit({ ...handEdited, force: true }, {});
+  assert.equal(forced.env.created, false);
+  assert.equal(forced.env.changed, true);
+  // Structure resets to the canonical template, values survive intact -
+  // including the hand-added key the template does not model.
+  assert.match(forced.env.content, /# --- /);
+  assert.match(forced.env.content, /^CUSTOM_KEEP=abc$/m);
+  assert.match(forced.env.content, /^JWT_SECRET=rotated-secret$/m);
+  assert.match(forced.env.content, /^OMNIROUTE_INITIAL_PASSWORD=user-picked$/m);
+  assert.notEqual(forced.env.content, plain.env.content);
+});
+
+test('planInit: --force on an already-canonical .env is a no-op write', () => {
+  const first = planInit(state(), {});
+  const replay = planInit(
+    {
+      ...state(),
+      force: true,
+      existingEnvContent: first.env.content,
+      currentDefaultHarness: first.defaultHarness,
+      currentModels: first.models,
+    },
+    {}
+  );
+  assert.equal(replay.env.created, false);
+  assert.equal(replay.env.changed, false);
+  assert.equal(replay.env.content, first.env.content);
+});
