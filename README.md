@@ -6,7 +6,9 @@ hands-on guide to building it and trying a harness locally. For the concepts
 (Harness, Agent, Provider, Sidecar, Run, …) see [CONTEXT.md](./CONTEXT.md); for
 the design rationale see [docs/adr/](./docs/adr/); for the agent-facing guide
 to delegating work with `e` and `e spawn` see
-[docs/agents/e.md](./docs/agents/e.md).
+[docs/agents/e.md](./docs/agents/e.md). Jump to [Usage examples](#usage-examples)
+for everyday commands, or to [Working on this repository](#working-on-this-repository)
+if you are here to change `e` itself.
 
 ## Why `e` exists: the `e` / `pi` relationship
 
@@ -442,6 +444,134 @@ Blank the platform prompt to disable PR/MR creation; a re-init with `--yes`
 keeps the configured platform. PR/MR failure is non-fatal - the pushed branch
 is the durable artifact, and a warning reports why the open failed.
 
+## Usage examples
+
+Everyday flows, all from inside the git repository you want the agent to work
+on (each run cuts its own worktree and branch; nothing touches your checkout).
+
+```bash
+# One-shot task with the favorite harness's default agent (pi after `e init`):
+e spawn pi "Add input validation to src/api/users.ts and cover it with tests"
+
+# The same with a named agent from ~/.e/agents/<name>/agent.json:
+e spawn smart-claude "Refactor the payment module; keep the public API stable"
+
+# Interactive: open the harness TUI in the container instead of a one-shot prompt
+e spawn pi
+
+# Give the run extra capabilities: a Skill from .e/skills, an MCP sidecar from .e/mcp
+e spawn pi --skill review-checklist --mcp everything "Review the open PRs' diffs"
+
+# Keep the worktree after the run to inspect it (it lives under the worktrees
+# dir, see Platform notes; the branch e/<agent>/<slug>-N exists either way)
+e spawn pi --keep-worktree "Try upgrading to express 5 and note what breaks"
+
+# Pass a secret or setting only this run needs (never written into an image)
+e spawn codex --env-file ./ci.env -e FEATURE_FLAG=on "Run the migration dry-run"
+
+# Pick the engine explicitly, or use another store than ~/.e
+e spawn pi --runtime podman "Fix the flaky test"
+e init --dir ./infra && e spawn pi --dir ./infra "Bump the base images"
+
+# Force an image rebuild after editing an agent's provider/model or a Dockerfile
+e spawn smart-claude --rebuild "hello"
+
+# Browser UI + terminal: start it in the repo you want runs to happen in
+e serve --detached && open http://127.0.0.1:8080   # `e serve stop` ends it
+
+# Move a configured store (agents, gateway config) to another machine
+e export -o e-state.zip && e import e-state.zip
+```
+
+What you get back: a branch `e/<agent>/<slug>-N` with the agent's commits (its
+leftover changes are committed as `e: run output for <branch>`), pushed to
+`origin` when the run exited 0 and produced commits, and a PR/MR into the
+branch you spawned from when `e init` was given a git platform.
+
+### Letting an agent fan out (sibling runs)
+
+A run that carries the `spawn-brother` skill gets a runtime-broker sidecar,
+and the agent inside can ask for **sibling** runs that work in parallel and
+are merged back into its worktree by the host (ADR-0013):
+
+```bash
+e spawn pi --skill spawn-brother "Split the API migration by module and delegate each module to a brother; integrate the results"
+```
+
+Inside the container the agent runs the skill's script; you see the same
+lifecycle on the host as `Sibling sib-001 (...)` log lines and one summary line
+per sibling at the end (`merge-back merged`, `conflict`, `held`, ...). The
+sibling branches stay in the repo for inspection (`git branch --list 'e/*'`);
+their work reaches you through the parent's branch, where each is one merge
+commit, plus a report per sibling under `e-runs/<id>/report.md`.
+
+## Working on this repository
+
+For contributors and for AI agents asked to change `e` itself. Read, in this
+order: [AGENTS.md](./AGENTS.md) (house rules), [CONTEXT.md](./CONTEXT.md) (the
+vocabulary - use these terms in code, comments, and docs), the
+[ADRs](./docs/adr/) behind the area you touch, and
+[docs/tickets/](./docs/tickets/) for the planning write-ups of larger
+features. Work items are GitHub issues in `BelphegorPrime/e`
+([docs/agents/issue-tracker.md](./docs/agents/issue-tracker.md)).
+
+The loop:
+
+```bash
+npm install
+npm run build:ts                      # bundles the container programs, then tsc -> dist/
+npm test                              # build + the whole node:test suite (~770 tests)
+node --test dist/runs/runSpawn.test.js dist/git/host.test.js   # one or two files while iterating
+npm run lint && npx prettier --check .                          # what CI and the pre-commit hook check
+alias e="node $(pwd)/dist/index.js"   # try the CLI you just built
+```
+
+Rules that bite:
+
+- **Tests follow code.** Every behaviour change ships with the test that would
+  have caught it, in the `*.test.ts` next to the module (`node:test`, no other
+  runner). Real-git and real-broker tests exist (`src/git/host.test.ts`,
+  `src/runs/runSpawn.e2e.test.ts`); prefer them over fakes for anything that
+  touches git or the spool. Do not run the suite with `--test-force-exit`; it
+  silently drops tests.
+- **Ports, not shell-outs.** Git and the container engine are reached only
+  through the `Git` and `ContainerRunner` interfaces (`src/git/index.ts`,
+  `src/runtime/index.ts`), so every orchestrator test can drive a fake.
+  Container-shipped code (`src/broker/*`, `src/egress/*`) is real TypeScript
+  bundled by esbuild (`bundle.generated.ts` is generated, never edited) and may
+  import Node built-ins only.
+- **Host owns git and secrets** (ADR-0002): nothing under `src/` may hand a
+  container a git credential, a docker socket, or `.env` contents beyond the
+  keys a run declares.
+- **Docs move with the code**: a shipped ticket gets a status paragraph at its
+  top and a row in `docs/tickets/README.md`; a new term or changed contract
+  lands in `CONTEXT.md`; an amendment to a decision goes into its ADR rather
+  than a new file.
+- Plain ASCII hyphens in prose (no long dashes); responses in caveman mode per
+  AGENTS.md.
+
+### If you are an agent inside an `e` run of this repo
+
+You are in `/workspace`, a disposable worktree on `e/<agent>/<slug>-N`. Do not
+run `git add`/`commit`/`push`/`worktree`; `e` captures your changes when you
+exit 0. Your role is `$E_ROLE`; `$E_BROKER_URL` names the runtime-broker if
+this run has one. Delegate with the `spawn-brother` skill when the task splits:
+
+```bash
+S=~/.agents/skills/spawn-brother/spawn-brother.mjs     # ~/.claude/skills/... under Claude Code
+node $S researcher "Read docs/adr/0013-*.md and CONTEXT.md; list every place the merge-back vocabulary is out of date. Write findings to notes/mergeback-audit.md."
+node $S --status                 # requested -> starting -> running -> done | failed
+node $S --status sib-001         # one sibling; `merge` and `report` appear once it exited
+cat e-runs/sib-001/report.md     # what the host did with its branch and what you must do
+node $S --merge sib-001          # after resolving `merge.status: conflict` markers or clearing `held` files
+```
+
+The host checkpoints your uncommitted work before a sibling starts and again
+before its branch is merged back; a sibling's files appear in `/workspace` in
+place. Never resolve a merge with git yourself - edit the marked files, then
+signal. If the broker does not answer, write the follow-up task down as a file
+and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
+
 ## Cheat sheet
 
 | Command                                        | What it does                                                                                                                     |
@@ -455,6 +585,10 @@ is the durable artifact, and a warning reports why the open failed.
 | `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                                                                                   |
 | `e spawn … --runtime <name>`                   | Pick the container engine (`docker`, `podman`, `nerdctl`, `finch`); default `$E_RUNTIME`, else the first one on `PATH`           |
 | `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                  |
+| `e spawn … --keep-worktree`                    | Leave the run's worktree in place for inspection                                                                                 |
+| `e spawn … --skill spawn-brother`              | Let the agent request sibling runs; the host merges each back into its worktree (ADR-0013)                                       |
+| `e serve [--detached]` / `e serve stop`        | Web UI + browser terminal for starting runs; stop the background server                                                          |
+| `e export` / `e import <file>`                 | Move the store and gateway configuration between machines as a zip                                                               |
 
 ## Environment variables
 
