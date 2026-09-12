@@ -38,8 +38,6 @@ export async function importConfiguration(
 ): Promise<void> {
   const { file: zipPath, root, force = false } = options;
   const baseDir = eBaseDir(root);
-  // `--runtime`/`E_RUNTIME`/auto-detect, like `e spawn` (never hardcoded docker).
-  const runner = options.runner ?? resolveRuntime();
 
   if (!fs.existsSync(zipPath)) {
     throw new Error(`Import file not found: ${zipPath}`);
@@ -105,6 +103,11 @@ export async function importConfiguration(
     const volumeDataDir = path.join(tempDir, 'omniroute-data');
     if (fs.existsSync(volumeDataDir)) {
       log.info('Restoring omniroute volume...');
+      // Resolved only now: an archive without volume data (the common
+      // `.env`-only case, and every file-level test) needs no container
+      // runtime on the host. `--runtime`/`E_RUNTIME`/auto-detect, like
+      // `e spawn` (never hardcoded docker).
+      const runner = options.runner ?? resolveRuntime();
 
       // Check if volume exists; create if not
       if (!runner.volumeExists(OMNIROUTE_VOLUME)) {

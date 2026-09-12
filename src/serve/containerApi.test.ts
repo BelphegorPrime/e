@@ -148,7 +148,12 @@ async function startFakeEngine(): Promise<{
   attached: () => import('node:stream').Duplex | undefined;
 }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'e-engine-'));
-  const socketPath = path.join(dir, 'engine.sock');
+  // Windows cannot listen on a filesystem socket path; the client speaks
+  // named pipes there just like the real Docker Desktop engine.
+  const socketPath =
+    process.platform === 'win32'
+      ? `\\\\.\\pipe\\${path.basename(dir)}`
+      : path.join(dir, 'engine.sock');
   const requests: string[] = [];
   let attachedSocket: import('node:stream').Duplex | undefined;
   const server = http.createServer((request, response) => {

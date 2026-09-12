@@ -50,7 +50,7 @@ echo "${url}"
   fs.chmodSync(path.join(bin, 'glab'), 0o755);
   const originalPath = process.env.PATH;
   const originalStubLog = process.env.E_STUB_LOG;
-  process.env.PATH = `${bin}:${originalPath}`;
+  process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
   process.env.E_STUB_LOG = log;
   return {
     log,
@@ -62,6 +62,13 @@ echo "${url}"
     },
   };
 }
+
+/**
+ * The stubs are `#!/bin/sh` scripts on PATH. `spawnSync` with `shell: false`
+ * only resolves `.exe`/`.com` on Windows, so the real `gh`/`glab` would run
+ * there instead of the stub.
+ */
+const needsShellShims = process.platform === 'win32' && 'sh shims on PATH';
 
 test('HostGit.currentBranch: reports the checked-out branch', () => {
   const repo = seedRepo();
@@ -78,131 +85,153 @@ test('HostGit.currentBranch: reports the checked-out branch', () => {
   }
 });
 
-test('HostPullRequest: GitHub uses gh with --head/--base and returns the URL', () => {
-  const stub = stubCli({ gh: 'https://github.com/acme/app/pull/7', glab: '' });
-  try {
-    const url = new HostPullRequest().create({
-      platform: 'github',
-      head: 'e/pi/fix-1',
-      base: 'main',
-      title: 'fix: typo in parser',
-      body: 'Fix the typo in the parser.',
+test(
+  'HostPullRequest: GitHub uses gh with --head/--base and returns the URL',
+  { skip: needsShellShims },
+  () => {
+    const stub = stubCli({
+      gh: 'https://github.com/acme/app/pull/7',
+      glab: '',
     });
-    assert.equal(url, 'https://github.com/acme/app/pull/7');
-    const calls = fs
-      .readFileSync(stub.log, 'utf8')
-      .trim()
-      .split('\0')
-      .filter(Boolean);
-    assert.deepEqual(calls, [
-      'pr',
-      'create',
-      '--head',
-      'e/pi/fix-1',
-      '--base',
-      'main',
-      '--title',
-      'fix: typo in parser',
-      '--body',
-      'Fix the typo in the parser.',
-    ]);
-  } finally {
-    stub.restore();
+    try {
+      const url = new HostPullRequest().create({
+        platform: 'github',
+        head: 'e/pi/fix-1',
+        base: 'main',
+        title: 'fix: typo in parser',
+        body: 'Fix the typo in the parser.',
+      });
+      assert.equal(url, 'https://github.com/acme/app/pull/7');
+      const calls = fs
+        .readFileSync(stub.log, 'utf8')
+        .trim()
+        .split('\0')
+        .filter(Boolean);
+      assert.deepEqual(calls, [
+        'pr',
+        'create',
+        '--head',
+        'e/pi/fix-1',
+        '--base',
+        'main',
+        '--title',
+        'fix: typo in parser',
+        '--body',
+        'Fix the typo in the parser.',
+      ]);
+    } finally {
+      stub.restore();
+    }
   }
-});
+);
 
-test('HostPullRequest: GitLab uses glab with --source-branch/--target-branch', () => {
-  const stub = stubCli({
-    gh: '',
-    glab: 'https://gitlab.com/acme/app/-/merge_requests/3',
-  });
-  try {
-    const url = new HostPullRequest().create({
-      platform: 'gitlab',
-      head: 'e/pi/fix-1',
-      base: 'main',
-      title: 'fix: typo in parser',
-      body: 'Fix the typo in the parser.',
+test(
+  'HostPullRequest: GitLab uses glab with --source-branch/--target-branch',
+  { skip: needsShellShims },
+  () => {
+    const stub = stubCli({
+      gh: '',
+      glab: 'https://gitlab.com/acme/app/-/merge_requests/3',
     });
-    assert.equal(url, 'https://gitlab.com/acme/app/-/merge_requests/3');
-    const calls = fs
-      .readFileSync(stub.log, 'utf8')
-      .trim()
-      .split('\0')
-      .filter(Boolean);
-    assert.deepEqual(calls, [
-      'mr',
-      'create',
-      '--source-branch',
-      'e/pi/fix-1',
-      '--target-branch',
-      'main',
-      '--title',
-      'fix: typo in parser',
-      '--description',
-      'Fix the typo in the parser.',
-    ]);
-  } finally {
-    stub.restore();
+    try {
+      const url = new HostPullRequest().create({
+        platform: 'gitlab',
+        head: 'e/pi/fix-1',
+        base: 'main',
+        title: 'fix: typo in parser',
+        body: 'Fix the typo in the parser.',
+      });
+      assert.equal(url, 'https://gitlab.com/acme/app/-/merge_requests/3');
+      const calls = fs
+        .readFileSync(stub.log, 'utf8')
+        .trim()
+        .split('\0')
+        .filter(Boolean);
+      assert.deepEqual(calls, [
+        'mr',
+        'create',
+        '--source-branch',
+        'e/pi/fix-1',
+        '--target-branch',
+        'main',
+        '--title',
+        'fix: typo in parser',
+        '--description',
+        'Fix the typo in the parser.',
+      ]);
+    } finally {
+      stub.restore();
+    }
   }
-});
+);
 
-test('HostPullRequest: Forgejo routes through plain gh (host resolved from remote)', () => {
-  const stub = stubCli({
-    gh: 'https://codeberg.org/acme/app/pulls/9',
-    glab: '',
-  });
-  try {
-    const url = new HostPullRequest().create({
-      platform: 'forgejo',
-      head: 'e/pi/fix-1',
-      base: 'main',
-      title: 'fix: typo in parser',
-      body: 'Fix the typo in the parser.',
+test(
+  'HostPullRequest: Forgejo routes through plain gh (host resolved from remote)',
+  { skip: needsShellShims },
+  () => {
+    const stub = stubCli({
+      gh: 'https://codeberg.org/acme/app/pulls/9',
+      glab: '',
     });
-    assert.equal(url, 'https://codeberg.org/acme/app/pulls/9');
-    const call = fs.readFileSync(stub.log, 'utf8').split('\0').filter(Boolean);
-    // Identical argv to a GitHub PR: gh finds the host from the git remote.
-    assert.deepEqual(call, [
-      'pr',
-      'create',
-      '--head',
-      'e/pi/fix-1',
-      '--base',
-      'main',
-      '--title',
-      'fix: typo in parser',
-      '--body',
-      'Fix the typo in the parser.',
-    ]);
-  } finally {
-    stub.restore();
+    try {
+      const url = new HostPullRequest().create({
+        platform: 'forgejo',
+        head: 'e/pi/fix-1',
+        base: 'main',
+        title: 'fix: typo in parser',
+        body: 'Fix the typo in the parser.',
+      });
+      assert.equal(url, 'https://codeberg.org/acme/app/pulls/9');
+      const call = fs
+        .readFileSync(stub.log, 'utf8')
+        .split('\0')
+        .filter(Boolean);
+      // Identical argv to a GitHub PR: gh finds the host from the git remote.
+      assert.deepEqual(call, [
+        'pr',
+        'create',
+        '--head',
+        'e/pi/fix-1',
+        '--base',
+        'main',
+        '--title',
+        'fix: typo in parser',
+        '--body',
+        'Fix the typo in the parser.',
+      ]);
+    } finally {
+      stub.restore();
+    }
   }
-});
+);
 
-test('HostPullRequest: a failing CLI throws with the platform detail', () => {
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-cli-'));
-  fs.writeFileSync(
-    path.join(bin, 'gh'),
-    '#!/bin/sh\necho "not authenticated" >&2\nexit 1\n'
-  );
-  fs.chmodSync(path.join(bin, 'gh'), 0o755);
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${bin}:${originalPath}`;
-  try {
-    assert.throws(
-      () =>
-        new HostPullRequest().create({
-          platform: 'github',
-          head: 'e/pi/fix-1',
-          base: 'main',
-          title: 'fix: typo',
-          body: 'Fix the typos.',
-        }),
-      /not authenticated/
+test(
+  'HostPullRequest: a failing CLI throws with the platform detail',
+  { skip: needsShellShims },
+  () => {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-cli-'));
+    fs.writeFileSync(
+      path.join(bin, 'gh'),
+      '#!/bin/sh\necho "not authenticated" >&2\nexit 1\n'
     );
-  } finally {
-    process.env.PATH = originalPath;
-    fs.rmSync(bin, { recursive: true, force: true });
+    fs.chmodSync(path.join(bin, 'gh'), 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+    try {
+      assert.throws(
+        () =>
+          new HostPullRequest().create({
+            platform: 'github',
+            head: 'e/pi/fix-1',
+            base: 'main',
+            title: 'fix: typo',
+            body: 'Fix the typos.',
+          }),
+        /not authenticated/
+      );
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
   }
-});
+);

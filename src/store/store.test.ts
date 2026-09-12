@@ -35,7 +35,8 @@ test('resolveRoot: explicitDir wins, resolved to absolute, without consulting ha
       return true;
     },
   });
-  assert.equal(root, '/some/project');
+  // Windows resolves a bare `/some/project` onto the current drive.
+  assert.equal(root, path.resolve('/some/project'));
   assert.equal(consulted, false, 'explicitDir short-circuits the walk');
 });
 

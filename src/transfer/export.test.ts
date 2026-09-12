@@ -41,48 +41,54 @@ test('export: copies the omniroute volume through the runtime seam', async () =>
   }
 });
 
-test('export discovers the initialized .e store in the current directory', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-export-'));
-  const store = path.join(root, '.e');
-  const binDir = path.join(root, 'bin');
-  const output = path.join(root, 'export.zip');
+// The fake `docker` is a `#!/bin/sh` script on PATH; Windows would run the
+// real one instead (spawn without a shell only resolves `.exe`/`.com`).
+test(
+  'export discovers the initialized .e store in the current directory',
+  { skip: process.platform === 'win32' && 'sh shim on PATH' },
+  () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-export-'));
+    const store = path.join(root, '.e');
+    const binDir = path.join(root, 'bin');
+    const output = path.join(root, 'export.zip');
 
-  try {
-    fs.mkdirSync(store);
-    fs.mkdirSync(binDir);
+    try {
+      fs.mkdirSync(store);
+      fs.mkdirSync(binDir);
 
-    const expectedFiles = {
-      '.env': 'SECRET=value\n',
-      'config.json': '{"defaultHarness":"claude"}\n',
-      'compose.yaml': 'services: {}\n',
-      'bootstrap.sh': '#!/bin/sh\n',
-    };
+      const expectedFiles = {
+        '.env': 'SECRET=value\n',
+        'config.json': '{"defaultHarness":"claude"}\n',
+        'compose.yaml': 'services: {}\n',
+        'bootstrap.sh': '#!/bin/sh\n',
+      };
 
-    for (const [name, content] of Object.entries(expectedFiles)) {
-      fs.writeFileSync(path.join(store, name), content);
+      for (const [name, content] of Object.entries(expectedFiles)) {
+        fs.writeFileSync(path.join(store, name), content);
+      }
+
+      const fakeDocker = path.join(binDir, 'docker');
+      fs.writeFileSync(fakeDocker, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+      const cli = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../index.js'
+      );
+      execFileSync(process.execPath, [cli, 'export', '--output', output], {
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+        },
+        stdio: 'pipe',
+      });
+
+      const zip = new AdmZip(output);
+      for (const [name, content] of Object.entries(expectedFiles)) {
+        assert.equal(zip.readAsText(name), content);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
-
-    const fakeDocker = path.join(binDir, 'docker');
-    fs.writeFileSync(fakeDocker, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-
-    const cli = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      '../index.js'
-    );
-    execFileSync(process.execPath, [cli, 'export', '--output', output], {
-      cwd: root,
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH ?? ''}`,
-      },
-      stdio: 'pipe',
-    });
-
-    const zip = new AdmZip(output);
-    for (const [name, content] of Object.entries(expectedFiles)) {
-      assert.equal(zip.readAsText(name), content);
-    }
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
   }
-});
+);

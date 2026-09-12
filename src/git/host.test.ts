@@ -182,7 +182,9 @@ test('HostGit.commitAll retries once when a pre-commit hook rewrites the staged 
       [
         '#!/bin/sh',
         'if grep -q unformatted new.txt 2>/dev/null; then',
-        '  sed -i "s/unformatted/formatted/" new.txt',
+        // Not `sed -i`: GNU and BSD sed disagree on its argument shape.
+        '  sed "s/unformatted/formatted/" new.txt > new.txt.tmp',
+        '  mv new.txt.tmp new.txt',
         '  git add -A',
         '  exit 1',
         'fi',
