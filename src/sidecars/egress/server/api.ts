@@ -33,7 +33,15 @@ import type {
   StatusResponse,
 } from '../contract/types.js';
 
-import { errorMessage } from '../../../shared/utils/errors.js';
+import {
+  decodeSegment,
+  readBody,
+  withErrorTail,
+  writeJson,
+  type JsonSender,
+  type SidecarHandler,
+} from '../../http.js';
+
 /** Everything the handler touches outside its own process, so tests can swap it. */
 export interface EgressApiOptions {
   /** The dnsmasq query log (default: the mounted log). */
@@ -44,14 +52,19 @@ export interface EgressApiOptions {
   reload?: () => void;
 }
 
-type Handler = (req: IncomingMessage, res: ServerResponse) => void;
-
 const BLACKLIST_DOMAINS_PATH = '/blacklist/domains';
 const BLACKLIST_DOMAIN_RE = /^\/blacklist\/domains\/([^/]+)$/;
-/** A blacklist mutation body is one short JSON object; anything bigger is abuse. */
-const MAX_BODY_BYTES = 64 * 1024;
 
-class BodyTooLarge extends Error {}
+/** Every body the egress routes can answer with. */
+type EgressResponseBody =
+  | EgressLogEntry[]
+  | SquashedEntry[]
+  | BlacklistDomainsResponse
+  | StatusResponse
+  | ErrorResponse;
+
+/** The shared JSON writer, pinned to this API's contract. */
+const sendJson: JsonSender<EgressResponseBody> = writeJson;
 
 function readFileOrEmpty(file: string): string {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
@@ -66,46 +79,10 @@ function signalEntrypoint(): void {
   }
 }
 
-function sendJson(
-  res: ServerResponse,
-  status: number,
-  body:
-    | EgressLogEntry[]
-    | SquashedEntry[]
-    | BlacklistDomainsResponse
-    | StatusResponse
-    | ErrorResponse
-): void {
-  res.writeHead(status, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk: Buffer | string) => {
-      body += chunk;
-      if (body.length > MAX_BODY_BYTES) {
-        req.destroy();
-        reject(new BodyTooLarge('Request body too large'));
-      }
-    });
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
-}
-
-/** Decodes a path segment; `null` for malformed percent-escapes (a URIError). */
-function decodeSegment(segment: string): string | null {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return null;
-  }
-}
-
 /** Builds the request handler; `http.createServer(createEgressApi())`. */
-export function createEgressApi(options: EgressApiOptions = {}): Handler {
+export function createEgressApi(
+  options: EgressApiOptions = {}
+): SidecarHandler {
   const logFile = options.logFile ?? EGRESS_DNSMASQ_LOG;
   const blacklistFile = options.blacklistFile ?? EGRESS_BLACKLIST_MOUNT;
   const reload = options.reload ?? signalEntrypoint;
@@ -152,15 +129,13 @@ export function createEgressApi(options: EgressApiOptions = {}): Handler {
     }
 
     if (pathname === BLACKLIST_DOMAINS_PATH && method === 'POST') {
+      // Read outside the try: a body past the cap is not malformed JSON, and
+      // the shared error tail is what answers it - for both sidecars alike.
+      const raw = await readBody(req);
       let domain: string | undefined;
       try {
-        ({ domain } = JSON.parse(
-          await readBody(req)
-        ) as Partial<BlacklistAddRequest>);
-      } catch (err) {
-        if (err instanceof BodyTooLarge) {
-          return sendJson(res, 413, { error: err.message });
-        }
+        ({ domain } = JSON.parse(raw) as Partial<BlacklistAddRequest>);
+      } catch {
         return sendJson(res, 400, { error: 'Invalid JSON body' });
       }
       if (typeof domain !== 'string' || domain.trim() === '') {
@@ -193,10 +168,5 @@ export function createEgressApi(options: EgressApiOptions = {}): Handler {
     return sendJson(res, 404, { error: 'Not found' });
   };
 
-  return (req, res) => {
-    handle(req, res).catch(err => {
-      if (!res.headersSent) sendJson(res, 500, { error: errorMessage(err) });
-      else res.end();
-    });
-  };
+  return withErrorTail(handle);
 }

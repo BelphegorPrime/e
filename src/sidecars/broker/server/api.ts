@@ -40,7 +40,15 @@ import type {
   StatusResponse,
 } from '../contract/types.js';
 
-import { errorMessage } from '../../../shared/utils/errors.js';
+import {
+  decodeSegment,
+  readBody,
+  withErrorTail,
+  writeJson,
+  type JsonSender,
+  type SidecarHandler,
+} from '../../http.js';
+
 export interface BrokerApiOptions {
   /** The spool directory (the bind mount inside the container). */
   spoolDir: string;
@@ -52,47 +60,23 @@ export interface BrokerApiOptions {
   eventsHeartbeatMs?: number;
 }
 
-type Handler = (req: IncomingMessage, res: ServerResponse) => void;
-
 const STATUS_EVENTS_PATH = '/status/events';
 const STATUS_ONE_RE = /^\/status\/([^/]+)$/;
 const MERGE_ONE_RE = /^\/merge\/([^/]+)$/;
 const CANCEL_ONE_RE = /^\/cancel\/([^/]+)$/;
-/** A spawn request is one agent name and one prompt; anything bigger is abuse. */
-const MAX_BODY_BYTES = 64 * 1024;
 
-class BodyTooLarge extends Error {}
+/** Every body the broker's routes can answer with. */
+type BrokerResponseBody =
+  | SpawnAccepted
+  | MergeSignalAccepted
+  | CancelAccepted
+  | StatusResponse
+  | SiblingRecord
+  | ErrorResponse
+  | { status: 'ok' };
 
-function sendJson(
-  res: ServerResponse,
-  status: number,
-  body:
-    | SpawnAccepted
-    | MergeSignalAccepted
-    | CancelAccepted
-    | StatusResponse
-    | SiblingRecord
-    | ErrorResponse
-    | { status: 'ok' }
-): void {
-  res.writeHead(status, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk: Buffer | string) => {
-      body += chunk;
-      if (body.length > MAX_BODY_BYTES) {
-        req.destroy();
-        reject(new BodyTooLarge('Request body too large'));
-      }
-    });
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
-}
+/** The shared JSON writer, pinned to this API's contract. */
+const sendJson: JsonSender<BrokerResponseBody> = writeJson;
 
 /**
  * Validates a `POST /spawn` body purely: both fields present, non-blank
@@ -120,17 +104,8 @@ export function parseSpawnBody(
   return { ok: true, body: { agent: agent.trim(), prompt: prompt.trim() } };
 }
 
-/** Decodes a path segment; `null` for malformed percent-escapes (a URIError). */
-function decodeSegment(segment: string): string | null {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return null;
-  }
-}
-
 /** Builds the request handler; `http.createServer(createBrokerApi({ spoolDir }))`. */
-export function createBrokerApi(options: BrokerApiOptions): Handler {
+export function createBrokerApi(options: BrokerApiOptions): SidecarHandler {
   const { spoolDir } = options;
   const now = options.now ?? (() => new Date());
 
@@ -285,14 +260,5 @@ export function createBrokerApi(options: BrokerApiOptions): Handler {
     return sendJson(res, 404, { error: 'Not found.' });
   };
 
-  return (req, res) => {
-    handle(req, res).catch(err => {
-      if (res.headersSent) return;
-      if (err instanceof BodyTooLarge) {
-        sendJson(res, 413, { error: err.message });
-      } else {
-        sendJson(res, 500, { error: errorMessage(err) });
-      }
-    });
-  };
+  return withErrorTail(handle);
 }

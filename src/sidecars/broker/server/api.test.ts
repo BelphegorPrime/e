@@ -144,10 +144,11 @@ test('broker api: an oversized body is refused with 413', async () => {
     const res = await post(
       broker.url,
       JSON.stringify({ agent: 'a', prompt: 'x'.repeat(70 * 1024) })
-    ).catch(() => undefined);
-    // The server destroys the socket after 64 KiB; depending on timing the
-    // client sees the 413 or a reset connection. Either way nothing is spooled.
-    if (res) assert.equal(res.status, 413);
+    );
+    // The status now always arrives: the shared reader stops at 64 KiB but
+    // leaves the socket up until the 413 has flushed (it used to destroy the
+    // request first, and the client only ever saw the reset).
+    assert.equal(res.status, 413);
     assert.equal(fs.existsSync(path.join(broker.spoolDir, 'requests')), false);
   } finally {
     await broker.close();
