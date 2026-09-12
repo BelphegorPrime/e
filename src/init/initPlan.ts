@@ -99,6 +99,12 @@ export interface InitState {
   currentMaxSiblings: number;
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
+  /**
+   * `-f/--force`: downgrade every never-clobber rule to an unconditional
+   * overwrite, so re-running init replaces hand-edited files instead of
+   * keeping them and showing a diff.
+   */
+  force?: boolean;
 }
 
 /** Raw wizard answers; the planner resolves blanks and keeps configured values. */
@@ -190,7 +196,9 @@ export interface InitPlan {
  * is decided here and asserted by tests; the executor only applies {@link InitWrite}
  * specs and logs. Re-init subtlety: `.env` sections are appended, not rewritten,
  * and `applyEnvValues` fills blank `KEY=` lines only, so a hand-edited or
- * already-seeded `.env` survives untouched.
+ * already-seeded `.env` survives untouched. `--force` (InitState.force) opts
+ * out of every never-clobber rule: all writes become unconditional overwrites
+ * and the `.env` re-renders from the canonical template.
  */
 export function planInit(state: InitState, answers: InitAnswers): InitPlan {
   const {
@@ -203,6 +211,10 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
   } = state;
   // The wizard's TUI or readline prompt may override the install directory.
   const root = answers.root ?? stateRoot;
+  // `--force` turns every never-clobber write into an unconditional overwrite;
+  // the resolved rule rides inside each plan write so the executor stays a
+  // pure apply step. `.env` forces a canonical re-render (see buildEnvWrite).
+  const clobberRule: InitWrite['clobber'] = state.force ? 'always' : 'never';
   const existingValues = state.existingEnvContent
     ? parseDotenv(state.existingEnvContent)
     : {};
@@ -259,13 +271,13 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
           directory: harnessDir(harness.name, root),
           file: dockerfilePath(harness.name, root),
           content: renderDockerfile(harness.dockerfile),
-          clobber: 'never',
+          clobber: clobberRule,
         },
         {
           directory: agentDir(harness.name, root),
           file: agentFilePath(harness.name, root),
           content: renderDefaultAgent(harness.name, fullEnv),
-          clobber: 'never',
+          clobber: clobberRule,
         },
       ],
     });
@@ -280,7 +292,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
         directory: dir,
         file: path.join(dir, fileName),
         content,
-        clobber: 'never',
+        clobber: clobberRule,
       });
     }
   }
@@ -293,7 +305,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
         directory: path.dirname(file),
         file,
         content,
-        clobber: 'never',
+        clobber: clobberRule,
       });
     }
   }
@@ -312,7 +324,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       directory: egressCtx,
       file: path.join(egressCtx, fileName),
       content,
-      clobber: 'never',
+      clobber: clobberRule,
     });
   }
   // The two host-editable policy files compose bind-mounts into the egress
@@ -323,14 +335,14 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     directory: path.dirname(egressBlacklistFile),
     file: egressBlacklistFile,
     content: egressFiles[EGRESS_FILES.blacklistExample],
-    clobber: 'never',
+    clobber: clobberRule,
   });
   const egressIptablesFile = egressIptablesPath(root);
   egressWrites.push({
     directory: path.dirname(egressIptablesFile),
     file: egressIptablesFile,
     content: egressFiles[EGRESS_FILES.iptablesExample],
-    clobber: 'never',
+    clobber: clobberRule,
   });
   steps.push({ kind: 'writes', writes: egressWrites });
 
@@ -343,7 +355,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       directory: brokerCtx,
       file: path.join(brokerCtx, fileName),
       content,
-      clobber: 'never' as const,
+      clobber: clobberRule,
     })
   );
   steps.push({ kind: 'writes', writes: brokerWrites });
@@ -376,7 +388,12 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
 
   return {
     steps,
-    env: buildEnvWrite(root, state.existingEnvContent, fullEnv),
+    env: buildEnvWrite(
+      root,
+      state.existingEnvContent,
+      fullEnv,
+      state.force ?? false
+    ),
     config: {
       defaultHarness,
       models,
@@ -459,13 +476,17 @@ function resolveGitPlatform(
  * template (with the e-net section) and every collected value replaces the
  * template's placeholder for that key; an existing file gains only the
  * sections it lacks, and collected values fill blank `KEY=` lines only, so a
- * hand-edited `.env` is never clobbered. The `created`/`changed` outcome tells
- * the executor whether to write or report the file up to date.
+ * hand-edited `.env` is never clobbered. With `force` an existing file also
+ * re-renders from the canonical template (collected/hand-set values are
+ * preserved, ordering and header reset), honoring `-f`'s overwrite promise.
+ * The `created`/`changed` outcome tells the executor whether to write or
+ * report the file up to date.
  */
 function buildEnvWrite(
   root: string | undefined,
   existingContent: string | undefined,
-  envValues: Record<string, string>
+  envValues: Record<string, string>,
+  force: boolean
 ): InitPlan['env'] {
   const file = envFilePath(root);
   const sections = [
@@ -476,7 +497,7 @@ function buildEnvWrite(
   ];
 
   let content: string;
-  if (existingContent === undefined) {
+  if (existingContent === undefined || force) {
     // The template pre-fills the two global keys with local-stack defaults;
     // a key the user just typed must win over that placeholder.
     content = applyEnvValues(
@@ -484,6 +505,22 @@ function buildEnvWrite(
       envValues,
       { overwrite: true }
     );
+    if (existingContent !== undefined) {
+      // A hand-added key the template does not model would vanish on the
+      // canonical re-render; append it so `--force` replaces structure but
+      // never a configured value.
+      const present = new Set(
+        [...content.matchAll(/^([A-Za-z_][A-Za-z0-9_]*)=/gm)].map(m => m[1])
+      );
+      const extras = Object.entries(envValues).filter(
+        ([key]) => !present.has(key)
+      );
+      if (extras.length > 0) {
+        content = content.endsWith('\n') ? content : content + '\n';
+        content +=
+          extras.map(([key, value]) => `${key}=${value}`).join('\n') + '\n';
+      }
+    }
   } else {
     const missing = sections.filter(
       section => !existingContent.includes(`# --- ${section.name} ---`)
