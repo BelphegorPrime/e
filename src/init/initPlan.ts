@@ -93,6 +93,8 @@ export interface InitState {
   gitPlatforms: GitPlatform[];
   /** The configured git platform, kept when a re-init doesn't change it (`--yes`). */
   currentGitPlatform?: GitPlatform;
+  /** The configured sibling-artifact allowlist (ADR-0013), kept as is by a re-init. */
+  currentSiblingArtifacts: string[];
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
 }
@@ -163,6 +165,7 @@ export interface InitPlan {
     models: string[];
     localRuntimes: LocalRuntime[];
     gitPlatform?: GitPlatform;
+    siblingArtifacts: string[];
   };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
@@ -371,7 +374,15 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
   return {
     steps,
     env: buildEnvWrite(root, state.existingEnvContent, fullEnv),
-    config: { defaultHarness, models, localRuntimes, gitPlatform },
+    config: {
+      defaultHarness,
+      models,
+      localRuntimes,
+      gitPlatform,
+      // Not asked by the wizard; edited by hand in config.json, so a re-init
+      // must carry it over rather than reset it.
+      siblingArtifacts: state.currentSiblingArtifacts,
+    },
     defaultHarness,
     models,
     localRuntimes,

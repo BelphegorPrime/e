@@ -5,6 +5,8 @@ import type {
 } from '../runtime/index.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /*
  * Test doubles for the run orchestrator, shared by the fake-driven and the
@@ -133,3 +135,21 @@ export const demoHarness: Harness = {
 
 /** The default agent for the demo harness (name mirrors the harness). */
 export const demoAgent: Agent = { name: 'demo', harness: 'demo' };
+
+/**
+ * Seeds a parent worktree with a realistic `node_modules` (a package, a
+ * relative `.bin` symlink) plus the things that must never travel into a
+ * sibling: an env file and git metadata inside the tree, an env file at the
+ * top. Leaves the top-level `.git` alone (a real worktree has one).
+ */
+export function seedParentArtifacts(parentWorktree: string): void {
+  const nm = path.join(parentWorktree, 'node_modules');
+  fs.mkdirSync(path.join(nm, 'pkg'), { recursive: true });
+  fs.writeFileSync(path.join(nm, 'pkg', 'index.js'), 'module.exports = 1;\n');
+  fs.mkdirSync(path.join(nm, '.bin'));
+  fs.symlinkSync('../pkg/index.js', path.join(nm, '.bin', 'tool'));
+  fs.writeFileSync(path.join(nm, 'pkg', '.env'), 'SECRET=1\n');
+  fs.mkdirSync(path.join(nm, '.git'));
+  fs.writeFileSync(path.join(nm, '.git', 'HEAD'), 'ref\n');
+  fs.writeFileSync(path.join(parentWorktree, '.env'), 'TOP=secret\n');
+}

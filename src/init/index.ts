@@ -85,6 +85,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
     currentGitPlatform: config.gitPlatform,
+    currentSiblingArtifacts: config.siblingArtifacts,
     hardware: detectHardware(),
   };
 

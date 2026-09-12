@@ -25,6 +25,7 @@ function state(overrides: Partial<InitState> = {}): InitState {
     currentDefaultHarness: 'pi',
     currentModels: [],
     currentLocalRuntimes: ['llamacpp'],
+    currentSiblingArtifacts: ['node_modules'],
     existingEnvContent: undefined,
     runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
@@ -45,6 +46,7 @@ test('planInit: blank or unanswered answers keep the configured current', () => 
     models: [],
     localRuntimes: ['llamacpp'],
     gitPlatform: undefined,
+    siblingArtifacts: ['node_modules'],
   });
 });
 
@@ -116,6 +118,7 @@ test('planInit: a named git platform is recorded in the config', () => {
     models: [],
     localRuntimes: ['llamacpp'],
     gitPlatform: 'gitlab',
+    siblingArtifacts: ['node_modules'],
   });
 });
 
@@ -352,4 +355,21 @@ test('planInit: seeds the runtime-broker build context (never clobbered)', () =>
   for (const write of brokerStep.writes) {
     assert.equal(write.clobber, 'never');
   }
+});
+
+test('planInit: config.json carries the configured sibling artifacts, defaulting to node_modules', () => {
+  assert.deepEqual(planInit(state(), {}).config.siblingArtifacts, [
+    'node_modules',
+  ]);
+  assert.deepEqual(
+    planInit(state({ currentSiblingArtifacts: ['node_modules', 'dist'] }), {})
+      .config.siblingArtifacts,
+    ['node_modules', 'dist']
+  );
+  // An explicitly empty list (sync disabled) survives a re-init too.
+  assert.deepEqual(
+    planInit(state({ currentSiblingArtifacts: [] }), {}).config
+      .siblingArtifacts,
+    []
+  );
 });

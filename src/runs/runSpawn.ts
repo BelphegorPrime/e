@@ -21,6 +21,12 @@ import { ProductionPullRequestManager } from './runPrManager.js';
 import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
 import { runRoleInstructions, type RunRole } from './runRole.js';
 import {
+  artifactsDirFor,
+  removeArtifacts,
+  syncArtifacts,
+} from './runArtifacts.js';
+import { log } from '../utils/log.js';
+import {
   brokerSidecarSpec,
   brokerSpoolDirFor,
   prepareBrokerSpool,
@@ -80,6 +86,13 @@ export interface ParentRun {
   worktreePath: string;
   /** The parent's run branch (`e/<agent>/<slug>-N`), named in the checkpoint commit. */
   branch: string;
+  /**
+   * Build artifacts to copy from the parent worktree into the sibling's
+   * container: the store's `siblingArtifacts` (`config.json`, default
+   * `node_modules`). `.env` and `.git` are never copied whatever is listed
+   * (ADR-0002); an empty list syncs nothing.
+   */
+  artifacts: readonly string[];
 }
 
 /** Full parameters for a runSpawn call. */
@@ -180,7 +193,9 @@ export async function runSpawn(
   let network: string | undefined;
   let openedNetwork = false;
   let startedSpecs: SidecarSpec[] = [];
-  let brokerSpool: string | undefined;
+  // Host-side scratch a run leaves behind (a sibling's synced artifacts, the
+  // broker spool); removed at teardown unless the worktree is kept too.
+  const scratch: Array<() => void> = [];
 
   try {
     const slug = params.name ?? slugify(params.prompt);
@@ -195,6 +210,38 @@ export async function runSpawn(
     ({ branch } = await branchNamer.nextBranch(params.agent, slug, base));
     worktreePath = worktreePathFor(worktreesDir, branch);
     const runName = branch.replace(/\//g, '-');
+
+    // Artifact sync (ADR-0013): the sibling's worktree holds only committed
+    // state, so the parent's gitignored build artifacts are copied into a
+    // scratch dir now - after the worktree exists, before the container
+    // starts - and bind-mounted at the same /workspace paths below. Never
+    // into the worktree itself, so they can never land in the branch.
+    const artifactMounts: Mount[] = [];
+    if (params.parent) {
+      const artifactsDir = artifactsDirFor(worktreesDir, runName);
+      scratch.push(() => removeArtifacts(artifactsDir));
+      const synced = syncArtifacts({
+        parentWorktree: params.parent.worktreePath,
+        targetDir: artifactsDir,
+        entries: params.parent.artifacts,
+      });
+      if (synced.copied.length > 0) {
+        log.debug(
+          `Synced ${synced.copied.join(', ')} from ${params.parent.branch} into ${runName}`
+        );
+      }
+      for (const entry of synced.refused) {
+        log.warn(
+          `Not syncing "${entry}" into ${runName}: not a real path inside the parent worktree`
+        );
+      }
+      for (const failure of synced.failed) {
+        log.warn(
+          `Could not sync "${failure.entry}" into ${runName} (${failure.error}); the sibling can regenerate it`
+        );
+      }
+      artifactMounts.push(...synced.mounts);
+    }
 
     // Prepare sidecar specs. With the local stack present, sidecars join the
     // shared egress namespace like the agent does (ADR-0011), so their traffic
@@ -218,7 +265,8 @@ export async function runSpawn(
     // owns its spool: the run's identity goes in before the broker starts, the
     // broker spools sibling requests there, and the directory goes with the run.
     if (params.broker) {
-      brokerSpool = brokerSpoolDirFor(worktreesDir, runName);
+      const brokerSpool = brokerSpoolDirFor(worktreesDir, runName);
+      scratch.push(() => removeBrokerSpool(brokerSpool));
       prepareBrokerSpool(brokerSpool, {
         name: runName,
         branch,
@@ -291,6 +339,7 @@ export async function runSpawn(
       networks: joinedNetworks,
       volumes: [
         { host: worktreePath, container: '/workspace' },
+        ...artifactMounts,
         ...(params.configMounts ?? []),
       ],
       workdir: '/workspace',
@@ -369,8 +418,8 @@ export async function runSpawn(
       if (openedNetwork) {
         await networkManager.removeNetwork(network as string);
       }
-      if (brokerSpool && !params.keepWorktree) {
-        removeBrokerSpool(brokerSpool);
+      if (!params.keepWorktree) {
+        for (const dispose of scratch) dispose();
       }
       if (
         worktreePath &&

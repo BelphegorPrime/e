@@ -27,6 +27,7 @@ import {
   demoAgent,
   demoHarness,
   makeSleep,
+  seedParentArtifacts,
 } from './runSpawn.testSupport.js';
 import { defaultBrokerPlan } from './runBroker.js';
 
@@ -918,6 +919,7 @@ test('an MCP sidecar that never becomes ready is reported by its alias', async (
 const parent = {
   worktreePath: '/wt/e-demo-parent-1',
   branch: 'e/demo/parent-1',
+  artifacts: ['node_modules'],
 };
 
 test('a sibling checkpoints a dirty parent worktree, then branches from that commit', async () => {
@@ -966,4 +968,103 @@ test('without a parent the run branches from the host HEAD and reports it as bas
   const result = await runSpawn(deps, makeParams());
   assert.equal(git.worktrees[0].base, 'basesha');
   assert.equal(result.base, 'basesha');
+});
+
+// Artifact sync (ticket 05): the parent's gitignored build artifacts reach the
+// sibling's container as bind mounts from a scratch dir, never its worktree.
+function withParentWorktree<T>(
+  fn: (parentWorktree: string, worktreesDir: string) => Promise<T>
+): Promise<T> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-run-artifacts-'));
+  const parentWorktree = path.join(root, 'parent');
+  fs.mkdirSync(parentWorktree);
+  seedParentArtifacts(parentWorktree);
+  const worktreesDir = path.join(root, 'wt');
+  return fn(parentWorktree, worktreesDir).finally(() =>
+    fs.rmSync(root, { recursive: true, force: true })
+  );
+}
+
+test("a sibling's container mounts the parent's node_modules from a scratch copy, right after the worktree", async () => {
+  await withParentWorktree(async (parentWorktree, worktreesDir) => {
+    const { deps, git, runtime } = makeDeps();
+    await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        role: 'child',
+        keepWorktree: true,
+        parent: {
+          worktreePath: parentWorktree,
+          branch: 'e/demo/parent-1',
+          artifacts: ['node_modules'],
+        },
+      })
+    );
+    const slug = slugify('Fix the flaky test');
+    const copy = path.join(
+      worktreesDir,
+      '.artifacts',
+      `e-demo-${slug}-1`,
+      'node_modules'
+    );
+    assert.deepEqual(runtime.options?.volumes, [
+      { host: git.worktrees[0].path, container: '/workspace' },
+      { host: copy, container: '/workspace/node_modules' },
+    ]);
+    assert.equal(
+      fs.readFileSync(path.join(copy, 'pkg', 'index.js'), 'utf8'),
+      'module.exports = 1;\n'
+    );
+  });
+});
+
+test('the artifact copy goes with the run; .env is never synced even when listed', async () => {
+  await withParentWorktree(async (parentWorktree, worktreesDir) => {
+    const { deps, runtime } = makeDeps();
+    await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        role: 'child',
+        parent: {
+          worktreePath: parentWorktree,
+          branch: 'e/demo/parent-1',
+          artifacts: ['.env', 'node_modules'],
+        },
+      })
+    );
+    assert.deepEqual(
+      runtime.options?.volumes?.map(v => v.container),
+      ['/workspace', '/workspace/node_modules']
+    );
+    assert.equal(fs.existsSync(path.join(worktreesDir, '.artifacts')), true);
+    assert.equal(
+      fs.readdirSync(path.join(worktreesDir, '.artifacts')).length,
+      0,
+      'the run scratch copy is removed at teardown'
+    );
+  });
+});
+
+test('an empty allowlist syncs nothing', async () => {
+  await withParentWorktree(async (parentWorktree, worktreesDir) => {
+    const { deps, runtime } = makeDeps();
+    await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        role: 'child',
+        parent: {
+          worktreePath: parentWorktree,
+          branch: 'e/demo/parent-1',
+          artifacts: [],
+        },
+      })
+    );
+    assert.deepEqual(
+      runtime.options?.volumes?.map(v => v.container),
+      ['/workspace']
+    );
+  });
 });

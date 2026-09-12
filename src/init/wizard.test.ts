@@ -26,6 +26,7 @@ function state(): InitState {
     currentDefaultHarness: WIZARD_STATE.currentHarness,
     currentModels: WIZARD_STATE.currentModels,
     currentLocalRuntimes: WIZARD_STATE.currentLocalRuntimes,
+    currentSiblingArtifacts: ['node_modules'],
     existingEnvContent: undefined,
     runtimeCatalogs: WIZARD_STATE.runtimeCatalogs,
     gitPlatforms: [...GIT_PLATFORMS] as const,

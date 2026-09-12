@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 shipped (2026-09-12): the HTTP surface (`POST /spawn` -> `202 {id}`, `GET /status`) and the spool exist; what remains here is the host side that consumes `requests/`, assigns the sibling branch, enforces depth and cap, and writes `status/`.
 
-**Notes from 03/04:** call `runSpawn` with `parent: { worktreePath, branch }` and `role: 'child'`; the checkpoint happens inside. Decide whether a sibling pushes / opens a PR (today it would target the host's current branch). The parent keeps editing while the host checkpoints, so a request may snapshot a half-written file; 07's merge-back reconciles.
+**Notes from 03/04:** call `runSpawn` with `parent: { worktreePath, branch, artifacts: readConfig(root).siblingArtifacts }` and `role: 'child'`; the checkpoint (04) and the artifact sync (05) happen inside. Decide whether a sibling pushes / opens a PR (today it would target the host's current branch). The parent keeps editing while the host checkpoints, so a request may snapshot a half-written file; 07's merge-back reconciles.
 
 **Status:** blocked
 

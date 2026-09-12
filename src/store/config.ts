@@ -32,6 +32,12 @@ export const GIT_PLATFORMS: readonly GitPlatform[] = [
   'gitea',
 ];
 
+/**
+ * The sibling-artifact allowlist when `config.json` sets none (ADR-0013):
+ * the parent's `node_modules` travels into a sibling's container.
+ */
+export const DEFAULT_SIBLING_ARTIFACTS: readonly string[] = ['node_modules'];
+
 /** Host-only orchestration settings, persisted in `config.json`. */
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
@@ -42,6 +48,13 @@ export type StoreConfig = {
   localRuntimes: LocalRuntime[];
   /** Git platform for PR/MR creation after successful runs. */
   gitPlatform?: GitPlatform;
+  /**
+   * Build artifacts copied from a parent worktree into a sibling run's
+   * container (ADR-0013), as paths relative to the worktree; default
+   * `node_modules`. `.env` and `.git` are never copied whatever is listed.
+   * An empty list disables the sync.
+   */
+  siblingArtifacts: string[];
 };
 
 export type ModelDataEntry = {
@@ -78,7 +91,18 @@ export function resolveConfig(raw: unknown): StoreConfig {
     GIT_PLATFORMS.includes(parsed.gitPlatform as GitPlatform)
       ? parsed.gitPlatform
       : undefined;
-  return { defaultHarness, models, localRuntimes, gitPlatform };
+  const siblingArtifacts =
+    Array.isArray(parsed.siblingArtifacts) &&
+    parsed.siblingArtifacts.every(entry => typeof entry === 'string')
+      ? parsed.siblingArtifacts
+      : [...DEFAULT_SIBLING_ARTIFACTS];
+  return {
+    defaultHarness,
+    models,
+    localRuntimes,
+    gitPlatform,
+    siblingArtifacts,
+  };
 }
 
 /**

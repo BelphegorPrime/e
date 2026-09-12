@@ -12,11 +12,13 @@ import {
   demoAgent,
   demoHarness,
   makeSleep,
+  seedParentArtifacts,
 } from './runSpawn.testSupport.js';
 
-// The checkpoint of ADR-0013 (ticket 04), end to end against real git: the
-// orchestrator with the real `HostGit` and a fake container runtime. HostGit
-// resolves the repo from cwd, so the test chdirs into a throwaway repo.
+// A sibling run end to end against real git - the checkpoint (ticket 04) and
+// the artifact sync (ticket 05) of ADR-0013: the orchestrator with the real
+// `HostGit` and a fake container runtime. HostGit resolves the repo from cwd,
+// so the test chdirs into a throwaway repo.
 
 test('end to end: a dirty parent worktree is checkpointed and the sibling starts from that snapshot', async () => {
   const repo = initRepo('e-checkpoint-repo-');
@@ -36,9 +38,15 @@ test('end to end: a dirty parent worktree is checkpointed and the sibling starts
       branch: parentBranch,
       base: 'main',
     });
-    // ... with the parent agent's work in progress, uncommitted.
+    // ... with the parent agent's work in progress, uncommitted, and its
+    // gitignored build artifacts and secrets, which git never carries over.
+    fs.writeFileSync(
+      path.join(parentWorktree, '.gitignore'),
+      'node_modules\n.env\n'
+    );
     fs.writeFileSync(path.join(parentWorktree, 'wip.txt'), 'half done\n');
     fs.appendFileSync(path.join(parentWorktree, 'base.txt'), 'parent edit\n');
+    seedParentArtifacts(parentWorktree);
     assert.equal(host.isDirty(parentWorktree), true);
     const parentTipBefore = host.headSha(parentWorktree);
 
@@ -55,7 +63,11 @@ test('end to end: a dirty parent worktree is checkpointed and the sibling starts
         worktreesDir,
         keepWorktree: true,
         role: 'child',
-        parent: { worktreePath: parentWorktree, branch: parentBranch },
+        parent: {
+          worktreePath: parentWorktree,
+          branch: parentBranch,
+          artifacts: ['node_modules', '.env'],
+        },
       }
     );
     assert.equal(result.ran, true);
@@ -95,11 +107,33 @@ test('end to end: a dirty parent worktree is checkpointed and the sibling starts
     );
     // The host's own HEAD (main) was not the base and is untouched.
     assert.equal(git(repo, 'rev-parse', 'main'), parentTipBefore);
-    // The sibling's container was pointed at the sibling's worktree.
-    assert.deepEqual(runtime.options?.volumes?.[0], {
-      host: siblingWorktree,
-      container: '/workspace',
-    });
+    // The sibling's container was pointed at the sibling's worktree, with the
+    // parent's node_modules mounted in from a scratch copy (ticket 05). The sync
+    // wrote nothing into the worktree (at run time the engine adds an empty
+    // mountpoint dir there, which git ignores); the copy keeps .bin links
+    // relative, and .env never travels even though it was listed.
+    const artifactsCopy = path.join(
+      worktreesDir,
+      '.artifacts',
+      `e-demo-${slugify(prompt)}-1`
+    );
+    assert.deepEqual(runtime.options?.volumes, [
+      { host: siblingWorktree, container: '/workspace' },
+      {
+        host: path.join(artifactsCopy, 'node_modules'),
+        container: '/workspace/node_modules',
+      },
+    ]);
+    assert.equal(
+      fs.existsSync(path.join(siblingWorktree, 'node_modules')),
+      false
+    );
+    assert.equal(
+      fs.readlinkSync(path.join(artifactsCopy, 'node_modules', '.bin', 'tool')),
+      '../pkg/index.js'
+    );
+    assert.equal(fs.existsSync(path.join(artifactsCopy, '.env')), false);
+    assert.equal(fs.existsSync(path.join(siblingWorktree, '.env')), false);
   } finally {
     process.chdir(originalCwd);
     fs.rmSync(worktreesDir, { recursive: true, force: true });

@@ -88,6 +88,7 @@ test('resolveConfig: a missing config yields the built-in defaults', () => {
     defaultHarness: DEFAULT_HARNESS,
     models: MODELS,
     localRuntimes: ['llamacpp'],
+    siblingArtifacts: ['node_modules'],
     gitPlatform: undefined,
   });
 });
@@ -97,6 +98,7 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
     defaultHarness: 'codex',
     models: MODELS,
     localRuntimes: ['llamacpp'],
+    siblingArtifacts: ['node_modules'],
     gitPlatform: undefined,
   });
 });
@@ -155,6 +157,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
         models: ['org/one'],
         localRuntimes: ['llamacpp'],
         gitPlatform: 'gitlab',
+        siblingArtifacts: ['node_modules', 'dist'],
       },
       root
     );
@@ -164,6 +167,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
       models: ['org/one'],
       localRuntimes: ['llamacpp'],
       gitPlatform: 'gitlab',
+      siblingArtifacts: ['node_modules', 'dist'],
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -177,6 +181,7 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
       defaultHarness: DEFAULT_HARNESS,
       models: MODELS,
       localRuntimes: ['llamacpp'],
+      siblingArtifacts: ['node_modules'],
       gitPlatform: undefined,
     });
     assert.ok(!fs.existsSync(configFilePath(root)));
@@ -261,4 +266,25 @@ test('isEgressInitialized: true only after the egress Dockerfile exists', () => 
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('resolveConfig: siblingArtifacts is kept as configured (an empty list disables the sync), malformed falls back', () => {
+  assert.deepEqual(
+    resolveConfig({
+      siblingArtifacts: ['node_modules', 'packages/app/node_modules'],
+    }).siblingArtifacts,
+    ['node_modules', 'packages/app/node_modules']
+  );
+  assert.deepEqual(
+    resolveConfig({ siblingArtifacts: [] }).siblingArtifacts,
+    []
+  );
+  assert.deepEqual(
+    resolveConfig({ siblingArtifacts: 'node_modules' }).siblingArtifacts,
+    ['node_modules']
+  );
+  assert.deepEqual(
+    resolveConfig({ siblingArtifacts: ['ok', 42] }).siblingArtifacts,
+    ['node_modules']
+  );
 });
