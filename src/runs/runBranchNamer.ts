@@ -4,10 +4,11 @@ import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
 
 /** Clean seam for run branch naming and collision resolution. */
 export interface BranchNamer {
-  /** Generate the next available branch name for a run. */
+  /** Cut the next available run branch from `base`, creating its worktree. */
   nextBranch(
     agent: Agent,
     slug: string,
+    base: string,
     maxAttempts?: number
   ): Promise<{ branch: string; counter: number }>;
 }
@@ -22,6 +23,7 @@ export class ProductionBranchNamer implements BranchNamer {
   async nextBranch(
     agent: Agent,
     slug: string,
+    base: string,
     maxAttempts = 50
   ): Promise<{ branch: string; counter: number }> {
     const prefix = `e/${agent.name}/${slug}`;
@@ -34,7 +36,7 @@ export class ProductionBranchNamer implements BranchNamer {
         this.git.addWorktree({
           path: worktreePathFor(this.worktreesDir, branch),
           branch,
-          base: this.git.headSha(),
+          base,
         });
         return { branch, counter };
       } catch (err) {

@@ -68,6 +68,20 @@ export interface RunSpawnDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/**
+ * The run a sibling is requested from (ADR-0013). Its worktree is the live
+ * `/workspace` of a running agent; before the sibling branches off, the host
+ * commits whatever is uncommitted there (the **checkpoint**), so the sibling
+ * starts from exactly what the parent sees - ADR-0001 worktrees only carry
+ * committed state. No agent action is involved.
+ */
+export interface ParentRun {
+  /** Host path of the parent's worktree. */
+  worktreePath: string;
+  /** The parent's run branch (`e/<agent>/<slug>-N`), named in the checkpoint commit. */
+  branch: string;
+}
+
 /** Full parameters for a runSpawn call. */
 export interface RunSpawnParams {
   name?: string;
@@ -91,6 +105,11 @@ export interface RunSpawnParams {
   role?: RunRole;
   /** The runtime-broker sidecar to bring up with the run (ADR-0013), if planned. */
   broker?: BrokerPlan;
+  /**
+   * Present for a sibling run: the parent whose worktree is checkpointed and
+   * whose branch tip the sibling branches from, instead of the host's HEAD.
+   */
+  parent?: ParentRun;
 }
 
 /** Orchestrated run output. */
@@ -99,11 +118,37 @@ export interface RunSpawnResult {
   exitCode: number;
   captured?: boolean;
   branch?: string;
+  /** The commit the run branched from (a checkpoint sha for a sibling). */
+  base?: string;
   pushed?: boolean;
   pushWarning?: string;
   pullRequestUrl?: string;
   pullRequestWarning?: string;
   error?: string;
+}
+
+/**
+ * The checkpoint of ADR-0013: commit the parent worktree's uncommitted work on
+ * its own branch (host-side, no agent involvement) and return the tip the
+ * sibling branches from. A clean parent needs no commit; its tip is the base.
+ */
+function checkpointParent(git: Git, parent: ParentRun, slug: string): string {
+  if (git.isDirty(parent.worktreePath)) {
+    try {
+      git.commitAll(
+        parent.worktreePath,
+        `e: checkpoint ${parent.branch} before spawning ${slug}`
+      );
+    } catch (err) {
+      // Nothing of the sibling exists yet; the parent keeps its work (staged
+      // by the attempt) and the request fails with the reason attached.
+      throw new Error(
+        `Could not checkpoint ${parent.branch} before spawning ${slug}: ${(err as Error).message}`,
+        { cause: err }
+      );
+    }
+  }
+  return git.headSha(parent.worktreePath);
 }
 
 /** Main run spawn orchestrator. Builds production managers from primitives. */
@@ -138,13 +183,16 @@ export async function runSpawn(
   let brokerSpool: string | undefined;
 
   try {
-    // Pin the base to the commit HEAD points at now, before creating the worktree.
-    const base = deps.git.headSha();
-    const baseBranch = deps.git.currentBranch() || 'main';
     const slug = params.name ?? slugify(params.prompt);
+    // Pin the base before creating the worktree: the host's HEAD - or, for a
+    // sibling, the parent worktree's tip once its WIP is checkpointed there.
+    const base = params.parent
+      ? checkpointParent(deps.git, params.parent, slug)
+      : deps.git.headSha();
+    const baseBranch = deps.git.currentBranch() || 'main';
 
     // Generate branch name and create worktree atomically (collision-retry inside the namer).
-    ({ branch } = await branchNamer.nextBranch(params.agent, slug));
+    ({ branch } = await branchNamer.nextBranch(params.agent, slug, base));
     worktreePath = worktreePathFor(worktreesDir, branch);
     const runName = branch.replace(/\//g, '-');
 
@@ -306,6 +354,7 @@ export async function runSpawn(
       exitCode,
       captured,
       branch,
+      base,
       pushed,
       pushWarning,
       pullRequestUrl,

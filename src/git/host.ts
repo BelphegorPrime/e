@@ -23,8 +23,11 @@ export class HostGit implements Git {
     return result.status === 0;
   }
 
-  headSha(): string {
-    return this.capture(['rev-parse', 'HEAD'], 'resolve HEAD').trim();
+  headSha(worktreePath?: string): string {
+    return this.capture(
+      [...(worktreePath ? ['-C', worktreePath] : []), 'rev-parse', 'HEAD'],
+      worktreePath ? `resolve HEAD of ${worktreePath}` : 'resolve HEAD'
+    ).trim();
   }
 
   currentBranch(): string {
@@ -190,12 +193,7 @@ export class HostGit implements Git {
         `git failed (${description}): a merge is already in progress in the worktree (MERGE_HEAD set); conclude or abort it first`
       );
     }
-    const head = () =>
-      this.capture(
-        ['-C', worktreePath, 'rev-parse', 'HEAD'],
-        `resolve HEAD of ${worktreePath}`
-      ).trim();
-    const before = head();
+    const before = this.headSha(worktreePath);
     // `--no-ff`: a merge commit even when a fast-forward were possible, so the
     // sibling's work is one visible node in the parent's history (ADR-0013).
     // It also makes git refuse on *any* staged change, not only on changes
@@ -213,7 +211,7 @@ export class HostGit implements Git {
     if (result.error) throw this.failure(description, result);
     if (result.status === 0) {
       log.command(description);
-      return head() === before
+      return this.headSha(worktreePath) === before
         ? { status: 'up-to-date' }
         : { status: 'merged' };
     }

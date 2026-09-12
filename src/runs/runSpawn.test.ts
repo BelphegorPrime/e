@@ -10,11 +10,6 @@ import type {
   RunRef,
   WorktreeSpec,
 } from '../git/index.js';
-import type {
-  ContainerRunner,
-  RunOptions,
-  SidecarSpec,
-} from '../runtime/index.js';
 import type { PullRequest, PullRequestSpec } from '../github/index.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
@@ -27,6 +22,12 @@ import {
   type SidecarPlan,
 } from './runSpawn.js';
 import { slugify } from '../identity/slugify.js';
+import {
+  FakeRuntime,
+  demoAgent,
+  demoHarness,
+  makeSleep,
+} from './runSpawn.testSupport.js';
 import { defaultBrokerPlan } from './runBroker.js';
 
 /** A `Git` fake that records what the orchestrator asked it to do. */
@@ -55,6 +56,8 @@ class FakeGit implements Git {
   commits: { path: string; message: string }[] = [];
   pushed: string[] = [];
   merges: { worktreePath: string; branch: string; message?: string }[] = [];
+  /** Per-worktree tips: `headSha(path)` answers these; `commitAll(path)` advances them. */
+  worktreeHeads: Record<string, string> = {};
 
   constructor(
     opts: {
@@ -86,9 +89,10 @@ class FakeGit implements Git {
     this.calls.push('isRepo');
     return this.repo;
   }
-  headSha(): string {
+  headSha(worktreePath?: string): string {
     this.calls.push('headSha');
-    return 'basesha';
+    if (worktreePath === undefined) return 'basesha';
+    return this.worktreeHeads[worktreePath] ?? 'wt-tip';
   }
   currentBranch(): string {
     return 'main';
@@ -126,6 +130,7 @@ class FakeGit implements Git {
     this.calls.push('commitAll');
     if (this.commitFails) throw new Error(this.commitFails);
     this.commits.push({ path: worktreePath, message });
+    this.worktreeHeads[worktreePath] = `checkpoint-${this.commits.length}`;
     this.dirty = false;
   }
   hasCommitsBeyondBase(): boolean {
@@ -166,126 +171,8 @@ class FakePullRequest implements PullRequest {
   }
 }
 
-/** A `ContainerRunner` fake that records the run and the group lifecycle. */
-class FakeRuntime implements ContainerRunner {
-  ran = false;
-  image?: string;
-  options?: RunOptions;
-  command?: string[];
-
-  /** Ordered record of every group primitive called, for asserting lifecycle order. */
-  calls: string[] = [];
-  networks: string[] = [];
-  removedNetworks: string[] = [];
-  startedSidecars: SidecarSpec[] = [];
-  removedContainers: string[] = [];
-  sleeps: number[] = [];
-
-  /**
-   * Scripted probe results per container name: an array of booleans consumed one
-   * per `probeTcp` call (last value repeats). Missing name → always true.
-   */
-  tcpScript: Record<string, boolean[]> = {};
-  healthcheckResult = true;
-  /** Container names reported as NOT running afterwards (a mid-run crash). */
-  crashed: Set<string> = new Set();
-  /** When set, the named group op throws (to test fail-fast / best-effort teardown). */
-  throwOn?: {
-    op: 'createNetwork' | 'removeNetwork' | 'removeContainer';
-    message: string;
-  };
-
-  constructor(private exitCode = 0) {}
-
-  async run(
-    image: string,
-    options: RunOptions,
-    command: string[]
-  ): Promise<number> {
-    this.calls.push('run');
-    this.ran = true;
-    this.image = image;
-    this.options = options;
-    this.command = command;
-    return this.exitCode;
-  }
-
-  createNetwork(name: string): void {
-    this.calls.push('createNetwork');
-    if (this.throwOn?.op === 'createNetwork')
-      throw new Error(this.throwOn.message);
-    this.networks.push(name);
-  }
-  removeNetwork(name: string): void {
-    this.calls.push('removeNetwork');
-    if (this.throwOn?.op === 'removeNetwork')
-      throw new Error(this.throwOn.message);
-    this.removedNetworks.push(name);
-  }
-  startSidecar(spec: SidecarSpec): void {
-    this.calls.push('startSidecar');
-    this.startedSidecars.push(spec);
-  }
-  removeContainer(name: string): void {
-    this.calls.push('removeContainer');
-    if (this.throwOn?.op === 'removeContainer')
-      throw new Error(this.throwOn.message);
-    this.removedContainers.push(name);
-  }
-  probedNetworks: string[] = [];
-  probeTcp(network: string, host: string, _port: number): boolean {
-    this.calls.push('probeTcp');
-    this.probedNetworks.push(`${network} ${host}`);
-    const script = this.tcpScript[host];
-    if (!script || script.length === 0) return true;
-    return script.length === 1 ? script[0] : (script.shift() as boolean);
-  }
-  probeHealthcheck(_container: string, _command: string[]): boolean {
-    this.calls.push('probeHealthcheck');
-    return this.healthcheckResult;
-  }
-  isRunning(name: string): boolean {
-    this.calls.push('isRunning');
-    return !this.crashed.has(name);
-  }
-  volumeExists(_volumeName: string): boolean {
-    this.calls.push('volumeExists');
-    return true;
-  }
-  createVolume(_volumeName: string): void {
-    this.calls.push('createVolume');
-  }
-  copyVolumeToDir(_volumeName: string, _hostDir: string): void {
-    this.calls.push('copyVolumeToDir');
-  }
-  copyDirToVolume(
-    _hostDir: string,
-    _volumeName: string,
-    _wipe?: boolean
-  ): void {
-    this.calls.push('copyDirToVolume');
-  }
-}
-
-/** A sleep spy that never actually waits, so readiness polling is instant in tests. */
-function makeSleep(runtime: FakeRuntime): (ms: number) => Promise<void> {
-  return async (ms: number) => {
-    runtime.sleeps.push(ms);
-  };
-}
-
-const harness: Harness = {
-  name: 'demo',
-  imageTag: 'e-harness-demo',
-  dockerfile: { label: 'demo', npmPackage: 'demo' },
-  requiredEnv: [],
-  protocols: [],
-  buildCommand: (prompt: string) => ['demo', '-p', prompt],
-  buildInteractiveCommand: () => ['demo'],
-};
-
-/** The default agent for the demo harness (name mirrors the harness). */
-const agent: Agent = { name: 'demo', harness: 'demo' };
+const harness = demoHarness;
+const agent = demoAgent;
 
 function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
   const git = overrides.git ?? new FakeGit();
@@ -1023,4 +910,60 @@ test('an MCP sidecar that never becomes ready is reported by its alias', async (
   );
   assert.equal(result.ran, false);
   assert.match(result.error ?? '', /Sidecar "everything" did not become ready/);
+});
+
+// A sibling run (ADR-0013) branches from its parent's worktree, not the host's
+// HEAD: the host checkpoints the parent's uncommitted work first, so the
+// sibling starts from exactly what the parent sees (ticket 04).
+const parent = {
+  worktreePath: '/wt/e-demo-parent-1',
+  branch: 'e/demo/parent-1',
+};
+
+test('a sibling checkpoints a dirty parent worktree, then branches from that commit', async () => {
+  const { deps, git, runtime } = makeDeps({
+    git: new FakeGit({ dirty: true }),
+  });
+  const result = await runSpawn(deps, makeParams({ parent, role: 'child' }));
+
+  const slug = slugify('Fix the flaky test');
+  // The checkpoint is the parent's, with a message naming both runs ...
+  assert.deepEqual(git.commits[0], {
+    path: parent.worktreePath,
+    message: `e: checkpoint e/demo/parent-1 before spawning ${slug}`,
+  });
+  // ... and it lands before the sibling's worktree is cut from it.
+  assert.ok(git.calls.indexOf('commitAll') < git.calls.indexOf('addWorktree'));
+  assert.equal(git.worktrees[0].base, 'checkpoint-1');
+  assert.equal(result.base, 'checkpoint-1');
+  // The sibling's container runs against the sibling's worktree, as always.
+  assert.equal(runtime.options?.volumes?.[0].host, git.worktrees[0].path);
+});
+
+test('a clean parent is not committed; the sibling branches from its current tip', async () => {
+  const { deps, git } = makeDeps({ git: new FakeGit({ dirty: false }) });
+  git.worktreeHeads[parent.worktreePath] = 'parent-tip';
+  const result = await runSpawn(deps, makeParams({ parent, role: 'child' }));
+  assert.ok(!git.calls.includes('commitAll'));
+  assert.equal(git.worktrees[0].base, 'parent-tip');
+  assert.equal(result.base, 'parent-tip');
+});
+
+test('a checkpoint that cannot be committed fails the request before anything of the sibling exists', async () => {
+  const { deps, git, runtime } = makeDeps({
+    git: new FakeGit({ dirty: true, commitFails: 'pre-commit hook failed' }),
+  });
+  await assert.rejects(
+    runSpawn(deps, makeParams({ parent, role: 'child' })),
+    /Could not checkpoint e\/demo\/parent-1 before spawning .*: pre-commit hook failed/
+  );
+  assert.equal(git.worktrees.length, 0);
+  assert.equal(runtime.ran, false);
+});
+
+test('without a parent the run branches from the host HEAD and reports it as base', async () => {
+  const { deps, git } = makeDeps();
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(git.worktrees[0].base, 'basesha');
+  assert.equal(result.base, 'basesha');
 });

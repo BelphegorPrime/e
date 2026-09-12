@@ -57,9 +57,9 @@ skill (`e spawn <agent> --skill spawn-brother`, or an agent that bakes it)
 starts the broker next to the agent; the skill's script posts sibling
 requests to it and reads their status. The broker holds no container-runtime
 socket and no credentials: it spools requests into a host-owned directory. The
-host side that picks a request up, checkpoints your worktree, runs the sibling
-and merges its work back (tickets 03-07) is not built yet, so today a request
-stays `requested`. Until that ships, delegation from inside a run means
+host side that picks a request up, runs the sibling and merges its work back
+(tickets 05-07) is not built yet, so today a request stays `requested`; the
+git primitives it will use (`Git.merge`, the checkpoint in `runSpawn`) exist. Until that ships, delegation from inside a run means
 writing the follow-up task down in `/workspace` and exiting 0 (see
 `docs/agents/e.md`, Recursive spawning). The shape:
 

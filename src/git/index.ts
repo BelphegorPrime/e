@@ -8,8 +8,11 @@ export interface Git {
   /** True if `cwd` is inside a git repository. */
   isRepo(): boolean;
 
-  /** The commit SHA that `HEAD` currently points at. */
-  headSha(): string;
+  /**
+   * The commit SHA `HEAD` points at: the host repo's, or - given a path - the
+   * worktree's there (a run branch's tip, e.g. after a checkpoint).
+   */
+  headSha(worktreePath?: string): string;
 
   /** The short name of the branch `HEAD` is currently on, or '' when detached. */
   currentBranch(): string;

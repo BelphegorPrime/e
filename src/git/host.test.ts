@@ -5,26 +5,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { HostGit } from './host.js';
+import { git, initRepo } from './host.testSupport.js';
 import { buildRunIndex } from '../runs/runIndex.js';
-
-/** Runs `git -C repo args...`, returning trimmed stdout. */
-function git(repo: string, ...args: string[]): string {
-  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
-  if (result.status !== 0) {
-    throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
-  }
-  return (result.stdout ?? '').trim();
-}
 
 /** A throwaway repo with a couple of run branches and one non-run branch. */
 function seedRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-git-'));
-  git(repo, 'init', '-q', '-b', 'main');
-  git(repo, 'config', 'user.email', 'test@example.com');
-  git(repo, 'config', 'user.name', 'e test');
-  fs.writeFileSync(path.join(repo, 'base.txt'), 'base');
-  git(repo, 'add', '-A');
-  git(repo, 'commit', '-q', '-m', 'init');
+  const repo = initRepo('e-host-git-');
   git(repo, 'branch', 'e/claudeCode/fix-typos-2');
   git(repo, 'checkout', '-q', 'e/claudeCode/fix-typos-2');
   fs.writeFileSync(path.join(repo, 'typos.txt'), 'typos');
@@ -594,6 +580,20 @@ test('HostGit.merge throws for a branch that does not exist', () => {
       /git failed \(merge e\/demo\/nope-9 into .*\)/
     );
     assert.equal(mergeInProgress(worktree), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.headSha(worktreePath) resolves that worktree, not the repo it was called from', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    fs.writeFileSync(path.join(worktree, 'wip.txt'), 'x');
+    git(worktree, 'add', '-A');
+    git(worktree, 'commit', '-q', '-m', 'in the worktree');
+    const host = new HostGit();
+    assert.equal(host.headSha(worktree), git(worktree, 'rev-parse', 'HEAD'));
+    assert.notEqual(host.headSha(worktree), git(repo, 'rev-parse', 'main'));
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
