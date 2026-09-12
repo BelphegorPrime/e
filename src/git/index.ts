@@ -60,7 +60,31 @@ export interface Git {
 
   /** Remove the worktree at `path`, keeping its branch. */
   removeWorktree(worktreePath: string): void;
+
+  /**
+   * Merge `branch` into the branch the worktree at `worktreePath` has checked
+   * out, always as a merge commit (`--no-ff`) so a sibling's work stays
+   * visible in the parent's history (ADR-0013). A conflict is an expected
+   * outcome, not an error: the merge is left in progress with the markers in
+   * the worktree files (never auto-resolved, never aborted) and the
+   * conflicted paths are reported for the caller to hand to the agent. Throws
+   * when git refuses to start the merge - an unknown ref, a merge already in
+   * progress, or local changes in the way (with `--no-ff` any *staged* change
+   * counts, not only one the merge would overwrite) - in which case the
+   * worktree is untouched; and when the merge stopped without a conflict (a
+   * failing `pre-merge-commit` hook leaves it staged with `MERGE_HEAD` set).
+   */
+  merge(worktreePath: string, branch: string, message?: string): MergeOutcome;
 }
+
+/** How a {@link Git.merge} ended. */
+export type MergeOutcome =
+  /** A merge commit landed on the worktree's branch. */
+  | { status: 'merged' }
+  /** `branch` was already reachable; nothing changed. */
+  | { status: 'up-to-date' }
+  /** Left in progress: markers in `files`, `MERGE_HEAD` set, for the agent to resolve. */
+  | { status: 'conflict'; files: string[] };
 
 /** A run branch's current tip, as enumerated by `for-each-ref`. */
 export interface RunRef {

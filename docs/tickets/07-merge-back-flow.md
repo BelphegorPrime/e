@@ -2,7 +2,7 @@
 
 **What to build:** After a child run exits, the host merges the child's branch into the parent branch using `Git.merge` (#3). If the parent has overlapping dirty edits, host folds parent's current WIP into the merge commit and updates the worktree in place; remaining in-flight overlap → merge held pending, parent told to clear files, host retries on signal. Child delivered via merged files in worktree + report at `e-runs/<child>/report.md`.
 
-**Blocked by:** 03 - Host Git merge primitive; 04 - Checkpoint commit on spawn.
+**Blocked by:** 04 - Checkpoint commit on spawn (03, the `Git.merge` primitive with its `merged` / `up-to-date` / `conflict` outcome, shipped 2026-09-12).
 
 **Status:** blocked
 

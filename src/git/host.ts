@@ -1,5 +1,11 @@
-import { spawnSync } from 'child_process';
-import type { Git, RunCommit, RunRef, WorktreeSpec } from './index.js';
+import { spawnSync, type SpawnSyncReturns } from 'child_process';
+import type {
+  Git,
+  MergeOutcome,
+  RunCommit,
+  RunRef,
+  WorktreeSpec,
+} from './index.js';
 import { log } from '../utils/log.js';
 
 /**
@@ -105,12 +111,7 @@ export class HostGit implements Git {
   branchExists(branch: string): boolean {
     // `--quiet` keeps a missing ref from writing to stderr; any exit code
     // other than 0 means the ref does not resolve.
-    const result = spawnSync(
-      'git',
-      ['rev-parse', '--verify', '--quiet', `${branch}^{commit}`],
-      { stdio: 'ignore', shell: false }
-    );
-    return result.status === 0;
+    return this.refResolves(`${branch}^{commit}`);
   }
 
   addWorktree(spec: WorktreeSpec): void {
@@ -178,6 +179,85 @@ export class HostGit implements Git {
     );
   }
 
+  merge(worktreePath: string, branch: string, message?: string): MergeOutcome {
+    const description = `merge ${branch} into ${worktreePath}`;
+    // A merge still in progress from before makes git refuse with MERGE_HEAD
+    // set - indistinguishable, after the fact, from a conflict of this merge.
+    // Refuse up front instead, so a stale conflict is never reported under the
+    // new branch's name.
+    if (this.mergeInProgress(worktreePath)) {
+      throw new Error(
+        `git failed (${description}): a merge is already in progress in the worktree (MERGE_HEAD set); conclude or abort it first`
+      );
+    }
+    const head = () =>
+      this.capture(
+        ['-C', worktreePath, 'rev-parse', 'HEAD'],
+        `resolve HEAD of ${worktreePath}`
+      ).trim();
+    const before = head();
+    // `--no-ff`: a merge commit even when a fast-forward were possible, so the
+    // sibling's work is one visible node in the parent's history (ADR-0013).
+    // It also makes git refuse on *any* staged change, not only on changes
+    // the merge would overwrite (a fast-forward tolerates unrelated ones).
+    // `--no-edit`: never open an editor from the host process.
+    const result = this.spawnGit([
+      '-C',
+      worktreePath,
+      'merge',
+      '--no-ff',
+      '--no-edit',
+      ...(message !== undefined ? ['-m', message] : []),
+      branch,
+    ]);
+    if (result.error) throw this.failure(description, result);
+    if (result.status === 0) {
+      log.command(description);
+      return head() === before
+        ? { status: 'up-to-date' }
+        : { status: 'merged' };
+    }
+    // Non-zero exit is one of three things: a conflict, which git leaves in
+    // progress (MERGE_HEAD set, markers in the files) for someone to resolve;
+    // a merge that stopped after the files were merged (a failing
+    // pre-merge-commit hook: MERGE_HEAD set, nothing unmerged); or a refusal
+    // to even start (unknown ref, local changes in the way), which leaves the
+    // worktree exactly as it was. Only the first is an outcome.
+    if (this.mergeInProgress(worktreePath)) {
+      const files = this.conflictedFiles(worktreePath);
+      if (files.length > 0) {
+        log.command(`${description}: conflict in ${files.join(', ')}`);
+        return { status: 'conflict', files };
+      }
+    }
+    throw this.failure(description, result);
+  }
+
+  /** Paths with unmerged index entries, NUL-separated so `core.quotePath` never mangles a name. */
+  private conflictedFiles(worktreePath: string): string[] {
+    return this.capture(
+      ['-C', worktreePath, 'diff', '--name-only', '-z', '--diff-filter=U'],
+      `list conflicted files in ${worktreePath}`
+    )
+      .split('\0')
+      .filter(file => file.length > 0);
+  }
+
+  /** True while a merge is in progress in the worktree (`MERGE_HEAD` resolves). */
+  private mergeInProgress(worktreePath: string): boolean {
+    return this.refResolves('MERGE_HEAD', worktreePath);
+  }
+
+  /** True if `ref` resolves (`rev-parse --verify --quiet`), in `cwd` when given. */
+  private refResolves(ref: string, cwd?: string): boolean {
+    const result = spawnSync(
+      'git',
+      [...(cwd ? ['-C', cwd] : []), 'rev-parse', '--verify', '--quiet', ref],
+      { stdio: 'ignore', shell: false }
+    );
+    return result.status === 0;
+  }
+
   /** Runs a git subcommand for its side effect, throwing on failure. */
   private run(args: string[], description: string): void {
     this.capture(args, description);
@@ -185,17 +265,30 @@ export class HostGit implements Git {
 
   /** Runs a git subcommand and returns its stdout, throwing on failure. */
   private capture(args: string[], description: string): string {
-    const result = spawnSync('git', args, { encoding: 'utf8', shell: false });
-    if (result.error) {
-      throw new Error(
-        `Failed to start git (${description}): ${result.error.message}`
-      );
-    }
-    if (result.status !== 0) {
-      const detail = result.stderr?.trim() || result.stdout?.trim() || '';
-      throw new Error(`git failed (${description}): ${detail}`);
+    const result = this.spawnGit(args);
+    if (result.error || result.status !== 0) {
+      throw this.failure(description, result);
     }
     log.command(description);
     return result.stdout;
+  }
+
+  /** Runs `git <args>` capturing stdout/stderr; callers decide what the exit status means. */
+  private spawnGit(args: string[]): SpawnSyncReturns<string> {
+    return spawnSync('git', args, { encoding: 'utf8', shell: false });
+  }
+
+  /** The error for a git call that failed to start or exited non-zero. */
+  private failure(
+    description: string,
+    result: SpawnSyncReturns<string>
+  ): Error {
+    if (result.error) {
+      return new Error(
+        `Failed to start git (${description}): ${result.error.message}`
+      );
+    }
+    const detail = result.stderr?.trim() || result.stdout?.trim() || '';
+    return new Error(`git failed (${description}): ${detail}`);
   }
 }

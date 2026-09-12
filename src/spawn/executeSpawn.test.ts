@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index.js';
+import type {
+  Git,
+  MergeOutcome,
+  RunCommit,
+  RunRef,
+  WorktreeSpec,
+} from '../git/index.js';
 import {
   ContainerRuntime,
   type RunOptions,
@@ -57,6 +63,9 @@ class StubGit implements Git {
   push(): void {}
   removeWorktree(worktreePath: string): void {
     this.removedWorktrees.push(worktreePath);
+  }
+  merge(): MergeOutcome {
+    return { status: 'merged' };
   }
 }
 

@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index.js';
+import type {
+  Git,
+  MergeOutcome,
+  RunCommit,
+  RunRef,
+  WorktreeSpec,
+} from '../git/index.js';
 import type {
   ContainerRunner,
   RunOptions,
@@ -39,6 +45,8 @@ class FakeGit implements Git {
   commitFails?: string;
   /** Run-branch log the fake returns (newest first); empty by default. */
   log: RunCommit[];
+  /** Scripted `merge` outcome per branch (merge-back, ticket 07); unscripted branches merge cleanly. */
+  mergeOutcomes: Record<string, MergeOutcome>;
 
   calls: string[] = [];
   listedPrefixes: string[] = [];
@@ -46,6 +54,7 @@ class FakeGit implements Git {
   removed: string[] = [];
   commits: { path: string; message: string }[] = [];
   pushed: string[] = [];
+  merges: { worktreePath: string; branch: string; message?: string }[] = [];
 
   constructor(
     opts: {
@@ -58,6 +67,7 @@ class FakeGit implements Git {
       pushFails?: string;
       commitFails?: string;
       log?: RunCommit[];
+      mergeOutcomes?: Record<string, MergeOutcome>;
     } = {}
   ) {
     this.repo = opts.repo ?? true;
@@ -69,6 +79,7 @@ class FakeGit implements Git {
     this.pushFails = opts.pushFails;
     this.commitFails = opts.commitFails;
     this.log = opts.log ?? [];
+    this.mergeOutcomes = opts.mergeOutcomes ?? {};
   }
 
   isRepo(): boolean {
@@ -129,6 +140,11 @@ class FakeGit implements Git {
   removeWorktree(worktreePath: string): void {
     this.calls.push('removeWorktree');
     this.removed.push(worktreePath);
+  }
+  merge(worktreePath: string, branch: string, message?: string): MergeOutcome {
+    this.calls.push('merge');
+    this.merges.push({ worktreePath, branch, message });
+    return this.mergeOutcomes[branch] ?? { status: 'merged' };
   }
 }
 

@@ -337,3 +337,264 @@ test('HostGit.listRunRefs with a full prefix only matches its own branches', () 
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// `merge` operates on a worktree by path (`-C`), never on cwd, so these tests
+// need no chdir. Each seeds a repo, cuts a worktree for the "parent" branch,
+// and cuts a "sibling" branch to merge in.
+function seedMergeRepo(): { repo: string; worktree: string } {
+  const repo = seedRepo();
+  const worktree = path.join(repo, 'wt-parent');
+  git(repo, 'worktree', 'add', '-q', '-b', 'e/demo/parent-1', worktree, 'main');
+  return { repo, worktree };
+}
+
+/** Cuts `branch` from `base` (default `main`) with one commit writing `files`. */
+function cutBranch(
+  repo: string,
+  branch: string,
+  opts: { files: Record<string, string>; message: string; base?: string }
+): void {
+  const tmp = path.join(repo, `wt-${branch.replace(/\//g, '-')}`);
+  git(repo, 'worktree', 'add', '-q', '-b', branch, tmp, opts.base ?? 'main');
+  for (const [file, content] of Object.entries(opts.files)) {
+    fs.writeFileSync(path.join(tmp, file), content);
+  }
+  git(tmp, 'add', '-A');
+  git(tmp, 'commit', '-q', '-m', opts.message);
+  git(repo, 'worktree', 'remove', '--force', tmp);
+}
+
+/** True while `MERGE_HEAD` resolves in the worktree (`git()` would throw on the miss). */
+function mergeInProgress(worktree: string): boolean {
+  return (
+    spawnSync('git', [
+      '-C',
+      worktree,
+      'rev-parse',
+      '-q',
+      '--verify',
+      'MERGE_HEAD',
+    ]).status === 0
+  );
+}
+
+const sibling = 'e/demo/sibling-1';
+
+test('HostGit.merge lands a sibling branch as a merge commit and reports merged', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    cutBranch(repo, sibling, {
+      files: { 'sibling.txt': 'from sibling' },
+      message: 'sibling work',
+    });
+    const before = git(worktree, 'rev-parse', 'HEAD');
+
+    const outcome = new HostGit().merge(worktree, sibling, 'merge sibling');
+
+    assert.deepEqual(outcome, { status: 'merged' });
+    assert.equal(
+      fs.readFileSync(path.join(worktree, 'sibling.txt'), 'utf8'),
+      'from sibling'
+    );
+    // A merge commit, not a fast-forward, with the message we asked for.
+    assert.notEqual(git(worktree, 'rev-parse', 'HEAD'), before);
+    assert.equal(git(worktree, 'rev-list', '--merges', '--count', 'HEAD'), '1');
+    assert.equal(git(worktree, 'log', '-1', '--format=%s'), 'merge sibling');
+    // Nothing left in progress; the worktree is clean.
+    assert.equal(new HostGit().isDirty(worktree), false);
+    assert.equal(mergeInProgress(worktree), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge without a message still commits (git default subject)', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    cutBranch(repo, sibling, {
+      files: { 'sibling.txt': 'x' },
+      message: 'sibling work',
+    });
+    assert.deepEqual(new HostGit().merge(worktree, sibling), {
+      status: 'merged',
+    });
+    assert.match(
+      git(worktree, 'log', '-1', '--format=%s'),
+      /^Merge branch 'e\/demo\/sibling-1'/
+    );
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge of an already-reachable branch is up-to-date and changes nothing', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    const before = git(worktree, 'rev-parse', 'HEAD');
+    // `main` is the parent branch's base, so it is already reachable.
+    assert.deepEqual(new HostGit().merge(worktree, 'main'), {
+      status: 'up-to-date',
+    });
+    assert.equal(git(worktree, 'rev-parse', 'HEAD'), before);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge leaves a conflict in progress with markers, reporting every file verbatim', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    // Parent and sibling both rewrite base.txt from the same base, and both
+    // add a new file under the same non-ASCII name (an add/add conflict; the
+    // name must come back unquoted despite core.quotePath).
+    fs.writeFileSync(path.join(worktree, 'base.txt'), 'parent version\n');
+    fs.writeFileSync(path.join(worktree, 'ä.txt'), 'parent ä\n');
+    git(worktree, 'add', '-A');
+    git(worktree, 'commit', '-q', '-m', 'parent edit');
+    cutBranch(repo, sibling, {
+      files: { 'base.txt': 'sibling version\n', 'ä.txt': 'sibling ä\n' },
+      message: 'sibling edit',
+    });
+    const before = git(worktree, 'rev-parse', 'HEAD');
+
+    const outcome = new HostGit().merge(worktree, sibling);
+
+    assert.deepEqual(outcome, {
+      status: 'conflict',
+      files: ['base.txt', 'ä.txt'],
+    });
+    const content = fs.readFileSync(path.join(worktree, 'base.txt'), 'utf8');
+    assert.match(content, /^<<<<<<< /m);
+    assert.match(content, /parent version/);
+    assert.match(content, /sibling version/);
+    assert.match(content, /^>>>>>>> /m);
+    // Not aborted, not auto-resolved: MERGE_HEAD is set and HEAD unchanged.
+    assert.equal(mergeInProgress(worktree), true);
+    assert.equal(git(worktree, 'rev-parse', 'HEAD'), before);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge refuses while a previous merge is still in progress, leaving it intact', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    fs.writeFileSync(path.join(worktree, 'base.txt'), 'parent version\n');
+    git(worktree, 'add', '-A');
+    git(worktree, 'commit', '-q', '-m', 'parent edit');
+    cutBranch(repo, sibling, {
+      files: { 'base.txt': 'sibling version\n' },
+      message: 'sibling edit',
+    });
+    cutBranch(repo, 'e/demo/sibling-2', {
+      files: { 'other.txt': 'two\n' },
+      message: 'other',
+    });
+    const host = new HostGit();
+    assert.equal(host.merge(worktree, sibling).status, 'conflict');
+    const mergeHead = git(worktree, 'rev-parse', 'MERGE_HEAD');
+
+    // The stale conflict must not be reported under the second branch's name.
+    assert.throws(
+      () => host.merge(worktree, 'e/demo/sibling-2'),
+      /git failed \(merge e\/demo\/sibling-2 into .*\): a merge is already in progress/
+    );
+    assert.equal(git(worktree, 'rev-parse', 'MERGE_HEAD'), mergeHead);
+    assert.match(
+      fs.readFileSync(path.join(worktree, 'base.txt'), 'utf8'),
+      /^<<<<<<< /m
+    );
+    assert.equal(fs.existsSync(path.join(worktree, 'other.txt')), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge throws, touching nothing, when local changes would be overwritten', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    cutBranch(repo, sibling, {
+      files: { 'base.txt': 'sibling version\n' },
+      message: 'sibling edit',
+    });
+    // Uncommitted parent edit to the very file the merge would rewrite.
+    fs.writeFileSync(
+      path.join(worktree, 'base.txt'),
+      'uncommitted parent edit\n'
+    );
+    const before = git(worktree, 'rev-parse', 'HEAD');
+
+    assert.throws(
+      () => new HostGit().merge(worktree, sibling),
+      /git failed \(merge e\/demo\/sibling-1 into .*\): .*(overwritten|Please commit)/s
+    );
+    assert.equal(
+      fs.readFileSync(path.join(worktree, 'base.txt'), 'utf8'),
+      'uncommitted parent edit\n'
+    );
+    assert.equal(git(worktree, 'rev-parse', 'HEAD'), before);
+    assert.equal(mergeInProgress(worktree), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge (--no-ff) also refuses a staged change in an unrelated file', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    cutBranch(repo, sibling, {
+      files: { 'sibling.txt': 'x' },
+      message: 'sibling work',
+    });
+    // Staged but uncommitted, in a file the merge never touches: a
+    // fast-forward would tolerate it, the merge commit does not. Ticket 07's
+    // checkpoint must therefore be the last index write before a merge-back.
+    fs.writeFileSync(path.join(worktree, 'unrelated.txt'), 'staged\n');
+    git(worktree, 'add', 'unrelated.txt');
+
+    assert.throws(
+      () => new HostGit().merge(worktree, sibling),
+      /git failed \(merge/
+    );
+    assert.equal(mergeInProgress(worktree), false);
+    assert.equal(fs.existsSync(path.join(worktree, 'sibling.txt')), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge throws, not "conflict", when a pre-merge-commit hook stops the merge', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    cutBranch(repo, sibling, {
+      files: { 'sibling.txt': 'x' },
+      message: 'sibling work',
+    });
+    const hook = path.join(repo, '.git', 'hooks', 'pre-merge-commit');
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+
+    // Files merged, commit refused: MERGE_HEAD is set but nothing is unmerged,
+    // so this is a failure to report, not a conflict for the agent to resolve.
+    assert.throws(
+      () => new HostGit().merge(worktree, sibling),
+      /git failed \(merge e\/demo\/sibling-1/
+    );
+    assert.equal(mergeInProgress(worktree), true);
+    assert.equal(git(worktree, 'diff', '--name-only', '--diff-filter=U'), '');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge throws for a branch that does not exist', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    assert.throws(
+      () => new HostGit().merge(worktree, 'e/demo/nope-9'),
+      /git failed \(merge e\/demo\/nope-9 into .*\)/
+    );
+    assert.equal(mergeInProgress(worktree), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});

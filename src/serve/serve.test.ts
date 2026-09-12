@@ -15,7 +15,7 @@ import {
   type ServeAppDeps,
   type ServeState,
 } from './serve.js';
-import type { Git, RunCommit, RunRef } from '../git/index.js';
+import type { Git, RunCommit, RunRef, MergeOutcome } from '../git/index.js';
 import { TerminalSessions } from './terminalSessions.js';
 import { fakeEngine, scriptedSpawner } from './terminalSessions.testSupport.js';
 import type { ModelsResponse } from '../modelStatus.js';
@@ -525,6 +525,9 @@ class FakeGit implements Git {
   }
   push(): void {}
   removeWorktree(): void {}
+  merge(): MergeOutcome {
+    return { status: 'merged' };
+  }
 }
 
 /** Boots the app on an ephemeral port with a temp UI dir and runs `fn`. */
