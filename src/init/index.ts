@@ -25,6 +25,8 @@ interface InitCommandOptions {
   dir?: string;
   /** `--yes`: skip prompts and use defaults (non-interactive/CI). */
   yes?: boolean;
+  /** `-f/--force`: overwrite files a plain re-init would never clobber. */
+  force?: boolean;
 }
 
 export function registerInitCommand(program: Command): void {
@@ -40,6 +42,11 @@ export function registerInitCommand(program: Command): void {
     .option(
       '-y, --yes',
       'skip prompts and use defaults (non-interactive/CI)',
+      false
+    )
+    .option(
+      '-f, --force',
+      'overwrite config files a plain re-init would never clobber',
       false
     )
     .action(async (opts: InitCommandOptions) => {
@@ -65,7 +72,8 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
 
   // Seed from any existing config so a re-init preserves the configured
   // favorite instead of silently resetting it - mirrors how the `.env` and
-  // Dockerfiles are never clobbered. A fresh store reads back the default.
+  // Dockerfiles are never clobbered (unless `--force` opts into overwriting
+  // both). A fresh store reads back the default.
   const config = readConfig(root);
   const envFile = envFilePath(root);
   const existingEnvContent = fs.existsSync(envFile)
@@ -88,10 +96,11 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     currentSiblingArtifacts: config.siblingArtifacts,
     currentMaxSiblings: config.maxSiblings,
     hardware: detectHardware(),
+    force: opts.force,
   };
 
   log.info(
-    `init interactive=${interactive} stdinTTY=${process.stdin.isTTY} stdoutTTY=${process.stdout.isTTY}`
+    `init interactive=${interactive} force=${opts.force ?? false} stdinTTY=${process.stdin.isTTY} stdoutTTY=${process.stdout.isTTY}`
   );
 
   // Default to current directory when no --dir provided, so the init target is selectable.

@@ -391,3 +391,67 @@ test('planInit: config.json carries the configured fan-out bound for siblings', 
     5
   );
 });
+
+test('planInit: --force turns every never-clobber write into an unconditional overwrite', () => {
+  const forced = planInit(state({ force: true }), {});
+  const writes = forced.steps.flatMap(step =>
+    step.kind === 'harness' || step.kind === 'writes'
+      ? step.writes
+      : [step.write]
+  );
+  assert.ok(writes.length > 0);
+  for (const write of writes) {
+    assert.equal(write.clobber, 'always');
+  }
+
+  // Force must not skip or reorder any step.
+  assert.deepEqual(
+    forced.steps.map(step => step.kind),
+    planInit(state(), {}).steps.map(step => step.kind)
+  );
+});
+
+test('planInit: without --force the container-file writes keep their never-clobber rule', () => {
+  const plan = planInit(state(), {});
+  const first = plan.steps[0];
+  assert.equal(first.kind, 'harness');
+  assert.equal(first.writes[0].clobber, 'never');
+});
+
+test('planInit: --force re-renders an existing .env from the canonical template, keeping values', () => {
+  const handEdited = state({
+    existingEnvContent:
+      'CUSTOM_KEEP=abc\nJWT_SECRET=rotated-secret\nOMNIROUTE_INITIAL_PASSWORD=user-picked\n',
+  });
+  const plain = planInit(handEdited, {});
+  // Without force: append-only, the hand-edited body is the prefix.
+  assert.ok(plain.env.content.startsWith(handEdited.existingEnvContent ?? ''));
+
+  const forced = planInit({ ...handEdited, force: true }, {});
+  assert.equal(forced.env.created, false);
+  assert.equal(forced.env.changed, true);
+  // Structure resets to the canonical template, values survive intact -
+  // including the hand-added key the template does not model.
+  assert.match(forced.env.content, /# --- /);
+  assert.match(forced.env.content, /^CUSTOM_KEEP=abc$/m);
+  assert.match(forced.env.content, /^JWT_SECRET=rotated-secret$/m);
+  assert.match(forced.env.content, /^OMNIROUTE_INITIAL_PASSWORD=user-picked$/m);
+  assert.notEqual(forced.env.content, plain.env.content);
+});
+
+test('planInit: --force on an already-canonical .env is a no-op write', () => {
+  const first = planInit(state(), {});
+  const replay = planInit(
+    {
+      ...state(),
+      force: true,
+      existingEnvContent: first.env.content,
+      currentDefaultHarness: first.defaultHarness,
+      currentModels: first.models,
+    },
+    {}
+  );
+  assert.equal(replay.env.created, false);
+  assert.equal(replay.env.changed, false);
+  assert.equal(replay.env.content, first.env.content);
+});
