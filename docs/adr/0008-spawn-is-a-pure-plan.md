@@ -16,7 +16,9 @@ command action (it had grown to ~400 lines of untested wiring before this).
 2. **`validateSpawn(facts)`** (pure, fail-fast) rejects the cheap-to-detect
    errors before anything expensive: a provider protocol the harness does not
    speak, a provider on a harness with no adapter, `--mcp` on a harness with no
-   MCP client, skills on a harness that supports none.
+   MCP client, skills on a harness that supports none, and a promptless spawn
+   with no terminal to attach the harness TUI to (the prompt decides one-shot
+   vs. TUI; the browser terminal's headless child is exempt, ADR-0014).
 3. _(Removed by ADR-0007/ADR-0009.)_ `e` no longer resolves `auto` against
    `/v1/models`; the harness receives `auto` and resolves it at run start. The
    pipeline is gather, validate, plan, execute.
@@ -26,7 +28,7 @@ command action (it had grown to ~400 lines of untested wiring before this).
    credential env-file's _content_ (resolving secrets by name and throwing on a
    missing one happens here: pure and testable).
 5. **`executeSpawn(facts, plan, deps)`** performs the effects the plan names:
-   preflight guards (a git repo, foreground), build the images, materialize each
+   preflight guards (a git repo), build the images, materialize each
    rendered file into `RunScratch` and wire the resulting paths, then hand the
    run's lifecycle to `runSpawn`.
 

@@ -1001,7 +1001,6 @@ test('SendMessage starts a run and answers {task}; GetTask, ListTasks, CancelTas
     assert.deepEqual(fixture.launches[0], [
       'spawn',
       'smart-codex',
-      '--detached',
       '--',
       'Fix it',
     ]);

@@ -116,9 +116,9 @@ e spawn pi-anthropic "Add a CONTRIBUTING.md that explains how to run the tests"
 ```
 
 Without a prompt, `e spawn <agent>` opens the harness's interactive TUI in the
-container; use that mode to chat with the agent inside its worktree. `-d`
-(`--detached`) makes the one-shot intent explicit and fails fast when the
-prompt is missing, which is what scripts and other agents should pass.
+container; use that mode to chat with the agent inside its worktree. A TUI
+needs a terminal, so a script or CI job that calls `e spawn` with an empty
+prompt fails fast ("No prompt and no terminal") instead of hanging.
 
 What happens, in order:
 

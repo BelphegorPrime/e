@@ -1,6 +1,6 @@
 /**
  * The **tasks** behind `e serve`'s A2A endpoint (ADR-0015). An A2A task is
- * one run: `message/send` starts a headless `e spawn <agent> --detached --
+ * one run: `message/send` starts a headless `e spawn <agent> --
  * <prompt>` child (the ADR-0014 pattern) carrying the report markers, so the
  * run writes its status into a spool this process owns - the same records,
  * states and task-state mapping as sibling runs, read here and rendered as
@@ -262,7 +262,7 @@ export class A2aTasks {
         ? message.contextId
         : this.newId();
     const child = this.spawnChild(
-      ['spawn', agent, '--detached', '--', prompt],
+      ['spawn', agent, '--', prompt],
       env.withReport({ spoolDir: this.spoolDir, id: recordId })
     );
     const entry: TaskEntry = {

@@ -180,7 +180,7 @@ class ScriptedGit implements Git {
   }
 }
 
-test('siblingCliArgs: a detached spawn of the requested agent, passthrough before --, the prompt after', () => {
+test('siblingCliArgs: a one-shot spawn of the requested agent, passthrough before --, the prompt after', () => {
   const request = {
     id: 'sib-001',
     agent: 'researcher',
@@ -190,14 +190,12 @@ test('siblingCliArgs: a detached spawn of the requested agent, passthrough befor
   assert.deepEqual(siblingCliArgs(request), [
     'spawn',
     'researcher',
-    '--detached',
     '--',
     '-x looks like a flag',
   ]);
   assert.deepEqual(siblingCliArgs(request, ['--dir', '/store']), [
     'spawn',
     'researcher',
-    '--detached',
     '--dir',
     '/store',
     '--',
@@ -466,7 +464,6 @@ test('the launched sibling inherits the passthrough arguments and environment', 
     assert.deepEqual(launch.args, [
       'spawn',
       'researcher',
-      '--detached',
       '--dir',
       '/store',
       '--env-file',

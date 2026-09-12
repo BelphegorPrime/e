@@ -351,7 +351,7 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
   }
 });
 
-test('a prompt without --detached runs one-shot: the harness gets the prompt, no TTY', async () => {
+test('a prompt runs one-shot: the harness gets the prompt, no TTY', async () => {
   await withDemoStore(async root => {
     const runtime = new RecordingRuntime();
     const result = await executeSpawn(
@@ -363,25 +363,6 @@ test('a prompt without --detached runs one-shot: the harness gets the prompt, no
     assert.equal(runtime.options?.interactive, false);
     assert.deepEqual(runtime.ranCommand?.slice(0, 2), ['demo', '-p']);
     assert.match(runtime.ranCommand?.[2] ?? '', /print hello/);
-  });
-});
-
-test('--detached with a prompt behaves exactly like the prompt alone', async () => {
-  await withDemoStore(async root => {
-    const plain = new RecordingRuntime();
-    await executeSpawn(facts({ root, prompt: 'print hello' }), emptyPlan, {
-      git: new StubGit(true),
-      runtime: plain,
-      scratch: new RunScratch(),
-    });
-    const explicit = new RecordingRuntime();
-    await executeSpawn(
-      facts({ root, prompt: 'print hello', detached: true }),
-      emptyPlan,
-      { git: new StubGit(true), runtime: explicit, scratch: new RunScratch() }
-    );
-    assert.equal(explicit.options?.interactive, plain.options?.interactive);
-    assert.deepEqual(explicit.ranCommand, plain.ranCommand);
   });
 });
 
@@ -417,7 +398,7 @@ test('the role reaches the orchestrator: a child run is launched with the child 
   await withDemoStore(async root => {
     const runtime = new RecordingRuntime();
     await executeSpawn(
-      facts({ root, role: 'child', detached: true }),
+      facts({ root, role: 'child' }),
       { ...emptyPlan, agentEnv: ['E_ROLE=child'] },
       { git: new StubGit(true), runtime, scratch: new RunScratch() }
     );
@@ -502,7 +483,6 @@ test('a sibling spawn joins the parent network, syncs the configured artifacts, 
         worktreesDir,
         name: 'sib-run',
         role: 'child',
-        detached: true,
         sibling: {
           parent: {
             worktreePath: parentWorktree,

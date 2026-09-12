@@ -2,7 +2,9 @@
  * Central catalog of the environment variables the `e` CLI reads or sets.
  * Names, defaults, and parsing live here so call sites ask for a typed
  * value instead of matching a string against `process.env` themselves -
- * one place to see every variable this process is sensitive to.
+ * one place to see every variable this process is sensitive to. The few
+ * host-process facts the CLI decides on next to its variables (whether stdin
+ * is a terminal) live here too, so every edge reads them from one place.
  */
 import { EGRESS_API_PORT } from '../egress/constants.js';
 import { OMNIROUTE_PORT } from '../constants.js';
@@ -117,6 +119,14 @@ export class Env {
     base: Record<string, string | undefined> = process.env
   ): Record<string, string | undefined> {
     return { ...base, [Env.SERVE_DETACHED_VAR]: '1' };
+  }
+
+  /**
+   * True when the host process has a terminal on stdin: the one thing an
+   * interactive run (the harness TUI) needs and a pipe or CI job lacks.
+   */
+  get stdinIsTty(): boolean {
+    return Boolean(process.stdin.isTTY);
   }
 
   /** True when this `e spawn` runs without a host TTY and must detach the container's TTY (see {@link Env.TTY_HEADLESS_VAR}). */

@@ -134,7 +134,7 @@ test('requestedAgent / parseSendParams: the agent from metadata.agent or skillId
   );
 });
 
-test('send: spools the request, starts `e spawn <agent> --detached -- <prompt>` with the report markers, answers a submitted task', async () => {
+test('send: spools the request, starts `e spawn <agent> -- <prompt>` with the report markers, answers a submitted task', async () => {
   await withTasks(async (tasks, children, spool) => {
     const task = tasks.send(
       send('Fix the flaky test', { agent: 'smart-codex' })
@@ -151,7 +151,6 @@ test('send: spools the request, starts `e spawn <agent> --detached -- <prompt>` 
     assert.deepEqual(children.launches[0].args, [
       'spawn',
       'smart-codex',
-      '--detached',
       '--',
       'Fix the flaky test',
     ]);

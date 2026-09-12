@@ -64,7 +64,7 @@ and the spec lets a server answer before the task is over - so clients poll
 `GetTask` or stream.
 Each harness agent in the Store is one skill; a message names the skill it
 wants in `metadata.agent`. A task is exactly one run: `serve` launches a
-headless `e spawn <agent> --detached -- <prompt>` child (the ADR-0014 pattern)
+headless `e spawn <agent> -- <prompt>` child (the ADR-0014 pattern)
 carrying `E_SPAWN_REPORT_SPOOL` / `E_SPAWN_REPORT_ID`, so the run writes the
 same status records a sibling would - into a spool `serve` owns - and the task
 is rendered from them (`src/a2a/tasks.ts`). The artifact of a completed task

@@ -4,7 +4,7 @@
  * spool: every request the runtime-broker accepted (`requests/<id>.json`) is
  * picked up once, checked against the depth and fan-out rules, and turned
  * into a sibling run by re-invoking this very CLI (`e spawn <agent>
- * --detached -- <prompt>`, the ADR-0014 pattern) with the sibling markers in
+ * -- <prompt>`, the ADR-0014 pattern) with the sibling markers in
  * its environment. The sibling process runs the whole spawn pipeline itself -
  * plan, image, the checkpoint of the parent (ticket 04), the artifact sync
  * (ticket 05) - and writes its own status (`starting` with its branch as
@@ -90,7 +90,7 @@ export interface SiblingProcess {
 /** What a launcher gets: the request, the CLI arguments, the environment carrying the markers, and where to log. */
 export interface SiblingLaunch {
   request: SpawnRequest;
-  /** The arguments after the executable (and its entry script): `spawn <agent> --detached ... -- <prompt>`. */
+  /** The arguments after the executable (and its entry script): `spawn <agent> ... -- <prompt>`. */
   args: string[];
   env: Record<string, string | undefined>;
   logFile: string;
@@ -171,19 +171,12 @@ export function siblingSummaryLine(outcome: SiblingOutcome): string {
   return `Sibling ${outcome.id} (${who}): ${outcome.status}, merge-back ${outcome.merge.status}${files}${reason}`;
 }
 
-/** The CLI arguments that spawn a sibling: `spawn <agent> --detached [passthrough...] -- <prompt>`. */
+/** The CLI arguments that spawn a sibling: `spawn <agent> [passthrough...] -- <prompt>` (a prompt means one-shot). */
 export function siblingCliArgs(
   request: SpawnRequest,
   passthrough: readonly string[] = []
 ): string[] {
-  return [
-    'spawn',
-    request.agent,
-    '--detached',
-    ...passthrough,
-    '--',
-    request.prompt,
-  ];
+  return ['spawn', request.agent, ...passthrough, '--', request.prompt];
 }
 
 /**

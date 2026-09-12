@@ -102,16 +102,15 @@ building takes time and may be unwanted.
 
 The commands an agent (or user) actually uses:
 
-| Command                                     | What it does                                                                          |
-| ------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `e spawn <agent-or-harness> "<prompt>"`     | Run an agent/harness against a prompt (one-shot detached)                             |
-| `e spawn <agent-or-harness>`                | Start the harness TUI (no prompt means interactive)                                   |
-| `e spawn -d <agent-or-harness> "<prompt>"`  | The same one-shot run, made explicit; `-d` fails without a prompt (use it in scripts) |
-| `e spawn <agent-or-harness> --skill <name>` | Add a Skill for this run                                                              |
-| `e spawn <agent-or-harness> --mcp <name>`   | Wire an MCP server (rejected for opencode)                                            |
-| `e init`                                    | Write the store (`~/.e`); usually done on the host                                    |
-| `e serve`                                   | Local web UI / BFF, and `e`'s A2A endpoint (ADR-0015)                                 |
-| `e --help`                                  | The full CLI                                                                          |
+| Command                                     | What it does                                          |
+| ------------------------------------------- | ----------------------------------------------------- |
+| `e spawn <agent-or-harness> "<prompt>"`     | Run an agent/harness against a prompt (one-shot)      |
+| `e spawn <agent-or-harness>`                | Start the harness TUI (no prompt means interactive)   |
+| `e spawn <agent-or-harness> --skill <name>` | Add a Skill for this run                              |
+| `e spawn <agent-or-harness> --mcp <name>`   | Wire an MCP server (rejected for opencode)            |
+| `e init`                                    | Write the store (`~/.e`); usually done on the host    |
+| `e serve`                                   | Local web UI / BFF, and `e`'s A2A endpoint (ADR-0015) |
+| `e --help`                                  | The full CLI                                          |
 
 `e` finds its store by walking up from the working directory for a `.e`
 directory, falling back to `~/.e`; `--dir <path>` overrides either.

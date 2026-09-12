@@ -96,7 +96,7 @@ test('a bare spawn runs the favorite harness (pi by default) with an empty promp
     assert.deepEqual(facts.agent, { name: 'pi', harness: 'pi' });
     assert.equal(facts.harness.name, 'pi');
     assert.equal(facts.prompt, '');
-    assert.equal(facts.detached, false);
+    assert.equal(typeof facts.stdinIsTty, 'boolean');
     assert.equal(facts.role, 'parent');
     assert.equal(facts.headlessTty, false);
     assert.deepEqual(facts.storeEnv, {});
@@ -234,19 +234,20 @@ test('--skill accepts comma-separated and repeated names, each checked on disk',
   });
 });
 
-test("--detached is gathered as a flag; the prompt check is validateSpawn's (pure)", () => {
+test('a promptless spawn is refused before anything is built when stdin is no terminal', () => {
   withStore(root => {
-    const bare = gather(root, undefined, [], { detached: true });
-    assert.equal(bare.detached, true);
+    const bare = gather(root, undefined, []);
     assert.equal(bare.prompt, '');
+    // The gathered facts carry the real stdin state; the rule is checked with
+    // both values so the test does not depend on how it is run.
     assert.throws(
-      () => validateSpawn(bare),
-      /A prompt is required for detached runs\./
+      () => validateSpawn({ ...bare, stdinIsTty: false }),
+      /No prompt and no terminal/
     );
-    const facts = gather(root, 'go', [], { detached: true });
-    assert.equal(facts.detached, true);
-    assert.equal(facts.prompt, 'go');
-    assert.doesNotThrow(() => validateSpawn(facts));
+    assert.doesNotThrow(() => validateSpawn({ ...bare, stdinIsTty: true }));
+    // A prompt always passes, terminal or not.
+    const facts = gather(root, 'go', []);
+    assert.doesNotThrow(() => validateSpawn({ ...facts, stdinIsTty: false }));
   });
 });
 
@@ -328,7 +329,6 @@ test('spawn CLI: target and prompt words are positional; --rm defaults on', asyn
   assert.deepEqual(prompt, ['fix', 'the', 'bug']);
   assert.equal(opts.rm, true);
   assert.equal(opts.rebuild, false);
-  assert.equal(opts.detached, undefined);
   assert.equal(opts.mcp, undefined);
   assert.equal(opts.skill, undefined);
 });
@@ -359,7 +359,6 @@ test('spawn CLI: every option parses to the field the action reads', async () =>
     '--rebuild',
     '--dir',
     '/store',
-    '-d',
     '--no-rm',
     '--keep-worktree',
     '-p',
@@ -380,7 +379,6 @@ test('spawn CLI: every option parses to the field the action reads', async () =>
   assert.deepEqual(opts.skill, ['s1,s2', 's3']);
   assert.equal(opts.rebuild, true);
   assert.equal(opts.dir, '/store');
-  assert.equal(opts.detached, true);
   assert.equal(opts.rm, false);
   assert.equal(opts.keepWorktree, true);
   assert.deepEqual(opts.port, ['8080:80', '9000:90']);

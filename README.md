@@ -654,9 +654,8 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | Command                                        | What it does                                                                                                                     |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config. Also asks for the git platform (PR/MR on successful runs) |
-| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt (one-shot detached)                                                                        |
+| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt (one-shot)                                                                                 |
 | `e spawn <agent-or-harness>`                   | Start the harness TUI (no prompt means interactive)                                                                              |
-| `e spawn -d <agent-or-harness> "<prompt>"`     | The same one-shot run, made explicit: `-d`/`--detached` errors when the prompt is missing (for scripts and agents)               |
 | `e spawn … --skill <name>`                     | Add a Skill for this run                                                                                                         |
 | `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for opencode, which has no MCP delivery yet)                                                        |
 | `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model)                                                           |

@@ -5,7 +5,7 @@
 once its broker is ready and stops when the agent's container exits. It polls
 the spool, and for every request the broker accepted it writes `starting` and
 launches a sibling as a child process of this very CLI: `e spawn <agent>
---detached -- <prompt>` (the ADR-0014 pattern), with the sibling markers in
+-- <prompt>` (the ADR-0014 pattern), with the sibling markers in
 its environment (`E_SPAWN_ROLE=child`, `E_SPAWN_PARENT_WORKTREE`,
 `E_SPAWN_PARENT_BRANCH`, `E_SPAWN_PARENT_NETWORK`, `E_SPAWN_SPOOL`,
 `E_SPAWN_SIBLING_ID`; `Env.sibling` / `Env.withSibling`). The sibling process

@@ -66,8 +66,6 @@ export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   mcp?: string[];
   /** `--skill <name...>`: Skills to add for this run (comma-separated or repeated). */
   skill?: string[];
-  /** `--detached`: one-shot made explicit; `validateSpawn` refuses it without a prompt. */
-  detached?: boolean;
   /** `--keep-worktree`: leave the run's worktree in place after the container exits. */
   keepWorktree?: boolean;
 }
@@ -258,8 +256,8 @@ export function gatherSpawnFacts(
     name: opts.name,
     env: opts.env ?? [],
     port: opts.port,
-    // The mode follows the prompt (isInteractiveRun); `-d` only makes it explicit.
-    detached: Boolean(opts.detached),
+    // The mode follows the prompt (isInteractiveRun); a TUI needs one of these.
+    stdinIsTty: env.stdinIsTty,
     headlessTty: env.headlessTty,
     rm: opts.rm,
     keepWorktree: Boolean(opts.keepWorktree),
@@ -348,10 +346,6 @@ export function registerSpawnCommand(program: Command): void {
     .option(
       '--dir <path>',
       'root directory holding the harness Dockerfiles (default: home directory)'
-    )
-    .option(
-      '-d, --detached',
-      'run one-shot and fail without a prompt (a prompt alone already runs one-shot; no prompt opens the harness TUI)'
     )
     .option('--rm', 'automatically remove the container when it exits', true)
     .option('--no-rm', 'keep the container after it exits')

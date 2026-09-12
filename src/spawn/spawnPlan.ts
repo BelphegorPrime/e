@@ -173,8 +173,12 @@ export interface SpawnFacts {
   env: string[];
   /** `-p` port publishes. */
   port?: string[];
-  /** `--detached`: one-shot made explicit; refused without a prompt (see {@link isInteractiveRun}). */
-  detached?: boolean;
+  /**
+   * The host process has a terminal on stdin. An interactive run needs one to
+   * attach to; without it (and without {@link headlessTty}) {@link validateSpawn}
+   * refuses a promptless spawn instead of hanging in a pipe or CI job.
+   */
+  stdinIsTty?: boolean;
   /**
    * `E_TTY_HEADLESS`: this spawn has no host TTY (it was started by the `serve`
    * browser terminal), so an interactive run detaches the container's TTY and
@@ -231,14 +235,25 @@ function hasPrompt(prompt: string): boolean {
  * Decides, purely, whether a run is interactive (the harness TUI) or one-shot
  * (the prompt on the harness's command line). The prompt is the switch, as
  * every user-facing surface documents it: `e spawn <agent> "<prompt>"` runs
- * one-shot, `e spawn <agent>` opens the TUI. `--detached` never flips it: with
- * a prompt it is the same one-shot run, without one {@link validateSpawn}
- * refuses the spawn, so `-d` can never silently open a TUI. Callers with no
- * prompt by construction - the browser terminal's headless child (ADR-0014) -
- * therefore stay interactive.
+ * one-shot, `e spawn <agent>` opens the TUI. No flag takes part: a script
+ * that lost its prompt is caught by {@link validateSpawn} (no terminal to
+ * attach a TUI to) rather than by an opt-in switch. Callers with no prompt by
+ * construction - the browser terminal's headless child (ADR-0014) - stay
+ * interactive.
  */
 export function isInteractiveRun(facts: Pick<SpawnFacts, 'prompt'>): boolean {
   return !hasPrompt(facts.prompt);
+}
+
+/**
+ * True when an interactive run has something to attach the harness TUI to:
+ * the host's own terminal, or the engine API when `serve` started this spawn
+ * headless and will attach through it (`E_TTY_HEADLESS`, ADR-0014).
+ */
+function hasTerminalForTui(
+  facts: Pick<SpawnFacts, 'stdinIsTty' | 'headlessTty'>
+): boolean {
+  return Boolean(facts.stdinIsTty) || Boolean(facts.headlessTty);
 }
 
 /**
@@ -249,17 +264,21 @@ export function isInteractiveRun(facts: Pick<SpawnFacts, 'prompt'>): boolean {
  *  - `--mcp` against a harness with no MCP client (opencode);
  *  - baked or `--skill` skills against a harness that supports none;
  *  - a `-e` that names a role-contract variable (`E_ROLE`, `E_BROKER_URL`);
- *  - `--detached` without a prompt (there is nothing to run one-shot).
+ *  - no prompt and no terminal (nothing to run one-shot, nothing to attach a TUI to).
  * Server/skill *existence* is checked by the edge during gather (it needs disk).
  */
 export function validateSpawn(facts: SpawnFacts): void {
   const { agent, harness } = facts;
   const caps = harnessCapabilities(harness);
 
-  // `-d` promises a one-shot run; without a prompt the only alternative would
-  // be to open the TUI silently, so the contradiction is refused up front.
-  if (facts.detached && !hasPrompt(facts.prompt)) {
-    throw new Error('A prompt is required for detached runs.');
+  // An interactive run attaches the harness TUI to the host terminal. A
+  // script or CI job that lost its prompt has no terminal, so it is refused
+  // here instead of hanging in `run -it`. The browser terminal's child has no
+  // host TTY by design and says so with E_TTY_HEADLESS (ADR-0014).
+  if (isInteractiveRun(facts) && !hasTerminalForTui(facts)) {
+    throw new Error(
+      'No prompt and no terminal: pass a prompt for a one-shot run, or start `e spawn` from a terminal to open the harness TUI.'
+    );
   }
 
   // A sibling is a child by definition; the two markers must agree.

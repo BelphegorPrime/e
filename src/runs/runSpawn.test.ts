@@ -1182,7 +1182,6 @@ test('a run with a broker launches sibling requests as child spawns while its ag
     assert.deepEqual(l.args, [
       'spawn',
       'researcher',
-      '--detached',
       '--dir',
       '/store',
       '--',

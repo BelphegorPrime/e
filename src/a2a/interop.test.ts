@@ -167,11 +167,7 @@ test('interop: the SDK client resolves the card, sends a message, follows the ta
     assert.equal(task.status?.state, TaskState.TASK_STATE_SUBMITTED);
     assert.equal(task.history[0].parts[0].content?.$case, 'text');
     assert.equal(task.metadata?.agent, 'smart-codex');
-    assert.deepEqual(facade.launches[0].slice(0, 3), [
-      'spawn',
-      'smart-codex',
-      '--detached',
-    ]);
+    assert.deepEqual(facade.launches[0].slice(0, 2), ['spawn', 'smart-codex']);
 
     writeStatus(facade.spool, 'a2a-001', {
       status: 'running',

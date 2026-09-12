@@ -172,7 +172,7 @@ test('resolveSpawnTarget: an unquoted unknown prompt keeps all its words in orde
 
 // isInteractiveRun is pure: the prompt decides the run mode. A prompt means a
 // one-shot run (the documented `e spawn <agent> "<prompt>"` contract); no
-// prompt means the harness TUI. `--detached` plays no part here.
+// prompt means the harness TUI. No flag takes part in the decision.
 test('isInteractiveRun: a prompt makes the run one-shot', () => {
   assert.equal(isInteractiveRun({ prompt: 'fix the bug' }), false);
 });
@@ -229,19 +229,35 @@ test('validateSpawn: rejects --mcp against a harness with no MCP wiring (opencod
   assert.throws(() => validateSpawn(f), /has no MCP client/);
 });
 
-test('validateSpawn: --detached without a prompt is refused (same rule as isInteractiveRun)', () => {
+test('validateSpawn: an interactive run without a terminal is refused (nothing to run, nothing to attach)', () => {
   assert.throws(
-    () => validateSpawn(facts({ prompt: '', detached: true })),
-    /A prompt is required for detached runs\./
+    () => validateSpawn(facts({ prompt: '', stdinIsTty: false })),
+    /No prompt and no terminal/
   );
   assert.throws(
-    () => validateSpawn(facts({ prompt: '   ', detached: true })),
-    /A prompt is required for detached runs\./
+    () => validateSpawn(facts({ prompt: '   ', stdinIsTty: false })),
+    /No prompt and no terminal/
+  );
+  // `stdinIsTty` unknown counts as absent: a caller that cannot say has none.
+  assert.throws(
+    () => validateSpawn(facts({ prompt: '' })),
+    /No prompt and no terminal/
+  );
+});
+
+test('validateSpawn: the TUI opens from a terminal, and for the headless browser child (ADR-0014)', () => {
+  assert.doesNotThrow(() =>
+    validateSpawn(facts({ prompt: '', stdinIsTty: true }))
   );
   assert.doesNotThrow(() =>
-    validateSpawn(facts({ prompt: 'go', detached: true }))
+    validateSpawn(facts({ prompt: '', stdinIsTty: false, headlessTty: true }))
   );
-  assert.doesNotThrow(() => validateSpawn(facts({ prompt: '' })));
+});
+
+test('validateSpawn: a prompt needs no terminal (scripts, siblings, A2A tasks)', () => {
+  assert.doesNotThrow(() =>
+    validateSpawn(facts({ prompt: 'go', stdinIsTty: false }))
+  );
 });
 
 test('validateSpawn: passes for a plain default agent', () => {

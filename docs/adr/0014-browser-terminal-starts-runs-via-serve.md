@@ -99,6 +99,7 @@ decision, as ADR-0010 already states.
 ## Out of scope
 
 - Killing or signalling a run from the UI - the user exits the harness.
-- Detached (`-d`) one-shot runs from the UI; the page is about the TUI.
+- One-shot runs (a prompt on the command line) from the UI; the page is about
+  the TUI.
 - Restoring sessions across `serve` restarts (re-attaching to a still-running
   `e-*` container by name is possible with this design, not implemented).
