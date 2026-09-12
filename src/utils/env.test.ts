@@ -13,6 +13,9 @@ const VARS = [
   Env.SPAWN_SPOOL_VAR,
   Env.SPAWN_SIBLING_ID_VAR,
   Env.TTY_HEADLESS_VAR,
+  Env.SPAWN_REPORT_SPOOL_VAR,
+  Env.SPAWN_REPORT_ID_VAR,
+  Env.A2A_TOKEN_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -144,4 +147,51 @@ test('withSibling sets the child role and every marker, drops the serve and term
     {}
   );
   assert.equal(withNet[Env.SPAWN_PARENT_NETWORK_VAR], 'p-net');
+});
+
+test('report markers (ADR-0015): undefined when unset, complete when both are set, an error with one', () => {
+  delete process.env[Env.SPAWN_REPORT_SPOOL_VAR];
+  delete process.env[Env.SPAWN_REPORT_ID_VAR];
+  assert.equal(env.report, undefined);
+  process.env[Env.SPAWN_REPORT_SPOOL_VAR] = '/spool';
+  assert.throws(() => env.report, /Incomplete report markers/);
+  process.env[Env.SPAWN_REPORT_ID_VAR] = 'a2a-001';
+  assert.deepEqual(env.report, { spoolDir: '/spool', id: 'a2a-001' });
+});
+
+test('withReport sets the report markers and drops the serve, terminal and sibling markers; withSibling drops the report markers', () => {
+  const base = {
+    PATH: '/bin',
+    [Env.SERVE_DETACHED_VAR]: '1',
+    [Env.TTY_HEADLESS_VAR]: '1',
+    [Env.SPAWN_ROLE_VAR]: 'child',
+    [Env.SPAWN_SPOOL_VAR]: '/old',
+    [Env.SPAWN_SIBLING_ID_VAR]: 'sib-001',
+  };
+  const copy = env.withReport({ spoolDir: '/spool', id: 'a2a-002' }, base);
+  assert.deepEqual(copy, {
+    PATH: '/bin',
+    [Env.SPAWN_REPORT_SPOOL_VAR]: '/spool',
+    [Env.SPAWN_REPORT_ID_VAR]: 'a2a-002',
+  });
+  assert.equal(base[Env.SERVE_DETACHED_VAR], '1');
+  const sibling = env.withSibling(
+    {
+      parent: { worktreePath: '/wt', branch: 'b' },
+      spoolDir: '/s',
+      id: 'sib-002',
+    },
+    copy
+  );
+  assert.equal(sibling[Env.SPAWN_REPORT_SPOOL_VAR], undefined);
+  assert.equal(sibling[Env.SPAWN_REPORT_ID_VAR], undefined);
+});
+
+test('a2aToken is the trimmed E_A2A_TOKEN, undefined when unset or blank', () => {
+  delete process.env[Env.A2A_TOKEN_VAR];
+  assert.equal(env.a2aToken, undefined);
+  process.env[Env.A2A_TOKEN_VAR] = '  ';
+  assert.equal(env.a2aToken, undefined);
+  process.env[Env.A2A_TOKEN_VAR] = ' secret ';
+  assert.equal(env.a2aToken, 'secret');
 });

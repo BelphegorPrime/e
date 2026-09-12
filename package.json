@@ -59,6 +59,7 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@a2a-js/sdk": "^1.1.0",
     "@eslint/js": "^10.0.1",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-separator": "^1.1.15",

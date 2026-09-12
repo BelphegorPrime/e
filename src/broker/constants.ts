@@ -52,6 +52,20 @@ export const SPOOL_LOGS_DIR = 'logs';
  * host when it retries that sibling's merge-back.
  */
 export const SPOOL_SIGNALS_DIR = 'signals';
+/**
+ * Spool layout: the parent agent's cancel requests (ADR-0015), one file per
+ * request, written by the broker on `POST /cancel/<id>` and taken by the host,
+ * which stops the sibling (or never starts it) and marks it `canceled`.
+ */
+export const SPOOL_CANCELS_DIR = 'cancels';
+
+/**
+ * How often the broker's `GET /status/events` stream (ADR-0015) re-reads the
+ * spool for changes, and how often it sends a keep-alive comment so an idle
+ * connection is not closed by a proxy.
+ */
+export const STATUS_EVENTS_POLL_MS = 1000;
+export const STATUS_EVENTS_HEARTBEAT_MS = 15_000;
 
 /**
  * Where a parent agent reads a finished sibling's report, inside its own

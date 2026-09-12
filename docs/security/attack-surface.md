@@ -144,12 +144,16 @@ is scoped to the compose network. No change needed there.
 | Browser terminal (ADR-0014): `POST /api/terminal/sessions` starts a headless `e spawn` child; the run container's TTY is attached through the engine's unix socket from the `serve` process only - the socket is never exposed to the browser or a container | Note   |
 | Terminal WebSocket (`/api/terminal/ws`) rejects upgrades whose `Origin` does not name the serving host; browsers skip same-origin for WebSockets, so this is what keeps another open page from typing into a run                                             | Good   |
 | `serve` needs no engine socket to run; without one the terminal routes refuse to start sessions and `/api/info.terminal` is false                                                                                                                            | Good   |
+| A2A endpoint (ADR-0015): `POST /a2a` starts a headless `e spawn` child per task, like the terminal; open on loopback, bearer-protected with `E_A2A_TOKEN`, and **disabled** (card 404, endpoint 503) when `serve` is bound beyond loopback without a token   | Good   |
+| The agent card lists Store agent names (not secrets); remote A2A agents' `${VAR}` headers resolve host-side from `.e/.env` at call time and never reach a container, an image, or the card                                                                   | Good   |
 
 The BFF keeps secrets server-side, so the browser UI does not expand the
 secret exposure. Keep the localhost bind; do not add auth while it holds (the
-UI observes, plus two delegated writes: egress blacklisting and starting a run,
-neither of which grants the local user a capability `e spawn` did not). Binding
-`serve` beyond loopback is the point where auth becomes required (ADR-0014). One caution for the detached mode: `serve.json` holds a
+UI observes, plus three delegated writes: egress blacklisting, starting a run
+from the terminal, and starting a run over A2A, none of which grants the local
+user a capability `e spawn` did not). Binding `serve` beyond loopback is the
+point where auth becomes required (ADR-0014); the A2A endpoint enforces that
+itself (ADR-0015: bearer token or off). One caution for the detached mode: `serve.json` holds a
 pid/host/port in `$HOME/.e` and `E_SERVE_DETACHED` gates re-detachment -
 verify a stale pid (host reboot) is handled today or add a health check before
 reporting "already serving".

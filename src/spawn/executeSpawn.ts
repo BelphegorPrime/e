@@ -27,8 +27,45 @@ import {
 } from '../store/paths.js';
 import { isInitialized } from '../store/config.js';
 import { Env } from '../utils/env.js';
-import { spawnSiblingProcess } from '../runs/runSiblings.js';
+import {
+  spawnSiblingProcess,
+  type SiblingLauncher,
+} from '../runs/runSiblings.js';
 import { renderBrokerFiles } from '../init/renderBroker.js';
+import { findAgent, isRemoteAgent } from '../agent/index.js';
+import { remoteSiblingProcess } from '../a2a/remoteSibling.js';
+import { A2aClient } from '../a2a/client.js';
+
+/**
+ * The production sibling launcher (ADR-0013, ADR-0015): a request for a
+ * harness agent becomes a child `e spawn` process; one for a remote A2A agent
+ * (`transport: "a2a"` in its `agent.json`) is answered in-process by the A2A
+ * client, its headers' `${VAR}` references resolved from the store env. An
+ * unknown agent is left to the child process, whose error lands in the log.
+ */
+export function productionSiblingLauncher(
+  root: string | undefined,
+  storeEnv: Record<string, string>
+): SiblingLauncher {
+  return launch => {
+    let agent;
+    try {
+      agent = findAgent(launch.request.agent, root);
+    } catch {
+      agent = undefined;
+    }
+    if (agent && isRemoteAgent(agent)) {
+      return remoteSiblingProcess({
+        agent,
+        request: launch.request,
+        spoolDir: launch.spoolDir,
+        storeEnv,
+        client: new A2aClient(),
+      });
+    }
+    return spawnSiblingProcess(launch);
+  };
+}
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -39,6 +76,14 @@ export interface ExecuteSpawnDeps {
   pullRequest?: PullRequest;
   /** The configured git platform, forwarded to `runSpawn`. */
   gitPlatform?: GitPlatform;
+  /** A cancel (SIGTERM), forwarded to `runSpawn` (ADR-0015). */
+  abort?: AbortSignal;
+  /**
+   * Starts one sibling for the run's consumer; defaults to the production
+   * launcher (a child `e spawn` process, or the in-process A2A client for a
+   * remote agent). Tests pass a scripted one.
+   */
+  launchSibling?: SiblingLauncher;
 }
 
 /**
@@ -243,10 +288,14 @@ export async function executeSpawn(
       sibling: sibling
         ? { spoolDir: sibling.spoolDir, id: sibling.id }
         : undefined,
+      report: facts.report,
+      abort: deps.abort,
       // What every sibling `e spawn` inherits from this invocation: the same
       // store, the same user env-file, the same container engine.
       siblingHost: {
-        launch: spawnSiblingProcess,
+        launch:
+          deps.launchSibling ??
+          productionSiblingLauncher(facts.root, facts.storeEnv),
         passthroughArgs: [
           ...(facts.dirOpt ? ['--dir', facts.dirOpt] : []),
           ...(facts.userEnvFile ? ['--env-file', facts.userEnvFile] : []),

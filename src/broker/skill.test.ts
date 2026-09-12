@@ -57,3 +57,27 @@ test('the skill explains the merge-back: the report in the worktree, every merge
   const script = renderSpawnBrotherSkill()[SPAWN_BROTHER_SCRIPT];
   assert.match(script, /\/merge\//);
 });
+
+test('the skill explains the A2A vocabulary (ADR-0015): taskState, --watch on the event stream, --cancel, remote agents', () => {
+  const md = renderSpawnBrotherSkill()['SKILL.md'];
+  assert.match(md, /`taskState`/);
+  for (const state of [
+    'submitted',
+    'working',
+    'input-required',
+    'completed',
+    'canceled',
+    'rejected',
+  ]) {
+    assert.match(md, new RegExp(`\`${state}\``));
+  }
+  assert.match(md, new RegExp(`${SPAWN_BROTHER_SCRIPT} --watch`));
+  assert.match(md, new RegExp(`${SPAWN_BROTHER_SCRIPT} --cancel sib-001`));
+  assert.match(md, /GET \/status\/events/);
+  assert.match(md, /curl -sN "\$E_BROKER_URL\/status\/events"/);
+  assert.match(md, /curl -sS -X POST "\$E_BROKER_URL\/cancel\/<id>"/);
+  assert.match(md, /"transport": "a2a"/);
+  const script = renderSpawnBrotherSkill()[SPAWN_BROTHER_SCRIPT];
+  assert.match(script, /\/cancel\//);
+  assert.match(script, /\/status\/events/);
+});

@@ -12,7 +12,7 @@
  * effects the plan names (ADR-0008).
  */
 
-import type { Agent } from '../agent/index.js';
+import type { HarnessAgent } from '../agent/index.js';
 import type { Harness } from '../harness/index.js';
 import { harnessCapabilities, planMcpDelivery } from '../harness/index.js';
 import {
@@ -149,8 +149,8 @@ export function resolveSpawnTarget({
 export interface SpawnFacts {
   /** The store root, or undefined when no `.e` store was found. */
   root: string | undefined;
-  /** The resolved Agent to run. */
-  agent: Agent;
+  /** The resolved Agent to run (a harness agent; a remote A2A agent never enters the pipeline). */
+  agent: HarnessAgent;
   /** The Harness the agent runs. */
   harness: Harness;
   /** Parsed `.e/.env` (secrets resolved by name from here; never baked). */
@@ -210,6 +210,12 @@ export interface SpawnFacts {
    * from, the network to join, and where to report status.
    */
   sibling?: SiblingSpawn;
+  /**
+   * Present when something watches this run through a spool without it being
+   * a sibling (the `E_SPAWN_REPORT_*` markers set by the A2A facade of
+   * `e serve`, ADR-0015): where to report status, `pushed` and the PR/MR URL.
+   */
+  report?: { spoolDir: string; id: string };
   /** The store's `siblingArtifacts` (`config.json`): what a sibling copies from its parent (ADR-0013). */
   siblingArtifacts: readonly string[];
   /** The store's `maxSiblings` (`config.json`): siblings a run may have in flight at once (ADR-0013). */
@@ -234,6 +240,13 @@ export function validateSpawn(facts: SpawnFacts): void {
   if (facts.sibling && (facts.role ?? 'parent') !== 'child') {
     throw new Error(
       `A spawn started for sibling ${facts.sibling.id} must carry E_SPAWN_ROLE=child.`
+    );
+  }
+  // A sibling already reports into its parent's spool; a second spool would
+  // be two watchers for one run (ADR-0015).
+  if (facts.sibling && facts.report) {
+    throw new Error(
+      `A spawn started for sibling ${facts.sibling.id} cannot also carry the report markers.`
     );
   }
 

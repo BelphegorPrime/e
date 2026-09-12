@@ -7,6 +7,7 @@ import { Command } from 'commander';
 import {
   gatherSpawnFacts,
   registerSpawnCommand,
+  resolveRemoteTarget,
   type SpawnCommandOptions,
 } from './spawn.js';
 import { Env } from '../utils/env.js';
@@ -420,5 +421,32 @@ test('the sibling markers reach the facts as the sibling to report to', () => {
       spoolDir: '/wt/.broker/e-demo-parent-1',
       id: 'sib-001',
     });
+  });
+});
+
+// Remote A2A agents (ADR-0015) short-circuit the pipeline: `resolveRemoteTarget`
+// answers before any fact is gathered; `gatherSpawnFacts` refuses one.
+
+test('resolveRemoteTarget: a remote agent target yields the agent, the joined prompt and the store env; a harness target yields nothing', () => {
+  withStore(root => {
+    writeAgent(root, {
+      name: 'remote',
+      transport: 'a2a',
+      url: 'https://agents.example.com/a2a',
+      headers: { Authorization: 'Bearer ${REMOTE_TOKEN}' },
+    });
+    fs.writeFileSync(envFilePath(root), 'REMOTE_TOKEN=abc\n');
+    const remote = resolveRemoteTarget('remote', ['what', 'is', 'X'], {
+      dir: root,
+    });
+    assert.ok(remote);
+    assert.equal(remote.agent.name, 'remote');
+    assert.equal(remote.prompt, 'what is X');
+    assert.equal(remote.storeEnv.REMOTE_TOKEN, 'abc');
+    assert.equal(resolveRemoteTarget('pi', ['hi'], { dir: root }), undefined);
+    assert.throws(
+      () => gatherSpawnFacts('remote', ['what is X'], { dir: root }),
+      /remote A2A agent and has no harness/
+    );
   });
 });

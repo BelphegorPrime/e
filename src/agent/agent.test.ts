@@ -10,7 +10,9 @@ import {
   isKnownTarget,
   listAgents,
   findAgent,
+  isRemoteAgent,
   type Agent,
+  type HarnessAgent,
   type ResolveAgentDeps,
 } from './agent.js';
 import { agentDir } from '../store/paths.js';
@@ -82,7 +84,7 @@ test('resolveAgent: a persisted agent whose name differs from its key throws', (
 });
 
 test('renderDefaultAgent: defaults provider endpoint to local OmniRoute', () => {
-  const parsed = JSON.parse(renderDefaultAgent('codex', {})) as Agent;
+  const parsed = JSON.parse(renderDefaultAgent('codex', {})) as HarnessAgent;
   const provider = {
     apiKeyEnv: 'OPENAI_API_KEY',
     baseUrl: 'http://localhost:20128/v1',
@@ -99,7 +101,7 @@ test('renderDefaultAgent: defaults provider endpoint to local OmniRoute', () => 
 });
 
 test('renderDefaultAgent: a default agent carries no provider', () => {
-  const parsed = JSON.parse(renderDefaultAgent('codex', {})) as Agent;
+  const parsed = JSON.parse(renderDefaultAgent('codex', {})) as HarnessAgent;
   const provider = {
     apiKeyEnv: 'OPENAI_API_KEY',
     baseUrl: 'http://localhost:20128/v1',
@@ -126,7 +128,7 @@ test('parseAgent: a valid inline provider is parsed onto the agent', () => {
   const agent = parseAgent(
     { name: 'smart-claude', harness: 'claudeCode', provider },
     'test.json'
-  );
+  ) as HarnessAgent;
   assert.deepEqual(agent.provider, provider);
 });
 
@@ -138,7 +140,7 @@ test('parseAgent: a string[] of default skills is parsed onto the agent', () => 
       skills: ['a', 'b'],
     },
     'test.json'
-  );
+  ) as HarnessAgent;
   assert.deepEqual(agent.skills, ['a', 'b']);
 });
 
@@ -146,7 +148,7 @@ test('parseAgent: an empty skills array is treated as no baked skills', () => {
   const agent = parseAgent(
     { name: 'x', harness: 'pi', skills: [] },
     'test.json'
-  );
+  ) as HarnessAgent;
   assert.equal(agent.skills, undefined);
 });
 
@@ -287,6 +289,96 @@ test('findAgent: an unknown name throws, listing the valid targets', () => {
         return true;
       }
     );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Remote A2A agents (ADR-0015): `transport: "a2a"` in agent.json names an
+// agent hosted elsewhere; no harness, a URL, headers with `${VAR}` references.
+
+test('parseAgent: transport "a2a" parses a remote agent with url, headers, requiredEnv and description', () => {
+  const agent = parseAgent(
+    {
+      name: 'remote-researcher',
+      transport: 'a2a',
+      url: 'https://agents.example.com/a2a',
+      headers: { Authorization: 'Bearer ${RESEARCH_TOKEN}' },
+      requiredEnv: ['RESEARCH_TOKEN'],
+      description: 'Answers research questions',
+    },
+    'test.json'
+  );
+  assert.equal(isRemoteAgent(agent), true);
+  assert.deepEqual(agent, {
+    name: 'remote-researcher',
+    transport: 'a2a',
+    url: 'https://agents.example.com/a2a',
+    headers: { Authorization: 'Bearer ${RESEARCH_TOKEN}' },
+    requiredEnv: ['RESEARCH_TOKEN'],
+    description: 'Answers research questions',
+  });
+  assert.equal(isRemoteAgent({ name: 'pi', harness: 'pi' }), false);
+});
+
+test('parseAgent: a remote agent without an http(s) url, or with malformed headers, throws naming the source', () => {
+  assert.throws(
+    () => parseAgent({ name: 'r', transport: 'a2a' }, 'r.json'),
+    /r\.json: a remote A2A agent needs an http\(s\) "url"/
+  );
+  assert.throws(
+    () => parseAgent({ name: 'r', transport: 'a2a', url: 'ftp://x' }, 'r.json'),
+    /http\(s\) "url"/
+  );
+  assert.throws(
+    () =>
+      parseAgent(
+        { name: 'r', transport: 'a2a', url: 'https://x', headers: { a: 1 } },
+        'r.json'
+      ),
+    /"headers" must be an object of string values/
+  );
+  assert.throws(
+    () => parseAgent({ transport: 'a2a', url: 'https://x' }, 'r.json'),
+    /needs a "name"/
+  );
+});
+
+test('resolveAgent: a persisted remote agent resolves without a harness check', () => {
+  const remote: Agent = {
+    name: 'remote-researcher',
+    transport: 'a2a',
+    url: 'https://agents.example.com/a2a',
+  };
+  const agent = resolveAgent(
+    'remote-researcher',
+    deps({ readAgent: n => (n === 'remote-researcher' ? remote : undefined) })
+  );
+  assert.deepEqual(agent, remote);
+});
+
+test('listAgents and findAgent: a remote agent.json in the store is listed and found next to harness agents', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agents-remote-'));
+  try {
+    fs.mkdirSync(agentDir('pi', root), { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir('pi', root), 'agent.json'),
+      JSON.stringify({ name: 'pi', harness: 'pi' })
+    );
+    fs.mkdirSync(agentDir('remote', root), { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir('remote', root), 'agent.json'),
+      JSON.stringify({ name: 'remote', transport: 'a2a', url: 'https://x/a2a' })
+    );
+    assert.deepEqual(
+      listAgents(root)
+        .map(a => a.name)
+        .sort(),
+      ['pi', 'remote']
+    );
+    const found = findAgent('remote', root);
+    assert.equal(isRemoteAgent(found), true);
+    assert.equal(isKnownTarget('remote', root), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

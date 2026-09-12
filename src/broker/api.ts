@@ -10,7 +10,13 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { DEPTH_LIMIT_MESSAGE, MERGE_SIGNAL_STATES } from './constants.js';
+import {
+  DEPTH_LIMIT_MESSAGE,
+  MERGE_SIGNAL_STATES,
+  STATUS_EVENTS_HEARTBEAT_MS,
+  STATUS_EVENTS_POLL_MS,
+} from './constants.js';
+import { streamStatusEvents } from './events.js';
 import {
   countInFlight,
   ensureSpool,
@@ -19,10 +25,13 @@ import {
   nextRequestId,
   readRecord,
   readRunInfo,
+  signalCancel,
   signalMerge,
   writeRequest,
 } from './spool.js';
+import { isTerminalSiblingState } from './taskState.js';
 import type {
+  CancelAccepted,
   ErrorResponse,
   MergeSignalAccepted,
   SiblingRecord,
@@ -36,12 +45,18 @@ export interface BrokerApiOptions {
   spoolDir: string;
   /** Clock, for tests. */
   now?: () => Date;
+  /** How often `GET /status/events` re-reads the spool; the default suits a bind mount. */
+  eventsPollMs?: number;
+  /** How often `GET /status/events` sends a keep-alive comment. */
+  eventsHeartbeatMs?: number;
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
+const STATUS_EVENTS_PATH = '/status/events';
 const STATUS_ONE_RE = /^\/status\/([^/]+)$/;
 const MERGE_ONE_RE = /^\/merge\/([^/]+)$/;
+const CANCEL_ONE_RE = /^\/cancel\/([^/]+)$/;
 /** A spawn request is one agent name and one prompt; anything bigger is abuse. */
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -53,6 +68,7 @@ function sendJson(
   body:
     | SpawnAccepted
     | MergeSignalAccepted
+    | CancelAccepted
     | StatusResponse
     | SiblingRecord
     | ErrorResponse
@@ -176,12 +192,27 @@ export function createBrokerApi(options: BrokerApiOptions): Handler {
       });
     }
 
+    const snapshot = (): StatusResponse => ({
+      run: readRunInfo(spoolDir),
+      siblings: listRecords(spoolDir),
+    });
+
     if (url.pathname === '/status') {
       if (method !== 'GET') return sendJson(res, 405, { error: 'Use GET.' });
-      return sendJson(res, 200, {
-        run: readRunInfo(spoolDir),
-        siblings: listRecords(spoolDir),
+      return sendJson(res, 200, snapshot());
+    }
+
+    // The same snapshot as a Server-Sent Events stream (ADR-0015): one
+    // `status` event now and one on every change, so an agent (or a UI) can
+    // block on "something happened" instead of polling with sleeps.
+    if (url.pathname === STATUS_EVENTS_PATH) {
+      if (method !== 'GET') return sendJson(res, 405, { error: 'Use GET.' });
+      streamStatusEvents(req, res, {
+        snapshot,
+        pollMs: options.eventsPollMs ?? STATUS_EVENTS_POLL_MS,
+        heartbeatMs: options.eventsHeartbeatMs ?? STATUS_EVENTS_HEARTBEAT_MS,
       });
+      return;
     }
 
     const one = STATUS_ONE_RE.exec(url.pathname);
@@ -222,6 +253,34 @@ export function createBrokerApi(options: BrokerApiOptions): Handler {
       return sendJson(res, 202, {
         id,
         status: 'merge-requested',
+        statusPath: `/status/${id}`,
+      });
+    }
+
+    // The parent's cancel (ADR-0015, A2A `tasks/cancel`): spooled for the
+    // host, which stops the sibling (or never starts it) and writes
+    // `canceled`. A request the host is already done with has nothing to
+    // cancel.
+    const cancelOne = CANCEL_ONE_RE.exec(url.pathname);
+    if (cancelOne) {
+      if (method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
+      const id = decodeSegment(cancelOne[1]);
+      const record =
+        id !== null && isRequestId(id) ? readRecord(spoolDir, id) : undefined;
+      if (!record || id === null) {
+        return sendJson(res, 404, {
+          error: `Unknown sibling "${id ?? cancelOne[1]}".`,
+        });
+      }
+      if (isTerminalSiblingState(record.status)) {
+        return sendJson(res, 409, {
+          error: `Nothing to cancel for ${id}: it is already ${record.status}.`,
+        });
+      }
+      signalCancel(spoolDir, id, now().toISOString());
+      return sendJson(res, 202, {
+        id,
+        status: 'cancel-requested',
         statusPath: `/status/${id}`,
       });
     }

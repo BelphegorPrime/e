@@ -290,6 +290,7 @@ const record = (over: Partial<SiblingRecord> = {}): SiblingRecord => ({
   prompt: 'look into   X\nand Y',
   requestedAt: 't',
   status: 'done',
+  taskState: 'completed',
   branch: 'e/researcher/look-1',
   exitCode: 0,
   ...over,

@@ -505,6 +505,65 @@ sibling branches stay in the repo for inspection (`git branch --list 'e/*'`);
 their work reaches you through the parent's branch, where each is one merge
 commit, plus a report per sibling under `e-runs/<id>/report.md`.
 
+Every sibling record also carries `taskState`, the lifecycle in the
+Agent2Agent (A2A) vocabulary (`submitted`, `working`, `input-required`,
+`completed`, `canceled`, `failed`, `rejected`, ADR-0015); the agent can block
+on it with `--watch` instead of polling, and cancel a sibling with `--cancel`.
+
+### `e` as an A2A agent
+
+`e serve` publishes an [Agent2Agent](https://a2a-protocol.org) agent card at
+`/.well-known/agent-card.json` and speaks the A2A 1.0 JSON-RPC binding on
+`POST /a2a` (ADR-0015; verified against the official `@a2a-js/sdk` in both
+directions, `src/a2a/interop.test.ts`). Every harness agent in the Store is one skill; a task
+is one run whose artifact is the branch, whether it was pushed, and the PR/MR
+URL. Any A2A client (an orchestrator, another agent) can therefore hand `e` a
+task:
+
+```bash
+e serve --detached
+curl -s http://127.0.0.1:8080/.well-known/agent-card.json | jq .skills[].id
+curl -s http://127.0.0.1:8080/a2a -H 'content-type: application/json' -d '{
+  "jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+  "params": { "message": { "messageId": "m1", "role": "ROLE_USER",
+    "parts": [{ "text": "Add input validation to src/api/users.ts and cover it with tests" }],
+    "metadata": { "agent": "pi" } } } }'
+# -> {"result":{"task":{"id":"...","status":{"state":"TASK_STATE_SUBMITTED"},...}}}
+# then GetTask (or SendStreamingMessage for server-sent events) until TASK_STATE_COMPLETED
+```
+
+The endpoint is open on loopback, like the rest of `serve`. Set `E_A2A_TOKEN`
+to require `Authorization: Bearer <token>`; bound beyond loopback (`--host`)
+without a token the endpoint stays off. Tasks take no follow-up messages: put
+the whole task into the first one.
+
+### Remote A2A agents in the Store
+
+An `agent.json` with `"transport": "a2a"` names an agent hosted elsewhere that
+speaks A2A. It is selected by name like any agent, but has no harness and no
+worktree: `e` sends it the prompt and prints (or, as a sibling, reports) its
+answer.
+
+```jsonc
+// ~/.e/agents/remote-researcher/agent.json
+{
+  "name": "remote-researcher",
+  "transport": "a2a",
+  "url": "https://agents.example.com/a2a",
+  "headers": { "Authorization": "Bearer ${RESEARCH_TOKEN}" },
+  "requiredEnv": ["RESEARCH_TOKEN"],
+  "description": "Answers research questions from the company wiki",
+}
+```
+
+```bash
+e spawn remote-researcher "Which teams own the payment service?"   # the answer on stdout, no branch
+node $S remote-researcher "Summarize the ADRs on git handling"     # as a sibling: answer in e-runs/<id>/report.md
+```
+
+`${VAR}` references in `headers` resolve from `.e/.env` on the host at call
+time; the value never enters a container or an image.
+
 ## Working on this repository
 
 For contributors and for AI agents asked to change `e` itself. Read, in this
@@ -560,10 +619,12 @@ this run has one. Delegate with the `spawn-brother` skill when the task splits:
 ```bash
 S=~/.agents/skills/spawn-brother/spawn-brother.mjs     # ~/.claude/skills/... under Claude Code
 node $S researcher "Read docs/adr/0013-*.md and CONTEXT.md; list every place the merge-back vocabulary is out of date. Write findings to notes/mergeback-audit.md."
-node $S --status                 # requested -> starting -> running -> done | failed
-node $S --status sib-001         # one sibling; `merge` and `report` appear once it exited
+node $S --status                 # requested -> starting -> running -> done | failed | canceled | rejected
+node $S --status sib-001         # one sibling; `merge` and `report` appear once it exited; `taskState` is the A2A view
+node $S --watch                  # block until a sibling's taskState needs you (input-required, completed, failed, ...)
 cat e-runs/sib-001/report.md     # what the host did with its branch and what you must do
 node $S --merge sib-001          # after resolving `merge.status: conflict` markers or clearing `held` files
+node $S --cancel sib-002         # stop a sibling you no longer need
 ```
 
 The host checkpoints your uncommitted work before a sibling starts and again
@@ -587,7 +648,8 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                  |
 | `e spawn … --keep-worktree`                    | Leave the run's worktree in place for inspection                                                                                 |
 | `e spawn … --skill spawn-brother`              | Let the agent request sibling runs; the host merges each back into its worktree (ADR-0013)                                       |
-| `e serve [--detached]` / `e serve stop`        | Web UI + browser terminal for starting runs; stop the background server                                                          |
+| `e spawn <remote-agent> "<prompt>"`            | Ask a Store agent with `"transport": "a2a"` over the Agent2Agent protocol; the answer on stdout, no run (ADR-0015)               |
+| `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, and the A2A endpoint (`/.well-known/agent-card.json`, `POST /a2a`); stop the background server         |
 | `e export` / `e import <file>`                 | Move the store and gateway configuration between machines as a zip                                                               |
 
 ## Environment variables
@@ -600,6 +662,7 @@ injected into a container.
 | `E_RUNTIME`                      | Container engine to use when `--runtime` is not passed: `docker`, `podman`, `nerdctl`, or `finch`                 |
 | `E_WORKTREES_DIR`                | Where run worktrees are created; must be a path the engine can bind-mount (see [Platform notes](#platform-notes)) |
 | `DOCKER_HOST` / `CONTAINER_HOST` | Engine socket for the browser terminal (`unix://` or `npipe://`); also honoured by the engine CLIs themselves     |
+| `E_A2A_TOKEN`                    | Bearer token `e serve` requires on its A2A endpoint; required to expose it beyond loopback (ADR-0015)             |
 | `OMNIROUTE_URL`                  | Where `e` reaches the local OmniRoute gateway (default `http://127.0.0.1:20128`)                                  |
 | `EGRESS_API_URL`                 | Where `e` reaches the egress blacklist API (default `http://127.0.0.1:20129`)                                     |
 | `LOCAL_LLAMA_URL`                | Where `e llamacpp download` reaches llama.cpp (default `http://127.0.0.1:9931`)                                   |

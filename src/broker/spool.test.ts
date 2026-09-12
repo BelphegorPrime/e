@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   countInFlight,
   ensureSpool,
+  hasCancelSignal,
   hasMergeSignal,
   isRequestId,
   listRecords,
@@ -14,7 +15,9 @@ import {
   readRecord,
   readRunInfo,
   readStatus,
+  signalCancel,
   signalMerge,
+  takeCancelSignal,
   takeMergeSignal,
   writeRequest,
   writeRunInfo,
@@ -37,12 +40,28 @@ const request = (id: string) => ({
   requestedAt: '2026-09-12T10:00:00.000Z',
 });
 
-test('isRequestId: sib-NNN only, so an id is safe to use as a file name', () => {
+test('isRequestId: sib-NNN (a sibling) or a2a-NNN (an A2A task) only, so an id is safe to use as a file name', () => {
   assert.equal(isRequestId('sib-001'), true);
   assert.equal(isRequestId('sib-1234'), true);
+  assert.equal(isRequestId('a2a-001'), true);
   assert.equal(isRequestId('sib-1'), false);
+  assert.equal(isRequestId('task-001'), false);
   assert.equal(isRequestId('../etc/passwd'), false);
   assert.equal(isRequestId('sib-001.json'), false);
+});
+
+test("nextRequestId counts per prefix: A2A tasks and siblings never take each other's numbers", () => {
+  withSpool(root => {
+    ensureSpool(root);
+    assert.equal(nextRequestId(root, 'a2a'), 'a2a-001');
+    writeRequest(root, request('sib-001'));
+    writeRequest(root, request('sib-002'));
+    assert.equal(nextRequestId(root, 'a2a'), 'a2a-001');
+    writeRequest(root, request('a2a-001'));
+    assert.equal(nextRequestId(root, 'a2a'), 'a2a-002');
+    assert.equal(nextRequestId(root), 'sib-003');
+    assert.deepEqual(listRequestIds(root), ['a2a-001', 'sib-001', 'sib-002']);
+  });
 });
 
 test('ensureSpool creates the requests and status dirs, idempotently', () => {
@@ -105,6 +124,7 @@ test('a record is the request plus the host status; requested until the host wri
     assert.deepEqual(readRecord(root, 'sib-001'), {
       ...request('sib-001'),
       status: 'requested',
+      taskState: 'submitted',
     });
     writeStatus(root, 'sib-001', {
       status: 'done',
@@ -115,6 +135,7 @@ test('a record is the request plus the host status; requested until the host wri
     assert.deepEqual(readRecord(root, 'sib-001'), {
       ...request('sib-001'),
       status: 'done',
+      taskState: 'completed',
       branch: 'e/researcher/look-into-x-1',
       exitCode: 0,
       updatedAt: '2026-09-12T10:05:00.000Z',
@@ -203,5 +224,55 @@ test('merge signals (ticket 07): written once, seen, taken exactly once; a malfo
 
     assert.throws(() => signalMerge(root, '../x', 't'), /Invalid request id/);
     assert.equal(hasMergeSignal(root, '../x'), false);
+  });
+});
+
+test('cancel signals (ADR-0015): their own directory, written once, taken exactly once, apart from merge signals', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    assert.equal(hasCancelSignal(root, 'sib-001'), false);
+    assert.equal(takeCancelSignal(root, 'sib-001'), false);
+
+    signalCancel(root, 'sib-001', '2026-09-12T10:00:00.000Z');
+    assert.equal(hasCancelSignal(root, 'sib-001'), true);
+    assert.equal(hasMergeSignal(root, 'sib-001'), false);
+    assert.deepEqual(
+      JSON.parse(
+        fs.readFileSync(path.join(root, 'cancels', 'sib-001.json'), 'utf8')
+      ),
+      { id: 'sib-001', signaledAt: '2026-09-12T10:00:00.000Z' }
+    );
+    assert.equal(takeCancelSignal(root, 'sib-001'), true);
+    assert.equal(hasCancelSignal(root, 'sib-001'), false);
+    assert.equal(takeCancelSignal(root, 'sib-001'), false);
+    assert.throws(() => signalCancel(root, '../x', 't'), /Invalid request id/);
+  });
+});
+
+test('every record carries its A2A task state, derived from run state and merge-back', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    for (const id of ['sib-001', 'sib-002', 'sib-003', 'sib-004', 'sib-005']) {
+      writeRequest(root, request(id));
+    }
+    writeStatus(root, 'sib-002', { status: 'running', updatedAt: 't' });
+    writeStatus(root, 'sib-003', {
+      status: 'done',
+      exitCode: 0,
+      merge: { status: 'conflict', files: ['a'] },
+      updatedAt: 't',
+    });
+    writeStatus(root, 'sib-004', { status: 'canceled', updatedAt: 't' });
+    writeStatus(root, 'sib-005', { status: 'rejected', updatedAt: 't' });
+    assert.deepEqual(
+      listRecords(root).map(record => [record.id, record.taskState]),
+      [
+        ['sib-001', 'submitted'],
+        ['sib-002', 'working'],
+        ['sib-003', 'input-required'],
+        ['sib-004', 'canceled'],
+        ['sib-005', 'rejected'],
+      ]
+    );
   });
 });

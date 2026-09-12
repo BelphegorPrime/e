@@ -19,7 +19,7 @@ import { RunScratch } from '../runs/runScratch.js';
 import { executeSpawn } from './executeSpawn.js';
 import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../harness/index.js';
-import type { Agent } from '../agent/index.js';
+import type { HarnessAgent } from '../agent/index.js';
 import { defaultBrokerPlan } from '../runs/runBroker.js';
 import { ensureSpool, readStatus } from '../broker/spool.js';
 
@@ -82,7 +82,7 @@ const harness: Harness = {
   buildCommand: (prompt: string) => ['demo', '-p', prompt],
   buildInteractiveCommand: () => ['demo'],
 };
-const agent: Agent = { name: 'demo', harness: 'demo' };
+const agent: HarnessAgent = { name: 'demo', harness: 'demo' };
 
 function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
   return {

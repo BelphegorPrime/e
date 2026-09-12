@@ -32,6 +32,7 @@ import {
 import { defaultBrokerPlan } from './runBroker.js';
 import {
   ensureSpool,
+  readRecord,
   readRunInfo,
   readStatus,
   writeRequest,
@@ -1401,4 +1402,76 @@ test('a run with a broker refuses to start without an explicit sibling launcher'
   );
   assert.equal(runtime.ran, false);
   assert.deepEqual(runtime.startedSidecars, []);
+});
+
+// Cancel (ADR-0015): `abort` is the run's SIGTERM. Before the container it
+// ends the run without one; during it the container is removed and the
+// normal (non-zero) teardown follows.
+
+test('abort before the container: no run, no commit, exit code 143, worktree removed', async () => {
+  const { deps, git, runtime } = makeDeps();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await runSpawn(deps, makeParams({ abort: controller.signal }));
+  assert.equal(result.ran, false);
+  assert.equal(result.exitCode, 143);
+  assert.match(result.error ?? '', /canceled before the container started/);
+  assert.equal(runtime.ran, false);
+  assert.equal(git.commits.length, 0);
+  assert.equal(git.removed.length, 1);
+});
+
+test('abort while the container runs: the container is removed by name, nothing is committed or pushed, the exit code is non-zero', async () => {
+  const runtime = new FakeRuntime(0);
+  const controller = new AbortController();
+  runtime.onRun = () => {
+    controller.abort();
+  };
+  const { deps, git } = makeDeps({ runtime });
+  git.dirty = true;
+  const result = await runSpawn(deps, makeParams({ abort: controller.signal }));
+  assert.equal(result.ran, true);
+  assert.deepEqual(runtime.removedContainers, ['e-demo-fix-flaky-test-1']);
+  // The fake "container" still returned 0; a canceled run never counts as a success.
+  assert.equal(result.exitCode, 143);
+  assert.equal(git.commits.length, 0);
+  assert.deepEqual(git.pushed, []);
+});
+
+test('the report markers (an A2A task): status goes into the spool with the branch, then done with pushed and the PR/MR URL; the run still pushes', async () => {
+  const spool = fs.mkdtempSync(path.join(os.tmpdir(), 'e-report-spool-'));
+  try {
+    ensureSpool(spool);
+    writeRequest(spool, {
+      id: 'a2a-001',
+      agent: 'demo',
+      prompt: 'Fix the flaky test',
+      requestedAt: 't',
+    });
+    const pr = new FakePullRequest({ url: 'https://example.com/pr/1' });
+    const runtime = new FakeRuntime(0);
+    runtime.onRun = () => {
+      const running = readStatus(spool, 'a2a-001');
+      assert.equal(running?.status, 'running');
+      assert.equal(running?.branch, 'e/demo/fix-flaky-test-1');
+    };
+    const { deps, git } = makeDeps({ runtime, pullRequest: pr });
+    git.dirty = true;
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        report: { spoolDir: spool, id: 'a2a-001' },
+        gitPlatform: 'github',
+      })
+    );
+    assert.equal(result.pushed, true);
+    const done = readStatus(spool, 'a2a-001');
+    assert.equal(done?.status, 'done');
+    assert.equal(done?.exitCode, 0);
+    assert.equal(done?.pushed, true);
+    assert.equal(done?.pullRequestUrl, 'https://example.com/pr/1');
+    assert.equal(readRecord(spool, 'a2a-001')?.taskState, 'completed');
+  } finally {
+    fs.rmSync(spool, { recursive: true, force: true });
+  }
 });

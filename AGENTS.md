@@ -65,7 +65,9 @@ retry after a sibling finishes. The shape:
 # runtime-broker over the run's network - no docker socket inside this container:
 node ~/.agents/skills/spawn-brother/spawn-brother.mjs <agent> "<task description>"
 node ~/.agents/skills/spawn-brother/spawn-brother.mjs --status
+node ~/.agents/skills/spawn-brother/spawn-brother.mjs --watch [<id>] # block until a sibling needs you
 node ~/.agents/skills/spawn-brother/spawn-brother.mjs --merge <id>   # "cleared / resolved, retry the merge"
+node ~/.agents/skills/spawn-brother/spawn-brother.mjs --cancel <id>  # stop a sibling you no longer need
 ```
 
 - Spawn is **non-blocking**; multiple siblings run in parallel
@@ -83,6 +85,14 @@ node ~/.agents/skills/spawn-brother/spawn-brother.mjs --merge <id>   # "cleared 
   your edits to the named files were in flight; finish them, then signal the
   same way. The host never resolves a conflict for you, and retries held
   merges once more when your run ends with exit code 0.
+- Every sibling record carries `taskState`, the Agent2Agent (A2A) lifecycle
+  (ADR-0015): `submitted`, `working`, `input-required` (its merge-back is
+  `conflict` or `held` and waits for you), `completed`, `failed`, `canceled`,
+  `rejected`. Branch on `taskState`; use `--watch` (the broker's
+  `GET /status/events`) instead of a poll loop with sleeps.
+- A Store agent with `"transport": "a2a"` is a remote A2A agent: request it
+  like any other; it has no branch, its answer is the `answer` field of its
+  status and the `## Answer` section of its report (`merge.status: skipped`).
 - Your role is set via env vars - check `$E_ROLE` (`parent` | `child`) and
   `$E_BROKER_URL` (`http://<host>:<port>`, no trailing slash). Do not create
   or depend on `child` / `parent` marker files in the worktree; role is not a

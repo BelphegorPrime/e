@@ -45,6 +45,9 @@ import {
 
 export type { ReadinessPolicy } from './runSidecarOrchestrator.js';
 
+/** The exit code of a canceled run (SIGTERM's 128 + 15), so no commit path takes it for a success. */
+export const CANCELED_EXIT_CODE = 143;
+
 /** Readiness polling defaults: up to 30 tries, 1s apart (~30s), overridable per run. */
 const DEFAULT_READINESS_ATTEMPTS = 30;
 const DEFAULT_READINESS_INTERVAL_MS = 1000;
@@ -139,6 +142,20 @@ export interface RunSpawnParams {
    * back into the parent (ADR-0013).
    */
   sibling?: { spoolDir: string; id: string };
+  /**
+   * Present for a run of the user's own that something else watches (the A2A
+   * facade of `e serve`, ADR-0015): a spool and request id to report the same
+   * status into, plus `pushed` and the PR/MR URL at the end. Unlike `sibling`
+   * it changes nothing else about the run.
+   */
+  report?: { spoolDir: string; id: string };
+  /**
+   * A cancel (ADR-0015): aborted before the container starts, the run ends
+   * without one; aborted while the container runs, the host removes it, so
+   * `runtime.run` returns and the normal teardown follows. Nothing is
+   * committed for a run that did not exit 0.
+   */
+  abort?: AbortSignal;
   /** Fan-out bound for a run with a broker (`config.json` `maxSiblings`; default 3). */
   maxSiblings?: number;
   /**
@@ -252,10 +269,11 @@ export async function runSpawn(
     );
   }
 
-  /** A sibling reports into its parent's spool; every other run has nowhere to. */
+  /** A sibling reports into its parent's spool, a watched run into its watcher's; every other run has nowhere to. */
+  const reportTo = params.sibling ?? params.report;
   const report = (patch: Omit<SiblingStatusPatch, 'updatedAt'>): void => {
-    if (!params.sibling) return;
-    writeStatus(params.sibling.spoolDir, params.sibling.id, {
+    if (!reportTo) return;
+    writeStatus(reportTo.spoolDir, reportTo.id, {
       ...patch,
       updatedAt: new Date().toISOString(),
     });
@@ -441,14 +459,43 @@ export async function runSpawn(
           params.model
         );
 
+    // A cancel that arrived before the container exists ends the run here:
+    // nothing ran, nothing to commit (ADR-0015).
+    if (params.abort?.aborted) {
+      report({
+        status: 'failed',
+        branch,
+        error: 'canceled before the container started',
+      });
+      return {
+        ran: false,
+        exitCode: CANCELED_EXIT_CODE,
+        branch,
+        base,
+        error: 'Run canceled before the container started',
+      };
+    }
+
     // A sibling is now identifiable: report it running under its branch.
     report({ status: 'running', branch });
 
-    // Execute the agent container in the foreground.
-    const exitCode = await deps.runtime.run(params.imageTag, runOptions, [
-      ...command,
-      ...(params.mcpArgs ?? []),
-    ]);
+    // Execute the agent container in the foreground. A cancel while it runs
+    // removes the container, so `run` returns (non-zero) and teardown follows.
+    const onAbort = (): void => {
+      log.warn(`Run ${runName} canceled: stopping its container`);
+      deps.runtime.removeContainer(runName);
+    };
+    params.abort?.addEventListener('abort', onAbort, { once: true });
+    let exitCode: number;
+    try {
+      exitCode = await deps.runtime.run(params.imageTag, runOptions, [
+        ...command,
+        ...(params.mcpArgs ?? []),
+      ]);
+    } finally {
+      params.abort?.removeEventListener('abort', onAbort);
+    }
+    if (params.abort?.aborted && exitCode === 0) exitCode = CANCELED_EXIT_CODE;
 
     // The agent is done: stop taking sibling requests and wait for the
     // siblings in flight (each is merged back as it exits), so nothing of
@@ -517,7 +564,13 @@ export async function runSpawn(
       pullRequestWarning = prResult.warning;
     }
 
-    report({ status: 'done', branch, exitCode });
+    report({
+      status: 'done',
+      branch,
+      exitCode,
+      ...(params.report ? { pushed } : {}),
+      ...(pullRequestUrl !== undefined ? { pullRequestUrl } : {}),
+    });
 
     return {
       ran: true,

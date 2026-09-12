@@ -2,15 +2,22 @@ import fs from 'fs';
 import { HARNESSES } from '../harness/index.js';
 import { PROTOCOLS, type Provider, type Protocol } from '../harness/adapter.js';
 import { agentFilePath, agentsBaseDir } from '../store/paths.js';
+import {
+  declaresA2aTransport,
+  parseRemoteA2aAgent,
+  type RemoteA2aAgent,
+} from '../a2a/remoteAgent.js';
+
+export type { RemoteA2aAgent } from '../a2a/remoteAgent.js';
 
 /**
- * An **Agent**: a named pairing of a Harness with, optionally, an inline
- * {@link Provider}. It is the selectable unit a Run executes. An Agent without
- * a provider runs its harness's base image against the ambient env exactly as
- * before; an Agent with a provider has that provider rendered into the
- * harness's native config form by the harness adapter. See ADR-0004/0006.
+ * A **harness Agent**: a named pairing of a Harness with, optionally, an
+ * inline {@link Provider}. It is the selectable unit a Run executes. An Agent
+ * without a provider runs its harness's base image against the ambient env
+ * exactly as before; an Agent with a provider has that provider rendered into
+ * the harness's native config form by the harness adapter. See ADR-0004/0006.
  */
-export interface Agent {
+export interface HarnessAgent {
   /** Registry key and branch segment, e.g. "smart-codex". */
   name: string;
   /** Name of the Harness this agent runs. */
@@ -25,6 +32,18 @@ export interface Agent {
   skills?: string[];
 }
 
+/**
+ * An **Agent** as the Store lists it: a harness agent `e` runs in a container,
+ * or a remote A2A agent `e` talks to over the Agent2Agent protocol (ADR-0015;
+ * `transport: "a2a"` in its `agent.json`). Both are selected by name.
+ */
+export type Agent = HarnessAgent | RemoteA2aAgent;
+
+/** True for a Store agent hosted elsewhere and reached over A2A. */
+export function isRemoteAgent(agent: Agent): agent is RemoteA2aAgent {
+  return 'transport' in agent && agent.transport === 'a2a';
+}
+
 /** Inputs to the pure agent resolution; the glue supplies the real values. */
 export interface ResolveAgentDeps {
   /** Loads a persisted agent definition by name, or undefined if none exists. */
@@ -37,7 +56,8 @@ export interface ResolveAgentDeps {
 
 /**
  * Resolves a spawn target to an Agent, purely:
- *  1. A persisted agent by that name wins (its harness reference is validated).
+ *  1. A persisted agent by that name wins (a harness agent's harness reference
+ *     is validated; a remote agent has none).
  *  2. Otherwise a bare harness name derives that harness's default agent.
  *  3. Otherwise it is an error listing the available agents and harnesses.
  */
@@ -49,7 +69,7 @@ export function resolveAgent(name: string, deps: ResolveAgentDeps): Agent {
         `Agent under "${name}" declares a different name "${onDisk.name}"; the directory name is the agent's identity.`
       );
     }
-    if (!deps.harnesses.includes(onDisk.harness)) {
+    if (!isRemoteAgent(onDisk) && !deps.harnesses.includes(onDisk.harness)) {
       throw new Error(
         `Agent "${name}" references unknown harness "${onDisk.harness}". Valid harnesses: ${deps.harnesses.join(', ')}.`
       );
@@ -74,7 +94,7 @@ export function renderDefaultAgent(
 ): string {
   const harness = HARNESSES[harnessName];
 
-  const agent: Agent = {
+  const agent: HarnessAgent = {
     name: harnessName,
     harness: harnessName,
     provider: {
@@ -98,20 +118,22 @@ function readAgentFile(name: string, root?: string): Agent | undefined {
 }
 
 /**
- * Validates a parsed `agent.json` object into an {@link Agent}, purely. The
- * `name`/`harness` strings are required; a `provider`, if present, is validated
- * in shape (its protocol must be one `e` recognises - whether the harness
- * *speaks* it is checked later, against the resolved harness). `where` names
- * the source in error messages.
+ * Validates a parsed `agent.json` object into an {@link Agent}, purely. With
+ * `transport: "a2a"` it is a remote agent (`url` required, no harness);
+ * otherwise the `name`/`harness` strings are required and a `provider`, if
+ * present, is validated in shape (its protocol must be one `e` recognises -
+ * whether the harness *speaks* it is checked later, against the resolved
+ * harness). `where` names the source in error messages.
  */
 export function parseAgent(raw: unknown, where: string): Agent {
-  const parsed = (raw ?? {}) as Partial<Agent>;
+  if (declaresA2aTransport(raw)) return parseRemoteA2aAgent(raw, where);
+  const parsed = (raw ?? {}) as Partial<HarnessAgent>;
   if (typeof parsed.name !== 'string' || typeof parsed.harness !== 'string') {
     throw new Error(
-      `Invalid agent definition at ${where}: expected { name, harness } strings.`
+      `Invalid agent definition at ${where}: expected { name, harness } strings (or "transport": "a2a" with a "url" for a remote agent).`
     );
   }
-  const agent: Agent = {
+  const agent: HarnessAgent = {
     name: parsed.name,
     harness: parsed.harness,
   };

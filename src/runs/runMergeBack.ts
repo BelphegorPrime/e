@@ -244,9 +244,14 @@ export function renderSiblingReport(
     `- run: ${record.status}${record.exitCode !== undefined ? `, exit code ${record.exitCode}` : ''}`,
     ...(record.error ? [`- error: ${record.error}`] : []),
     `- merge: ${merge.status}`,
+    `- taskState: ${record.taskState}`,
     `- task: ${record.prompt.replace(/\s+/g, ' ').trim()}`,
     '',
     ...explain(record, merge),
+    // A remote A2A agent's answer (ADR-0015): the report is the only place it lands.
+    ...(record.answer !== undefined
+      ? ['', '## Answer', '', record.answer.trimEnd()]
+      : []),
   ];
   return lines.join('\n') + '\n';
 }

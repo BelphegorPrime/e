@@ -5,13 +5,16 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createBrokerApi, parseSpawnBody } from './api.js';
+import { SseParser } from './events.js';
 import {
+  hasCancelSignal,
   hasMergeSignal,
   readRequest,
   writeRunInfo,
   writeStatus,
 } from './spool.js';
 import type {
+  CancelAccepted,
   MergeSignalAccepted,
   SiblingRecord,
   SpawnAccepted,
@@ -349,5 +352,138 @@ test('broker api: POST /merge/<id> spools the parent signal for a held or confli
     assert.deepEqual(record.merge, { status: 'conflict', files: ['src/b.ts'] });
   } finally {
     await broker.close();
+  }
+});
+
+test('broker api: POST /cancel/<id> spools a cancel for a request the host is not done with; a settled one is 409', async () => {
+  const broker = await startBroker();
+  try {
+    await post(broker.url, JSON.stringify({ agent: 'a', prompt: 'one' }));
+    await post(broker.url, JSON.stringify({ agent: 'b', prompt: 'two' }));
+    await post(broker.url, JSON.stringify({ agent: 'c', prompt: 'three' }));
+    const cancel = (id: string) =>
+      fetch(`${broker.url}/cancel/${id}`, { method: 'POST' });
+
+    assert.equal((await cancel('sib-999')).status, 404);
+    assert.equal((await cancel('..%2Fx')).status, 404);
+    assert.equal(
+      (await fetch(`${broker.url}/cancel/sib-001`, { method: 'GET' })).status,
+      405
+    );
+
+    // Not yet picked up: cancelable (the host marks it canceled on its tick).
+    const waiting = await cancel('sib-001');
+    assert.equal(waiting.status, 202);
+    assert.deepEqual(await json<CancelAccepted>(waiting), {
+      id: 'sib-001',
+      status: 'cancel-requested',
+      statusPath: '/status/sib-001',
+    });
+    assert.equal(hasCancelSignal(broker.spoolDir, 'sib-001'), true);
+
+    // Running: cancelable.
+    writeStatus(broker.spoolDir, 'sib-002', {
+      status: 'running',
+      branch: 'e/b/two-1',
+      updatedAt: 't',
+    });
+    assert.equal((await cancel('sib-002')).status, 202);
+
+    // Done, failed, canceled, rejected: nothing to cancel.
+    for (const status of ['done', 'failed', 'canceled', 'rejected'] as const) {
+      writeStatus(broker.spoolDir, 'sib-003', { status, updatedAt: 't' });
+      const settled = await cancel('sib-003');
+      assert.equal(settled.status, 409, status);
+      assert.match(
+        (await json<{ error: string }>(settled)).error,
+        new RegExp(`already ${status}`)
+      );
+    }
+    assert.equal(hasCancelSignal(broker.spoolDir, 'sib-003'), false);
+  } finally {
+    await broker.close();
+  }
+});
+
+test('broker api: GET /status carries the A2A taskState per sibling', async () => {
+  const broker = await startBroker();
+  try {
+    await post(broker.url, JSON.stringify({ agent: 'a', prompt: 'one' }));
+    await post(broker.url, JSON.stringify({ agent: 'b', prompt: 'two' }));
+    writeStatus(broker.spoolDir, 'sib-002', {
+      status: 'done',
+      branch: 'e/b/two-1',
+      exitCode: 0,
+      merge: { status: 'held', files: ['x'], reason: 'in flight' },
+      updatedAt: 't',
+    });
+    const status = await json<StatusResponse>(
+      await fetch(`${broker.url}/status`)
+    );
+    assert.deepEqual(
+      status.siblings.map(s => [s.id, s.taskState]),
+      [
+        ['sib-001', 'submitted'],
+        ['sib-002', 'input-required'],
+      ]
+    );
+  } finally {
+    await broker.close();
+  }
+});
+
+test('broker api: GET /status/events streams the status as server-sent events, one per change', async () => {
+  const spoolDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-broker-api-'));
+  const server = http.createServer(
+    createBrokerApi({ spoolDir, eventsPollMs: 5, eventsHeartbeatMs: 1000 })
+  );
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const url = `http://127.0.0.1:${address.port}`;
+  try {
+    assert.equal(
+      (await fetch(`${url}/status/events`, { method: 'POST' })).status,
+      405
+    );
+    const response = await fetch(`${url}/status/events`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'text/event-stream');
+    const reader = response.body!.getReader();
+    const parser = new SseParser();
+    const decoder = new TextDecoder();
+    const events: StatusResponse[] = [];
+    const next = async (): Promise<void> => {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        const parsed = parser.push(decoder.decode(value, { stream: true }));
+        if (parsed.length === 0) continue;
+        for (const event of parsed) {
+          assert.equal(event.event, 'status');
+          events.push(JSON.parse(event.data) as StatusResponse);
+        }
+        return;
+      }
+    };
+    await next();
+    assert.deepEqual(events[0], { run: null, siblings: [] });
+    await post(url, JSON.stringify({ agent: 'a', prompt: 'one' }));
+    await next();
+    assert.deepEqual(
+      events[1].siblings.map(s => [s.id, s.status, s.taskState]),
+      [['sib-001', 'requested', 'submitted']]
+    );
+    writeStatus(spoolDir, 'sib-001', {
+      status: 'done',
+      exitCode: 0,
+      updatedAt: 't',
+    });
+    await next();
+    assert.equal(events[2].siblings[0].taskState, 'completed');
+    await reader.cancel();
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    fs.rmSync(spoolDir, { recursive: true, force: true });
   }
 });

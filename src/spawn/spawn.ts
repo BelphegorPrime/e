@@ -13,7 +13,13 @@ import {
   type SpawnFacts,
 } from './spawnPlan.js';
 import { resolveHarness, HARNESSES } from '../harness/index.js';
-import { findAgent, isKnownTarget } from '../agent/index.js';
+import {
+  findAgent,
+  isKnownTarget,
+  isRemoteAgent,
+  type RemoteA2aAgent,
+} from '../agent/index.js';
+import { runRemoteAgent } from '../a2a/remoteSpawn.js';
 import { parseDotenv } from '../utils/dotenv.js';
 import {
   ensureShippedSkill,
@@ -43,6 +49,10 @@ import { log } from '../utils/log.js';
 import { env } from '../utils/env.js';
 import { siblingSummaryLine } from '../runs/runSiblings.js';
 import { mergeLanded } from '../runs/runMergeBack.js';
+import { CANCELED_EXIT_CODE } from '../runs/runSpawn.js';
+
+/** How long a canceled `e spawn` may take to stop its container and tear down before it is exited by force. */
+const CANCEL_GRACE_MS = 60_000;
 
 /** The parsed `e spawn` CLI options, as Commander hands them to the action. */
 export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
@@ -208,6 +218,13 @@ export function gatherSpawnFacts(
     isKnownTarget: name => isKnownTarget(name, root),
   });
   const agent = findAgent(resolved.agentTarget, root);
+  if (isRemoteAgent(agent)) {
+    // The action answers a remote agent before gathering facts (see
+    // `resolveRemoteTarget`); reaching this means a caller skipped that step.
+    throw new Error(
+      `Agent "${agent.name}" is a remote A2A agent and has no harness to spawn.`
+    );
+  }
   const harness = resolveHarness(agent.harness);
 
   const baseEnvPath = root !== undefined ? envFilePath(root) : undefined;
@@ -266,9 +283,41 @@ export function gatherSpawnFacts(
     role: env.spawnRole,
     // Set by a parent run's host for a sibling request (ADR-0013).
     sibling: env.sibling,
+    // Set by the A2A facade of `e serve` for a run it watches (ADR-0015).
+    report: env.report,
     // The store's sibling settings, read once with the rest of config.json.
     siblingArtifacts: config.siblingArtifacts,
     maxSiblings: config.maxSiblings,
+  };
+}
+
+/**
+ * The remote-agent short circuit (ADR-0015): when the spawn target names a
+ * Store agent with `transport: "a2a"`, there is nothing to build or run -
+ * the prompt goes over A2A. Returns what `runRemoteAgent` needs, or undefined
+ * for an ordinary (harness) target. Exported for its tests.
+ */
+export function resolveRemoteTarget(
+  target: string | undefined,
+  prompt: string[],
+  opts: SpawnCommandOptions
+):
+  | { agent: RemoteA2aAgent; prompt: string; storeEnv: Record<string, string> }
+  | undefined {
+  const root = findRoot(opts.dir);
+  const resolved = resolveSpawnTarget({
+    target,
+    prompt,
+    defaultHarness: readConfig(root).defaultHarness,
+    isKnownTarget: name => isKnownTarget(name, root),
+  });
+  const agent = findAgent(resolved.agentTarget, root);
+  if (!isRemoteAgent(agent)) return undefined;
+  const baseEnvPath = root !== undefined ? envFilePath(root) : undefined;
+  return {
+    agent,
+    prompt: resolved.prompt.join(' '),
+    storeEnv: loadStoreEnv(baseEnvPath),
   };
 }
 
@@ -329,14 +378,28 @@ export function registerSpawnCommand(program: Command): void {
         // RunScratch owns every rendered secret file; one dispose() cleans up, and
         // one try/catch turns any failure into a clean exit (ADR-0008).
         const scratch = new RunScratch();
-        // A sibling its parent's host gives up on gets SIGTERM; drop the
-        // rendered secret files before exiting (Node's default would exit
-        // without running any cleanup).
+        // SIGTERM is a cancel (ADR-0015): a sibling its parent canceled or
+        // gave up on, an A2A task its client canceled. The run stops its
+        // container and tears down as usual (`RunSpawnParams.abort`); should
+        // that hang, the fallback below still drops the rendered secret files
+        // and exits (Node's default would exit without any cleanup).
+        const cancel = new AbortController();
         process.once('SIGTERM', () => {
-          scratch.dispose();
-          process.exit(143);
+          cancel.abort();
+          setTimeout(() => {
+            scratch.dispose();
+            process.exit(CANCELED_EXIT_CODE);
+          }, CANCEL_GRACE_MS).unref();
         });
         try {
+          // A remote A2A agent (ADR-0015) is answered over the wire: no
+          // image, no worktree, the answer on stdout.
+          const remote = resolveRemoteTarget(target, prompt, opts);
+          if (remote) {
+            process.exit(
+              await runRemoteAgent({ ...remote, abort: cancel.signal })
+            );
+          }
           const facts = gatherSpawnFacts(target, prompt, opts);
           validateSpawn(facts);
           const runtime = resolveRuntime(opts.runtime);
@@ -398,6 +461,7 @@ export function registerSpawnCommand(program: Command): void {
             scratch,
             pullRequest: config.gitPlatform ? new HostPullRequest() : undefined,
             gitPlatform: config.gitPlatform,
+            abort: cancel.signal,
           });
 
           // Rendered env-files hold resolved secrets; each container already has

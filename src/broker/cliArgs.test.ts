@@ -62,3 +62,30 @@ test('parseSpawnBrotherArgs: --merge <id> signals one sibling; the id is require
   );
   assert.match(SPAWN_BROTHER_USAGE, /--merge <id>/);
 });
+
+test('parseSpawnBrotherArgs: --cancel <id> cancels one sibling; the id is required, and only one', () => {
+  assert.deepEqual(parseSpawnBrotherArgs(['--cancel', 'sib-001']), {
+    kind: 'cancel',
+    id: 'sib-001',
+  });
+  assert.throws(() => parseSpawnBrotherArgs(['--cancel']), /exactly one/);
+  assert.throws(
+    () => parseSpawnBrotherArgs(['--cancel', 'a', 'b']),
+    /exactly one/
+  );
+});
+
+test('parseSpawnBrotherArgs: --watch blocks on all siblings or on one', () => {
+  assert.deepEqual(parseSpawnBrotherArgs(['--watch']), { kind: 'watch' });
+  assert.deepEqual(parseSpawnBrotherArgs(['--watch', 'sib-002']), {
+    kind: 'watch',
+    id: 'sib-002',
+  });
+  assert.throws(
+    () => parseSpawnBrotherArgs(['--watch', 'a', 'b']),
+    /at most one/
+  );
+  assert.match(SPAWN_BROTHER_USAGE, /--watch/);
+  assert.match(SPAWN_BROTHER_USAGE, /--cancel/);
+  assert.match(SPAWN_BROTHER_USAGE, /4 --watch timed out/);
+});

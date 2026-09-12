@@ -1,8 +1,34 @@
 /** Wire and spool types of the runtime-broker (ADR-0013). Node built-ins only: bundled. */
 
-/** A sibling's lifecycle: the broker writes `requested`; the host advances the rest. */
+/**
+ * A sibling's lifecycle: the broker writes `requested`; the host advances the
+ * rest. `canceled` and `rejected` (ADR-0015) are the host's answers to a
+ * parent's `POST /cancel/<id>` and to a request it refuses after the broker
+ * accepted it (the depth rule, re-checked host-side).
+ */
 export type SiblingState =
-  'requested' | 'starting' | 'running' | 'done' | 'failed';
+  | 'requested'
+  | 'starting'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'canceled'
+  | 'rejected';
+
+/**
+ * The A2A task state a sibling record maps to (ADR-0015): the Agent2Agent
+ * protocol's vocabulary, derived from the run state and the merge-back, so
+ * an agent, the web UI and an A2A client all read the same lifecycle. See
+ * `taskState.ts` for the mapping.
+ */
+export type TaskState =
+  | 'submitted'
+  | 'working'
+  | 'input-required'
+  | 'completed'
+  | 'canceled'
+  | 'failed'
+  | 'rejected';
 
 /** `POST /spawn` body. */
 export interface SpawnRequestBody {
@@ -14,7 +40,7 @@ export interface SpawnRequestBody {
 
 /** A request as spooled by the broker (`requests/<id>.json`). */
 export interface SpawnRequest extends SpawnRequestBody {
-  /** `sib-NNN`, assigned in arrival order. */
+  /** `sib-NNN` (a sibling) or `a2a-NNN` (a task the A2A facade started), assigned in arrival order. */
   id: string;
   /** ISO timestamp of arrival at the broker. */
   requestedAt: string;
@@ -36,7 +62,11 @@ export type MergeBackStatus =
   | 'held'
   /** Git refused for another reason (`reason`); no retry will help. */
   | 'failed'
-  /** Not attempted: the sibling failed or exited non-zero (`reason`). */
+  /**
+   * Not attempted (`reason`): the sibling failed, exited non-zero, was
+   * canceled or rejected, or was a remote A2A agent with no branch to merge
+   * (its answer is in the report).
+   */
   | 'skipped';
 
 /** The merge-back of one sibling, as the host reports it in the status. */
@@ -55,12 +85,21 @@ export interface SiblingStatusPatch {
   branch?: string;
   /** The sibling container's exit code, once it exited. */
   exitCode?: number;
-  /** Why the sibling failed, when it did. */
+  /** Why the sibling failed, was canceled or was rejected, when it was. */
   error?: string;
   /** The merge-back into the parent worktree, once the sibling has exited. */
   merge?: MergeBack;
   /** Where the parent agent reads the sibling's report, relative to its worktree (`e-runs/<id>/report.md`). */
   report?: string;
+  /** A run of the user's own (never a sibling): whether its branch was pushed. */
+  pushed?: boolean;
+  /** A run of the user's own: the PR/MR opened for its branch, when one was. */
+  pullRequestUrl?: string;
+  /**
+   * A remote A2A agent's answer (ADR-0015): the text of the artifacts it
+   * returned. Such a sibling has no branch; the answer goes into the report.
+   */
+  answer?: string;
   /** ISO timestamp of the last host update. */
   updatedAt: string;
 }
@@ -73,9 +112,23 @@ export interface MergeSignalAccepted {
   statusPath: string;
 }
 
-/** A request merged with whatever status the host has written for it. */
+/** `202` body of `POST /cancel/<id>`: the parent's cancel is spooled for the host. */
+export interface CancelAccepted {
+  id: string;
+  status: 'cancel-requested';
+  /** Where to poll for the `canceled` state: `/status/<id>`. */
+  statusPath: string;
+}
+
+/**
+ * A request merged with whatever status the host has written for it, plus
+ * the A2A task state derived from both (ADR-0015).
+ */
 export type SiblingRecord = SpawnRequest &
-  Partial<Omit<SiblingStatusPatch, 'status'>> & { status: SiblingState };
+  Partial<Omit<SiblingStatusPatch, 'status'>> & {
+    status: SiblingState;
+    taskState: TaskState;
+  };
 
 /** The parent run's identity, written by the host before the broker starts (`run.json`). */
 export interface BrokerRunInfo {
@@ -99,7 +152,7 @@ export interface SpawnAccepted {
   statusPath: string;
 }
 
-/** `GET /status` body. */
+/** `GET /status` body, and the `data` of every `status` event on `GET /status/events`. */
 export interface StatusResponse {
   run: BrokerRunInfo | null;
   siblings: SiblingRecord[];

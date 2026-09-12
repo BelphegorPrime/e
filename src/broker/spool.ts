@@ -12,11 +12,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  SPOOL_CANCELS_DIR,
   SPOOL_REQUESTS_DIR,
   SPOOL_RUN_FILE,
   SPOOL_SIGNALS_DIR,
   SPOOL_STATUS_DIR,
 } from './constants.js';
+import { taskStateOf } from './taskState.js';
 import type {
   BrokerRunInfo,
   SiblingRecord,
@@ -25,8 +27,14 @@ import type {
   SpawnRequest,
 } from './types.js';
 
-/** Request ids are `sib-NNN`; the shape is checked before it becomes a file name. */
-const REQUEST_ID_RE = /^sib-\d{3,}$/;
+/**
+ * Request ids are `<prefix>-NNN`: `sib-` for a sibling the broker accepted,
+ * `a2a-` for a task the A2A facade on `e serve` started (ADR-0015). The shape
+ * is checked before it becomes a file name.
+ */
+export const REQUEST_ID_PREFIXES = ['sib', 'a2a'] as const;
+export type RequestIdPrefix = (typeof REQUEST_ID_PREFIXES)[number];
+const REQUEST_ID_RE = /^(sib|a2a)-\d{3,}$/;
 
 export function isRequestId(value: string): boolean {
   return REQUEST_ID_RE.test(value);
@@ -69,13 +77,17 @@ export function listRequestIds(root: string): string[] {
     .sort();
 }
 
-/** The next id in the sequence: `sib-001`, `sib-002`, ... (max existing + 1). */
-export function nextRequestId(root: string): string {
+/** The next id in the sequence for `prefix`: `sib-001`, `sib-002`, ... (max existing + 1). */
+export function nextRequestId(
+  root: string,
+  prefix: RequestIdPrefix = 'sib'
+): string {
   let max = 0;
   for (const id of listRequestIds(root)) {
-    max = Math.max(max, Number(id.slice('sib-'.length)));
+    if (!id.startsWith(`${prefix}-`)) continue;
+    max = Math.max(max, Number(id.slice(prefix.length + 1)));
   }
-  return `sib-${String(max + 1).padStart(3, '0')}`;
+  return `${prefix}-${String(max + 1).padStart(3, '0')}`;
 }
 
 /** Spools a request; refuses to overwrite an existing id. */
@@ -121,35 +133,65 @@ export function readStatus(
 }
 
 /**
+ * A **signal** is a one-shot file the broker writes for the parent agent and
+ * the host takes (removes) when it acts on it: a merge signal (ticket 07)
+ * or a cancel (ADR-0015). One helper set, two directories.
+ */
+function writeSignal(root: string, dir: string, id: string, at: string): void {
+  if (!isRequestId(id)) throw new Error(`Invalid request id "${id}".`);
+  fs.mkdirSync(path.join(root, dir), { recursive: true });
+  writeJsonAtomic(path.join(root, dir, `${id}.json`), { id, signaledAt: at });
+}
+
+function hasSignal(root: string, dir: string, id: string): boolean {
+  return isRequestId(id) && fs.existsSync(path.join(root, dir, `${id}.json`));
+}
+
+function takeSignal(root: string, dir: string, id: string): boolean {
+  if (!hasSignal(root, dir, id)) return false;
+  fs.rmSync(path.join(root, dir, `${id}.json`), { force: true });
+  return true;
+}
+
+/**
  * The parent agent's signal that sibling `id`'s merge-back may be retried
  * (ticket 07): its files are cleared, or the conflict markers resolved. The
  * broker writes it for `POST /merge/<id>`; the host takes it when it retries.
  */
 export function signalMerge(root: string, id: string, at: string): void {
-  if (!isRequestId(id)) throw new Error(`Invalid request id "${id}".`);
-  fs.mkdirSync(path.join(root, SPOOL_SIGNALS_DIR), { recursive: true });
-  writeJsonAtomic(path.join(root, SPOOL_SIGNALS_DIR, `${id}.json`), {
-    id,
-    signaledAt: at,
-  });
+  writeSignal(root, SPOOL_SIGNALS_DIR, id, at);
 }
 
 /** True if a merge signal for `id` is waiting (not yet taken by the host). */
 export function hasMergeSignal(root: string, id: string): boolean {
-  return (
-    isRequestId(id) &&
-    fs.existsSync(path.join(root, SPOOL_SIGNALS_DIR, `${id}.json`))
-  );
+  return hasSignal(root, SPOOL_SIGNALS_DIR, id);
 }
 
 /** Consumes the merge signal for `id`: true if there was one (it is removed). */
 export function takeMergeSignal(root: string, id: string): boolean {
-  if (!hasMergeSignal(root, id)) return false;
-  fs.rmSync(path.join(root, SPOOL_SIGNALS_DIR, `${id}.json`), { force: true });
-  return true;
+  return takeSignal(root, SPOOL_SIGNALS_DIR, id);
 }
 
-/** A request merged with its status; `requested` until the host writes one. */
+/**
+ * The parent agent's cancel of sibling `id` (ADR-0015): the broker writes it
+ * for `POST /cancel/<id>`; the host takes it and stops the sibling (or never
+ * starts it), then writes `canceled`.
+ */
+export function signalCancel(root: string, id: string, at: string): void {
+  writeSignal(root, SPOOL_CANCELS_DIR, id, at);
+}
+
+/** True if a cancel for `id` is waiting (not yet taken by the host). */
+export function hasCancelSignal(root: string, id: string): boolean {
+  return hasSignal(root, SPOOL_CANCELS_DIR, id);
+}
+
+/** Consumes the cancel for `id`: true if there was one (it is removed). */
+export function takeCancelSignal(root: string, id: string): boolean {
+  return takeSignal(root, SPOOL_CANCELS_DIR, id);
+}
+
+/** A request merged with its status (`requested` until the host writes one) and its A2A task state. */
 export function readRecord(
   root: string,
   id: string
@@ -157,9 +199,10 @@ export function readRecord(
   const request = readRequest(root, id);
   if (!request) return undefined;
   const status = readStatus(root, id);
-  return status
+  const merged = status
     ? { ...request, ...status }
-    : { ...request, status: 'requested' };
+    : { ...request, status: 'requested' as const };
+  return { ...merged, taskState: taskStateOf(merged) };
 }
 
 export function listRecords(root: string): SiblingRecord[] {

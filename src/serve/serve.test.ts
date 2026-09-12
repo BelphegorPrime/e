@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,6 +21,17 @@ import { TerminalSessions } from './terminalSessions.js';
 import { fakeEngine, scriptedSpawner } from './terminalSessions.testSupport.js';
 import type { ModelsResponse } from '../modelStatus.js';
 import { E_VERSION } from '../version.js';
+import type { A2aAccess } from '../a2a/access.js';
+import { A2aTasks } from '../a2a/tasks.js';
+import { SseParser } from '../broker/events.js';
+import {
+  ensureSpool,
+  writeRequest,
+  writeRunInfo,
+  writeStatus,
+} from '../broker/spool.js';
+import type { StatusResponse } from '../broker/types.js';
+import { brokerSpoolDirFor } from '../runs/runBroker.js';
 
 test('detachedServeArguments preserves command arguments and removes detached flags', () => {
   assert.deepEqual(
@@ -895,5 +907,451 @@ test('terminal routes list agents, start, inspect and remove sessions', async ()
   } finally {
     terminal.dispose();
     server.close();
+  }
+});
+
+// e as an A2A agent (ADR-0015): the card at its well-known path and one
+// JSON-RPC endpoint, both delegations to `A2aTasks`; and the siblings view
+// of a run's spool for the UI.
+
+async function serveWith(
+  deps: ServeAppDeps
+): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+  const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
+  await fs.writeFile(
+    path.join(uiDirectory, 'index.html'),
+    '<!doctype html><title>e</title>'
+  );
+  const server = await startServeServer(
+    createServeApp(uiDirectory, deps),
+    '127.0.0.1',
+    0
+  );
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close(error => (error ? reject(error) : resolve()));
+      });
+      await fs.rm(uiDirectory, { recursive: true, force: true });
+    },
+  };
+}
+
+const rpc = (
+  baseUrl: string,
+  body: unknown,
+  headers: Record<string, string> = {}
+) =>
+  fetch(`${baseUrl}/a2a`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+
+test('without the A2A facade the card is 404 and the endpoint 503', async () => {
+  const { baseUrl, close } = await serveWith({});
+  try {
+    assert.equal(
+      (await fetch(`${baseUrl}/.well-known/agent-card.json`)).status,
+      404
+    );
+    assert.equal(
+      (await rpc(baseUrl, { jsonrpc: '2.0', id: 1, method: 'ListTasks' }))
+        .status,
+      503
+    );
+  } finally {
+    await close();
+  }
+});
+
+function a2aFixture(access: A2aAccess) {
+  const spool = fsSync.mkdtempSync(path.join(os.tmpdir(), 'e-serve-a2a-'));
+  const launches: string[][] = [];
+  const tasks = new A2aTasks({
+    spoolDir: spool,
+    knownAgent: name => name === 'pi' || name === 'smart-codex',
+    defaultAgent: 'pi',
+    spawnChild: args => {
+      launches.push(args);
+      return { exited: new Promise<number>(() => {}), kill: () => {} };
+    },
+    pollIntervalMs: 20,
+    newId: () => `t-${launches.length + 1}`,
+  });
+  return {
+    spool,
+    launches,
+    tasks,
+    deps: {
+      a2a: { tasks, access, url: 'http://127.0.0.1:1/a2a' },
+      listAgents: () => [
+        { name: 'pi', harness: 'pi', model: 'auto/coding', default: true },
+        { name: 'smart-codex', harness: 'codex', model: null, default: false },
+        {
+          name: 'remote',
+          harness: 'a2a',
+          model: null,
+          default: false,
+          transport: 'a2a' as const,
+        },
+      ],
+    } satisfies ServeAppDeps,
+    dispose: () => {
+      tasks.dispose();
+      fsSync.rmSync(spool, { recursive: true, force: true });
+    },
+  };
+}
+
+test('the agent card lists the harness agents as skills (not remote ones) and names the endpoint', async () => {
+  const fixture = a2aFixture({ enabled: true, requireBearer: false });
+  const { baseUrl, close } = await serveWith(fixture.deps);
+  try {
+    const res = await fetch(`${baseUrl}/.well-known/agent-card.json`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('a2a-version'), '1.0');
+    const card = (await res.json()) as {
+      skills: { id: string }[];
+      supportedInterfaces: { url: string }[];
+      version: string;
+      securitySchemes?: unknown;
+    };
+    assert.deepEqual(
+      card.skills.map(s => s.id),
+      ['pi', 'smart-codex']
+    );
+    assert.equal(card.supportedInterfaces[0].url, 'http://127.0.0.1:1/a2a');
+    assert.equal(card.version, E_VERSION);
+    assert.equal(card.securitySchemes, undefined);
+  } finally {
+    await close();
+    fixture.dispose();
+  }
+});
+
+test('SendMessage starts a run and answers {task}; GetTask, ListTasks, CancelTask and the errors of the binding', async () => {
+  const fixture = a2aFixture({ enabled: true, requireBearer: false });
+  const { baseUrl, close } = await serveWith(fixture.deps);
+  try {
+    const sent = await rpc(baseUrl, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'SendMessage',
+      params: {
+        message: {
+          messageId: 'm',
+          role: 'ROLE_USER',
+          parts: [{ text: 'Fix it' }],
+          metadata: { agent: 'smart-codex' },
+        },
+      },
+    });
+    assert.equal(sent.status, 200);
+    assert.equal(sent.headers.get('a2a-version'), '1.0');
+    const body = (await sent.json()) as {
+      id: number;
+      result: { task: { id: string; status: { state: string } } };
+    };
+    assert.equal(body.id, 1);
+    assert.equal(body.result.task.status.state, 'TASK_STATE_SUBMITTED');
+    assert.deepEqual(fixture.launches[0], [
+      'spawn',
+      'smart-codex',
+      '--detached',
+      '--',
+      'Fix it',
+    ]);
+    const taskId = body.result.task.id;
+
+    const got = (await (
+      await rpc(baseUrl, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'GetTask',
+        params: { id: taskId },
+      })
+    ).json()) as { result: { id: string } };
+    assert.equal(got.result.id, taskId);
+    const listed = (await (
+      await rpc(baseUrl, { jsonrpc: '2.0', id: 3, method: 'ListTasks' })
+    ).json()) as { result: { tasks: unknown[] } };
+    assert.equal(listed.result.tasks.length, 1);
+    const canceled = (await (
+      await rpc(baseUrl, {
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'CancelTask',
+        params: { id: taskId },
+      })
+    ).json()) as { result: { id: string } };
+    assert.equal(canceled.result.id, taskId);
+
+    const error = async (request: unknown) =>
+      (
+        (await (await rpc(baseUrl, request)).json()) as {
+          error: { code: number };
+        }
+      ).error.code;
+    assert.equal(
+      await error({
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'GetTask',
+        params: { id: 'nope' },
+      }),
+      -32001
+    );
+    assert.equal(
+      await error({
+        jsonrpc: '2.0',
+        id: 6,
+        method: 'CreateTaskPushNotificationConfig',
+        params: {},
+      }),
+      -32003
+    );
+    assert.equal(
+      await error({ jsonrpc: '2.0', id: 7, method: 'GetExtendedAgentCard' }),
+      -32007
+    );
+    assert.equal(
+      await error({ jsonrpc: '2.0', id: 8, method: 'nope' }),
+      -32601
+    );
+    // The 0.x slash names still work as aliases of the 1.0 RPC names.
+    const legacy = (await (
+      await rpc(baseUrl, {
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tasks/get',
+        params: { id: taskId },
+      })
+    ).json()) as { result: { id: string } };
+    assert.equal(legacy.result.id, taskId);
+    // ListTasks answers the 1.0 ListTasksResponse shape.
+    const page = (await (
+      await rpc(baseUrl, { jsonrpc: '2.0', id: 11, method: 'ListTasks' })
+    ).json()) as {
+      result: { tasks: unknown[]; nextPageToken: string; totalSize: number };
+    };
+    assert.equal(page.result.totalSize, 1);
+    assert.equal(page.result.nextPageToken, '');
+    assert.equal(await error('not json'), -32700);
+    assert.equal(
+      await error({
+        jsonrpc: '2.0',
+        id: 9,
+        method: 'SendMessage',
+        params: {
+          message: { parts: [{ text: 'x' }], metadata: { agent: 'remote' } },
+        },
+      }),
+      -32602
+    );
+  } finally {
+    await close();
+    fixture.dispose();
+  }
+});
+
+test('SendStreamingMessage answers server-sent events: the task, then updates as the run reports, final on completion', async () => {
+  const fixture = a2aFixture({ enabled: true, requireBearer: false });
+  const { baseUrl, close } = await serveWith(fixture.deps);
+  try {
+    const res = await rpc(baseUrl, {
+      jsonrpc: '2.0',
+      id: 'stream-1',
+      method: 'SendStreamingMessage',
+      params: {
+        message: {
+          messageId: 'm',
+          role: 'ROLE_USER',
+          parts: [{ text: 'Fix it' }],
+        },
+      },
+    });
+    assert.equal(res.headers.get('content-type'), 'text/event-stream');
+    const parser = new SseParser();
+    const decoder = new TextDecoder();
+    const reader = res.body!.getReader();
+    const results: Record<string, unknown>[] = [];
+    const readUntil = async (count: number) => {
+      while (results.length < count) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        for (const event of parser.push(
+          decoder.decode(value, { stream: true })
+        )) {
+          const response = JSON.parse(event.data) as {
+            id: string;
+            result: Record<string, unknown>;
+          };
+          assert.equal(response.id, 'stream-1');
+          results.push(response.result);
+        }
+      }
+    };
+    await readUntil(1);
+    assert.ok('task' in results[0]);
+    writeStatus(fixture.spool, 'a2a-001', {
+      status: 'running',
+      branch: 'e/pi/fix-it-1',
+      updatedAt: 't',
+    });
+    await readUntil(2);
+    assert.ok('statusUpdate' in results[1]);
+    writeStatus(fixture.spool, 'a2a-001', {
+      status: 'done',
+      branch: 'e/pi/fix-it-1',
+      exitCode: 0,
+      pushed: false,
+      updatedAt: 't',
+    });
+    await readUntil(4);
+    assert.ok('artifactUpdate' in results[2]);
+    assert.deepEqual(
+      (
+        results[3] as {
+          statusUpdate: { final: boolean; status: { state: string } };
+        }
+      ).statusUpdate.final,
+      true
+    );
+    assert.equal(
+      (results[3] as { statusUpdate: { status: { state: string } } })
+        .statusUpdate.status.state,
+      'TASK_STATE_COMPLETED'
+    );
+    // The server ends the stream after the final event.
+    const { done } = await reader.read();
+    assert.equal(done, true);
+  } finally {
+    await close();
+    fixture.dispose();
+  }
+});
+
+test('with a bearer token the endpoint refuses requests without it; the card advertises the scheme; disabled access is 404 and 503', async () => {
+  const secured = a2aFixture({
+    enabled: true,
+    requireBearer: true,
+    token: 's3cret',
+  });
+  const one = await serveWith(secured.deps);
+  try {
+    const card = (await (
+      await fetch(`${one.baseUrl}/.well-known/agent-card.json`)
+    ).json()) as { securityRequirements: unknown };
+    assert.deepEqual(card.securityRequirements, [
+      { schemes: { bearer: { list: [] } } },
+    ]);
+    assert.equal(
+      (await rpc(one.baseUrl, { jsonrpc: '2.0', id: 1, method: 'ListTasks' }))
+        .status,
+      401
+    );
+    assert.equal(
+      (
+        await rpc(
+          one.baseUrl,
+          { jsonrpc: '2.0', id: 1, method: 'ListTasks' },
+          { authorization: 'Bearer wrong' }
+        )
+      ).status,
+      401
+    );
+    assert.equal(
+      (
+        await rpc(
+          one.baseUrl,
+          { jsonrpc: '2.0', id: 1, method: 'ListTasks' },
+          { authorization: 'Bearer s3cret' }
+        )
+      ).status,
+      200
+    );
+  } finally {
+    await one.close();
+    secured.dispose();
+  }
+  const off = a2aFixture({ enabled: false, reason: 'beyond loopback' });
+  const two = await serveWith(off.deps);
+  try {
+    assert.equal(
+      (await fetch(`${two.baseUrl}/.well-known/agent-card.json`)).status,
+      404
+    );
+    const res = await rpc(two.baseUrl, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'ListTasks',
+    });
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { error: 'beyond loopback' });
+  } finally {
+    await two.close();
+    off.dispose();
+  }
+});
+
+test('the siblings of a run with a broker come from its spool, as a snapshot and as server-sent events', async () => {
+  const worktreesDir = fsSync.mkdtempSync(
+    path.join(os.tmpdir(), 'e-serve-wt-')
+  );
+  const spool = brokerSpoolDirFor(worktreesDir, 'e-pi-task-1');
+  ensureSpool(spool);
+  writeRunInfo(spool, {
+    name: 'e-pi-task-1',
+    branch: 'e/pi/task-1',
+    agent: 'pi',
+    role: 'parent',
+    maxSiblings: 3,
+  });
+  writeRequest(spool, {
+    id: 'sib-001',
+    agent: 'r',
+    prompt: 'p',
+    requestedAt: 't',
+  });
+  const git = {
+    listRunRefs: (): RunRef[] => [
+      { name: 'e/pi/task-1', sha: 'abc', committerDate: 't', subject: 's' },
+    ],
+  } as unknown as Git;
+  const { baseUrl, close } = await serveWith({ git, worktreesDir });
+  try {
+    const snapshot = await fetch(`${baseUrl}/api/runs/e/pi/task-1/siblings`);
+    assert.equal(snapshot.status, 200);
+    const body = (await snapshot.json()) as StatusResponse;
+    assert.equal(body.run?.name, 'e-pi-task-1');
+    assert.deepEqual(
+      body.siblings.map(s => [s.id, s.taskState]),
+      [['sib-001', 'submitted']]
+    );
+    // A run without a spool has no siblings.
+    const none = (await (
+      await fetch(`${baseUrl}/api/runs/e/pi/other-2/siblings`)
+    ).json()) as StatusResponse;
+    assert.deepEqual(none, { run: null, siblings: [] });
+    const events = await fetch(
+      `${baseUrl}/api/runs/e/pi/task-1/siblings/events`
+    );
+    assert.equal(events.headers.get('content-type'), 'text/event-stream');
+    const reader = events.body!.getReader();
+    const { value } = await reader.read();
+    const parsed = new SseParser().push(new TextDecoder().decode(value));
+    assert.equal(parsed[0].event, 'status');
+    assert.equal(
+      (JSON.parse(parsed[0].data) as StatusResponse).siblings[0].id,
+      'sib-001'
+    );
+    await reader.cancel();
+  } finally {
+    await close();
+    fsSync.rmSync(worktreesDir, { recursive: true, force: true });
   }
 });

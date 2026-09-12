@@ -9,18 +9,28 @@ export type SpawnBrotherCommand =
   | { kind: 'help' }
   | { kind: 'status'; id?: string }
   | { kind: 'merge'; id: string }
+  | { kind: 'cancel'; id: string }
+  | { kind: 'watch'; id?: string }
   | { kind: 'spawn'; agent: string; prompt: string };
+
+/** How long `--watch` blocks at most before giving up (exit 4). */
+export const WATCH_TIMEOUT_MS = 30 * 60 * 1000;
 
 export const SPAWN_BROTHER_USAGE = [
   'usage: node spawn-brother.mjs <agent> <task description...>',
   '       node spawn-brother.mjs --status [<id>]',
+  '       node spawn-brother.mjs --watch [<id>]',
   '       node spawn-brother.mjs --merge <id>',
+  '       node spawn-brother.mjs --cancel <id>',
   '',
   'Requests a sibling run ("brother") from the runtime-broker at $E_BROKER_URL,',
-  'lists the status of every sibling requested from this run, or signals that a',
+  'lists the status of every sibling requested from this run, blocks until one',
+  'of them (or the one named) needs your attention (its taskState becomes',
+  'input-required, completed, failed, canceled or rejected), signals that a',
   "sibling's held or conflicted merge-back may be retried (its files are clear,",
-  'or its conflict markers are resolved).',
-  'Exit codes: 0 ok, 1 the broker refused, 2 usage, 3 the broker did not answer.',
+  'or its conflict markers are resolved), or cancels a sibling.',
+  'Exit codes: 0 ok, 1 the broker refused, 2 usage, 3 the broker did not answer,',
+  '4 --watch timed out.',
 ].join('\n');
 
 /** Parses the script's argv (without `node` and the script path). */
@@ -29,19 +39,20 @@ export function parseSpawnBrotherArgs(argv: string[]): SpawnBrotherCommand {
   if (first === undefined || first === '-h' || first === '--help') {
     return { kind: 'help' };
   }
-  if (first === '--status') {
+  if (first === '--status' || first === '--watch') {
+    const kind = first === '--status' ? 'status' : 'watch';
     if (rest.length > 1) {
-      throw new Error('--status takes at most one sibling id.');
+      throw new Error(`${first} takes at most one sibling id.`);
     }
-    return rest[0] === undefined
-      ? { kind: 'status' }
-      : { kind: 'status', id: rest[0] };
+    return rest[0] === undefined ? { kind } : { kind, id: rest[0] };
   }
-  if (first === '--merge') {
+  if (first === '--merge' || first === '--cancel') {
     if (rest.length !== 1) {
-      throw new Error('--merge takes exactly one sibling id.');
+      throw new Error(`${first} takes exactly one sibling id.`);
     }
-    return { kind: 'merge', id: rest[0] };
+    return first === '--merge'
+      ? { kind: 'merge', id: rest[0] }
+      : { kind: 'cancel', id: rest[0] };
   }
   if (first.startsWith('-')) {
     throw new Error(`Unknown option "${first}".`);

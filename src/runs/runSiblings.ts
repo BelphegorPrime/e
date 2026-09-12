@@ -14,11 +14,20 @@
  *
  * Depth: every accepted request becomes a sibling under the parent that owns
  * the broker, never a child of a child; a spool whose run is itself a child
- * refuses. Fan-out: at most `maxSiblings` in flight (`starting` or `running`);
- * further requests wait in the spool and are picked up as slots free.
- * Readiness follows the sidecar policy's shape (ADR-0005): the spool is polled
- * every `intervalMs`, and a launched sibling has `attempts` polls to report
- * `running` before it is killed and failed.
+ * **rejects** (ADR-0015). Fan-out: at most `maxSiblings` in flight
+ * (`starting` or `running`); further requests wait in the spool and are
+ * picked up as slots free. Readiness follows the sidecar policy's shape
+ * (ADR-0005): the spool is polled every `intervalMs`, and a launched sibling
+ * has `attempts` polls to report `running` before it is killed and failed.
+ *
+ * Cancel (ADR-0015, the A2A `tasks/cancel`): a `cancels/<id>.json` the broker
+ * spooled for `POST /cancel/<id>` is taken on the next tick - a request not
+ * yet started is marked `canceled` right away; one in flight gets its process
+ * stopped (the `e spawn` child stops its container on SIGTERM) and is marked
+ * `canceled` when it exits, whatever it reported last. The parent run's end
+ * cancels what was still waiting. A remote A2A agent (ADR-0015) is launched
+ * through the same launcher seam: no process, the host talks A2A in-process
+ * and reports the answer.
  *
  * Merge-back (ticket 07): when a sibling process exits, its record is
  * **settled** - a `done` sibling that exited 0 is folded into the parent
@@ -46,12 +55,14 @@ import {
   readRecord,
   readRequest,
   readStatus,
+  takeCancelSignal,
   takeMergeSignal,
   writeStatus,
 } from '../broker/spool.js';
 import type {
   MergeBack,
   SiblingRecord,
+  SiblingState,
   SpawnRequest,
 } from '../broker/types.js';
 import type { Git } from '../git/index.js';
@@ -71,7 +82,7 @@ import type { RunRole } from './runRole.js';
 export interface SiblingProcess {
   /** Resolves with the exit code once the process is gone (1 when it failed to start or was killed). */
   exited: Promise<number>;
-  /** Asks the process to stop (a sibling that never became ready). */
+  /** Asks the process to stop (a cancel, or a sibling that never became ready). */
   kill(): void;
 }
 
@@ -82,6 +93,8 @@ export interface SiblingLaunch {
   args: string[];
   env: Record<string, string | undefined>;
   logFile: string;
+  /** The parent's spool, where the sibling reports its status under `request.id`. */
+  spoolDir: string;
 }
 
 /** Starts one sibling process; production re-invokes the CLI, tests script one. */
@@ -125,15 +138,21 @@ export interface SiblingConsumerOptions {
   git: Git;
 }
 
+/** The run states a settled sibling can be in (nothing more will happen to it). */
+export type SettledState = Extract<
+  SiblingState,
+  'done' | 'failed' | 'canceled' | 'rejected'
+>;
+
 /** How one sibling ended and how its work reached the parent (ticket 07). */
 export interface SiblingOutcome {
   id: string;
   agent: string;
   /** The sibling's run branch, once it had one. */
   branch?: string;
-  status: 'done' | 'failed';
+  status: SettledState;
   exitCode?: number;
-  /** Why the sibling failed, when it did. */
+  /** Why the sibling failed, was canceled or was rejected, when it was. */
   error?: string;
   /** The merge-back into the parent worktree. */
   merge: MergeBack;
@@ -222,6 +241,13 @@ export function logTail(logFile: string, lines = 3): string {
   }
 }
 
+/** Why a request the parent run outlived was canceled. */
+export const PARENT_ENDED_MESSAGE =
+  'the parent run ended before the request was picked up';
+
+/** Why a canceled sibling is not merged. */
+export const CANCELED_MESSAGE = 'canceled by the parent';
+
 /**
  * Picks sibling requests up from a run's spool for as long as its agent runs
  * (see the module doc). Driven by {@link SiblingConsumer.start} in production
@@ -232,6 +258,8 @@ export class SiblingConsumer {
     string,
     { child: SiblingProcess; polls: number; logFile: string }
   >();
+  /** Siblings whose process was asked to stop for a cancel; their exit is `canceled`. */
+  private readonly canceling = new Set<string>();
   private stopping = false;
   private loop: Promise<void> | undefined;
   /** Every sibling that has exited, with its merge-back. */
@@ -250,18 +278,18 @@ export class SiblingConsumer {
   }
 
   /**
-   * Stops picking requests up, fails the ones still waiting (the parent run
+   * Stops picking requests up, cancels the ones still waiting (the parent run
    * has ended; nobody is left to receive their work), waits for the siblings
-   * in flight to exit, and fails whatever arrived while waiting.
+   * in flight to exit, and cancels whatever arrived while waiting.
    */
   async stop(): Promise<void> {
     this.stopping = true;
     await (this.loop ?? Promise.resolve());
-    this.failWaiting();
+    this.cancelWaiting();
     await Promise.all(
       [...this.inFlight.values()].map(flight => flight.child.exited)
     );
-    this.failWaiting();
+    this.cancelWaiting();
   }
 
   /**
@@ -292,10 +320,10 @@ export class SiblingConsumer {
     }
   }
 
-  private failWaiting(): void {
+  private cancelWaiting(): void {
     for (const id of listRequestIds(this.opts.spoolDir)) {
       if (!readStatus(this.opts.spoolDir, id)) {
-        this.fail(id, 'the parent run ended before the request was picked up');
+        this.end(id, 'canceled', PARENT_ENDED_MESSAGE);
         const record = readRecord(this.opts.spoolDir, id);
         if (record) this.settle(record);
       }
@@ -310,11 +338,13 @@ export class SiblingConsumer {
   }
 
   /**
-   * One pass: new requests are refused, started, or left waiting; launched
-   * siblings are watched; merge-backs the parent signaled are retried.
+   * One pass: cancels are taken; new requests are rejected, started, or left
+   * waiting; launched siblings are watched; merge-backs the parent signaled
+   * are retried.
    */
   tick(): void {
     const { spoolDir, parent, maxSiblings } = this.opts;
+    this.takeCancels();
     const launchedNow = new Set<string>();
     let inFlight = countInFlight(spoolDir, ['starting', 'running']);
     for (const id of listRequestIds(spoolDir)) {
@@ -322,7 +352,9 @@ export class SiblingConsumer {
       const request = readRequest(spoolDir, id);
       if (!request) continue;
       if (parent.role === 'child') {
-        this.fail(id, DEPTH_LIMIT_MESSAGE);
+        this.end(id, 'rejected', DEPTH_LIMIT_MESSAGE);
+        const record = readRecord(spoolDir, id);
+        if (record) this.settle(record);
         continue;
       }
       // Arrival order: the first waiting request takes the next free slot.
@@ -339,13 +371,38 @@ export class SiblingConsumer {
       if (flight.polls >= this.opts.readiness.attempts) {
         flight.child.kill();
         this.inFlight.delete(id);
-        this.fail(
+        this.end(
           id,
+          'failed',
           `did not become ready in time (no container after ${this.opts.readiness.attempts} polls)`
         );
       }
     }
     this.takeSignals();
+  }
+
+  /**
+   * The parent's cancels (ADR-0015): a request not yet started is canceled
+   * on the spot; one in flight is asked to stop and marked when it exits.
+   * A cancel for a settled request has nothing left to do.
+   */
+  private takeCancels(): void {
+    for (const id of listRequestIds(this.opts.spoolDir)) {
+      if (!takeCancelSignal(this.opts.spoolDir, id)) continue;
+      const status = readStatus(this.opts.spoolDir, id)?.status;
+      if (status === undefined) {
+        log.info(`Sibling ${id}: canceled before it was started`);
+        this.end(id, 'canceled', `${CANCELED_MESSAGE} before it was started`);
+        const record = readRecord(this.opts.spoolDir, id);
+        if (record) this.settle(record);
+        continue;
+      }
+      const flight = this.inFlight.get(id);
+      if (!flight) continue;
+      log.info(`Sibling ${id}: cancel received, stopping it`);
+      this.canceling.add(id);
+      flight.child.kill();
+    }
   }
 
   /** The parent said "cleared" or "resolved" for a waiting merge-back: retry it. */
@@ -385,10 +442,12 @@ export class SiblingConsumer {
           ...this.opts.passthroughEnv,
         },
         logFile,
+        spoolDir,
       });
     } catch (err) {
-      this.fail(
+      this.end(
         request.id,
+        'failed',
         `could not start the sibling process: ${(err as Error).message}`
       );
       return;
@@ -401,8 +460,9 @@ export class SiblingConsumer {
   }
 
   /**
-   * The sibling reports its own result; a process that never did has failed.
-   * Either way its record is settled: merged back or skipped, and reported.
+   * The sibling reports its own result; a process that never did has failed;
+   * one the parent canceled is `canceled` whatever it reported. Either way
+   * its record is settled: merged back or skipped, and reported.
    */
   private onExit(
     id: string,
@@ -411,11 +471,20 @@ export class SiblingConsumer {
     reason?: string
   ): void {
     this.inFlight.delete(id);
-    const status = readStatus(this.opts.spoolDir, id)?.status;
-    if (status !== 'done' && status !== 'failed') {
+    const previous = readStatus(this.opts.spoolDir, id);
+    if (this.canceling.delete(id)) {
+      writeStatus(this.opts.spoolDir, id, {
+        ...previous,
+        status: 'canceled',
+        error: CANCELED_MESSAGE,
+        exitCode: previous?.exitCode ?? code,
+        updatedAt: this.now(),
+      });
+    } else if (previous?.status !== 'done' && previous?.status !== 'failed') {
       const tail = logTail(logFile);
-      this.fail(
+      this.end(
         id,
+        'failed',
         reason ??
           `sibling process exited with code ${code} before reporting a result${tail ? `: ${tail}` : ''}`,
         code
@@ -434,10 +503,30 @@ export class SiblingConsumer {
 
   /** The merge-back a finished record gets: attempted only for a `done` sibling that exited 0. */
   private mergeFor(record: SiblingRecord): MergeBack {
-    if (record.status === 'failed') {
+    switch (record.status) {
+      case 'failed':
+        return {
+          status: 'skipped',
+          reason: `the sibling failed: ${record.error ?? 'no reason reported'}`,
+        };
+      case 'canceled':
+        return {
+          status: 'skipped',
+          reason: `the sibling was canceled: ${record.error ?? CANCELED_MESSAGE}`,
+        };
+      case 'rejected':
+        return {
+          status: 'skipped',
+          reason: `the request was rejected: ${record.error ?? 'no reason reported'}`,
+        };
+      default:
+        break;
+    }
+    if (record.answer !== undefined) {
       return {
         status: 'skipped',
-        reason: `the sibling failed: ${record.error ?? 'no reason reported'}`,
+        reason:
+          'a remote A2A agent has no branch to merge; its answer is in the report',
       };
     }
     if (!record.branch) {
@@ -508,11 +597,17 @@ export class SiblingConsumer {
         `Sibling ${record.id}: could not write its report into ${parent.worktreePath}: ${(err as Error).message}`
       );
     }
+    const status: SettledState =
+      record.status === 'failed' ||
+      record.status === 'canceled' ||
+      record.status === 'rejected'
+        ? record.status
+        : 'done';
     const outcome: SiblingOutcome = {
       id: record.id,
       agent: record.agent,
       ...(record.branch !== undefined ? { branch: record.branch } : {}),
-      status: record.status === 'failed' ? 'failed' : 'done',
+      status,
       ...(record.exitCode !== undefined ? { exitCode: record.exitCode } : {}),
       ...(record.error !== undefined ? { error: record.error } : {}),
       merge,
@@ -523,6 +618,7 @@ export class SiblingConsumer {
       ...(outcome.branch !== undefined ? { branch: outcome.branch } : {}),
       ...(outcome.exitCode !== undefined ? { exitCode: outcome.exitCode } : {}),
       ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+      ...(record.answer !== undefined ? { answer: record.answer } : {}),
       merge,
       ...(report !== undefined ? { report } : {}),
       updatedAt: this.now(),
@@ -537,10 +633,16 @@ export class SiblingConsumer {
     );
   }
 
-  private fail(id: string, error: string, exitCode?: number): void {
-    log.warn(`Sibling ${id}: ${error}`);
+  /** Ends a request the host gives up on: `failed`, `canceled` or `rejected`, with the reason. */
+  private end(
+    id: string,
+    status: Exclude<SettledState, 'done'>,
+    error: string,
+    exitCode?: number
+  ): void {
+    log.warn(`Sibling ${id}: ${status}, ${error}`);
     writeStatus(this.opts.spoolDir, id, {
-      status: 'failed',
+      status,
       error,
       ...(exitCode !== undefined ? { exitCode } : {}),
       updatedAt: this.now(),

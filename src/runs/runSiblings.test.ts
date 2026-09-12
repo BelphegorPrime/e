@@ -5,8 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   ensureSpool,
+  hasCancelSignal,
   hasMergeSignal,
+  readRecord,
   readStatus,
+  signalCancel,
   signalMerge,
   writeRequest,
   writeRunInfo,
@@ -252,7 +255,7 @@ test('a new request is marked starting and launched with the sibling markers; th
   });
 });
 
-test('depth limit: a spool whose run is itself a sibling refuses every request', async () => {
+test('depth limit: a spool whose run is itself a sibling rejects every request', async () => {
   await withSpool('child', async spool => {
     const launcher = new FakeLauncher();
     const c = consumer(spool, launcher, {
@@ -266,8 +269,11 @@ test('depth limit: a spool whose run is itself a sibling refuses every request',
     c.tick();
     assert.equal(launcher.launches.length, 0);
     const status = readStatus(spool, 'sib-001');
-    assert.equal(status?.status, 'failed');
+    assert.equal(status?.status, 'rejected');
     assert.match(status?.error ?? '', /Depth limit/);
+    // A rejection is settled like any end: skipped merge, a report, A2A `rejected`.
+    assert.equal(status?.merge?.status, 'skipped');
+    assert.equal(readRecord(spool, 'sib-001')?.taskState, 'rejected');
   });
 });
 
@@ -427,7 +433,7 @@ test('start/stop: the loop polls until stopped; stop fails what is still waiting
     await new Promise(resolve => setTimeout(resolve, 5));
     // In flight: stop waits for it ...
     assert.equal(stopped, false);
-    // ... and the one never picked up is failed, not left dangling.
+    // ... and the one never picked up is canceled, not left dangling.
     assert.match(
       readStatus(spool, 'sib-002')?.error ?? '',
       /parent run ended before the request was picked up/
@@ -533,7 +539,13 @@ test('spawnSiblingProcess: runs the invocation with the args, logs its output, r
   try {
     const logFile = path.join(dir, 'logs', 'sib-001.log');
     const child = spawnSiblingProcess(
-      { request: someRequest, args: ['spawn', 'a'], env: process.env, logFile },
+      {
+        request: someRequest,
+        args: ['spawn', 'a'],
+        env: process.env,
+        logFile,
+        spoolDir: dir,
+      },
       scripted(
         "console.log('building', process.argv.slice(1).join(' ')); console.error('boom'); process.exit(3)"
       )
@@ -556,6 +568,7 @@ test('spawnSiblingProcess: kill ends a running sibling (exit code 1); a missing 
         args: [],
         env: process.env,
         logFile: path.join(dir, 'hang.log'),
+        spoolDir: dir,
       },
       scripted('setInterval(() => {}, 1000)')
     );
@@ -567,6 +580,7 @@ test('spawnSiblingProcess: kill ends a running sibling (exit code 1); a missing 
         args: [],
         env: process.env,
         logFile: path.join(dir, 'missing.log'),
+        spoolDir: dir,
       },
       { command: path.join(dir, 'no-such-binary'), prefix: [] }
     );
@@ -852,17 +866,19 @@ test('a failed sibling, a non-zero exit, and a process that dies unreported are 
   });
 });
 
-test('a request the parent run ended on is failed and reported, so the agent finds every sibling in e-runs', async () => {
+test('a request the parent run ended on is canceled and reported, so the agent finds every sibling in e-runs', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
     const c = consumer(spool, launcher);
     request(spool, 'sib-001');
     await c.stop();
+    assert.equal(readStatus(spool, 'sib-001')?.status, 'canceled');
     assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'skipped');
     assert.match(
       reportOf(spool, 'sib-001'),
       /the parent run ended before the request was picked up/
     );
+    assert.equal(readRecord(spool, 'sib-001')?.taskState, 'canceled');
   });
 });
 
@@ -949,4 +965,120 @@ test('siblingSummaryLine: who, how it ended, how its work came back', () => {
     }),
     'Sibling sib-003 (researcher, e/researcher/x-1): done, merge-back conflict [a.ts, b.ts]'
   );
+});
+
+// Cancel (ADR-0015): the parent's `POST /cancel/<id>` is a file in the spool
+// the tick takes; a waiting request is canceled on the spot, one in flight is
+// stopped and canceled when it exits, whatever it reported.
+
+test('cancel: a request not yet picked up is canceled on the next tick, never launched, and reported', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const c = consumer(spool, launcher, { maxSiblings: 1 });
+    request(spool, 'sib-001');
+    request(spool, 'sib-002');
+    c.tick(); // sib-001 launched; sib-002 waits for a slot
+    signalCancel(spool, 'sib-002', 't');
+    c.tick();
+    assert.deepEqual(
+      launcher.launches.map(l => l.request.id),
+      ['sib-001']
+    );
+    const status = readStatus(spool, 'sib-002');
+    assert.equal(status?.status, 'canceled');
+    assert.match(
+      status?.error ?? '',
+      /canceled by the parent before it was started/
+    );
+    assert.equal(status?.merge?.status, 'skipped');
+    assert.equal(readRecord(spool, 'sib-002')?.taskState, 'canceled');
+    assert.match(reportOf(spool, 'sib-002'), /^# Sibling sib-002: skipped$/m);
+    assert.match(reportOf(spool, 'sib-002'), /taskState: canceled/);
+    assert.equal(hasCancelSignal(spool, 'sib-002'), false);
+    // The freed slot goes to nobody else here; sib-001 keeps running.
+    assert.equal(readStatus(spool, 'sib-001')?.status, 'starting');
+  });
+});
+
+test('cancel: a sibling in flight is asked to stop and is canceled when it exits, even if it reported done first', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit();
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    writeStatus(spool, 'sib-001', {
+      status: 'running',
+      branch: 'e/r/one-1',
+      updatedAt: 't',
+    });
+    signalCancel(spool, 'sib-001', 't');
+    c.tick();
+    assert.deepEqual(launcher.killed, ['sib-001']);
+    // The stopped `e spawn` still writes its own final status on the way out.
+    await finishSibling(spool, launcher, 'sib-001', 'e/r/one-1', 'done', 137);
+    const status = readStatus(spool, 'sib-001');
+    assert.equal(status?.status, 'canceled');
+    assert.equal(status?.branch, 'e/r/one-1');
+    assert.equal(status?.exitCode, 137);
+    assert.equal(status?.merge?.status, 'skipped');
+    assert.match(status?.merge?.reason ?? '', /canceled/);
+    // Nothing of a canceled sibling is merged.
+    assert.deepEqual(git.merges, []);
+    assert.equal(c.outcomes[0].status, 'canceled');
+    assert.match(
+      siblingSummaryLine(c.outcomes[0]),
+      /^Sibling sib-001 \(researcher, e\/r\/one-1\): canceled, merge-back skipped/
+    );
+  });
+});
+
+test('cancel: a stale cancel for a settled sibling is consumed and changes nothing', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit();
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/r/one-1');
+    assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'merged');
+    signalCancel(spool, 'sib-001', 't');
+    c.tick();
+    assert.equal(hasCancelSignal(spool, 'sib-001'), false);
+    assert.equal(readStatus(spool, 'sib-001')?.status, 'done');
+    assert.deepEqual(launcher.killed, []);
+  });
+});
+
+test('a remote A2A agent sibling (ADR-0015): its answer lands in the status and the report; the merge-back is skipped for lack of a branch', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit();
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001', 'remote-researcher');
+    c.tick();
+    assert.equal(launcher.launches[0].spoolDir, spool);
+    writeStatus(spool, 'sib-001', {
+      status: 'done',
+      exitCode: 0,
+      answer: 'The library is MIT licensed.\n\nSee LICENSE.',
+      updatedAt: 't',
+    });
+    await launcher.exit('sib-001', 0);
+    const status = readStatus(spool, 'sib-001');
+    assert.equal(status?.status, 'done');
+    assert.equal(
+      status?.answer,
+      'The library is MIT licensed.\n\nSee LICENSE.'
+    );
+    assert.deepEqual(status?.merge, {
+      status: 'skipped',
+      reason:
+        'a remote A2A agent has no branch to merge; its answer is in the report',
+    });
+    assert.equal(readRecord(spool, 'sib-001')?.taskState, 'completed');
+    const report = reportOf(spool, 'sib-001');
+    assert.match(report, /## Answer\n\nThe library is MIT licensed\./);
+    assert.deepEqual(git.merges, []);
+  });
 });

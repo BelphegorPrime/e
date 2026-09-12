@@ -109,7 +109,7 @@ The commands an agent (or user) actually uses:
 | `e spawn <agent-or-harness> --skill <name>` | Add a Skill for this run                                  |
 | `e spawn <agent-or-harness> --mcp <name>`   | Wire an MCP server (rejected for opencode)                |
 | `e init`                                    | Write the store (`~/.e`); usually done on the host        |
-| `e serve`                                   | Local web UI / BFF (observer-first, read-only)            |
+| `e serve`                                   | Local web UI / BFF, and `e`'s A2A endpoint (ADR-0015)     |
 | `e --help`                                  | The full CLI                                              |
 
 `e` finds its store by walking up from the working directory for a `.e`
@@ -199,8 +199,11 @@ ADR-0002). The one sanctioned way around it is the `spawn-brother` skill
 (ADR-0013): with it, the host starts **sibling** runs for you through the
 runtime-broker sidecar and, when each exits, merges its branch back into your
 worktree (a merge commit; the report at `e-runs/<id>/report.md`, conflicts
-left for you to resolve and signal with `--merge <id>`) - check `$E_ROLE` and
-`$E_BROKER_URL`, see `AGENTS.md`. Without it, delegation means requesting a new run at the
+left for you to resolve and signal with `--merge <id>`; `--watch` blocks until
+a sibling's `taskState` needs you, `--cancel <id>` stops one, ADR-0015) - check
+`$E_ROLE` and `$E_BROKER_URL`, see `AGENTS.md`. A Store agent with
+`"transport": "a2a"` is a remote Agent2Agent agent: request it the same way,
+and read its answer in the report (no branch to merge). Without it, delegation means requesting a new run at the
 layer that owns the runtime: record the task and its acceptance criteria as a
 file in the worktree, exit 0, and let the parent (or the host) spawn the
 follow-up run. Recursive spawning therefore follows the limits the

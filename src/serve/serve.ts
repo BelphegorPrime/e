@@ -20,7 +20,10 @@ import { env } from '../utils/env.js';
 import { resolveFreePortBlock } from '../utils/port.js';
 import { E_VERSION } from '../version.js';
 import { type ModelsResponse } from '../modelStatus.js';
-import { listAgents as listStoreAgents } from '../agent/index.js';
+import {
+  isRemoteAgent,
+  listAgents as listStoreAgents,
+} from '../agent/index.js';
 import { findRoot } from '../store/root.js';
 import {
   resolveEngineSocketPath,
@@ -30,6 +33,28 @@ import { TerminalRequestError, TerminalSessions } from './terminalSessions.js';
 import { attachTerminalWebSocket } from './terminalSocket.js';
 import { selfInvocation } from '../utils/selfInvoke.js';
 import { readConfig } from '../store/config.js';
+import { HARNESSES } from '../harness/index.js';
+import { defaultWorktreesDir } from '../runs/worktreesDir.js';
+import { brokerSpoolDirFor } from '../runs/runBroker.js';
+import { listRecords, readRunInfo } from '../broker/spool.js';
+import { streamStatusEvents } from '../broker/events.js';
+import {
+  STATUS_EVENTS_HEARTBEAT_MS,
+  STATUS_EVENTS_POLL_MS,
+} from '../broker/constants.js';
+import type { StatusResponse } from '../broker/types.js';
+import { a2aAccess, type A2aAccess } from '../a2a/access.js';
+import { renderAgentCard } from '../a2a/agentCard.js';
+import { A2aTasks, a2aSpoolDirFor, removeA2aSpool } from '../a2a/tasks.js';
+import {
+  a2aRpcHandler,
+  agentCardHandler,
+  type A2aServerDeps,
+} from '../a2a/server.js';
+import { AGENT_CARD_PATH } from '../a2a/wire.js';
+
+/** The JSON-RPC endpoint of the A2A facade (ADR-0015), outside `/api` so the card can name it plainly. */
+export const A2A_RPC_PATH = '/a2a';
 
 const serveStatePath = path.join(eBaseDir(), 'serve.json');
 
@@ -260,27 +285,57 @@ export interface ServeAppDeps {
   terminal?: TerminalSessions;
   /** The store's agents for the terminal's "start a run" picker; tests inject a fake. */
   listAgents?: () => AgentSummary[];
+  /**
+   * The A2A facade (ADR-0015): the tasks, the access decision and the
+   * endpoint URL the agent card advertises. Absent in tests that do not
+   * exercise it; the card then answers 404 and the endpoint 503.
+   */
+  a2a?: { tasks: A2aTasks; access: A2aAccess; url: string };
+  /** Where run spools live (`<worktreesDir>/.broker/<runName>`), for the siblings view; default: the platform rule. */
+  worktreesDir?: string;
 }
+
+/** The runs a `/api/runs/*` path may end in: the sibling view of a run with a broker (ADR-0015). */
+const SIBLINGS_SUFFIX = '/siblings';
+const SIBLINGS_EVENTS_SUFFIX = '/siblings/events';
 
 /** One selectable agent as the UI sees it. */
 export interface AgentSummary {
   name: string;
+  /** The harness the agent runs on, or `a2a` for a remote A2A agent (ADR-0015). */
   harness: string;
   /** The provider's configured model id (`auto` included), or null for a default agent. */
   model: string | null;
   /** True when the agent runs on the store's `defaultHarness`; the picker lists those first. */
   default: boolean;
+  /** `a2a` for a remote agent reached over the Agent2Agent protocol; absent for a harness agent. */
+  transport?: 'a2a';
+  /** A remote agent's own description, when it has one. */
+  description?: string;
 }
 
 function storeAgents(): AgentSummary[] {
   const root = findRoot();
   const { defaultHarness } = readConfig(root);
-  return listStoreAgents(root).map(agent => ({
-    name: agent.name,
-    harness: agent.harness,
-    model: agent.provider?.model ?? null,
-    default: agent.harness === defaultHarness,
-  }));
+  return listStoreAgents(root).map(agent =>
+    isRemoteAgent(agent)
+      ? {
+          name: agent.name,
+          harness: 'a2a',
+          model: null,
+          default: false,
+          transport: 'a2a',
+          ...(agent.description !== undefined
+            ? { description: agent.description }
+            : {}),
+        }
+      : {
+          name: agent.name,
+          harness: agent.harness,
+          model: agent.provider?.model ?? null,
+          default: agent.harness === defaultHarness,
+        }
+  );
 }
 
 export function createServeApp(
@@ -295,10 +350,44 @@ export function createServeApp(
     git = new HostGit(),
     terminal,
     listAgents = storeAgents,
+    a2a,
+    worktreesDir = defaultWorktreesDir(),
   } = deps;
 
   const app = express();
   app.use('/api', express.json());
+
+  // e as an A2A agent (ADR-0015): the card at its well-known path, one
+  // JSON-RPC endpoint. Both are delegations - a task is `e spawn` in a
+  // headless child - so the BFF still holds no orchestration of its own.
+  const a2aDeps: A2aServerDeps = a2a
+    ? {
+        tasks: a2a.tasks,
+        access: a2a.access,
+        card: () =>
+          renderAgentCard({
+            url: a2a.url,
+            version: E_VERSION,
+            agents: listAgents().filter(agent => agent.transport !== 'a2a'),
+            bearer: a2a.access.enabled && a2a.access.requireBearer,
+          }),
+      }
+    : {
+        tasks: undefined as unknown as A2aTasks,
+        access: {
+          enabled: false,
+          reason: 'The A2A endpoint is not configured.',
+        },
+        card: () => {
+          throw new Error('unreachable');
+        },
+      };
+  app.get(AGENT_CARD_PATH, agentCardHandler(a2aDeps));
+  app.post(
+    A2A_RPC_PATH,
+    express.text({ type: () => true, limit: '1mb' }),
+    a2aRpcHandler(a2aDeps)
+  );
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok' });
@@ -436,12 +525,41 @@ export function createServeApp(
       return;
     }
     const logsRequested = restPath.endsWith('/logs');
+    const siblingsRequested = restPath.endsWith(SIBLINGS_SUFFIX);
+    const siblingEventsRequested = restPath.endsWith(SIBLINGS_EVENTS_SUFFIX);
     const branchName = logsRequested
       ? restPath.slice(0, -'/logs'.length)
-      : restPath;
+      : siblingEventsRequested
+        ? restPath.slice(0, -SIBLINGS_EVENTS_SUFFIX.length)
+        : siblingsRequested
+          ? restPath.slice(0, -SIBLINGS_SUFFIX.length)
+          : restPath;
     const identity = parseRunBranch(branchName);
     if (!identity) {
       response.status(404).json({ error: 'Not found' });
+      return;
+    }
+    // The siblings of a live run with a broker (ADR-0013/0015): read from its
+    // spool on the host, the same records the broker serves, as a snapshot or
+    // as Server-Sent Events. A run without a spool has no siblings.
+    if (siblingsRequested || siblingEventsRequested) {
+      const spool = brokerSpoolDirFor(
+        worktreesDir,
+        branchName.replace(/\//g, '-')
+      );
+      const snapshot = (): StatusResponse => ({
+        run: readRunInfo(spool),
+        siblings: listRecords(spool),
+      });
+      if (siblingEventsRequested) {
+        streamStatusEvents(request, response, {
+          snapshot,
+          pollMs: STATUS_EVENTS_POLL_MS,
+          heartbeatMs: STATUS_EVENTS_HEARTBEAT_MS,
+        });
+        return;
+      }
+      response.json(snapshot());
       return;
     }
     try {
@@ -690,9 +808,30 @@ export function registerServeCommand(program: Command): void {
           "No container engine socket found; the browser terminal cannot start runs. Set DOCKER_HOST (unix:// or npipe://) or CONTAINER_HOST to your engine's socket if it lives somewhere unusual."
         );
       }
+      // e as an A2A agent (ADR-0015): open on loopback, bearer-protected
+      // with E_A2A_TOKEN, off beyond loopback without one.
+      const access = a2aAccess({ host, token: env.a2aToken });
+      if (!access.enabled) log.warn(`A2A endpoint disabled: ${access.reason}`);
+      const worktreesDir = defaultWorktreesDir();
+      const a2aSpool = a2aSpoolDirFor(worktreesDir, process.pid);
+      const tasks = new A2aTasks({
+        spoolDir: a2aSpool,
+        knownAgent: name =>
+          Object.keys(HARNESSES).includes(name) ||
+          storeAgents().some(
+            agent => agent.name === name && agent.transport !== 'a2a'
+          ),
+        defaultAgent: readConfig(findRoot()).defaultHarness,
+      });
       const app = createServeApp(resolveUiDirectory(), {
         omniRouteEmbedPort: embedPort,
         terminal,
+        a2a: {
+          tasks,
+          access,
+          url: `http://${host}:${port}${A2A_RPC_PATH}`,
+        },
+        worktreesDir,
       });
       const server = await startServeServer(app, host, port);
       attachTerminalWebSocket(server, terminal);
@@ -700,6 +839,8 @@ export function registerServeCommand(program: Command): void {
       server.once('close', () => {
         embedProxy.close();
         terminal.dispose();
+        tasks.dispose();
+        removeA2aSpool(a2aSpool);
       });
       const address = server.address() as AddressInfo;
       if (env.serveDetached) {
@@ -707,6 +848,11 @@ export function registerServeCommand(program: Command): void {
       }
       log.info(`UI serving at http://${host}:${address.port}`);
       log.info(`OmniRoute embed proxy at http://${host}:${embedPort}`);
+      if (access.enabled) {
+        log.info(
+          `A2A agent card at http://${host}:${address.port}${AGENT_CARD_PATH}${access.requireBearer ? ' (bearer token required on the endpoint)' : ''}`
+        );
+      }
     });
 
   serve

@@ -41,6 +41,22 @@ export class Env {
   static readonly SPAWN_SIBLING_ID_VAR = 'E_SPAWN_SIBLING_ID';
 
   /**
+   * Set together on an `e spawn` process something else watches (the A2A
+   * facade of `e serve`, ADR-0015): a spool and the request id the run
+   * reports its status under. Unlike the sibling markers they change nothing
+   * else about the run (it pushes and opens its PR/MR as usual). Both or none.
+   */
+  static readonly SPAWN_REPORT_SPOOL_VAR = 'E_SPAWN_REPORT_SPOOL';
+  static readonly SPAWN_REPORT_ID_VAR = 'E_SPAWN_REPORT_ID';
+
+  /**
+   * The bearer token `e serve` requires on its A2A endpoint (ADR-0015). Unset,
+   * the endpoint is open on loopback only; a `serve` bound beyond loopback
+   * without a token disables the endpoint rather than expose it.
+   */
+  static readonly A2A_TOKEN_VAR = 'E_A2A_TOKEN';
+
+  /**
    * The container runtime to use when `--runtime` is not passed - one of the
    * registry names (`docker`, `podman`, `nerdctl`, `finch`; see
    * `runtime/registry.ts`). Unset: the first one found on `PATH`.
@@ -161,6 +177,56 @@ export class Env {
   }
 
   /**
+   * The report markers of this `e spawn` process (see {@link Env.SPAWN_REPORT_SPOOL_VAR}),
+   * or undefined for a run nothing watches. Throws when only one is set.
+   */
+  get report(): { spoolDir: string; id: string } | undefined {
+    const spoolDir =
+      process.env[Env.SPAWN_REPORT_SPOOL_VAR]?.trim() || undefined;
+    const id = process.env[Env.SPAWN_REPORT_ID_VAR]?.trim() || undefined;
+    if (spoolDir === undefined && id === undefined) return undefined;
+    if (spoolDir === undefined || id === undefined) {
+      throw new Error(
+        `Incomplete report markers: ${Env.SPAWN_REPORT_SPOOL_VAR} and ${Env.SPAWN_REPORT_ID_VAR} must both be set.`
+      );
+    }
+    return { spoolDir, id };
+  }
+
+  /**
+   * Copies `base` for an `e spawn` child that reports into a spool without
+   * being a sibling (the A2A facade): the report markers set, the serve,
+   * terminal and sibling markers dropped.
+   */
+  withReport(
+    report: { spoolDir: string; id: string },
+    base: Record<string, string | undefined> = process.env
+  ): Record<string, string | undefined> {
+    const copy: Record<string, string | undefined> = { ...base };
+    for (const name of [
+      Env.SERVE_DETACHED_VAR,
+      Env.TTY_HEADLESS_VAR,
+      Env.SPAWN_ROLE_VAR,
+      Env.SPAWN_PARENT_WORKTREE_VAR,
+      Env.SPAWN_PARENT_BRANCH_VAR,
+      Env.SPAWN_PARENT_NETWORK_VAR,
+      Env.SPAWN_SPOOL_VAR,
+      Env.SPAWN_SIBLING_ID_VAR,
+    ]) {
+      delete copy[name];
+    }
+    copy[Env.SPAWN_REPORT_SPOOL_VAR] = report.spoolDir;
+    copy[Env.SPAWN_REPORT_ID_VAR] = report.id;
+    return copy;
+  }
+
+  /** The `E_A2A_TOKEN` bearer token for `e serve`'s A2A endpoint, or undefined when unset or blank. */
+  get a2aToken(): string | undefined {
+    const value = process.env[Env.A2A_TOKEN_VAR]?.trim();
+    return value ? value : undefined;
+  }
+
+  /**
    * Copies `base` (defaulting to the current environment) for a sibling `e
    * spawn` process: the role marker says `child`, the sibling markers are set,
    * and the serve/terminal markers are dropped so the sibling never mistakes
@@ -173,6 +239,8 @@ export class Env {
     const copy: Record<string, string | undefined> = { ...base };
     delete copy[Env.SERVE_DETACHED_VAR];
     delete copy[Env.TTY_HEADLESS_VAR];
+    delete copy[Env.SPAWN_REPORT_SPOOL_VAR];
+    delete copy[Env.SPAWN_REPORT_ID_VAR];
     copy[Env.SPAWN_ROLE_VAR] = 'child';
     copy[Env.SPAWN_PARENT_WORKTREE_VAR] = sibling.parent.worktreePath;
     copy[Env.SPAWN_PARENT_BRANCH_VAR] = sibling.parent.branch;
