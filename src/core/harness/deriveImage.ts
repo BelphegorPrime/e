@@ -10,6 +10,7 @@
  * performs the effects (writing files, copying skill trees, invoking the build).
  */
 import type {
+  BakedProviderConfig,
   ContainerEnv,
   HarnessAdapter,
   Provider,
@@ -17,16 +18,6 @@ import type {
 } from './adapter.js';
 import { imageTag } from '../identity/imageTag.js';
 import { NODE_HOME } from './renderDockerfile.js';
-
-/** The baked provider config block of a derived Dockerfile (a file harness). */
-export interface DockerfileProviderBlock {
-  /** The rendered config file's name, present in the build context. */
-  configFileName: string;
-  /** Absolute in-container config dir the file is copied into; outside `/workspace`. */
-  configDir: string;
-  /** Name of the env var relocating the config dir, e.g. `CODEX_HOME`. */
-  configDirEnv: string;
-}
 
 /** The baked default-skills block of a derived Dockerfile. */
 export interface DockerfileSkillsBlock {
@@ -40,8 +31,12 @@ export interface DockerfileSkillsBlock {
 export interface DerivedDockerfileParams {
   /** The harness base image tag this derives from, e.g. `e-harness-codex`. */
   baseImage: string;
-  /** The baked provider config, for a file-configured harness. */
-  provider?: DockerfileProviderBlock;
+  /**
+   * The baked provider config, for a file-configured harness - the adapter's own
+   * {@link BakedProviderConfig}, passed through rather than re-flattened: the
+   * render needs its file name and its two config-dir fields.
+   */
+  provider?: BakedProviderConfig;
   /** The baked default skills, for an agent that declares them. */
   skills?: DockerfileSkillsBlock;
   /**
@@ -93,7 +88,7 @@ export function renderDerivedDockerfile(p: DerivedDockerfileParams): string {
       `# the harness adapter, read from a config dir outside /workspace so it`,
       `# never lands in a run's branch.`,
       `ENV ${p.provider.configDirEnv}=${p.provider.configDir}`,
-      `COPY ${p.provider.configFileName} ${p.provider.configDir}/${p.provider.configFileName}`
+      `COPY ${p.provider.file.fileName} ${p.provider.configDir}/${p.provider.file.fileName}`
     );
     ownedDirs.push(p.provider.configDir);
   }
@@ -131,27 +126,21 @@ export function derivedImageTag(agentName: string): string {
   return imageTag('agent', agentName);
 }
 
-/** A file-configured harness's provider config, baked into the derived image. */
-export interface BakedProviderConfig {
-  /** The rendered config file (e.g. Codex `config.toml`). */
-  file: RenderedConfigFile;
-  /** Absolute in-container config dir the file is baked into; outside `/workspace`. */
-  configDir: string;
-  /** Name of the env var relocating the config dir, e.g. `CODEX_HOME`. */
-  configDirEnv: string;
-}
-
-/** How a Provider is delivered to a Run. */
+/**
+ * How a Provider is delivered to a Run: a {@link FileProviderDelivery} widened by
+ * the one thing an env harness differs in - it bakes nothing, so `bakedConfig` is
+ * optional here and required there.
+ */
 export interface ProviderDelivery {
   /**
    * Env delivered at runtime via `--env-file`: the API key by name for every
-   * harness, plus - for an env-configured harness - the endpoint and resolved model.
+   * harness, plus - for an env-configured harness - the endpoint and the model.
    */
   runtimeEnv: ContainerEnv[];
   /**
-   * A model to deliver on the run command (e.g. `codex exec -m <id>`), set only
-   * when the model was `auto`-resolved for a file harness - its config file omits
-   * the model so the resolved id arrives at runtime, not baked (ADR-0007).
+   * A model to name on the run command (e.g. `codex exec -m <id>`), when the
+   * harness needs it there; see {@link FileProviderDelivery.runtimeModel}. Never
+   * set for an env harness, which carries its model in the env.
    */
   runtimeModel?: string;
   /**
@@ -163,56 +152,23 @@ export interface ProviderDelivery {
 }
 
 /**
- * Plans how an agent's {@link Provider} reaches its Run, purely - the single
- * place the delivery form is decided from the adapter's kind, given the model
- * already {@link ResolvedModel resolved} at spawn:
+ * Plans how an agent's {@link Provider} reaches its Run - the union's one fork,
+ * and the whole of what this module decides about an adapter:
  *
- * - **env** harness (Claude Code): the whole provider (with the resolved model)
- *   becomes runtime env; nothing is baked from the provider.
- * - **file** harness (Codex, pi): the provider is rendered into a config file to
- *   bake into the derived image ({@link ProviderDelivery.bakedConfig}). The model
- *   handling branches on the adapter's `modelInFile`: Codex (`false`) bakes a
- *   concrete model but keeps an `auto`-resolved one out of the config and delivers
- *   it on the run command (`runtimeModel`); pi (`true`) selects only models
- *   declared in `models.json`, so the resolved model is always baked *and* passed
- *   on the command line (`--provider`/`--model`) for selection. Only the API key
- *   is delivered as runtime env (by name; never baked).
+ * - **env** harness (Claude Code): the whole provider becomes runtime env;
+ *   nothing is baked.
+ * - **file** harness (Codex, pi): the adapter plans its own delivery. What gets
+ *   baked, where it lands in the image, and whether the run command must name the
+ *   model are that harness's business, not this module's (ADR-0006).
  */
 export function planProviderDelivery(
   storeEnv: Record<string, string>,
   adapter: HarnessAdapter,
   provider: Provider
 ): ProviderDelivery {
-  if (adapter.kind === 'env') {
-    // Env harnesses carry the model at runtime already; use the resolved id.
-    return {
-      runtimeEnv: adapter.renderProviderEnv({
-        ...provider,
-        model: provider.model,
-      }),
-    };
-  }
-
-  // File harness: bake the provider config into the derived image. `modelInFile`
-  // forces the resolved model into the config (pi requires it declared to be
-  // selectable) and passes it on the command line too; otherwise Codex keeps an
-  // auto model out of the config and delivers it via `-m` at runtime.
-  const bakeResolvedModel =
-    adapter.modelInFile || provider.model !== 'auto/coding';
-  const passModelOnCommand =
-    adapter.modelInFile || provider.model === 'auto/coding';
-  const configProvider: Provider = bakeResolvedModel
-    ? { ...provider, model: provider.model }
-    : provider;
-  return {
-    runtimeEnv: adapter.renderRuntimeEnv(provider),
-    runtimeModel: passModelOnCommand ? provider.model : undefined,
-    bakedConfig: {
-      file: adapter.renderProviderFile(configProvider, storeEnv),
-      configDir: adapter.configDir,
-      configDirEnv: adapter.configDirEnv,
-    },
-  };
+  return adapter.kind === 'env'
+    ? { runtimeEnv: adapter.renderProviderEnv(provider) }
+    : adapter.planProviderDelivery(provider, storeEnv);
 }
 
 /** The derived agent image, composing baked provider config and/or default skills. */
@@ -253,24 +209,14 @@ export function planAgentImage(params: {
   if (!params.bakedConfig && skillNames.length === 0) return undefined;
 
   const files: RenderedConfigFile[] = [];
-  const provider: DockerfileProviderBlock | undefined = params.bakedConfig
-    ? {
-        configFileName: params.bakedConfig.file.fileName,
-        configDir: params.bakedConfig.configDir,
-        configDirEnv: params.bakedConfig.configDirEnv,
-      }
-    : undefined;
   if (params.bakedConfig) files.push(params.bakedConfig.file);
 
   files.push({
     fileName: 'Dockerfile',
     content: renderDerivedDockerfile({
       baseImage: params.baseImage,
-      provider,
-      skills:
-        skillNames.length > 0
-          ? { skillsDir: params.skills!.skillsDir, names: skillNames }
-          : undefined,
+      provider: params.bakedConfig,
+      skills: skillNames.length > 0 ? params.skills : undefined,
       runtimeUser: params.runtimeUser,
     }),
   });

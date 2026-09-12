@@ -3,7 +3,6 @@ import type { EnvHarnessSection } from './renderEnvTemplate.js';
 import type {
   Protocol,
   HarnessAdapter,
-  FileHarnessAdapter,
   ConfigOverlayDelivery,
 } from './adapter.js';
 import type { McpEndpoint } from '../mcp/index.js';
@@ -226,28 +225,48 @@ export function resolveHarness(name: string): Harness {
 export type McpDeliveryForm = 'flag' | 'file' | 'none';
 
 /**
- * The MCP delivery form a harness declares - the single classifier of the
- * `flag`/`file`/`none` fork. Internal: both {@link harnessCapabilities} (for
- * gating) and {@link planMcpDelivery} (for wiring) derive from it, so the label
- * and the wiring it implies can never disagree.
+ * A harness's MCP wiring: the delivery form *and* the very function that form
+ * calls, bound to its owner. Probing once and carrying the capability away is
+ * what keeps {@link planMcpDelivery} free of casts and non-null assertions - a
+ * label alone would force every caller to re-prove what the probe already knew.
+ * Internal to this module.
  */
-function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
-  if (harness.renderMcpArgs) return 'flag';
-  // A file adapter delivers MCP only if it renders an overlay; opencode has no
-  // file adapter, so it stays `none`.
-  if (harness.adapter?.kind === 'file' && harness.adapter.planConfigOverlay) {
-    return 'file';
-  }
-  return 'none';
-}
+type McpWiring =
+  | { form: 'flag'; renderArgs: (endpoints: McpEndpoint[]) => string[] }
+  | {
+      form: 'file';
+      planOverlay: (
+        baseConfig: string,
+        endpoints: McpEndpoint[]
+      ) => ConfigOverlayDelivery;
+    }
+  | { form: 'none' };
 
 /**
- * The harness's file config adapter when it has one, else undefined - narrows the
- * {@link HarnessAdapter} union so {@link planMcpDelivery} avoids an
- * `as FileHarnessAdapter` cast. Internal to this module.
+ * The single classifier of the `flag`/`file`/`none` fork. Both
+ * {@link harnessCapabilities} (for gating) and {@link planMcpDelivery} (for
+ * wiring) go through it, so the label and the wiring it implies can never
+ * disagree.
  */
-function fileAdapterFor(harness: Harness): FileHarnessAdapter | undefined {
-  return harness.adapter?.kind === 'file' ? harness.adapter : undefined;
+function mcpWiring(harness: Harness): McpWiring {
+  if (harness.renderMcpArgs) {
+    return { form: 'flag', renderArgs: harness.renderMcpArgs.bind(harness) };
+  }
+  // A file adapter delivers MCP only if it plans an overlay; opencode has no
+  // adapter at all, so it stays `none`.
+  const adapter = harness.adapter;
+  if (adapter?.kind === 'file' && adapter.planConfigOverlay) {
+    return {
+      form: 'file',
+      planOverlay: adapter.planConfigOverlay.bind(adapter),
+    };
+  }
+  return { form: 'none' };
+}
+
+/** The MCP delivery form a harness declares - {@link mcpWiring} without its wiring. */
+function mcpDeliveryForm(harness: Harness): McpDeliveryForm {
+  return mcpWiring(harness).form;
 }
 
 /**
@@ -295,30 +314,26 @@ export type McpDelivery =
 /**
  * Plans MCP delivery for a harness, given the selected `endpoints` and the baked
  * provider `baseConfig` a file overlay merges onto (empty for a default agent).
- * Dispatches on the single {@link mcpDeliveryForm} classifier - the label and the
- * wiring share one source, so they cannot drift. The non-null assertions are
- * guaranteed by that classifier: a `flag` form has `renderMcpArgs`; a `file` form
- * has a file adapter with `planConfigOverlay`.
+ * Dispatches on the single {@link mcpWiring} classifier - the label and the wiring
+ * share one source, so they cannot drift, and the capability arrives already
+ * proven rather than re-probed here.
  */
 export function planMcpDelivery(
   harness: Harness,
   endpoints: McpEndpoint[],
   baseConfig: string
 ): McpDelivery {
-  const form = mcpDeliveryForm(harness);
-  switch (form) {
+  const wiring = mcpWiring(harness);
+  switch (wiring.form) {
     case 'flag':
-      return { form, args: harness.renderMcpArgs!(endpoints) };
+      return { form: wiring.form, args: wiring.renderArgs(endpoints) };
     case 'file':
       return {
-        form,
-        overlay: fileAdapterFor(harness)!.planConfigOverlay!(
-          baseConfig,
-          endpoints
-        ),
+        form: wiring.form,
+        overlay: wiring.planOverlay(baseConfig, endpoints),
       };
     case 'none':
-      return { form };
+      return { form: wiring.form };
   }
 }
 

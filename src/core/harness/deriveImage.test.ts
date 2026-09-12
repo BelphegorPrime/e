@@ -10,11 +10,12 @@ import {
   claudeCodeAdapter,
   codexAdapter,
   piAdapter,
+  type BakedProviderConfig,
   type Provider,
 } from './adapter.js';
 
-const providerBlock = {
-  configFileName: 'config.toml',
+const providerBlock: BakedProviderConfig = {
+  file: { fileName: 'config.toml', content: 'model = "gpt-5-codex"\n' },
   configDir: '/home/node/.codex',
   configDirEnv: 'CODEX_HOME',
 };
@@ -174,13 +175,12 @@ test('planProviderDelivery: a file harness bakes a concrete model into its confi
   assert.match(plan.bakedConfig.file.content, /^model = "gpt-5-codex"$/m);
   assert.equal(plan.runtimeModel, undefined);
   // Only the API key is delivered at runtime for a file harness.
-  assert.deepEqual(
-    plan.runtimeEnv,
-    codexAdapter.renderRuntimeEnv(fileProvider)
-  );
+  assert.deepEqual(plan.runtimeEnv, [
+    { name: 'MY_GATEWAY_KEY', fromEnv: 'MY_GATEWAY_KEY' },
+  ]);
 });
 
-test('planProviderDelivery: a file harness keeps an auto model out of the config, delivers it on the command', () => {
+test('planProviderDelivery: a file harness names an auto model on the run command', () => {
   const plan = planProviderDelivery({}, codexAdapter, {
     ...fileProvider,
     model: 'auto/coding',
@@ -207,7 +207,9 @@ test('planProviderDelivery: pi bakes auto model into models.json and passes it o
   assert.deepEqual(cfg.providers.e.models, [{ id: 'auto/coding' }]);
   // It is still passed on the command line for provider/model selection.
   assert.equal(plan.runtimeModel, 'auto/coding');
-  assert.deepEqual(plan.runtimeEnv, piAdapter.renderRuntimeEnv(piProvider));
+  assert.deepEqual(plan.runtimeEnv, [
+    { name: 'MY_GATEWAY_KEY', fromEnv: 'MY_GATEWAY_KEY' },
+  ]);
 });
 
 test('planProviderDelivery: pi bakes a concrete model too and passes it for selection', () => {

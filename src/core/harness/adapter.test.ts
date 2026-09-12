@@ -12,8 +12,10 @@ import {
   PI_PROVIDER_ID,
   validateProviderProtocol,
   EnvFileRenderer,
+  type FileHarnessAdapter,
   type Provider,
 } from './adapter.js';
+import { planAgentImage, planProviderDelivery } from './deriveImage.js';
 
 const provider: Provider = {
   baseUrl: 'https://gateway.example.com',
@@ -154,7 +156,7 @@ test('renderCodexConfig: references the API key by env var name, never a value',
   assert.match(toml, /^env_key = "MY_GATEWAY_KEY"$/m);
 });
 
-test('renderCodexConfig: omits the model line for `auto` (delivered at runtime, not baked)', () => {
+test('renderCodexConfig: bakes an `auto` alias verbatim (the endpoint resolves it)', () => {
   const toml = renderCodexConfig({ ...codexProvider, model: 'auto/coding' });
   assert.match(toml, /^model = "auto\/coding"$/m);
   assert.match(toml, /^model_provider = "e"$/m);
@@ -171,29 +173,46 @@ test('renderCodexConfig: escapes TOML-significant characters in interpolated val
   assert.match(toml, /^base_url = "https:\/\/host\/\\"weird\\"\\\\path"$/m);
 });
 
-test('codexAdapter: is a file-delivered adapter that renders config.toml', () => {
+test('codexAdapter: one call plans the whole delivery - a baked config.toml, the key by name', () => {
   assert.equal(codexAdapter.kind, 'file');
-  const file = codexAdapter.renderProviderFile(codexProvider, {});
-  assert.equal(file.fileName, 'config.toml');
-  assert.equal(file.content, renderCodexConfig(codexProvider));
-});
-
-test('codexAdapter: bakes config under a relocated config dir outside /workspace', () => {
-  assert.equal(codexAdapter.configDirEnv, 'CODEX_HOME');
-  assert.ok(codexAdapter.configDir.startsWith('/'));
-  assert.ok(!codexAdapter.configDir.startsWith('/workspace'));
-});
-
-test('codexAdapter: the only runtime env is the API key, delivered by name', () => {
-  const entries = codexAdapter.renderRuntimeEnv(codexProvider);
-  assert.deepEqual(entries, [
+  const delivery = codexAdapter.planProviderDelivery(codexProvider, {});
+  assert.equal(delivery.bakedConfig.file.fileName, 'config.toml');
+  assert.equal(
+    delivery.bakedConfig.file.content,
+    renderCodexConfig(codexProvider)
+  );
+  // The only runtime env is the API key, delivered by name.
+  assert.deepEqual(delivery.runtimeEnv, [
     { name: 'MY_GATEWAY_KEY', fromEnv: 'MY_GATEWAY_KEY' },
   ]);
 });
 
+test('codexAdapter: bakes config under a relocated config dir outside /workspace', () => {
+  const { bakedConfig } = codexAdapter.planProviderDelivery(codexProvider, {});
+  assert.equal(bakedConfig.configDirEnv, 'CODEX_HOME');
+  assert.ok(bakedConfig.configDir.startsWith('/'));
+  assert.ok(!bakedConfig.configDir.startsWith('/workspace'));
+});
+
 test('codexAdapter: the runtime env never carries the secret value, only its name', () => {
-  const entries = codexAdapter.renderRuntimeEnv(codexProvider);
-  assert.ok(entries.every(e => 'fromEnv' in e && !('value' in e)));
+  const { runtimeEnv } = codexAdapter.planProviderDelivery(codexProvider, {});
+  assert.ok(runtimeEnv.every(e => 'fromEnv' in e && !('value' in e)));
+});
+
+test('codexAdapter: names the model on the run command only for an auto pick', () => {
+  // A concrete model is selected by the baked config.toml; the `auto` alias is
+  // not a model the baked line can select, so it goes on `codex exec -m`.
+  assert.equal(
+    codexAdapter.planProviderDelivery(codexProvider, {}).runtimeModel,
+    undefined
+  );
+  assert.equal(
+    codexAdapter.planProviderDelivery(
+      { ...codexProvider, model: 'auto/coding' },
+      {}
+    ).runtimeModel,
+    'auto/coding'
+  );
 });
 
 test('renderCodexMcpServers: renders a streamable-HTTP block per server (url, no type key)', () => {
@@ -224,14 +243,6 @@ test('renderCodexMcpServers: renders remote headers verbatim as http_headers', (
   assert.match(
     toml,
     /^http_headers = \{ "Authorization" = "Bearer TOKEN" \}$/m
-  );
-});
-
-test('codexAdapter: renderMcpServers delegates to renderCodexMcpServers', () => {
-  const endpoints = [{ name: 'everything', url: 'http://everything:3001/mcp' }];
-  assert.equal(
-    codexAdapter.renderMcpServers!(endpoints),
-    renderCodexMcpServers(endpoints)
   );
 });
 
@@ -348,36 +359,89 @@ test('renderPiModelsJson: maps openai-chat to pi openai-completions', () => {
   assert.equal(cfg.providers[PI_PROVIDER_ID].api, 'openai-completions');
 });
 
-test('piAdapter: is a file-delivered adapter that renders models.json', () => {
+test('piAdapter: one call plans the whole delivery - a baked models.json, the key by name', () => {
   assert.equal(piAdapter.kind, 'file');
-  const file = piAdapter.renderProviderFile(piProvider, {});
-  assert.equal(file.fileName, 'models.json');
-  assert.equal(file.content, renderPiModelsJson(piProvider, {}));
-});
-
-test('piAdapter: bakes config under a relocated config dir outside /workspace', () => {
-  assert.equal(piAdapter.configDirEnv, 'PI_CODING_AGENT_DIR');
-  assert.ok(piAdapter.configDir.startsWith('/'));
-  assert.ok(!piAdapter.configDir.startsWith('/workspace'));
-});
-
-test('piAdapter: requires the model in the file; Codex does not (modelInFile)', () => {
-  // pi selects only models declared in models.json, so a resolved model is always
-  // baked; Codex can deliver an auto model on the command line via `-m`.
-  assert.equal(piAdapter.modelInFile, true);
-  assert.equal(codexAdapter.modelInFile, false);
-});
-
-test('piAdapter: the only runtime env is the API key, delivered by name', () => {
-  assert.deepEqual(piAdapter.renderRuntimeEnv(piProvider), [
+  const delivery = piAdapter.planProviderDelivery(piProvider, {});
+  assert.equal(delivery.bakedConfig.file.fileName, 'models.json');
+  assert.equal(
+    delivery.bakedConfig.file.content,
+    renderPiModelsJson(piProvider, {})
+  );
+  // The only runtime env is the API key, delivered by name.
+  assert.deepEqual(delivery.runtimeEnv, [
     { name: 'MY_GATEWAY_KEY', fromEnv: 'MY_GATEWAY_KEY' },
   ]);
 });
 
+test('piAdapter: bakes config under a relocated config dir outside /workspace', () => {
+  const { bakedConfig } = piAdapter.planProviderDelivery(piProvider, {});
+  assert.equal(bakedConfig.configDirEnv, 'PI_CODING_AGENT_DIR');
+  assert.ok(bakedConfig.configDir.startsWith('/'));
+  assert.ok(!bakedConfig.configDir.startsWith('/workspace'));
+});
+
+test('piAdapter: names every model on the run command; Codex only an auto pick', () => {
+  // pi selects by flag and only from what models.json declares, so the model is
+  // baked *and* named on the command line; Codex lets a concrete model stand.
+  assert.equal(
+    piAdapter.planProviderDelivery(piProvider, {}).runtimeModel,
+    'claude-opus-5'
+  );
+  assert.equal(
+    codexAdapter.planProviderDelivery(codexProvider, {}).runtimeModel,
+    undefined
+  );
+});
+
 test('piAdapter: ships MCP delivery via the pi-mcp-adapter (mcp.json overlay)', () => {
+  // pi's overlay is self-contained: the baked models.json stays as it is and the
+  // overlay mounts a sibling mcp.json, so nothing is merged into the provider file.
   assert.equal(typeof piAdapter.planConfigOverlay, 'function');
-  // pi's overlay is self-contained (the provider models.json stays baked); the
-  // adapter does not render MCP into the provider file, so renderMcpServers is
-  // intentionally absent.
-  assert.equal(piAdapter.renderMcpServers, undefined);
+});
+
+test('a file harness is one object: `kind` plus one delivery method', () => {
+  // The whole contract, written out - a harness with no MCP overlay declares
+  // nothing else. Nothing outside the adapter asks where its config dir is, what
+  // its file is called, or whether its model may be baked, so this toy adapter
+  // runs the full path from Provider to derived Dockerfile unchanged.
+  const toyAdapter: FileHarnessAdapter = {
+    kind: 'file',
+    planProviderDelivery: provider => ({
+      bakedConfig: {
+        file: {
+          fileName: 'toy.json',
+          content: JSON.stringify({ model: provider.model }) + '\n',
+        },
+        configDir: '/home/node/.toy',
+        configDirEnv: 'TOY_HOME',
+      },
+      runtimeEnv: [{ name: 'TOY_KEY', fromEnv: provider.apiKeyEnv }],
+    }),
+  };
+
+  const delivery = planProviderDelivery({}, toyAdapter, codexProvider);
+  assert.deepEqual(delivery.runtimeEnv, [
+    { name: 'TOY_KEY', fromEnv: 'MY_GATEWAY_KEY' },
+  ]);
+  assert.equal(delivery.runtimeModel, undefined);
+
+  const image = planAgentImage({
+    baseImage: 'e-harness-toy',
+    agentName: 'toy',
+    bakedConfig: delivery.bakedConfig,
+  });
+  assert.ok(image);
+  assert.deepEqual(
+    image.files.map(f => f.fileName),
+    ['toy.json', 'Dockerfile']
+  );
+  const dockerfile = image.files.find(f => f.fileName === 'Dockerfile');
+  assert.match(
+    dockerfile?.content ?? '',
+    /^ENV TOY_HOME=\/home\/node\/\.toy$/m
+  );
+  assert.match(
+    dockerfile?.content ?? '',
+    /^COPY toy\.json \/home\/node\/\.toy\/toy\.json$/m
+  );
 });

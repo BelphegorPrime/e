@@ -60,9 +60,9 @@ export type ContainerEnv =
 /**
  * A config file an adapter renders for a file-configured harness, to be baked
  * into a **derived agent image** (ADR-0004 layer 2). It is written under
- * `.e/agents/<name>/` on the host and `COPY`d into the image at
- * {@link FileHarnessAdapter.configDir} - a path outside `/workspace`, so
- * `e`-generated config never lands in the Run's branch (ADR-0006).
+ * `.e/agents/<name>/` on the host and `COPY`d into the image at the
+ * {@link BakedProviderConfig.configDir} the adapter names - a path outside
+ * `/workspace`, so `e`-generated config never lands in the Run's branch (ADR-0006).
  */
 export interface RenderedConfigFile {
   /** File name written under the agent dir and copied into the image. */
@@ -82,7 +82,7 @@ export interface RenderedConfigFile {
 export interface ConfigOverlayDelivery {
   /** The merged config file to materialize; its `fileName` is the harness's config file. */
   file: RenderedConfigFile;
-  /** Absolute container path to mount {@link file} at (`configDir/configFileName`); outside `/workspace`. */
+  /** Absolute container path to mount {@link file} at, in the harness's config dir; outside `/workspace`. */
   mountTo: string;
   /** Env (as `NAME=value` argv entries) relocating the harness's config dir to the mount. */
   env: string[];
@@ -99,65 +99,79 @@ export interface EnvHarnessAdapter {
 }
 
 /**
- * A **file-based** config adapter (Codex): a {@link Provider} becomes a config
- * file baked into a derived agent image, read from a relocated config dir. The
- * API key is never baked - the file references it by env var name (Codex's
- * `env_key`), and {@link renderRuntimeEnv} delivers that name at runtime, so the
- * secret stays a runtime value (ADR-0006).
+ * A file-configured harness's provider config, ready to bake into the **derived
+ * agent image** (ADR-0004 layer 2): the rendered file, the in-container dir it is
+ * copied into, and the env var that points the CLI there. The adapter fills all
+ * three, so the derived-image render never has to know where a harness keeps its
+ * config - it copies what it is handed.
+ */
+export interface BakedProviderConfig {
+  /** The rendered config file (Codex `config.toml`, pi `models.json`). */
+  file: RenderedConfigFile;
+  /** Absolute in-container config dir the file is baked into; outside `/workspace`. */
+  configDir: string;
+  /** Name of the env var relocating the config dir, e.g. `CODEX_HOME`. */
+  configDirEnv: string;
+}
+
+/**
+ * A file harness's complete provider delivery - the file-form twin of
+ * {@link EnvHarnessAdapter.renderProviderEnv}: what the derived image bakes, what
+ * must still reach the container at runtime, and what the run command has to
+ * name. It all comes from one adapter call, so no caller reassembles a delivery
+ * out of an adapter's insides.
+ */
+export interface FileProviderDelivery {
+  /** The provider config to bake; a file harness always renders exactly one. */
+  bakedConfig: BakedProviderConfig;
+  /**
+   * Env delivered at runtime via `--env-file`: the API key, by name only. The
+   * baked file points at it through the harness's own key-by-name mechanism
+   * (Codex `env_key`, pi `${VAR}` interpolation), so no secret is ever baked.
+   */
+  runtimeEnv: ContainerEnv[];
+  /**
+   * The model to name on the run command (`codex exec -m <id>`, pi `--model
+   * <id>`), set only by a harness that needs it there - Codex for an `auto` pick
+   * its baked config cannot select on its own, pi for every model, because it
+   * selects by flag (ADR-0007). Absent means the baked config already selects it.
+   */
+  runtimeModel?: string;
+}
+
+/**
+ * A **file-based** config adapter (Codex, pi): a {@link Provider} becomes a
+ * config file baked into a derived agent image, read from a relocated config dir.
+ * The API key is never baked - the file references it by env var name (Codex's
+ * `env_key`) and the delivery names it as runtime env, so the secret stays a
+ * runtime value (ADR-0006).
  */
 export interface FileHarnessAdapter {
   kind: 'file';
   /**
-   * Name of the env var that relocates this harness's config dir (e.g.
-   * `CODEX_HOME`). Set in the derived image so the CLI reads config from
-   * {@link configDir} rather than a `$HOME`-relative default.
+   * Plans this harness's whole provider delivery in one call: the file to bake
+   * and where in the image it lands, the runtime env, and any model the run
+   * command must name. Every one of those is the harness's own decision - where it
+   * reads config, whether it can select an `auto` model from a baked file - so a
+   * new file harness is one object with one method, and the derived-image planner
+   * branches on none of it. `storeEnv` is the parsed `.e/.env`, for a file format
+   * that cannot reference a key by name (pi). See {@link planProviderDelivery},
+   * the union's one fork.
    */
-  configDirEnv: string;
-  /** Absolute in-container config dir the file is baked into; outside `/workspace`. */
-  configDir: string;
-  /** The config file name this harness reads under {@link configDir} (e.g. `config.toml`). */
-  configFileName: string;
-  /**
-   * Whether a resolved model must be materialised into the config file. Codex can
-   * receive an `auto`-resolved model on the command line (`-m <id>`) and keep its
-   * config model-agnostic, so it sets `false`; pi selects only models **declared**
-   * in `models.json`, so it sets `true` and every resolved model is baked (ADR-0007
-   * staleness applies: a newly-shipped `auto` pick needs `--rebuild`). See
-   * {@link planProviderDelivery} and `docs/research/harness-cli-facts.md`.
-   */
-  modelInFile: boolean;
-  /** Renders the Provider into this harness's native config file. */
-  renderProviderFile(
+  planProviderDelivery(
     provider: Provider,
     storeEnv: Record<string, string>
-  ): RenderedConfigFile;
-  /**
-   * The runtime env the derived image still needs - the API key, by name only
-   * (never baked). The baked config file points at it via the harness's own
-   * key-by-name mechanism (Codex `env_key`, pi `${VAR}` interpolation).
-   */
-  renderRuntimeEnv(provider: Provider): ContainerEnv[];
-  /**
-   * Renders the selected MCP servers into this harness's native config as a
-   * runtime-overlay fragment (ADR-0006 layer 3), to be merged onto the baked
-   * base config and delivered outside `/workspace` via {@link configDir}.
-   * Container sidecars use streamable HTTP (a `url`); returns an empty string
-   * when nothing is selected. **Optional** - absent for a file harness whose
-   * MCP config is self-contained (pi renders `mcp.json` standalone in
-   * {@link planConfigOverlay}, so it needs no fragment).
-   */
-  renderMcpServers?(endpoints: McpEndpoint[]): string;
+  ): FileProviderDelivery;
   /**
    * Plans the complete MCP config-overlay delivery: merges the selected servers
    * onto the baked `baseConfig` (the exact config the derived image baked, reused
    * not re-derived; empty for a default agent with no provider) and returns the
    * merged file, the container path to mount it at, and the config-dir relocation
-   * env - everything the spawn edge needs without touching this adapter's
-   * {@link configDir}/{@link configFileName}/{@link configDirEnv} fields. Pure -
-   * the edge writes the file, formats the mount, and appends the env. **Optional**
-   * - its presence is the harness's declared file-MCP capability; pi ships one via
-   * the pi-mcp-adapter extension, delivering `mcp.json` beside the baked provider
-   * file. See {@link planMcpDelivery}.
+   * env - everything the spawn edge needs without knowing where this harness reads
+   * its config. Pure - the edge writes the file, formats the mount, and appends
+   * the env. **Optional** - its presence is the harness's declared file-MCP
+   * capability; pi ships one via the pi-mcp-adapter extension, delivering
+   * `mcp.json` beside the baked provider file. See {@link planMcpDelivery}.
    */
   planConfigOverlay?(
     baseConfig: string,
@@ -209,10 +223,10 @@ function tomlBasicString(value: string): string {
  * environment at runtime, so no secret is written here. Grounding:
  * `docs/research/harness-cli-facts.md`.
  *
- * A concrete model is baked as the top-level `model` (ADR-0004). An `auto` model
- * is **omitted** from the file - it is resolved at spawn and delivered at runtime
- * (`codex exec -m <id>`, ADR-0007), so the derived image is not rebuilt when the
- * resolved model changes.
+ * The provider's model is baked as the top-level `model` (ADR-0004), whether it
+ * is a concrete id or the `auto/coding` alias the endpoint resolves per request;
+ * {@link codexAdapter} additionally names an `auto` one on the run command
+ * (`codex exec -m <id>`, ADR-0007), which a baked alias cannot stand in for.
  */
 export function renderCodexConfig(provider: Provider): string {
   // A fixed provider id: `e` owns the whole file, so there is only ever one
@@ -271,34 +285,40 @@ function tomlBareKey(name: string): string {
 }
 
 /**
- * Codex's adapter. Codex is configured through `config.toml` under its config
- * dir (relocatable via `CODEX_HOME`), so the provider is rendered into a file
- * baked into the derived agent image; only the API key is delivered at runtime,
- * by name. The config dir is a fixed path under the non-root runtime user's
- * home, outside `/workspace`.
+ * Where Codex reads its config in the image: `config.toml` under a config dir
+ * relocated by `CODEX_HOME`, a fixed path in the non-root runtime user's home and
+ * outside `/workspace`. Private to the adapter - both of its deliveries spell the
+ * baked file's home from here, and nothing else needs to know it.
+ */
+const CODEX_CONFIG_DIR_ENV = 'CODEX_HOME';
+const CODEX_CONFIG_DIR = `${NODE_HOME}/.codex`;
+const CODEX_CONFIG_FILE = 'config.toml';
+
+/**
+ * Codex's adapter. Codex is configured through `config.toml`, so the provider is
+ * rendered into a file baked into the derived agent image; only the API key is
+ * delivered at runtime, by name.
  */
 export const codexAdapter: FileHarnessAdapter = {
   kind: 'file',
-  configDirEnv: 'CODEX_HOME',
-  configDir: `${NODE_HOME}/.codex`,
-  configFileName: 'config.toml',
-  // Codex delivers an auto-resolved model on the command line (`codex exec -m`),
-  // so it keeps the config model-agnostic rather than baking the model.
-  modelInFile: false,
-  renderProviderFile(
-    provider: Provider,
-    _storeEnv: Record<string, string>
-  ): RenderedConfigFile {
+  planProviderDelivery(provider: Provider): FileProviderDelivery {
     return {
-      fileName: 'config.toml',
-      content: renderCodexConfig(provider),
+      bakedConfig: {
+        file: {
+          fileName: CODEX_CONFIG_FILE,
+          content: renderCodexConfig(provider),
+        },
+        configDir: CODEX_CONFIG_DIR,
+        configDirEnv: CODEX_CONFIG_DIR_ENV,
+      },
+      runtimeEnv: [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }],
+      // Only an `auto` model needs naming on the command line (`codex exec -m
+      // auto/coding`): the endpoint picks behind that alias per request, so the
+      // baked `model` line cannot stand for it. A concrete model is selected by
+      // the baked config and needs no flag (ADR-0007).
+      runtimeModel:
+        provider.model === 'auto/coding' ? provider.model : undefined,
     };
-  },
-  renderRuntimeEnv(provider: Provider): ContainerEnv[] {
-    return [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }];
-  },
-  renderMcpServers(endpoints: McpEndpoint[]): string {
-    return renderCodexMcpServers(endpoints);
   },
   planConfigOverlay(
     baseConfig: string,
@@ -307,9 +327,9 @@ export const codexAdapter: FileHarnessAdapter = {
     const block = renderCodexMcpServers(endpoints);
     const content = (baseConfig ? baseConfig.trimEnd() + '\n\n' : '') + block;
     return {
-      file: { fileName: this.configFileName, content },
-      mountTo: `${this.configDir}/${this.configFileName}`,
-      env: [`${this.configDirEnv}=${this.configDir}`],
+      file: { fileName: CODEX_CONFIG_FILE, content },
+      mountTo: `${CODEX_CONFIG_DIR}/${CODEX_CONFIG_FILE}`,
+      env: [`${CODEX_CONFIG_DIR_ENV}=${CODEX_CONFIG_DIR}`],
     };
   },
 };
@@ -394,29 +414,42 @@ export function renderPiModelsJson(
 }
 
 /**
- * pi's adapter. pi is configured through `models.json` under its config dir
- * (relocatable via `PI_CODING_AGENT_DIR`), so the provider is rendered into a
- * file baked into the derived agent image; only the API key is delivered at
- * runtime, by name. The `pi-mcp-adapter` extension (installed into the image)
- * gives pi an MCP client; it reads a standard `mcp.json` (`mcpServers` with
- * `url` entries for streamable HTTP) from the same config dir, so `--mcp` is
- * delivered as a read-only overlay mounted at `~/.pi/agent/mcp.json`. pi
- * requires the model declared in the file, so `modelInFile` is `true`. The
- * config dir lives under the non-root runtime user's home, outside `/workspace`.
+ * Where pi reads its config in the image: `models.json` under a config dir
+ * relocated by `PI_CODING_AGENT_DIR`, in the non-root runtime user's home and
+ * outside `/workspace`. Private to the adapter, like Codex's.
+ */
+const PI_CONFIG_DIR_ENV = 'PI_CODING_AGENT_DIR';
+const PI_CONFIG_DIR = `${NODE_HOME}/.pi/agent`;
+const PI_CONFIG_FILE = 'models.json';
+
+/**
+ * pi's adapter. pi is configured through `models.json`, so the provider is
+ * rendered into a file baked into the derived agent image; only the API key is
+ * delivered at runtime, by name. The `pi-mcp-adapter` extension (installed into
+ * the image) gives pi an MCP client; it reads a standard `mcp.json` (`mcpServers`
+ * with `url` entries for streamable HTTP) from the same config dir, so `--mcp` is
+ * delivered as a read-only overlay mounted at `~/.pi/agent/mcp.json`.
  */
 export const piAdapter: FileHarnessAdapter = {
   kind: 'file',
-  configDirEnv: 'PI_CODING_AGENT_DIR',
-  configDir: `${NODE_HOME}/.pi/agent`,
-  configFileName: 'models.json',
-  modelInFile: true,
-  renderProviderFile(
+  planProviderDelivery(
     provider: Provider,
     storeEnv: Record<string, string>
-  ): RenderedConfigFile {
+  ): FileProviderDelivery {
     return {
-      fileName: 'models.json',
-      content: renderPiModelsJson(provider, storeEnv),
+      bakedConfig: {
+        file: {
+          fileName: PI_CONFIG_FILE,
+          content: renderPiModelsJson(provider, storeEnv),
+        },
+        configDir: PI_CONFIG_DIR,
+        configDirEnv: PI_CONFIG_DIR_ENV,
+      },
+      runtimeEnv: [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }],
+      // pi selects a model by flag and only from what `models.json` declares, so
+      // every model is both baked and named on the command line (ADR-0007
+      // staleness applies: a newly-shipped `auto` pick needs `--rebuild`).
+      runtimeModel: provider.model,
     };
   },
   planConfigOverlay(
@@ -432,12 +465,9 @@ export const piAdapter: FileHarnessAdapter = {
       },
       // Mount next to models.json in pi's config dir. No relocation env: pi's
       // provider models.json stays exactly where it baked.
-      mountTo: `${this.configDir}/mcp.json`,
+      mountTo: `${PI_CONFIG_DIR}/mcp.json`,
       env: [],
     };
-  },
-  renderRuntimeEnv(provider: Provider): ContainerEnv[] {
-    return [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }];
   },
 };
 
