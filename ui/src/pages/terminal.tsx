@@ -12,10 +12,13 @@ import {
   fetchAgents,
   fetchSessions,
   fetchTerminalAvailable,
+  fetchTerminalOptions,
   removeSession,
   terminalSocketUrl,
   type AgentSummary,
+  type McpOption,
   type TerminalControlMessage,
+  type TerminalOptions,
   type TerminalSessionInfo,
 } from '@/lib/terminal-api';
 import { cn } from '@/lib/utils';
@@ -230,6 +233,16 @@ function TerminalView({ session, onStatus }: TerminalViewProps) {
   );
 }
 
+/** Tiny transport badge: container MCP servers run as sidecar containers. */
+function McpBadge({ entry }: { entry: McpOption }) {
+  const badge = entry.transport === 'container' ? 'sidecar' : 'remote'
+  return (
+    <span className="ml-auto shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+      {badge}
+    </span>
+  );
+}
+
 export function TerminalPage() {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
@@ -237,6 +250,10 @@ export function TerminalPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [agent, setAgent] = useState('');
   const [name, setName] = useState('');
+  const [options, setOptions] = useState<TerminalOptions | null>(null);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [selectedMcp, setSelectedMcp] = useState<string[]>([]);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -251,12 +268,14 @@ export function TerminalPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const [terminalAvailable, list] = await Promise.all([
+        const [terminalAvailable, list, runOptions] = await Promise.all([
           fetchTerminalAvailable(),
           fetchAgents(),
+          fetchTerminalOptions(),
         ]);
         setAvailable(terminalAvailable);
         setAgents(list);
+        setOptions(runOptions);
         if (list.length > 0) setAgent(current => current || list[0].name);
       } catch (cause) {
         setAvailable(false);
@@ -284,12 +303,27 @@ export function TerminalPage() {
     );
   }, []);
 
+  const toggleName = (
+    current: string[],
+    set: (next: string[]) => void,
+    name: string
+  ): void => {
+    set(
+      current.includes(name)
+        ? current.filter(entry => entry !== name)
+        : [...current, name]
+    );
+  };
+
   const start = async () => {
     if (!agent) return;
     setStarting(true);
     setError(null);
     try {
-      const session = await createSession(agent, name.trim() || undefined);
+      const session = await createSession(agent, name.trim() || undefined, {
+        skills: selectedSkills,
+        mcp: selectedMcp,
+      });
       setName('');
       updateSession(session);
       setSelectedId(session.id);
@@ -369,6 +403,92 @@ export function TerminalPage() {
                 title="lowercase letters, digits and hyphens"
               />
             </label>
+            <div className="rounded-md border border-border">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-foreground"
+                onClick={() => setAdvancedOpen(open => !open)}
+                aria-expanded={advancedOpen}
+              >
+                Advanced
+                <span className="text-muted-foreground">
+                  {advancedOpen ? '−' : '+'}
+                </span>
+              </button>
+              {advancedOpen && (
+                <div className="flex flex-col gap-3 border-t border-border px-3 py-2">
+                  <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+                    Skills
+                    {options === null ? (
+                      <span className="text-xs">Loading…</span>
+                    ) : options.skills.length === 0 ? (
+                      <span className="text-xs">
+                        No skill under <code>.e/skills</code>.
+                      </span>
+                    ) : (
+                      <span className="flex flex-col gap-1">
+                        {options.skills.map(skill => (
+                          <label
+                            key={skill}
+                            className="flex cursor-pointer items-center gap-2 text-foreground"
+                          >
+                            <input
+                              type="checkbox"
+                              className="size-3.5 accent-[hsl(var(--primary))]"
+                              checked={selectedSkills.includes(skill)}
+                              onChange={() =>
+                                toggleName(
+                                  selectedSkills,
+                                  setSelectedSkills,
+                                  skill
+                                )
+                              }
+                            />
+                            <span className="font-mono">{skill}</span>
+                          </label>
+                        ))}
+                      </span>
+                    )}
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+                    MCP servers (container ones run as sidecars)
+                    {options === null ? (
+                      <span className="text-xs">Loading…</span>
+                    ) : options.mcp.length === 0 ? (
+                      <span className="text-xs">
+                        No MCP server under <code>.e/mcp</code>.
+                      </span>
+                    ) : (
+                      <span className="flex flex-col gap-1">
+                        {options.mcp.map(entry => (
+                          <label
+                            key={entry.name}
+                            className="flex cursor-pointer items-center gap-2 text-foreground"
+                          >
+                            <input
+                              type="checkbox"
+                              className="size-3.5 accent-[hsl(var(--primary))]"
+                              checked={selectedMcp.includes(entry.name)}
+                              onChange={() =>
+                                toggleName(
+                                  selectedMcp,
+                                  setSelectedMcp,
+                                  entry.name
+                                )
+                              }
+                            />
+                            <span className="truncate font-mono">
+                              {entry.name}
+                            </span>
+                            <McpBadge entry={entry} />
+                          </label>
+                        ))}
+                      </span>
+                    )}
+                  </label>
+                </div>
+              )}
+            </div>
             <Button
               type="submit"
               size="sm"
@@ -378,9 +498,9 @@ export function TerminalPage() {
               Start
             </Button>
             <p className="text-xs text-muted-foreground">
-              Runs exactly <code>e spawn {agent || '<agent>'}</code> in the
-              directory <code>e serve</code> was started in. Exit the harness to
-              let e commit and push the run.
+              Runs <code>e spawn {agent || '<agent>'}</code> in the directory{' '}
+              <code>e serve</code> was started in, plus any selected skills and
+              MCP servers. Exit the harness to let e commit and push the run.
             </p>
           </form>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background">

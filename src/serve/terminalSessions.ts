@@ -8,6 +8,8 @@ import { log } from '../utils/log.js';
 import { selfInvocation } from '../utils/selfInvoke.js';
 
 import { errorMessage } from '../utils/errors.js';
+import { listMcpServerNames, readMcpServer } from '../mcp/index.js';
+import { listSkillNames } from '../skill/index.js';
 /**
  * Lifecycle of a browser-started run (ADR-0014):
  *  - `starting`: the `e spawn` child is building images, creating the
@@ -32,6 +34,23 @@ export interface StartSessionRequest {
   agent: string;
   /** Optional run name; a unique `ui-…` slug is generated when absent. */
   name?: string;
+  /** Skills to add for this run (`e spawn --skill`); names must exist in the store. */
+  skills?: string[];
+  /** MCP servers to wire for this run (`e spawn --mcp`); container servers run as sidecars. */
+  mcp?: string[];
+}
+
+/** One selectable MCP server for a browser-started run. */
+export interface McpOption {
+  name: string;
+  /** `container` servers run as sidecar containers on the run's network. */
+  transport: 'container' | 'remote';
+}
+
+/** The store's skills and MCP servers, for the terminal's advanced run options. */
+export interface TerminalOptions {
+  skills: string[];
+  mcp: McpOption[];
 }
 
 export type TerminalControlMessage =
@@ -67,6 +86,10 @@ export interface TerminalSessionsDeps {
   /** Replay buffer cap per session, in bytes. */
   bufferLimit?: number;
   now?: () => Date;
+  /** Lists the store's skill names (advanced run options); defaults to disk. */
+  listSkills?: () => string[];
+  /** Lists the store's MCP servers (advanced run options); defaults to disk. */
+  listMcpServers?: () => McpOption[];
 }
 
 const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
@@ -90,6 +113,41 @@ function spawnHeadlessCli(args: string[]): SpawnedChild {
 /** Line output from a non-TTY child needs carriage returns for a terminal. */
 function toTerminalLines(chunk: Buffer | string): Buffer {
   return Buffer.from(chunk.toString().replace(/\r?\n/g, '\r\n'));
+}
+
+/** Lists the store's MCP servers; malformed `mcp.json` files still show, spawn reports their parse error. */
+function defaultMcpOptions(): McpOption[] {
+  return listMcpServerNames().map(name => {
+    let transport: McpOption['transport'] = 'remote';
+    try {
+      const server = readMcpServer(name);
+      if (server?.transport === 'container') transport = 'container';
+    } catch {
+      // Malformed mcp.json: keep the name selectable, the spawn child errors clearly.
+    }
+    return { name, transport };
+  });
+}
+
+/** Validates requested skill/MCP names against the store; unknown or malformed names are a 400. */
+function validatedNames(
+  selected: string[] | undefined,
+  label: string,
+  available: string[]
+): string[] {
+  if (selected === undefined) return [];
+  for (const name of selected) {
+    if (!AGENT_NAME.test(name)) {
+      throw new TerminalRequestError(`Invalid ${label} name "${name}".`);
+    }
+    if (!available.includes(name)) {
+      const list = available.length ? available.join(', ') : '(none)';
+      throw new TerminalRequestError(
+        `Unknown ${label} "${name}". Available: ${list}.`
+      );
+    }
+  }
+  return selected;
 }
 
 class TerminalSession {
@@ -232,6 +290,8 @@ export class TerminalSessions {
   private readonly pollIntervalMs: number;
   private readonly bufferLimit: number;
   private readonly now: () => Date;
+  private readonly listSkills: () => string[];
+  private readonly listMcpServers: () => McpOption[];
 
   constructor(deps: TerminalSessionsDeps) {
     this.engine = deps.engine;
@@ -239,6 +299,8 @@ export class TerminalSessions {
     this.pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.bufferLimit = deps.bufferLimit ?? DEFAULT_BUFFER_LIMIT;
     this.now = deps.now ?? (() => new Date());
+    this.listSkills = deps.listSkills ?? listSkillNames;
+    this.listMcpServers = deps.listMcpServers ?? defaultMcpOptions;
   }
 
   /** False when no engine socket was found: sessions cannot be started. */
@@ -264,6 +326,18 @@ export class TerminalSessions {
         'Run names may contain lowercase letters, digits and hyphens only.'
       );
     }
+    const skills =
+      request.skills === undefined
+        ? []
+        : validatedNames(request.skills, 'skill', this.listSkills());
+    const mcpServers =
+      request.mcp === undefined
+        ? []
+        : validatedNames(
+            request.mcp,
+            'MCP server',
+            this.listMcpServers().map(option => option.name)
+          );
     const info: TerminalSessionInfo = {
       id: randomUUID(),
       agent: request.agent,
@@ -271,7 +345,14 @@ export class TerminalSessions {
       phase: 'starting',
       createdAt: this.now().toISOString(),
     };
-    const child = this.spawnChild(['spawn', request.agent, '--name', slug]);
+    const child = this.spawnChild([
+      'spawn',
+      request.agent,
+      '--name',
+      slug,
+      ...skills.flatMap(name => ['--skill', name]),
+      ...mcpServers.flatMap(name => ['--mcp', name]),
+    ]);
     this.sessions.set(
       info.id,
       new TerminalSession(info, child, {
@@ -281,6 +362,11 @@ export class TerminalSessions {
       })
     );
     return info;
+  }
+
+  /** The store's skills and MCP servers for the run form's advanced options. */
+  options(): TerminalOptions {
+    return { skills: this.listSkills(), mcp: this.listMcpServers() };
   }
 
   list(): TerminalSessionInfo[] {

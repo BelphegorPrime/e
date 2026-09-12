@@ -431,6 +431,17 @@ export function createServeApp(
     return terminal;
   };
 
+  /** The request's `skills`/`mcp` field: an array of strings, or absent. */
+  const toNameList = (value: unknown): string[] | undefined =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === 'string')
+      : undefined;
+
+  app.get('/api/terminal/options', (_request, response) => {
+    const sessions = requireTerminal(response);
+    if (sessions) response.json(sessions.options());
+  });
+
   app.get('/api/terminal/sessions', (_request, response) => {
     const sessions = requireTerminal(response);
     if (sessions) response.json({ sessions: sessions.list() });
@@ -439,11 +450,18 @@ export function createServeApp(
   app.post('/api/terminal/sessions', (request, response) => {
     const sessions = requireTerminal(response);
     if (!sessions) return;
-    const body = (request.body ?? {}) as { agent?: unknown; name?: unknown };
+    const body = (request.body ?? {}) as {
+      agent?: unknown;
+      name?: unknown;
+      skills?: unknown;
+      mcp?: unknown;
+    };
     try {
       const session = sessions.start({
         agent: typeof body.agent === 'string' ? body.agent : '',
         name: typeof body.name === 'string' ? body.name : undefined,
+        skills: toNameList(body.skills),
+        mcp: toNameList(body.mcp),
       });
       response.status(201).json({ session });
     } catch (error) {
