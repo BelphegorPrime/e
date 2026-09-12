@@ -315,7 +315,12 @@ test('interactive mode starts the harness TUI and ignores the one-shot prompt', 
 test('does not modify the working tree in place: worktree lives under worktreesDir', async () => {
   const { deps, git } = makeDeps();
   await runSpawn(deps, makeParams({ worktreesDir: '/tmp/wt' }));
-  assert.ok(git.worktrees[0].path.startsWith(`/tmp/wt${path.sep}`));
+  // Containment via path.relative: Windows joins '/tmp/wt' as '\\tmp\\wt'.
+  const relative = path.relative('/tmp/wt', git.worktrees[0].path);
+  assert.ok(
+    relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative),
+    `${git.worktrees[0].path} should live under /tmp/wt`
+  );
 });
 
 test('commits when the worktree is dirty', async () => {
