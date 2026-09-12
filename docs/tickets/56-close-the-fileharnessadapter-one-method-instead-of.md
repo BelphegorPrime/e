@@ -1,6 +1,6 @@
 # 56 - Close the FileHarnessAdapter: one method instead of nine members
 
-**Status:** Open, ready-for-agent.
+**Status:** Done (closed 2026-09-13), `5751900`.
 
 **GitHub:** [#121](https://github.com/BelphegorPrime/e/issues/121)
 

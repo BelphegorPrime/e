@@ -1,6 +1,6 @@
 # 52 - One in-memory Git adapter instead of five hand-written fakes
 
-**Status:** Open, ready-for-agent.
+**Status:** Done (closed 2026-09-13), `168f42e`.
 
 **GitHub:** [#117](https://github.com/BelphegorPrime/e/issues/117)
 

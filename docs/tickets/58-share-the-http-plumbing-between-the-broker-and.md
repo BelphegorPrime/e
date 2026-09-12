@@ -1,6 +1,6 @@
 # 58 - Share the HTTP plumbing between the broker and egress sidecars
 
-**Status:** Open, ready-for-agent.
+**Status:** Done (closed 2026-09-13), `6d0f9bb`.
 
 **GitHub:** [#123](https://github.com/BelphegorPrime/e/issues/123)
 

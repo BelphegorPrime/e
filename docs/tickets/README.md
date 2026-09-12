@@ -102,4 +102,5 @@ findings shipped directly rather than as issues:
   `writeStatus` became the patch its type always claimed to be, which closed
   two field-loss bugs that had been hiding each other.
 
-Cheapest of the rest to pick up: `58` and `61`. Most leverage: `52`.
+Landed 2026-09-13: `52` (#117), `56` (#121), `58` (#123) and four of the six
+modules in `60` (#125). Cheapest of the rest to pick up: `61`.
