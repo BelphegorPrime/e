@@ -128,8 +128,12 @@ test('end to end: a dirty parent worktree is checkpointed and the sibling starts
       fs.existsSync(path.join(siblingWorktree, 'node_modules')),
       false
     );
+    // Windows reports a relative link target with backslashes.
     assert.equal(
-      fs.readlinkSync(path.join(artifactsCopy, 'node_modules', '.bin', 'tool')),
+      fs
+        .readlinkSync(path.join(artifactsCopy, 'node_modules', '.bin', 'tool'))
+        .split(path.sep)
+        .join('/'),
       '../pkg/index.js'
     );
     assert.equal(fs.existsSync(path.join(artifactsCopy, '.env')), false);

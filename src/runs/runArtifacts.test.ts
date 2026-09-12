@@ -118,7 +118,11 @@ test('syncArtifacts: copies allowed entries into the target and mounts them at t
     // The .bin symlink is kept verbatim (relative), so it resolves in the container.
     const link = path.join(target, 'node_modules', '.bin', 'tool');
     assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
-    assert.equal(fs.readlinkSync(link), '../pkg/index.js');
+    // Windows reports a relative link target with backslashes.
+    assert.equal(
+      fs.readlinkSync(link).split(path.sep).join('/'),
+      '../pkg/index.js'
+    );
     // Secrets and git metadata never travel: not as entries, not inside a tree.
     assert.equal(fs.existsSync(path.join(target, '.env')), false);
     assert.equal(fs.existsSync(path.join(target, '.git')), false);

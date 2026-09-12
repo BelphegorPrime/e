@@ -15,17 +15,22 @@ test('file: writes the content and returns an existing path', () => {
   }
 });
 
-test('file: defaults to mode 0600 (secrets), honours an explicit mode', () => {
-  const scratch = new RunScratch();
-  try {
-    const secret = scratch.file('a.env', 'x');
-    assert.equal(fs.statSync(secret).mode & 0o777, 0o600);
-    const open = scratch.file('b.txt', 'y', { mode: 0o644 });
-    assert.equal(fs.statSync(open).mode & 0o777, 0o644);
-  } finally {
-    scratch.dispose();
+// Windows has no POSIX permission bits: stat reports 0o666 whatever was asked.
+test(
+  'file: defaults to mode 0600 (secrets), honours an explicit mode',
+  { skip: process.platform === 'win32' && 'no POSIX file modes' },
+  () => {
+    const scratch = new RunScratch();
+    try {
+      const secret = scratch.file('a.env', 'x');
+      assert.equal(fs.statSync(secret).mode & 0o777, 0o600);
+      const open = scratch.file('b.txt', 'y', { mode: 0o644 });
+      assert.equal(fs.statSync(open).mode & 0o777, 0o644);
+    } finally {
+      scratch.dispose();
+    }
   }
-});
+);
 
 test('dir: returns a fresh empty directory', () => {
   const scratch = new RunScratch();

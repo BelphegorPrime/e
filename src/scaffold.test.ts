@@ -47,9 +47,11 @@ test('writeIfAbsent: an identical existing file is left up to date, not rewritte
   try {
     const file = path.join(root, 'Dockerfile');
     fs.writeFileSync(file, 'FROM node', { mode: 0o600 });
+    // Compared to the pre-call stat, not to 0o600: Windows has no POSIX modes.
+    const modeBefore = fs.statSync(file).mode;
     writeIfAbsent(root, file, 'FROM node');
     assert.equal(fs.readFileSync(file, 'utf8'), 'FROM node');
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'mode preserved');
+    assert.equal(fs.statSync(file).mode, modeBefore, 'mode preserved');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
