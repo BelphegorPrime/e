@@ -42,12 +42,7 @@ export function registerRuntimeCommands(program: Command): void {
       .description(`Download <model> into the running ${runtime.label} stack`)
       .action((model: string) => {
         // The Ollama pull runs through the same engine `e spawn` would use.
-        downloadModel(
-          runtime.id,
-          model,
-          cp.spawnSync,
-          resolveRuntime().command
-        );
+        downloadModel(runtime.id, model, cp.spawnSync, resolveRuntime().engine);
       });
   }
 }

@@ -21,6 +21,15 @@ export class FakeRuntime implements ContainerRunner {
   options?: RunOptions;
   command?: string[];
 
+  /** The engine name a child `e spawn` would inherit as `E_RUNTIME`. */
+  engine = 'docker';
+  /** Image tags handed to `build`, in order. */
+  built: string[] = [];
+  /** Compose files brought up, in order. */
+  composedUp: string[] = [];
+  /** What `imageExists` answers; false by default, so every build gate fires. */
+  imageExistsResult = false;
+
   /** Ordered record of every group primitive called, for asserting lifecycle order. */
   calls: string[] = [];
   networks: string[] = [];
@@ -44,6 +53,23 @@ export class FakeRuntime implements ContainerRunner {
   };
 
   constructor(private exitCode = 0) {}
+
+  imageExists(_imageTag: string): boolean {
+    this.calls.push('imageExists');
+    return this.imageExistsResult;
+  }
+  build(imageTag: string, _contextDir: string, _dockerfile?: string): void {
+    this.calls.push('build');
+    this.built.push(imageTag);
+  }
+  composeUp(
+    composeFile: string,
+    _envFile?: string,
+    _waitForBootstrap?: boolean
+  ): void {
+    this.calls.push('composeUp');
+    this.composedUp.push(composeFile);
+  }
 
   /** Runs while the "container" runs: a test plays the agent here (e.g. posts a sibling request). */
   onRun?: (options: RunOptions) => void | Promise<void>;

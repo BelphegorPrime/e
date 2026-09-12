@@ -10,11 +10,26 @@ import {
  * ran) without a live Docker daemon.
  */
 export class RecordingRunner implements ContainerRunner {
+  engine = 'docker';
   calls: string[] = [];
   volumesCreated: string[] = [];
   copied: Array<{ source: string; target: string; wipe?: boolean }> = [];
   volumeExistsResult = true;
 
+  imageExists(_imageTag: string): boolean {
+    this.calls.push('imageExists');
+    return true;
+  }
+  build(_imageTag: string, _contextDir: string, _dockerfile?: string): void {
+    this.calls.push('build');
+  }
+  composeUp(
+    _composeFile: string,
+    _envFile?: string,
+    _waitForBootstrap?: boolean
+  ): void {
+    this.calls.push('composeUp');
+  }
   async run(
     _image: string,
     _opts: RunOptions,

@@ -1,4 +1,4 @@
-import { ContainerRuntime } from './index.js';
+import { ContainerRuntime, type ContainerRunner } from './index.js';
 import { Env } from '../../shared/utils/env.js';
 
 /**
@@ -86,13 +86,15 @@ export function resolveRuntimeWith<T extends { isAvailable(): boolean }>(
 }
 
 /**
- * Resolves the {@link ContainerRuntime} for this process: `--runtime`, then
- * `E_RUNTIME`, then the first registered runtime found on `PATH`.
+ * Resolves the runtime for this process: `--runtime`, then `E_RUNTIME`, then
+ * the first registered runtime found on `PATH`. Hands back the
+ * {@link ContainerRunner} port - this factory is the one place that names the
+ * concrete {@link ContainerRuntime}, so no consumer has to.
  */
 export function resolveRuntime(
   preferred?: string,
   environment: Record<string, string | undefined> = process.env
-): ContainerRuntime {
+): ContainerRunner {
   return resolveRuntimeWith(
     preferred,
     environment,

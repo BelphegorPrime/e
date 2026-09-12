@@ -80,8 +80,45 @@ export interface SidecarSpec {
  * container" to "bring up a group, wait on the primary, tear all down": the
  * network/sidecar/probe primitives below compose a Run's group, while `run`
  * still executes the primary agent in the foreground.
+ *
+ * It also carries what a Run needs *before* its group exists - the image gate,
+ * the image build, and the local Compose stack - because the spawn executor
+ * drives all three. Leaving them off is what used to make `executeSpawn` depend
+ * on the concrete {@link ContainerRuntime} class instead of this port, and its
+ * test subclass a real runtime pointed at a stand-in binary.
  */
 export interface ContainerRunner {
+  /**
+   * The engine this runner drives - `docker`, `podman`, `nerdctl` or `finch`
+   * (`registry.ts`): both the executable and the value `--runtime` / `E_RUNTIME`
+   * name. On the port because a consumer has to hand it on: a sibling `e spawn`
+   * inherits it as `E_RUNTIME` (ADR-0013), so the child drives the engine this
+   * process resolved rather than re-detecting one off `PATH`.
+   */
+  readonly engine: string;
+
+  /** True if an image with this tag already exists locally - the build gate. */
+  imageExists(imageTag: string): boolean;
+
+  /**
+   * Build `imageTag` from `contextDir`; the Dockerfile defaults to
+   * `<contextDir>/Dockerfile`. Throws on failure, so a broken build ends the
+   * spawn before any worktree exists (ADR-0005).
+   */
+  build(imageTag: string, contextDir: string, dockerfile?: string): void;
+
+  /**
+   * Bring the store's local Compose stack up in the background, before a run
+   * joins its egress namespace (ADR-0011). `waitForBootstrap` is false for
+   * stacks with no local inference runtime, which deliberately render no
+   * model-registration service to wait for.
+   */
+  composeUp(
+    composeFile: string,
+    envFile?: string,
+    waitForBootstrap?: boolean
+  ): void;
+
   /** Runs the primary agent container in the foreground; resolves with its exit code. */
   run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number>;
 
@@ -141,7 +178,7 @@ export function waitArgs(container: string): string[] {
 /**
  * Pure argv builders - one per runtime subcommand. Each returns the arguments
  * that follow the runtime executable, so the corresponding method reduces to
- * `spawnSync(this.command, xArgs(...))`. Extracted so every subcommand's argv is
+ * `spawnSync(this.engine, xArgs(...))`. Extracted so every subcommand's argv is
  * assertable without spawning a process (only `run`'s builder, {@link
  * ContainerRuntime.buildRunArgs}, used to be reachable by a test).
  */
@@ -270,33 +307,34 @@ export function volumeCopyInArgs(
  * A container runtime (docker, podman, ...).
  *
  * Docker and Podman share the same CLI surface, so a single concrete class
- * covers both - the only thing that varies is the `command` executable, passed
+ * covers both - the only thing that varies is the `engine` executable, passed
  * in at construction.
  */
 export class ContainerRuntime implements ContainerRunner {
   /**
-   * @param command The executable invoked for this runtime, e.g. "docker".
+   * @param engine The executable invoked for this runtime, e.g. "docker" -
+   *   also the `--runtime` name it answers to ({@link ContainerRunner.engine}).
    * @param spawnImpl Process spawner for the long-running `run`/`wait` calls;
    *   tests inject a fake, production uses `child_process.spawn`.
    */
   constructor(
-    readonly command: string,
+    readonly engine: string,
     private readonly spawnImpl: typeof spawn = spawn
   ) {}
 
   /** Returns true if this runtime is installed and responds to `--version`. */
   isAvailable(): boolean {
-    const result = spawnSync(this.command, versionArgs(), {
+    const result = spawnSync(this.engine, versionArgs(), {
       stdio: 'ignore',
       shell: false,
     });
-    log.debug(`Runtime ${this.command} available: ${result.status === 0}`);
+    log.debug(`Runtime ${this.engine} available: ${result.status === 0}`);
     return result.status === 0;
   }
 
   /** Returns true if an image with the given tag already exists locally. */
   imageExists(imageTag: string): boolean {
-    const result = spawnSync(this.command, imageInspectArgs(imageTag), {
+    const result = spawnSync(this.engine, imageInspectArgs(imageTag), {
       stdio: 'ignore',
       shell: false,
     });
@@ -312,16 +350,16 @@ export class ContainerRuntime implements ContainerRunner {
   build(imageTag: string, contextDir: string, dockerfile?: string): void {
     const args = buildImageArgs(imageTag, contextDir, dockerfile);
 
-    log.command(`> ${this.command} ${args.join(' ')}`);
+    log.command(`> ${this.engine} ${args.join(' ')}`);
     log.debug(`Context: ${contextDir}, Dockerfile: ${dockerfile ?? 'default'}`);
-    const result = spawnSync(this.command, args, {
+    const result = spawnSync(this.engine, args, {
       stdio: 'inherit',
       shell: false,
     });
 
     if (result.error) {
       throw new Error(
-        `Failed to start ${this.command}: ${result.error.message}`
+        `Failed to start ${this.engine}: ${result.error.message}`
       );
     }
     if (result.status !== 0) {
@@ -375,21 +413,21 @@ export class ContainerRuntime implements ContainerRunner {
    */
   run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number> {
     const runArgs = this.buildRunArgs(image, opts, commandArgs);
-    log.info(`Using runtime: ${this.command}`);
-    log.command(`> ${this.command} ${runArgs.join(' ')}`);
+    log.info(`Using runtime: ${this.engine}`);
+    log.command(`> ${this.engine} ${runArgs.join(' ')}`);
 
     if (opts.interactive && opts.headlessTty) {
       return this.runHeadless(runArgs);
     }
 
     return new Promise<number>((resolve, reject) => {
-      const child = this.spawnImpl(this.command, runArgs, {
+      const child = this.spawnImpl(this.engine, runArgs, {
         stdio: 'inherit',
         shell: false,
       });
 
       child.on('error', err => {
-        reject(new Error(`Failed to start ${this.command}: ${err.message}`));
+        reject(new Error(`Failed to start ${this.engine}: ${err.message}`));
       });
 
       child.on('exit', (code, signal) => {
@@ -421,7 +459,7 @@ export class ContainerRuntime implements ContainerRunner {
   /** Runs `<command> <args>`, inheriting stderr, and captures stdout with the exit code. */
   private capture(args: string[]): Promise<{ code: number; stdout: string }> {
     return new Promise((resolve, reject) => {
-      const child = this.spawnImpl(this.command, args, {
+      const child = this.spawnImpl(this.engine, args, {
         stdio: ['ignore', 'pipe', 'inherit'],
         shell: false,
       });
@@ -430,7 +468,7 @@ export class ContainerRuntime implements ContainerRunner {
         stdout += chunk.toString();
       });
       child.on('error', err => {
-        reject(new Error(`Failed to start ${this.command}: ${err.message}`));
+        reject(new Error(`Failed to start ${this.engine}: ${err.message}`));
       });
       child.on('exit', (code, signal) => {
         resolve({ code: signal ? 1 : (code ?? 0), stdout });
@@ -448,19 +486,19 @@ export class ContainerRuntime implements ContainerRunner {
     envFile?: string,
     waitForBootstrap = true
   ): void {
-    runComposeStack(this.command, composeFile, envFile, waitForBootstrap);
+    runComposeStack(this.engine, composeFile, envFile, waitForBootstrap);
   }
 
   /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */
   createNetwork(name: string): void {
     log.debug(`Creating network: ${name}`);
-    const result = spawnSync(this.command, networkCreateArgs(name), {
+    const result = spawnSync(this.engine, networkCreateArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
     if (result.error) {
       throw new Error(
-        `Failed to start ${this.command}: ${result.error.message}`
+        `Failed to start ${this.engine}: ${result.error.message}`
       );
     }
     if (result.status !== 0) {
@@ -474,7 +512,7 @@ export class ContainerRuntime implements ContainerRunner {
   /** Remove a network. Best-effort: swallows every failure so teardown never masks the run result. */
   removeNetwork(name: string): void {
     log.debug(`Removing network: ${name}`);
-    spawnSync(this.command, networkRemoveArgs(name), {
+    spawnSync(this.engine, networkRemoveArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -489,14 +527,14 @@ export class ContainerRuntime implements ContainerRunner {
   startSidecar(spec: SidecarSpec): void {
     const args = sidecarRunArgs(spec);
 
-    log.command(`> ${this.command} ${args.join(' ')}`);
-    const result = spawnSync(this.command, args, {
+    log.command(`> ${this.engine} ${args.join(' ')}`);
+    const result = spawnSync(this.engine, args, {
       stdio: ['ignore', 'ignore', 'inherit'],
       shell: false,
     });
     if (result.error) {
       throw new Error(
-        `Failed to start ${this.command}: ${result.error.message}`
+        `Failed to start ${this.engine}: ${result.error.message}`
       );
     }
     if (result.status !== 0) {
@@ -508,7 +546,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Force-remove a container by name (even if running). Best-effort: never throws (teardown). */
   removeContainer(name: string): void {
-    spawnSync(this.command, containerRemoveArgs(name), {
+    spawnSync(this.engine, containerRemoveArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -522,7 +560,7 @@ export class ContainerRuntime implements ContainerRunner {
    * `busybox` image is a tiny public image the runtime auto-pulls on first use.
    */
   probeTcp(network: string, host: string, port: number): boolean {
-    const result = spawnSync(this.command, tcpProbeArgs(network, host, port), {
+    const result = spawnSync(this.engine, tcpProbeArgs(network, host, port), {
       stdio: 'ignore',
       shell: false,
     });
@@ -535,7 +573,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Run a readiness command inside the sidecar (`exec`); true iff it exits 0. */
   probeHealthcheck(container: string, command: string[]): boolean {
-    const result = spawnSync(this.command, execArgs(container, command), {
+    const result = spawnSync(this.engine, execArgs(container, command), {
       stdio: 'ignore',
       shell: false,
     });
@@ -548,7 +586,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** True if the named container is still running (`inspect` reports `Running: true`). */
   isRunning(name: string): boolean {
-    const result = spawnSync(this.command, runningInspectArgs(name), {
+    const result = spawnSync(this.engine, runningInspectArgs(name), {
       encoding: 'utf8',
       shell: false,
     });
@@ -556,7 +594,7 @@ export class ContainerRuntime implements ContainerRunner {
   }
 
   volumeExists(volumeName: string): boolean {
-    const result = spawnSync(this.command, volumeInspectArgs(volumeName), {
+    const result = spawnSync(this.engine, volumeInspectArgs(volumeName), {
       stdio: 'ignore',
       shell: false,
     });
@@ -589,18 +627,18 @@ export class ContainerRuntime implements ContainerRunner {
    * import): stderr passes through for the user, anything else is silent.
    */
   private runOrThrow(args: string[], what: string): void {
-    const result = spawnSync(this.command, args, {
+    const result = spawnSync(this.engine, args, {
       stdio: ['ignore', 'ignore', 'inherit'],
       shell: false,
     });
     if (result.error) {
       throw new Error(
-        `Failed to start ${this.command} to ${what}: ${result.error.message}`
+        `Failed to start ${this.engine} to ${what}: ${result.error.message}`
       );
     }
     if (result.status !== 0) {
       throw new Error(
-        `${this.command} failed to ${what} (exit code ${result.status ?? 1}).`
+        `${this.engine} failed to ${what} (exit code ${result.status ?? 1}).`
       );
     }
   }

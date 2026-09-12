@@ -4,7 +4,7 @@ import type { Git } from '../../ports/git/index.js';
 import type { PullRequest } from '../../ports/github/index.js';
 import type { GitPlatform } from '../../core/store/config.js';
 import type {
-  ContainerRuntime,
+  ContainerRunner,
   Mount,
   RunOptions,
 } from '../../ports/runtime/index.js';
@@ -73,7 +73,7 @@ export function productionSiblingLauncher(
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
   git: Git;
-  runtime: ContainerRuntime;
+  runtime: ContainerRunner;
   scratch: RunScratch;
   /** Optional PR/MR opener (present only when the store has a platform). */
   pullRequest?: PullRequest;
@@ -99,7 +99,7 @@ export interface ExecuteSpawnDeps {
 function buildImages(
   facts: SpawnFacts,
   plan: SpawnPlan,
-  runtime: ContainerRuntime,
+  runtime: ContainerRunner,
   scratch: RunScratch
 ): string {
   const { harness, root, rebuild } = facts;
@@ -305,7 +305,7 @@ export async function executeSpawn(
           ...(facts.dirOpt ? ['--dir', facts.dirOpt] : []),
           ...(facts.userEnvFile ? ['--env-file', facts.userEnvFile] : []),
         ],
-        passthroughEnv: { [Env.RUNTIME_VAR]: runtime.command },
+        passthroughEnv: { [Env.RUNTIME_VAR]: runtime.engine },
       },
     }
   );

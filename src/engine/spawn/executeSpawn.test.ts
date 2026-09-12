@@ -4,10 +4,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { InMemoryGit } from '../../ports/git/memory.js';
-import {
-  ContainerRuntime,
-  type RunOptions,
-  type SidecarSpec,
+import type {
+  ContainerRunner,
+  RunOptions,
+  SidecarSpec,
 } from '../../ports/runtime/index.js';
 import { RunScratch } from '../runs/runScratch.js';
 import { executeSpawn } from './executeSpawn.js';
@@ -19,9 +19,6 @@ import {
   ensureSpool,
   readStatus,
 } from '../../sidecars/broker/contract/spool.js';
-
-// The preflight guards (a git repo, foreground) run before any build, so they
-// are reachable with a fake git and an untouched runtime.
 
 const harness: Harness = {
   name: 'demo',
@@ -62,34 +59,19 @@ const emptyPlan: SpawnPlan = {
   baseEnvWhitelist: [],
 };
 
-// A runtime that must never be touched by a preflight failure.
-const untouched = new ContainerRuntime('true');
-
-test('errors before any build when not in a git repository', async () => {
-  const scratch = new RunScratch();
-  const result = await executeSpawn(facts(), emptyPlan, {
-    git: new InMemoryGit({ repo: false }),
-    runtime: untouched,
-    scratch,
-  });
-  assert.equal(result.ran, false);
-  assert.equal(result.exitCode, 1);
-  assert.match(result.error ?? '', /git repository/i);
-});
-
-// A runtime that uses the harmless `true` binary for image probes but records
-// the run options instead of starting a container, so the full executeSpawn
-// path (preflight → build check → env-file composition → runSpawn) is testable.
-class RecordingRuntime extends ContainerRuntime {
+// A {@link ContainerRunner} that records instead of driving an engine, so the
+// whole executeSpawn path (preflight → build gate → env-file composition →
+// runSpawn) is testable without a daemon. It implements the port rather than
+// subclassing the real runtime pointed at a stand-in binary: every method
+// executeSpawn reaches for - the image gate and the build included - is on the
+// port.
+class RecordingRuntime implements ContainerRunner {
+  engine = 'docker';
   options?: RunOptions;
   /** The argv handed to the container (the harness command with its prompt). */
   ranCommand?: string[];
   built: string[] = [];
   sidecars: SidecarSpec[] = [];
-
-  constructor() {
-    super('true');
-  }
 
   imageExists(_imageTag: string): boolean {
     return false;
@@ -98,6 +80,8 @@ class RecordingRuntime extends ContainerRuntime {
   build(tag: string, _dir: string): void {
     this.built.push(tag);
   }
+
+  composeUp(): void {}
 
   async run(
     _image: string,
@@ -109,18 +93,51 @@ class RecordingRuntime extends ContainerRuntime {
     return 0;
   }
 
+  createNetwork(): void {}
+  removeNetwork(): void {}
+
   startSidecar(spec: SidecarSpec): void {
     this.sidecars.push(spec);
   }
 
+  removeContainer(): void {}
+
   probeTcp(): boolean {
+    return true;
+  }
+
+  probeHealthcheck(): boolean {
     return true;
   }
 
   isRunning(): boolean {
     return true;
   }
+
+  volumeExists(): boolean {
+    return true;
+  }
+  createVolume(): void {}
+  copyVolumeToDir(): void {}
+  copyDirToVolume(): void {}
 }
+
+// The preflight guards (a git repo, foreground) run before any build, so a
+// failing one must leave the runtime entirely untouched.
+test('errors before any build when not in a git repository', async () => {
+  const untouched = new RecordingRuntime();
+  const scratch = new RunScratch();
+  const result = await executeSpawn(facts(), emptyPlan, {
+    git: new InMemoryGit({ repo: false }),
+    runtime: untouched,
+    scratch,
+  });
+  assert.equal(result.ran, false);
+  assert.equal(result.exitCode, 1);
+  assert.match(result.error ?? '', /git repository/i);
+  assert.deepEqual(untouched.built, []);
+  assert.equal(untouched.ranCommand, undefined);
+});
 
 /** A repo with a demo harness Dockerfile, so executeSpawn passes preflight. */
 async function withDemoStore<T>(fn: (root: string) => Promise<T>): Promise<T> {
