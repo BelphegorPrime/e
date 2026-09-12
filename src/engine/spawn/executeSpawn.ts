@@ -33,10 +33,7 @@ import {
 import { isInitialized } from '../../core/store/config.js';
 import { Env } from '../../shared/utils/env.js';
 import { EGRESS_CONTAINER } from '../../shared/constants.js';
-import {
-  spawnSiblingProcess,
-  type SiblingLauncher,
-} from '../runs/runSiblings.js';
+import { spawnChildProcess, type ChildLauncher } from '../runs/childRun.js';
 import { renderBrokerFiles } from '../../sidecars/broker/render.js';
 import { findAgent, isRemoteAgent } from '../../core/agent/index.js';
 import { remoteSiblingProcess } from '../a2a/remoteSibling.js';
@@ -52,7 +49,7 @@ import { A2aClient } from '../a2a/client.js';
 export function productionSiblingLauncher(
   root: string | undefined,
   storeEnv: Record<string, string>
-): SiblingLauncher {
+): ChildLauncher {
   return launch => {
     let agent;
     try {
@@ -69,7 +66,7 @@ export function productionSiblingLauncher(
         client: new A2aClient(),
       });
     }
-    return spawnSiblingProcess(launch);
+    return spawnChildProcess(launch);
   };
 }
 
@@ -89,7 +86,7 @@ export interface ExecuteSpawnDeps {
    * launcher (a child `e spawn` process, or the in-process A2A client for a
    * remote agent). Tests pass a scripted one.
    */
-  launchSibling?: SiblingLauncher;
+  launchSibling?: ChildLauncher;
 }
 
 /**

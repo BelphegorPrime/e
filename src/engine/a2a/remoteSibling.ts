@@ -5,7 +5,7 @@
  * outcome into the same spool, in the same states, so the parent's skill,
  * the report and the merge-back (skipped: no branch) see one kind of
  * sibling. The result is the answer text in the status (`answer`) and the
- * report; the {@link SiblingProcess} shape lets the consumer cancel it like
+ * report; the {@link ChildHandle} shape lets the consumer cancel it like
  * a process.
  */
 
@@ -14,7 +14,7 @@ import type {
   SpawnRequest,
 } from '../../sidecars/broker/contract/types.js';
 import { writeStatus } from '../../sidecars/broker/contract/spool.js';
-import type { SiblingProcess } from '../runs/runSiblings.js';
+import type { ChildHandle } from '../runs/childRun.js';
 import { log } from '../../shared/utils/log.js';
 import {
   A2aClient,
@@ -55,7 +55,7 @@ export const INPUT_REQUIRED_MESSAGE =
  */
 export function remoteSiblingProcess(
   options: RemoteSiblingOptions
-): SiblingProcess {
+): ChildHandle {
   const { agent, request, spoolDir, client } = options;
   const now = options.now ?? (() => new Date());
   const cancel = new AbortController();

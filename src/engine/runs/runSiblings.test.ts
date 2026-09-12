@@ -19,27 +19,29 @@ import { Env } from '../../shared/utils/env.js';
 import type { Git, MergeOutcome } from '../../ports/git/index.js';
 import {
   SiblingConsumer,
-  assertCliEntry,
-  logTail,
-  siblingCliArgs,
   siblingSummaryLine,
-  spawnSiblingProcess,
   type SiblingConsumerOptions,
-  type SiblingLaunch,
-  type SiblingProcess,
 } from './runSiblings.js';
+import {
+  assertCliEntry,
+  childCliArgs,
+  logTail,
+  spawnChildProcess,
+  type ChildHandle,
+  type ChildLaunch,
+} from './childRun.js';
 
 // The consumer is driven tick by tick here (no timers): the test plays the
 // broker (spooling requests) and the sibling process (reporting status).
 
 /** A launcher the test controls: records launches, lets the test end each process. */
 class FakeLauncher {
-  launches: SiblingLaunch[] = [];
+  launches: ChildLaunch[] = [];
   killed: string[] = [];
   private readonly exits = new Map<string, (code: number) => void>();
   throws?: string;
 
-  launch = (launch: SiblingLaunch): SiblingProcess => {
+  launch = (launch: ChildLaunch): ChildHandle => {
     if (this.throws) throw new Error(this.throws);
     this.launches.push(launch);
     const id = launch.request.id;
@@ -180,20 +182,20 @@ class ScriptedGit implements Git {
   }
 }
 
-test('siblingCliArgs: a one-shot spawn of the requested agent, passthrough before --, the prompt after', () => {
+test('childCliArgs: a one-shot spawn of the requested agent, passthrough before --, the prompt after', () => {
   const request = {
     id: 'sib-001',
     agent: 'researcher',
     prompt: '-x looks like a flag',
     requestedAt: 't',
   };
-  assert.deepEqual(siblingCliArgs(request), [
+  assert.deepEqual(childCliArgs(request), [
     'spawn',
     'researcher',
     '--',
     '-x looks like a flag',
   ]);
-  assert.deepEqual(siblingCliArgs(request, ['--dir', '/store']), [
+  assert.deepEqual(childCliArgs(request, ['--dir', '/store']), [
     'spawn',
     'researcher',
     '--dir',
@@ -531,11 +533,11 @@ const someRequest = {
   requestedAt: 't',
 };
 
-test('spawnSiblingProcess: runs the invocation with the args, logs its output, reports the exit code', async () => {
+test('spawnChildProcess: runs the invocation with the args, logs its output, reports the exit code', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-sibling-proc-'));
   try {
     const logFile = path.join(dir, 'logs', 'sib-001.log');
-    const child = spawnSiblingProcess(
+    const child = spawnChildProcess(
       {
         request: someRequest,
         args: ['spawn', 'a'],
@@ -556,10 +558,10 @@ test('spawnSiblingProcess: runs the invocation with the args, logs its output, r
   }
 });
 
-test('spawnSiblingProcess: kill ends a running sibling (exit code 1); a missing executable is exit code 1', async () => {
+test('spawnChildProcess: kill ends a running sibling (exit code 1); a missing executable is exit code 1', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-sibling-proc-'));
   try {
-    const hanging = spawnSiblingProcess(
+    const hanging = spawnChildProcess(
       {
         request: someRequest,
         args: [],
@@ -571,7 +573,7 @@ test('spawnSiblingProcess: kill ends a running sibling (exit code 1); a missing 
     );
     hanging.kill();
     assert.equal(await hanging.exited, 1);
-    const missing = spawnSiblingProcess(
+    const missing = spawnChildProcess(
       {
         request: someRequest,
         args: [],

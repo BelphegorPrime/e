@@ -38,7 +38,7 @@ import {
   writeRequest,
   writeStatus,
 } from '../../sidecars/broker/contract/spool.js';
-import type { SiblingLaunch, SiblingLauncher } from './runSiblings.js';
+import type { ChildLaunch, ChildLauncher } from './childRun.js';
 import { Env } from '../../shared/utils/env.js';
 
 /** A `Git` fake that records what the orchestrator asked it to do. */
@@ -212,7 +212,7 @@ function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
  * a launcher that fails loudly. (The production launcher re-invokes the CLI,
  * which under the test runner would be this very file: never let that happen.)
  */
-const noSiblingsExpected: SiblingLauncher = launch => {
+const noSiblingsExpected: ChildLauncher = launch => {
   throw new Error(`unexpected sibling launch for ${launch.request.id}`);
 };
 
@@ -1129,8 +1129,8 @@ test('a run with a broker launches sibling requests as child spawns while its ag
     const slug = slugify('Fix the flaky test');
     const runName = `e-demo-${slug}-1`;
     const spool = path.join(worktreesDir, '.broker', runName);
-    const launches: SiblingLaunch[] = [];
-    const launch: SiblingLauncher = l => {
+    const launches: ChildLaunch[] = [];
+    const launch: ChildLauncher = l => {
       launches.push(l);
       // The sibling process reports for itself, as a real `e spawn` does.
       writeStatus(spool, l.request.id, {
@@ -1244,7 +1244,7 @@ test('a merge held until the run ends is retried after the output commit and bef
     });
     const slug = slugify('Fix the flaky test');
     const spool = path.join(worktreesDir, '.broker', `e-demo-${slug}-1`);
-    const launch: SiblingLauncher = l => {
+    const launch: ChildLauncher = l => {
       writeStatus(spool, l.request.id, {
         status: 'done',
         branch: 'e/researcher/look-1',
@@ -1303,7 +1303,7 @@ test('a request still waiting when the agent exits is failed: nobody is left to 
     const { deps, runtime } = makeDeps();
     const slug = slugify('Fix the flaky test');
     const spool = path.join(worktreesDir, '.broker', `e-demo-${slug}-1`);
-    const launches: SiblingLaunch[] = [];
+    const launches: ChildLaunch[] = [];
     runtime.onRun = () => {
       // Posted in the agent's last moment: the consumer is asleep until stop.
       writeRequest(spool, {

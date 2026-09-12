@@ -81,7 +81,7 @@ async function startFacade(token?: string): Promise<Facade> {
     spoolDir: spool,
     knownAgent: name => name === 'pi' || name === 'smart-codex',
     defaultAgent: 'pi',
-    spawnChild: args => {
+    launch: ({ args }) => {
       launches.push(args);
       return { exited: new Promise<number>(() => {}), kill: () => {} };
     },

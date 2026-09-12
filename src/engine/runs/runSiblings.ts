@@ -41,13 +41,9 @@
  * own work is committed. A merge that lands frees every held one to retry.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { spawn as spawnProcess } from 'node:child_process';
 import {
   DEPTH_LIMIT_MESSAGE,
   MERGE_SIGNAL_STATES,
-  SPOOL_LOGS_DIR,
 } from '../../sidecars/broker/contract/constants.js';
 import {
   countInFlight,
@@ -75,35 +71,15 @@ import {
 } from './runMergeBack.js';
 import { log } from '../../shared/utils/log.js';
 import {
-  selfInvocation,
-  type SelfInvocation,
-} from '../../shared/utils/selfInvoke.js';
+  settleChildRun,
+  startChildRun,
+  type ChildHandle,
+  type ChildLauncher,
+} from './childRun.js';
 import type { ReadinessPolicy } from './runSidecarOrchestrator.js';
 import type { RunRole } from './runRole.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';
-/** A launched sibling process, as the consumer sees it. */
-export interface SiblingProcess {
-  /** Resolves with the exit code once the process is gone (1 when it failed to start or was killed). */
-  exited: Promise<number>;
-  /** Asks the process to stop (a cancel, or a sibling that never became ready). */
-  kill(): void;
-}
-
-/** What a launcher gets: the request, the CLI arguments, the environment carrying the markers, and where to log. */
-export interface SiblingLaunch {
-  request: SpawnRequest;
-  /** The arguments after the executable (and its entry script): `spawn <agent> ... -- <prompt>`. */
-  args: string[];
-  env: Record<string, string | undefined>;
-  logFile: string;
-  /** The parent's spool, where the sibling reports its status under `request.id`. */
-  spoolDir: string;
-}
-
-/** Starts one sibling process; production re-invokes the CLI, tests script one. */
-export type SiblingLauncher = (launch: SiblingLaunch) => SiblingProcess;
-
 /**
  * Default pacing: poll every second, allow ten minutes for a sibling to reach
  * its container (a harness image may have to be built first). The shape is
@@ -135,7 +111,7 @@ export interface SiblingConsumerOptions {
   passthroughArgs?: string[];
   /** Environment every sibling process inherits beyond the markers (the parent's `E_RUNTIME`). */
   passthroughEnv?: Record<string, string>;
-  launch: SiblingLauncher;
+  launch: ChildLauncher;
   sleep: (ms: number) => Promise<void>;
   now?: () => Date;
   /** The host's git, for the merge-back into the parent worktree. */
@@ -174,76 +150,15 @@ export function siblingSummaryLine(outcome: SiblingOutcome): string {
   return `Sibling ${outcome.id} (${who}): ${outcome.status}, merge-back ${outcome.merge.status}${files}${reason}`;
 }
 
-/** The CLI arguments that spawn a sibling: `spawn <agent> [passthrough...] -- <prompt>` (a prompt means one-shot). */
-export function siblingCliArgs(
-  request: SpawnRequest,
-  passthrough: readonly string[] = []
-): string[] {
-  return ['spawn', request.agent, ...passthrough, '--', request.prompt];
-}
-
-/**
- * `selfInvocation()` checked to really be the e CLI: with a script entry it
- * must be the CLI's `index.js` (a single executable has none). Re-invoking any
- * other entry - a test file, say - would run *that* as every "sibling", which
- * would spawn siblings of its own: a fork bomb. Better refused than tried.
- */
-export function assertCliEntry(invocation: SelfInvocation): SelfInvocation {
-  const [entry] = invocation.prefix;
-  if (entry !== undefined && !/(^|[\\/])index\.(m?js|cjs)$/.test(entry)) {
-    throw new Error(
-      `Refusing to re-invoke "${entry}" as the e CLI: not its index.js entry`
-    );
-  }
-  return invocation;
-}
-
-/**
- * The production launcher: re-invokes this CLI in the directory the parent
- * spawn was started from (the repo), output appended to the spool log.
- * `invocation` is how to run this CLI again (checked by {@link assertCliEntry}
- * by default); tests pass a scripted one.
- */
-export function spawnSiblingProcess(
-  launch: SiblingLaunch,
-  invocation: SelfInvocation = assertCliEntry(selfInvocation())
-): SiblingProcess {
-  fs.mkdirSync(path.dirname(launch.logFile), { recursive: true });
-  const out = fs.openSync(launch.logFile, 'a');
-  let child;
-  try {
-    child = spawnProcess(
-      invocation.command,
-      [...invocation.prefix, ...launch.args],
-      { cwd: process.cwd(), env: launch.env, stdio: ['ignore', out, out] }
-    );
-  } catch (err) {
-    fs.closeSync(out);
-    throw err;
-  }
-  const exited = new Promise<number>(resolve => {
-    child.on('error', () => resolve(1));
-    child.on('exit', (code, signal) => resolve(signal ? 1 : (code ?? 0)));
-  }).finally(() => fs.closeSync(out));
-  return { exited, kill: () => child.kill('SIGTERM') };
-}
-
-/** The last `lines` of a sibling's log, joined, for a failure message; empty when there is none. */
-export function logTail(logFile: string, lines = 3): string {
-  try {
-    const text = fs.readFileSync(logFile, 'utf8').trimEnd();
-    return text === '' ? '' : text.split('\n').slice(-lines).join(' | ');
-  } catch {
-    return '';
-  }
-}
-
 /** Why a request the parent run outlived was canceled. */
 export const PARENT_ENDED_MESSAGE =
   'the parent run ended before the request was picked up';
 
 /** Why a canceled sibling is not merged. */
-export const CANCELED_MESSAGE = 'canceled by the parent';
+export const CANCEL_ACTOR = 'the parent';
+
+/** Why a sibling the parent canceled ended (`settleChildRun`'s wording for this caller). */
+export const CANCELED_MESSAGE = `canceled by ${CANCEL_ACTOR}`;
 
 /**
  * Picks sibling requests up from a run's spool for as long as its agent runs
@@ -253,7 +168,7 @@ export const CANCELED_MESSAGE = 'canceled by the parent';
 export class SiblingConsumer {
   private readonly inFlight = new Map<
     string,
-    { child: SiblingProcess; polls: number; logFile: string }
+    { child: ChildHandle; polls: number }
   >();
   /** Siblings whose process was asked to stop for a cancel; their exit is `canceled`. */
   private readonly canceling = new Set<string>();
@@ -420,12 +335,12 @@ export class SiblingConsumer {
     log.info(
       `Sibling ${request.id}: starting ${request.agent} for ${parent.branch}`
     );
-    const logFile = path.join(spoolDir, SPOOL_LOGS_DIR, `${request.id}.log`);
-    let child: SiblingProcess;
+    let child: ChildHandle;
     try {
-      child = this.opts.launch({
+      child = startChildRun({
+        spoolDir,
         request,
-        args: siblingCliArgs(request, this.opts.passthroughArgs),
+        passthroughArgs: this.opts.passthroughArgs,
         env: {
           ...env.withSibling({
             parent: {
@@ -438,8 +353,7 @@ export class SiblingConsumer {
           }),
           ...this.opts.passthroughEnv,
         },
-        logFile,
-        spoolDir,
+        launch: this.opts.launch,
       });
     } catch (err) {
       this.end(
@@ -449,10 +363,10 @@ export class SiblingConsumer {
       );
       return;
     }
-    this.inFlight.set(request.id, { child, polls: 0, logFile });
+    this.inFlight.set(request.id, { child, polls: 0 });
     child.exited.then(
-      code => this.onExit(request.id, code, logFile),
-      err => this.onExit(request.id, 1, logFile, errorMessage(err))
+      code => this.onExit(request.id, code),
+      err => this.onExit(request.id, 1, errorMessage(err))
     );
   }
 
@@ -461,32 +375,17 @@ export class SiblingConsumer {
    * one the parent canceled is `canceled` whatever it reported. Either way
    * its record is settled: merged back or skipped, and reported.
    */
-  private onExit(
-    id: string,
-    code: number,
-    logFile: string,
-    reason?: string
-  ): void {
+  private onExit(id: string, code: number, reason?: string): void {
     this.inFlight.delete(id);
-    const previous = readStatus(this.opts.spoolDir, id);
-    if (this.canceling.delete(id)) {
-      writeStatus(this.opts.spoolDir, id, {
-        ...previous,
-        status: 'canceled',
-        error: CANCELED_MESSAGE,
-        exitCode: previous?.exitCode ?? code,
-        updatedAt: this.now(),
-      });
-    } else if (previous?.status !== 'done' && previous?.status !== 'failed') {
-      const tail = logTail(logFile);
-      this.end(
-        id,
-        'failed',
-        reason ??
-          `sibling process exited with code ${code} before reporting a result${tail ? `: ${tail}` : ''}`,
-        code
-      );
-    }
+    settleChildRun({
+      spoolDir: this.opts.spoolDir,
+      id,
+      code,
+      canceling: this.canceling.delete(id),
+      actor: CANCEL_ACTOR,
+      reason,
+      now: this.opts.now,
+    });
     const record = readRecord(this.opts.spoolDir, id);
     if (record) this.settle(record);
   }

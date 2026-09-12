@@ -925,7 +925,7 @@ function a2aFixture(access: A2aAccess) {
     spoolDir: spool,
     knownAgent: name => name === 'pi' || name === 'smart-codex',
     defaultAgent: 'pi',
-    spawnChild: args => {
+    launch: ({ args }) => {
       launches.push(args);
       return { exited: new Promise<number>(() => {}), kill: () => {} };
     },

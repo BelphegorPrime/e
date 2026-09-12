@@ -276,3 +276,34 @@ test('every record carries its A2A task state, derived from run state and merge-
     );
   });
 });
+
+test('writeStatus patches: a later write never drops what an earlier one recorded', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    writeRequest(root, {
+      id: 'sib-001',
+      agent: 'pi',
+      prompt: 'go',
+      requestedAt: 't0',
+    });
+    writeStatus(root, 'sib-001', {
+      status: 'running',
+      branch: 'e/pi/go-1',
+      updatedAt: 't1',
+    });
+    writeStatus(root, 'sib-001', {
+      status: 'done',
+      exitCode: 0,
+      pushed: true,
+      updatedAt: 't2',
+    });
+    // The branch came from the first write, `pushed` from the second.
+    assert.deepEqual(readStatus(root, 'sib-001'), {
+      status: 'done',
+      branch: 'e/pi/go-1',
+      exitCode: 0,
+      pushed: true,
+      updatedAt: 't2',
+    });
+  });
+});

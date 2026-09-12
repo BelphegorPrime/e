@@ -10,7 +10,6 @@
  * the run (which lands on its branch and PR/MR like any other).
  */
 
-import { spawn as spawnProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -19,16 +18,21 @@ import {
   nextRequestId,
   readRecord,
   writeRequest,
-  writeStatus,
 } from '../../sidecars/broker/contract/spool.js';
 import { isTerminalTaskState } from '../../sidecars/broker/contract/taskState.js';
 import type {
   SiblingRecord,
+  SpawnRequest,
   TaskState,
 } from '../../sidecars/broker/contract/types.js';
 import { env } from '../../shared/utils/env.js';
 import { log } from '../../shared/utils/log.js';
-import { selfInvocation } from '../../shared/utils/selfInvoke.js';
+import {
+  settleChildRun,
+  startChildRun,
+  type ChildHandle,
+  type ChildLauncher,
+} from '../runs/childRun.js';
 import { JsonRpcError } from './jsonRpc.js';
 import {
   A2A_ERROR_CODES,
@@ -45,12 +49,6 @@ import {
   type WireTaskStatus,
 } from './wire.js';
 
-/** The slice of a child process a task drives; tests fake it. */
-export interface TaskChild {
-  exited: Promise<number>;
-  kill(): void;
-}
-
 export interface A2aTasksDeps {
   /** The spool this process owns for its tasks (under the worktrees dir, like broker spools). */
   spoolDir: string;
@@ -58,11 +56,11 @@ export interface A2aTasksDeps {
   knownAgent: (name: string) => boolean;
   /** The agent a message without `metadata.agent` runs as (the store's default harness). */
   defaultAgent: string;
-  /** Spawns `e <args>` with `env`; defaults to re-invoking this executable. */
-  spawnChild?: (
-    args: string[],
-    childEnv: Record<string, string | undefined>
-  ) => TaskChild;
+  /**
+   * Starts the task's child run; defaults to re-invoking this executable
+   * (`childRun.spawnChildProcess`). Tests script one.
+   */
+  launch?: ChildLauncher;
   /** How often the spool is re-read for changes. */
   pollIntervalMs?: number;
   now?: () => Date;
@@ -79,7 +77,7 @@ interface TaskEntry {
   prompt: string;
   /** The user's message, kept as the task's history. */
   message: WireMessage;
-  child: TaskChild;
+  child: ChildHandle;
   canceling: boolean;
   /** The last task state the listeners saw. */
   lastState: TaskState;
@@ -88,28 +86,13 @@ interface TaskEntry {
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 500;
+
+/** Who cancels an A2A task, for `settleChildRun`'s message (`canceled by the A2A client`). */
+const CANCEL_ACTOR = 'the A2A client';
 const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 /** The one artifact a completed task has: the run's branch and PR/MR. */
 export const RUN_ARTIFACT_NAME = 'run';
-
-/** Re-invokes this very CLI headless, the way the terminal and `serve --detached` do. */
-function spawnHeadlessCli(
-  args: string[],
-  childEnv: Record<string, string | undefined>
-): TaskChild {
-  const { command, prefix } = selfInvocation();
-  const child = spawnProcess(command, [...prefix, ...args], {
-    cwd: process.cwd(),
-    env: childEnv,
-    stdio: 'ignore',
-  });
-  const exited = new Promise<number>(resolve => {
-    child.on('error', () => resolve(1));
-    child.on('exit', (code, signal) => resolve(signal ? 1 : (code ?? 0)));
-  });
-  return { exited, kill: () => child.kill('SIGTERM') };
-}
 
 /** The agent a message asks for: `metadata.agent`, else `metadata.skillId`, on the message or the params. */
 export function requestedAgent(
@@ -227,7 +210,7 @@ export class A2aTasks {
   private readonly spoolDir: string;
   private readonly knownAgent: (name: string) => boolean;
   private readonly defaultAgent: string;
-  private readonly spawnChild: NonNullable<A2aTasksDeps['spawnChild']>;
+  private readonly launch: ChildLauncher | undefined;
   private readonly pollIntervalMs: number;
   private readonly now: () => Date;
   private readonly newId: () => string;
@@ -237,7 +220,7 @@ export class A2aTasks {
     this.spoolDir = deps.spoolDir;
     this.knownAgent = deps.knownAgent;
     this.defaultAgent = deps.defaultAgent;
-    this.spawnChild = deps.spawnChild ?? spawnHeadlessCli;
+    this.launch = deps.launch;
     this.pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.now = deps.now ?? (() => new Date());
     this.newId = deps.newId ?? randomUUID;
@@ -253,21 +236,24 @@ export class A2aTasks {
     );
     const recordId = nextRequestId(this.spoolDir, 'a2a');
     const at = this.now().toISOString();
-    writeRequest(this.spoolDir, {
+    const request: SpawnRequest = {
       id: recordId,
       agent,
       prompt,
       requestedAt: at,
-    });
+    };
+    writeRequest(this.spoolDir, request);
     const id = this.newId();
     const contextId =
       typeof message.contextId === 'string' && message.contextId !== ''
         ? message.contextId
         : this.newId();
-    const child = this.spawnChild(
-      ['spawn', agent, '--', prompt],
-      env.withReport({ spoolDir: this.spoolDir, id: recordId })
-    );
+    const child = startChildRun({
+      spoolDir: this.spoolDir,
+      request,
+      env: env.withReport({ spoolDir: this.spoolDir, id: recordId }),
+      launch: this.launch,
+    });
     const entry: TaskEntry = {
       id,
       contextId,
@@ -417,24 +403,14 @@ export class A2aTasks {
    * whatever it reported; a process that never reported a result failed.
    */
   private onExit(entry: TaskEntry, code: number): void {
-    const record = this.record(entry);
-    if (entry.canceling) {
-      writeStatus(this.spoolDir, entry.recordId, {
-        status: 'canceled',
-        ...(record.branch !== undefined ? { branch: record.branch } : {}),
-        exitCode: record.exitCode ?? code,
-        error: 'canceled by the A2A client',
-        updatedAt: this.now().toISOString(),
-      });
-    } else if (record.status !== 'done' && record.status !== 'failed') {
-      writeStatus(this.spoolDir, entry.recordId, {
-        status: 'failed',
-        ...(record.branch !== undefined ? { branch: record.branch } : {}),
-        exitCode: code,
-        error: `the e spawn process exited with code ${code} before reporting a result`,
-        updatedAt: this.now().toISOString(),
-      });
-    }
+    settleChildRun({
+      spoolDir: this.spoolDir,
+      id: entry.recordId,
+      code,
+      canceling: entry.canceling,
+      actor: CANCEL_ACTOR,
+      now: this.now,
+    });
     this.tick();
   }
 

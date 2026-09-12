@@ -10,12 +10,8 @@ import {
 } from '../../sidecars/broker/contract/spool.js';
 import { Env } from '../../shared/utils/env.js';
 import { JsonRpcError } from './jsonRpc.js';
-import {
-  A2aTasks,
-  parseSendParams,
-  requestedAgent,
-  type TaskChild,
-} from './tasks.js';
+import { A2aTasks, parseSendParams, requestedAgent } from './tasks.js';
+import type { ChildHandle, ChildLaunch } from '../runs/childRun.js';
 import type { WireStreamResult, WireTask } from './wire.js';
 
 /** The `e spawn` children the test controls: it plays each run by writing its status. */
@@ -25,10 +21,7 @@ class FakeChildren {
   killed: number[] = [];
   private readonly exits: Array<(code: number) => void> = [];
 
-  spawn = (
-    args: string[],
-    env: Record<string, string | undefined>
-  ): TaskChild => {
+  spawn = ({ args, env }: ChildLaunch): ChildHandle => {
     const index = this.launches.length;
     this.launches.push({ args, env });
     const exited = new Promise<number>(resolve => {
@@ -53,7 +46,7 @@ function withTasks<T>(
     spoolDir: spool,
     knownAgent: name => ['pi', 'smart-codex'].includes(name),
     defaultAgent: 'pi',
-    spawnChild: children.spawn,
+    launch: children.spawn,
     pollIntervalMs: 60_000, // driven by hand through tick()
     now: () => new Date('2026-09-12T10:00:00.000Z'),
     newId: () => `id-${++counter}`,

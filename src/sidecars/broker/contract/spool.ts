@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   SPOOL_CANCELS_DIR,
+  SPOOL_LOGS_DIR,
   SPOOL_REQUESTS_DIR,
   SPOOL_RUN_FILE,
   SPOOL_SIGNALS_DIR,
@@ -44,6 +45,17 @@ export function isRequestId(value: string): boolean {
 export function ensureSpool(root: string): void {
   fs.mkdirSync(path.join(root, SPOOL_REQUESTS_DIR), { recursive: true });
   fs.mkdirSync(path.join(root, SPOOL_STATUS_DIR), { recursive: true });
+  fs.mkdirSync(path.join(root, SPOOL_LOGS_DIR), { recursive: true });
+}
+
+/**
+ * Where a request's child process writes its output: `logs/<id>.log`. The
+ * host launches the process and the failure message quotes the tail of this
+ * file, so the path belongs here with the rest of the spool layout.
+ */
+export function spoolLogPath(root: string, id: string): string {
+  if (!isRequestId(id)) throw new Error(`Invalid request id "${id}".`);
+  return path.join(root, SPOOL_LOGS_DIR, `${id}.log`);
 }
 
 function writeJsonAtomic(file: string, value: unknown): void {
@@ -112,14 +124,23 @@ export function readRequest(
   );
 }
 
-/** The host's side: records how far a request got. */
+/**
+ * The host's side: records how far a request got. A **patch**, as its type
+ * says - the fields given are merged over whatever the record already holds,
+ * so a later write never drops what an earlier one recorded (a run reports
+ * `done` with its `pushed` and PR/MR url; a cancel racing it still leaves
+ * them in place). No field can be cleared once set, which is the shape the
+ * record has anyway: a request only ever moves forward.
+ */
 export function writeStatus(
   root: string,
   id: string,
   patch: SiblingStatusPatch
 ): void {
   if (!isRequestId(id)) throw new Error(`Invalid request id "${id}".`);
-  writeJsonAtomic(path.join(root, SPOOL_STATUS_DIR, `${id}.json`), patch);
+  const file = path.join(root, SPOOL_STATUS_DIR, `${id}.json`);
+  const previous = readJson<SiblingStatusPatch>(file);
+  writeJsonAtomic(file, previous ? { ...previous, ...patch } : patch);
 }
 
 export function readStatus(

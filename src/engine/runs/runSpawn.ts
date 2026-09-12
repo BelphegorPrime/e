@@ -36,9 +36,9 @@ import { DEFAULT_MAX_SIBLINGS } from '../../core/store/config.js';
 import {
   DEFAULT_SIBLING_READINESS,
   SiblingConsumer,
-  type SiblingLauncher,
   type SiblingOutcome,
 } from './runSiblings.js';
+import type { ChildLauncher } from './childRun.js';
 import {
   brokerSidecarSpec,
   brokerSpoolDirFor,
@@ -174,7 +174,7 @@ export interface RunSpawnParams {
     readiness?: ReadinessPolicy;
     passthroughArgs?: string[];
     passthroughEnv?: Record<string, string>;
-    launch: SiblingLauncher;
+    launch: ChildLauncher;
   };
 }
 

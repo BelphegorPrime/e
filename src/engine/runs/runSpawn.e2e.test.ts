@@ -17,7 +17,7 @@ import { slugify } from '../../core/identity/slugify.js';
 import type { RunOptions } from '../../ports/runtime/index.js';
 import { Env } from '../../shared/utils/env.js';
 import { defaultBrokerPlan } from './runBroker.js';
-import type { SiblingLauncher } from './runSiblings.js';
+import type { ChildLauncher } from './childRun.js';
 import { runSpawn } from './runSpawn.js';
 import {
   FakeRuntime,
@@ -108,7 +108,7 @@ test("e2e: a parent spawns children through the real broker; a child spawns a si
   // The sibling launcher: the child `e spawn` pipeline, in-process, from the
   // markers the consumer hands it - checkpoint, branch, artifact sync, run,
   // capture, status - against the same real git.
-  const launch: SiblingLauncher = l => {
+  const launch: ChildLauncher = l => {
     const env = l.env;
     const runtime = new FakeRuntime();
     runtime.onRun = async options => {
