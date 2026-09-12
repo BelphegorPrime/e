@@ -63,6 +63,15 @@ export default tseslint.config(
     },
   },
   {
+    // The UI smoke test's page probes run inside Chrome (page.evaluate).
+    files: ['scripts/smoke-ui/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+    },
+  },
+  {
     // Undefined identifiers in TypeScript are a tsc error already; the ESLint
     // rule only produces false positives on type names there.
     files: ['**/*.{js,mjs,cjs}'],

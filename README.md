@@ -301,7 +301,7 @@ cannot be started.
 
 ## Test
 
-Three levels, cheapest first.
+Four levels, cheapest first.
 
 ### 1. Unit tests
 
@@ -311,7 +311,8 @@ npm test
 
 Builds and runs the full `node --test` suite (adapters, delivery planning,
 harness registry, spawn planning, store, …). `npm run test:ui-assets` runs the
-UI-assets guard tests (the `prebuild:bin` gate) separately:
+tests of the build scripts (the `prebuild:bin` gate, the UI smoke test's
+helpers) separately.
 
 ### 2. Rendering checks (no container, no gateway)
 
@@ -340,7 +341,31 @@ node -e "const {HARNESSES,harnessCapabilities}=require('./dist/harness/index');c
 # → file none
 ```
 
-### 3. End-to-end run
+### 3. UI smoke test (headless Chrome, no container)
+
+```bash
+npm run build:dev && npm run smoke:ui
+```
+
+Drives the built web UI through the Chrome or Chromium already on the machine
+(no download; `$CHROME_PATH` or `--chrome <path>` if it is not on `PATH`).
+Every page is rendered in light, dark and a phone-width viewport against a
+deterministic fixture BFF (fake git refs, agents, egress data, terminal
+options - no Store, engine or git state needed), then the theme toggle,
+sidebar collapse, mobile sheet and terminal Advanced section are exercised.
+The run fails on console or page errors, failed or 4xx/5xx requests, a broken
+layout (sidebar width, content under the sidebar, palette, fonts), and - once
+`--update-baseline` has recorded one - a pixel diff above `--max-diff`
+(default 0.5%). Screenshots, diff images and `report.json` land in
+`ui/.smoke/` (gitignored). `--url http://127.0.0.1:8080` targets a live
+`e serve` instead of the fixture. Typical before/after check of a UI change:
+
+```bash
+npm run smoke:ui -- --update-baseline   # on the old code
+npm run build:ui && npm run smoke:ui    # on the new code: diffs in ui/.smoke/diff/
+```
+
+### 4. End-to-end run
 
 Requires: a container engine on `PATH` (`docker`, `podman`, `nerdctl`, or
 `finch`, see [Container runtimes](#container-runtimes)), a **git repo** to run
