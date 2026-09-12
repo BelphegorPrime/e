@@ -37,3 +37,23 @@ test('the skill ships the bundled script, which speaks to $E_BROKER_URL only', (
     .filter(spec => !spec.startsWith('node:'));
   assert.deepEqual(imports, []);
 });
+
+test('the skill explains the merge-back: the report in the worktree, every merge state, and the --merge signal', () => {
+  const md = renderSpawnBrotherSkill()['SKILL.md'];
+  assert.match(md, /e-runs\/<id>\/report\.md/);
+  for (const state of [
+    'merged',
+    'up-to-date',
+    'conflict',
+    'held',
+    'skipped',
+    'failed',
+  ]) {
+    assert.match(md, new RegExp(`merge\\.status: ${state}`));
+  }
+  assert.match(md, new RegExp(`${SPAWN_BROTHER_SCRIPT} --merge <id>`));
+  assert.match(md, /never resolves a\s+conflict for you/);
+  assert.match(md, /curl -sS -X POST "\$E_BROKER_URL\/merge\/<id>"/);
+  const script = renderSpawnBrotherSkill()[SPAWN_BROTHER_SCRIPT];
+  assert.match(script, /\/merge\//);
+});

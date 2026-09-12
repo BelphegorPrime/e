@@ -70,14 +70,23 @@ export interface Git {
    * visible in the parent's history (ADR-0013). A conflict is an expected
    * outcome, not an error: the merge is left in progress with the markers in
    * the worktree files (never auto-resolved, never aborted) and the
-   * conflicted paths are reported for the caller to hand to the agent. Throws
-   * when git refuses to start the merge - an unknown ref, a merge already in
-   * progress, or local changes in the way (with `--no-ff` any *staged* change
-   * counts, not only one the merge would overwrite) - in which case the
-   * worktree is untouched; and when the merge stopped without a conflict (a
+   * conflicted paths are reported for the caller to hand to the agent. So is
+   * a refusal over local changes in the way (an uncommitted or untracked file
+   * the merge would overwrite; with `--no-ff` any *staged* change counts):
+   * the worktree is untouched and the paths git named are reported, for the
+   * caller to have cleared before it retries. Throws when git refuses for any
+   * other reason - an unknown ref, a merge already in progress - leaving the
+   * worktree untouched; and when the merge stopped without a conflict (a
    * failing `pre-merge-commit` hook leaves it staged with `MERGE_HEAD` set).
    */
   merge(worktreePath: string, branch: string, message?: string): MergeOutcome;
+
+  /**
+   * True while a merge is in progress in the worktree at `worktreePath`
+   * (`MERGE_HEAD` resolves): a conflict nobody has concluded yet. The next
+   * `commitAll` there concludes it as the merge commit.
+   */
+  mergeInProgress(worktreePath: string): boolean;
 }
 
 /** How a {@link Git.merge} ended. */
@@ -87,7 +96,9 @@ export type MergeOutcome =
   /** `branch` was already reachable; nothing changed. */
   | { status: 'up-to-date' }
   /** Left in progress: markers in `files`, `MERGE_HEAD` set, for the agent to resolve. */
-  | { status: 'conflict'; files: string[] };
+  | { status: 'conflict'; files: string[] }
+  /** Not started: local changes to `files` (as git named them) would be overwritten; the worktree is untouched. */
+  | { status: 'refused'; files: string[] };
 
 /** A run branch's current tip, as enumerated by `for-each-ref`. */
 export interface RunRef {

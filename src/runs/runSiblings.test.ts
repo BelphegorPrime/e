@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   ensureSpool,
+  hasMergeSignal,
   readStatus,
+  signalMerge,
   writeRequest,
   writeRunInfo,
   writeStatus,
@@ -17,6 +19,7 @@ import {
   assertCliEntry,
   logTail,
   siblingCliArgs,
+  siblingSummaryLine,
   spawnSiblingProcess,
   type SiblingConsumerOptions,
   type SiblingLaunch,
@@ -54,6 +57,8 @@ function withSpool<T>(
 ): Promise<T> {
   const spool = fs.mkdtempSync(path.join(os.tmpdir(), 'e-siblings-'));
   ensureSpool(spool);
+  // The parent's "worktree": where the consumer writes sibling reports.
+  fs.mkdirSync(parentWorktree(spool));
   writeRunInfo(spool, {
     name: 'e-demo-parent-1',
     branch: 'e/demo/parent-1',
@@ -64,6 +69,11 @@ function withSpool<T>(
   return fn(spool).finally(() =>
     fs.rmSync(spool, { recursive: true, force: true })
   );
+}
+
+/** The parent worktree that goes with a test spool. */
+function parentWorktree(spool: string): string {
+  return path.join(spool, 'parent-wt');
 }
 
 function request(spool: string, id: string, agent = 'researcher'): void {
@@ -78,7 +88,7 @@ function consumer(
   return new SiblingConsumer({
     spoolDir: spool,
     parent: {
-      worktreePath: '/wt/e-demo-parent-1',
+      worktreePath: parentWorktree(spool),
       branch: 'e/demo/parent-1',
       network: 'e-demo-parent-1-net',
       role: 'parent',
@@ -88,8 +98,83 @@ function consumer(
     launch: launcher.launch,
     sleep: async () => {},
     now: () => new Date('2026-09-12T12:00:00.000Z'),
+    git: new ScriptedGit(),
     ...overrides,
   });
+}
+
+/**
+ * A `Git` for the merge-back seams: records checkpoints and merges in call
+ * order, answers each branch's merge from a script (an outcome, a list of
+ * outcomes consumed one per attempt, or an error to throw), and keeps a
+ * conflict "in progress" until the next `commitAll` concludes it.
+ */
+class ScriptedGit implements Git {
+  calls: string[] = [];
+  merges: { branch: string; message?: string }[] = [];
+  commits: string[] = [];
+  dirty = false;
+  merging = false;
+  constructor(
+    private readonly script: Record<
+      string,
+      MergeOutcome | Error | (MergeOutcome | Error)[]
+    > = {}
+  ) {}
+  isRepo() {
+    return true;
+  }
+  headSha() {
+    return 'sha';
+  }
+  currentBranch() {
+    return 'main';
+  }
+  listRunBranches() {
+    return [];
+  }
+  listRunRefs() {
+    return [];
+  }
+  runLog() {
+    return [];
+  }
+  branchExists() {
+    return true;
+  }
+  addWorktree() {}
+  isDirty() {
+    return this.dirty;
+  }
+  commitAll(_path: string, message: string) {
+    this.calls.push(`commit ${message}`);
+    this.commits.push(message);
+    this.dirty = false;
+    this.merging = false;
+  }
+  hasCommitsBeyondBase() {
+    return true;
+  }
+  push() {}
+  removeWorktree() {}
+  merge(_path: string, branch: string, message?: string): MergeOutcome {
+    this.calls.push(`merge ${branch}`);
+    this.merges.push({ branch, message });
+    const scripted = this.script[branch];
+    let outcome: MergeOutcome | Error | undefined;
+    if (Array.isArray(scripted)) {
+      outcome = scripted.length > 1 ? scripted.shift() : scripted[0];
+    } else {
+      outcome = scripted;
+    }
+    if (outcome instanceof Error) throw outcome;
+    const result = outcome ?? { status: 'merged' };
+    if (result.status === 'conflict') this.merging = true;
+    return result;
+  }
+  mergeInProgress() {
+    return this.merging;
+  }
 }
 
 test('siblingCliArgs: a detached spawn of the requested agent, passthrough before --, the prompt after', () => {
@@ -131,7 +216,7 @@ test('a new request is marked starting and launched with the sibling markers; th
     assert.equal(launch.env[Env.SPAWN_ROLE_VAR], 'child');
     assert.equal(
       launch.env[Env.SPAWN_PARENT_WORKTREE_VAR],
-      '/wt/e-demo-parent-1'
+      parentWorktree(spool)
     );
     assert.equal(launch.env[Env.SPAWN_PARENT_BRANCH_VAR], 'e/demo/parent-1');
     assert.equal(
@@ -491,286 +576,377 @@ test('spawnSiblingProcess: kill ends a running sibling (exit code 1); a missing 
   }
 });
 
-// Merge-back (ticket 07): when a sibling reports done with its branch, the
-// consumer folds the branch into the parent worktree with `Git.merge` and
-// writes a report the parent agent reads from `e-runs/<runName>/report.md`.
-
-/** A git fake recording merge attempts; outcome scriptable per branch. */
-class RecordingGit implements Git {
-  merges: { worktreePath: string; branch: string; message?: string }[] = [];
-  private attempts = 0;
-  constructor(
-    private readonly outcomes: Record<string, MergeOutcome> = {},
-    private readonly mergeThrows?: string,
-    private readonly throwOnce = false
-  ) {}
-  isRepo(): boolean {
-    return true;
-  }
-  headSha(): string {
-    return 'sha';
-  }
-  currentBranch(): string {
-    return 'main';
-  }
-  listRunBranches(): string[] {
-    return [];
-  }
-  listRunRefs() {
-    return [];
-  }
-  runLog() {
-    return [];
-  }
-  branchExists(): boolean {
-    return false;
-  }
-  addWorktree(): void {}
-  isDirty(): boolean {
-    return false;
-  }
-  commitAll(): void {}
-  hasCommitsBeyondBase(): boolean {
-    return false;
-  }
-  push(): void {}
-  removeWorktree(): void {}
-  merge(worktreePath: string, branch: string, message?: string): MergeOutcome {
-    this.merges.push({ worktreePath, branch, message });
-    this.attempts++;
-    if (this.mergeThrows && (this.throwOnce ? this.attempts === 1 : true)) {
-      throw new Error(this.mergeThrows);
-    }
-    return this.outcomes[branch] ?? { status: 'merged' };
-  }
-}
+// Merge-back (ticket 07): when a sibling exits, the consumer settles it -
+// folds its branch into the parent worktree through `runMergeBack`, publishes
+// the outcome into the sibling's status and as `e-runs/<id>/report.md` in the
+// worktree - and retries a waiting merge on the parent's signal, when another
+// merge lands, and when the parent run ends.
 
 /** Drives a sibling to a terminal report and exit, as a real one would. */
 async function finishSibling(
   spool: string,
   launcher: FakeLauncher,
+  id: string,
   branch: string,
-  status: 'done' | 'failed',
+  status: 'done' | 'failed' = 'done',
   exitCode = 0
 ): Promise<void> {
-  writeStatus(spool, 'sib-001', {
+  writeStatus(spool, id, {
     status,
     branch,
     ...(status === 'failed' ? { error: 'the sibling gave up' } : {}),
     exitCode,
     updatedAt: 't',
   });
-  await launcher.exit('sib-001', exitCode);
+  await launcher.exit(id, exitCode);
 }
 
-function testWorktreesDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'e-mergeback-'));
-}
+const reportOf = (spool: string, id: string) =>
+  fs.readFileSync(
+    path.join(parentWorktree(spool), 'e-runs', id, 'report.md'),
+    'utf8'
+  );
 
-function consumerWithGit(
-  spool: string,
-  launcher: FakeLauncher,
-  git: Git,
-  worktreesDir: string
-): SiblingConsumer {
-  return consumer(spool, launcher, { git, worktreesDir });
-}
+test('a done sibling is merged into the parent worktree; status and report carry the outcome', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit();
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
 
-test('a done sibling is merged into the parent worktree and reported', async () => {
-  const worktreesDir = testWorktreesDir();
-  try {
-    await withSpool('parent', async spool => {
-      const launcher = new FakeLauncher();
-      const git = new RecordingGit();
-      const c = consumerWithGit(spool, launcher, git, worktreesDir);
-      request(spool, 'sib-001');
-      c.tick();
-      await finishSibling(spool, launcher, 'e/researcher/look-1', 'done');
-
-      assert.deepEqual(git.merges, [
-        {
-          worktreePath: '/wt/e-demo-parent-1',
-          branch: 'e/researcher/look-1',
-          message: 'e: merge back e/researcher/look-1',
-        },
-      ]);
-      const [result] = c.results;
-      assert.equal(result.id, 'sib-001');
-      assert.equal(result.branch, 'e/researcher/look-1');
-      assert.equal(result.status, 'done');
-      assert.equal(result.mergeStatus, 'merged');
-
-      // The parent agent's report: branch-derived run name, telling it the
-      // sibling's work is in its tree now.
-      const report = path.join(
-        worktreesDir,
-        'e-runs',
-        'e-researcher-look-1',
-        'report.md'
-      );
-      assert.equal(fs.existsSync(report), true);
-      const text = fs.readFileSync(report, 'utf8');
-      assert.match(text, /Merged/);
-      assert.match(text, /e\/researcher\/look-1/);
-    });
-  } finally {
-    fs.rmSync(worktreesDir, { recursive: true, force: true });
-  }
+    assert.deepEqual(git.merges, [
+      {
+        branch: 'e/researcher/look-1',
+        message: 'e: merge back e/researcher/look-1',
+      },
+    ]);
+    assert.deepEqual(c.outcomes, [
+      {
+        id: 'sib-001',
+        agent: 'researcher',
+        branch: 'e/researcher/look-1',
+        status: 'done',
+        exitCode: 0,
+        merge: { status: 'merged' },
+        report: 'e-runs/sib-001/report.md',
+      },
+    ]);
+    // The agent polls the status and finds the merge there ...
+    const status = readStatus(spool, 'sib-001');
+    assert.equal(status?.status, 'done');
+    assert.deepEqual(status?.merge, { status: 'merged' });
+    assert.equal(status?.report, 'e-runs/sib-001/report.md');
+    // ... and the report in its own worktree, not on some host path.
+    assert.match(reportOf(spool, 'sib-001'), /^# Sibling sib-001: merged/);
+  });
 });
 
-test('a merge conflict is held pending, files reported and written to the report; never auto-resolved', async () => {
-  const worktreesDir = testWorktreesDir();
-  try {
-    await withSpool('parent', async spool => {
-      const launcher = new FakeLauncher();
-      const git = new RecordingGit({
-        'e/researcher/look-1': {
-          status: 'conflict',
-          files: ['src/a.ts', 'src/b.ts'],
-        },
-      });
-      const c = consumerWithGit(spool, launcher, git, worktreesDir);
-      request(spool, 'sib-001');
-      c.tick();
-      await finishSibling(spool, launcher, 'e/researcher/look-1', 'done');
+test('a dirty parent is checkpointed before the merge, so its WIP is folded in and the merge is the last index write', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit();
+    git.dirty = true;
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
 
-      const [result] = c.results;
-      assert.equal(result.mergeStatus, 'conflict');
-      assert.deepEqual(result.conflictFiles, ['src/a.ts', 'src/b.ts']);
-      // The merge is left in progress with the markers; nothing was resolved.
-      assert.equal(git.merges.length, 1);
-
-      const text = fs.readFileSync(
-        path.join(worktreesDir, 'e-runs', 'e-researcher-look-1', 'report.md'),
-        'utf8'
-      );
-      assert.match(text, /Merge held pending/);
-      assert.match(text, /src\/a\.ts/);
-      assert.match(text, /src\/b\.ts/);
-    });
-  } finally {
-    fs.rmSync(worktreesDir, { recursive: true, force: true });
-  }
+    assert.deepEqual(git.calls, [
+      'commit e: checkpoint e/demo/parent-1 before merging e/researcher/look-1',
+      'merge e/researcher/look-1',
+    ]);
+    assert.equal(c.outcomes[0].merge.status, 'merged');
+  });
 });
 
-test('a merge git refuses (overlapping WIP in the parent) is held pending with the reason, not resolved', async () => {
-  const worktreesDir = testWorktreesDir();
-  try {
-    await withSpool('parent', async spool => {
-      const launcher = new FakeLauncher();
-      // The parent's dirty worktree stands in the way of a clean merge, as
-      // when the agent is mid-edit on files the sibling also touched.
-      const git = new RecordingGit(
-        {},
-        'local changes would be overwritten by merge'
-      );
-      const c = consumerWithGit(spool, launcher, git, worktreesDir);
-      request(spool, 'sib-001');
-      c.tick();
-      await finishSibling(spool, launcher, 'e/researcher/look-1', 'done');
-
-      const [result] = c.results;
-      assert.equal(result.mergeStatus, 'error');
-      assert.match(result.logTail ?? '', /local changes would be overwritten/);
-      // Refused: the worktree was untouched, nothing resolved, no conflict set.
-      assert.equal(result.conflictFiles, undefined);
-      const text = fs.readFileSync(
-        path.join(worktreesDir, 'e-runs', 'e-researcher-look-1', 'report.md'),
-        'utf8'
-      );
-      assert.match(text, /held pending/);
-      assert.match(text, /local changes would be overwritten/);
+test('a conflict is left in progress (never resolved by the host), holds the next sibling, and concludes on the parent signal; the held one then merges', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit({
+      'e/researcher/look-1': { status: 'conflict', files: ['src/a.ts'] },
     });
-  } finally {
-    fs.rmSync(worktreesDir, { recursive: true, force: true });
-  }
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    request(spool, 'sib-002');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
+    assert.deepEqual(readStatus(spool, 'sib-001')?.merge, {
+      status: 'conflict',
+      files: ['src/a.ts'],
+    });
+    const report = reportOf(spool, 'sib-001');
+    assert.match(report, /conflict markers in:/);
+    assert.match(report, /`src\/a\.ts`/);
+    assert.match(report, /spawn-brother\.mjs --merge sib-001/);
+    // Nothing was committed or resolved on the parent's behalf.
+    assert.deepEqual(git.commits, []);
+
+    // The second sibling finishes into a worktree mid-merge: held, no attempt.
+    await finishSibling(spool, launcher, 'sib-002', 'e/researcher/look-2');
+    assert.equal(readStatus(spool, 'sib-002')?.merge?.status, 'held');
+    assert.match(
+      readStatus(spool, 'sib-002')?.merge?.reason ?? '',
+      /another merge-back is still in progress/
+    );
+    assert.deepEqual(
+      git.merges.map(m => m.branch),
+      ['e/researcher/look-1']
+    );
+
+    // The parent resolves the markers and signals through the broker; the
+    // next tick concludes the merge as a commit, then the held one lands too.
+    signalMerge(spool, 'sib-001', 't');
+    c.tick();
+    assert.equal(hasMergeSignal(spool, 'sib-001'), false);
+    assert.deepEqual(git.commits, [
+      'e: merge back e/researcher/look-1 (conflict resolved in e/demo/parent-1)',
+    ]);
+    assert.deepEqual(readStatus(spool, 'sib-001')?.merge, { status: 'merged' });
+    assert.deepEqual(readStatus(spool, 'sib-002')?.merge, { status: 'merged' });
+    assert.deepEqual(
+      git.merges.map(m => m.branch),
+      ['e/researcher/look-1', 'e/researcher/look-2']
+    );
+    assert.match(reportOf(spool, 'sib-001'), /^# Sibling sib-001: merged/);
+    assert.match(reportOf(spool, 'sib-002'), /^# Sibling sib-002: merged/);
+    // A signal for a sibling with nothing to retry is simply taken and ignored.
+    assert.deepEqual(
+      c.outcomes.map(o => o.merge.status),
+      ['merged', 'merged']
+    );
+  });
 });
 
-test('a held merge is retried after the parent clears its WIP (the commit signal); conflicts never are', async () => {
-  const worktreesDir = testWorktreesDir();
-  try {
-    await withSpool('parent', async spool => {
-      const launcher = new FakeLauncher();
-      // The sibling's branch conflicts on the first attempt, as when it
-      // overlapped the parent's WIP; once the parent commits, it merges.
-      const git = new RecordingGit(
-        {},
-        'local changes would be overwritten',
-        true
-      );
-      const c = consumerWithGit(spool, launcher, git, worktreesDir);
-      request(spool, 'sib-001');
-      c.tick();
-      await finishSibling(spool, launcher, 'e/researcher/look-1', 'done');
-
-      // Held: the parent's WIP stood in the way.
-      assert.equal(c.results[0].mergeStatus, 'error');
-
-      // The parent finishes, commits its work (the clear signal), and the
-      // host retries: the same sibling now lands as a clean merge commit.
-      c.retryHeld();
-      assert.equal(git.merges.length, 2);
-      const [result] = c.results;
-      assert.equal(result.mergeStatus, 'merged');
-      assert.equal(result.id, 'sib-001');
-      // Results are stable: a second retry has nothing left to do.
-      c.retryHeld();
-      assert.equal(c.results.length, 1);
+test('a merge refused over files in flight is held with the files named; the parent signals, the host retries', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit({
+      'e/researcher/look-1': [
+        { status: 'refused', files: ['src/a.ts', 'src/b.ts'] },
+        { status: 'merged' },
+      ],
     });
-  } finally {
-    fs.rmSync(worktreesDir, { recursive: true, force: true });
-  }
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
+
+    const held = readStatus(spool, 'sib-001')?.merge;
+    assert.equal(held?.status, 'held');
+    assert.deepEqual(held?.files, ['src/a.ts', 'src/b.ts']);
+    assert.match(held?.reason ?? '', /in flight/);
+    const report = reportOf(spool, 'sib-001');
+    assert.match(report, /Files in the way:/);
+    assert.match(report, /`src\/b\.ts`/);
+    assert.match(report, /--merge sib-001/);
+
+    // No signal, no retry: ticks leave it alone.
+    c.tick();
+    assert.equal(git.merges.length, 1);
+
+    signalMerge(spool, 'sib-001', 't');
+    c.tick();
+    assert.equal(git.merges.length, 2);
+    assert.deepEqual(readStatus(spool, 'sib-001')?.merge, { status: 'merged' });
+    assert.equal(c.outcomes[0].merge.status, 'merged');
+  });
 });
 
-test('a failed sibling is not merged; the report says so', async () => {
-  const worktreesDir = testWorktreesDir();
-  try {
-    await withSpool('parent', async spool => {
-      const launcher = new FakeLauncher();
-      const git = new RecordingGit();
-      const c = consumerWithGit(spool, launcher, git, worktreesDir);
-      request(spool, 'sib-001');
-      c.tick();
-      await finishSibling(spool, launcher, 'ignored-branch', 'failed', 3);
-
-      assert.deepEqual(git.merges, []);
-      const [result] = c.results;
-      assert.equal(result.status, 'failed');
-      assert.equal(result.exitCode, 3);
-      assert.equal(result.mergeStatus, 'not-done');
-      assert.match(result.error ?? '', /gave up/);
-      // Its report still lands, so the parent reads the failure in the same
-      // place it reads merges - from the branch it announced before dying.
-      const text = fs.readFileSync(
-        path.join(worktreesDir, 'e-runs', 'ignored-branch', 'report.md'),
-        'utf8'
-      );
-      assert.match(text, /the sibling gave up/);
-      assert.match(text, /Merge failed/);
+test('finish (the parent run ended, its work committed): held merges get their last retry; a conflict the run commit concluded is merged', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit({
+      'e/researcher/look-1': { status: 'conflict', files: ['x'] },
+      'e/researcher/look-2': [
+        { status: 'refused', files: ['y'] },
+        { status: 'merged' },
+      ],
     });
-  } finally {
-    fs.rmSync(worktreesDir, { recursive: true, force: true });
-  }
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    request(spool, 'sib-002');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
+    // A refusal while a conflict is in progress reads as "in progress" first;
+    // script the conflict concluded by the run's own commit before sib-002.
+    git.commitAll(parentWorktree(spool), 'e: run output for e/demo/parent-1');
+    await finishSibling(spool, launcher, 'sib-002', 'e/researcher/look-2');
+    assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'conflict');
+    assert.equal(readStatus(spool, 'sib-002')?.merge?.status, 'held');
+
+    c.finish();
+    // The conflict was concluded by the run's own commit, not by the parent's
+    // hand: merged, but said so, since the files may still carry markers.
+    const concluded = readStatus(spool, 'sib-001')?.merge;
+    assert.equal(concluded?.status, 'merged');
+    assert.match(concluded?.reason ?? '', /leftover conflict markers/);
+    assert.match(reportOf(spool, 'sib-001'), /^# Sibling sib-001: merged/);
+    assert.deepEqual(readStatus(spool, 'sib-002')?.merge, { status: 'merged' });
+    assert.deepEqual(
+      c.outcomes.map(o => [o.id, o.merge.status]),
+      [
+        ['sib-001', 'merged'],
+        ['sib-002', 'merged'],
+      ]
+    );
+  });
 });
 
-test('a sibling exiting before reporting done is failed, not merged', async () => {
-  const worktreesDir = testWorktreesDir();
-  try {
-    await withSpool('parent', async spool => {
-      const launcher = new FakeLauncher();
-      const git = new RecordingGit();
-      const c = consumerWithGit(spool, launcher, git, worktreesDir);
-      request(spool, 'sib-001');
-      c.tick();
-      await launcher.exit('sib-001', 2);
-
-      assert.equal(git.merges.length, 0);
-      const [result] = c.results;
-      assert.equal(result.status, 'failed');
-      assert.equal(result.mergeStatus, 'not-done');
-      assert.equal(readStatus(spool, 'sib-001')?.status, 'failed');
+test('finish leaves a conflict still in progress alone: only the parent could have resolved it', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit({
+      'e/researcher/look-1': { status: 'conflict', files: ['x'] },
     });
-  } finally {
-    fs.rmSync(worktreesDir, { recursive: true, force: true });
-  }
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
+    c.finish();
+    assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'conflict');
+    assert.deepEqual(git.commits, []);
+  });
+});
+
+test('a failed sibling, a non-zero exit, and a process that dies unreported are skipped, not merged, with reports', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit();
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    request(spool, 'sib-002');
+    request(spool, 'sib-003');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/r/one-1', 'failed', 3);
+    await finishSibling(spool, launcher, 'sib-002', 'e/r/two-1', 'done', 2);
+    await launcher.exit('sib-003', 1);
+
+    assert.deepEqual(git.merges, []);
+    const [one, two, three] = c.outcomes;
+    assert.equal(one.status, 'failed');
+    assert.equal(one.exitCode, 3);
+    assert.equal(one.merge.status, 'skipped');
+    assert.match(
+      one.merge.reason ?? '',
+      /the sibling failed: the sibling gave up/
+    );
+    assert.match(reportOf(spool, 'sib-001'), /Not merged: the sibling failed/);
+    assert.match(reportOf(spool, 'sib-001'), /branch `e\/r\/one-1` keeps/);
+
+    assert.equal(two.status, 'done');
+    assert.equal(two.merge.status, 'skipped');
+    assert.match(two.merge.reason ?? '', /exited with code 2/);
+
+    assert.equal(three.status, 'failed');
+    assert.equal(three.merge.status, 'skipped');
+    assert.match(
+      readStatus(spool, 'sib-003')?.error ?? '',
+      /exited with code 1 before reporting/
+    );
+    assert.match(reportOf(spool, 'sib-003'), /^# Sibling sib-003: skipped/);
+    // The status keeps the failure and gains the merge disposition.
+    assert.equal(readStatus(spool, 'sib-003')?.status, 'failed');
+    assert.equal(readStatus(spool, 'sib-003')?.merge?.status, 'skipped');
+  });
+});
+
+test('a request the parent run ended on is failed and reported, so the agent finds every sibling in e-runs', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const c = consumer(spool, launcher);
+    request(spool, 'sib-001');
+    await c.stop();
+    assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'skipped');
+    assert.match(
+      reportOf(spool, 'sib-001'),
+      /the parent run ended before the request was picked up/
+    );
+  });
+});
+
+test('a signal for a sibling with nothing to retry is consumed, not left in the spool', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit();
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
+    assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'merged');
+
+    signalMerge(spool, 'sib-001', 't');
+    c.tick();
+    assert.equal(hasMergeSignal(spool, 'sib-001'), false);
+    assert.equal(git.merges.length, 1);
+  });
+});
+
+test('a git lock collision (the sibling process checkpointing the same worktree) holds the merge instead of failing it, and a later landing retries it', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new ScriptedGit({
+      'e/researcher/look-1': [
+        new Error(
+          "git failed (merge): fatal: Unable to create '/wt/.git/index.lock': File exists.\nAnother git process seems to be running in this repository"
+        ),
+        { status: 'merged' },
+      ],
+    });
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    request(spool, 'sib-002');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
+    const held = readStatus(spool, 'sib-001')?.merge;
+    assert.equal(held?.status, 'held');
+    assert.match(
+      held?.reason ?? '',
+      /another git process was using your worktree/
+    );
+
+    await finishSibling(spool, launcher, 'sib-002', 'e/researcher/look-2');
+    assert.deepEqual(
+      c.outcomes.map(o => [o.id, o.merge.status]),
+      [
+        ['sib-001', 'merged'],
+        ['sib-002', 'merged'],
+      ]
+    );
+  });
+});
+
+test('siblingSummaryLine: who, how it ended, how its work came back', () => {
+  assert.equal(
+    siblingSummaryLine({
+      id: 'sib-001',
+      agent: 'researcher',
+      branch: 'e/researcher/look-1',
+      status: 'done',
+      exitCode: 0,
+      merge: { status: 'merged' },
+      report: 'e-runs/sib-001/report.md',
+    }),
+    'Sibling sib-001 (researcher, e/researcher/look-1): done, merge-back merged'
+  );
+  assert.equal(
+    siblingSummaryLine({
+      id: 'sib-002',
+      agent: 'researcher',
+      status: 'failed',
+      merge: { status: 'skipped', reason: 'the sibling failed: gave up' },
+    }),
+    'Sibling sib-002 (researcher): failed, merge-back skipped - the sibling failed: gave up'
+  );
+  assert.equal(
+    siblingSummaryLine({
+      id: 'sib-003',
+      agent: 'researcher',
+      branch: 'e/researcher/x-1',
+      status: 'done',
+      merge: { status: 'conflict', files: ['a.ts', 'b.ts'] },
+    }),
+    'Sibling sib-003 (researcher, e/researcher/x-1): done, merge-back conflict [a.ts, b.ts]'
+  );
 });

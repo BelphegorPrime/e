@@ -14,6 +14,7 @@ import path from 'node:path';
 import {
   SPOOL_REQUESTS_DIR,
   SPOOL_RUN_FILE,
+  SPOOL_SIGNALS_DIR,
   SPOOL_STATUS_DIR,
 } from './constants.js';
 import type {
@@ -117,6 +118,35 @@ export function readStatus(
   return readJson<SiblingStatusPatch>(
     path.join(root, SPOOL_STATUS_DIR, `${id}.json`)
   );
+}
+
+/**
+ * The parent agent's signal that sibling `id`'s merge-back may be retried
+ * (ticket 07): its files are cleared, or the conflict markers resolved. The
+ * broker writes it for `POST /merge/<id>`; the host takes it when it retries.
+ */
+export function signalMerge(root: string, id: string, at: string): void {
+  if (!isRequestId(id)) throw new Error(`Invalid request id "${id}".`);
+  fs.mkdirSync(path.join(root, SPOOL_SIGNALS_DIR), { recursive: true });
+  writeJsonAtomic(path.join(root, SPOOL_SIGNALS_DIR, `${id}.json`), {
+    id,
+    signaledAt: at,
+  });
+}
+
+/** True if a merge signal for `id` is waiting (not yet taken by the host). */
+export function hasMergeSignal(root: string, id: string): boolean {
+  return (
+    isRequestId(id) &&
+    fs.existsSync(path.join(root, SPOOL_SIGNALS_DIR, `${id}.json`))
+  );
+}
+
+/** Consumes the merge signal for `id`: true if there was one (it is removed). */
+export function takeMergeSignal(root: string, id: string): boolean {
+  if (!hasMergeSignal(root, id)) return false;
+  fs.rmSync(path.join(root, SPOOL_SIGNALS_DIR, `${id}.json`), { force: true });
+  return true;
 }
 
 /** A request merged with its status; `requested` until the host writes one. */

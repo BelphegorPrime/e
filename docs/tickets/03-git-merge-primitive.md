@@ -21,7 +21,10 @@ change, not only one the merge would overwrite, so ticket 07's checkpoint
 must be the last index write before a merge-back. Conflicted paths are read
 with `-z`, so a non-ASCII name comes back verbatim. An untracked file that a
 merge would overwrite is a refusal whose paths live only in git's message;
-07 may need to parse them or move the file aside first. The in-memory doubles are
+07 may need to parse them or move the file aside first. (Ticket 07 did: a
+refusal over local or untracked changes in the way is now a fourth outcome,
+`{ status: 'refused', files }`, parsed from git's message; other refusals
+still throw. `Git.mergeInProgress(worktreePath)` was added alongside.) The in-memory doubles are
 the scripted `Git` fakes next to their tests (`runSpawn.test.ts` scripts an
 outcome per branch and records every call; `executeSpawn.test.ts` and
 `serve.test.ts` merge cleanly).

@@ -528,6 +528,9 @@ class FakeGit implements Git {
   merge(): MergeOutcome {
     return { status: 'merged' };
   }
+  mergeInProgress(): boolean {
+    return false;
+  }
 }
 
 /** Boots the app on an ephemeral port with a temp UI dir and runs `fn`. */

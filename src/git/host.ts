@@ -9,6 +9,30 @@ import type {
 import { log } from '../utils/log.js';
 
 /**
+ * The paths a refused `git merge` named as in the way, parsed out of its
+ * stderr: every indented line (a tab, or two spaces for a staged change)
+ * under a header ending in `would be overwritten by merge:` - both the "Your
+ * local changes to the following files" and the "following untracked working
+ * tree files" blocks, in order, until the next unindented line. Empty when
+ * the message is about something else (an unknown ref, a merge in progress).
+ */
+export function overwrittenPaths(stderr: string): string[] {
+  const paths: string[] = [];
+  let inBlock = false;
+  for (const line of stderr.split('\n')) {
+    if (/would be overwritten by merge:\s*$/.test(line)) {
+      inBlock = true;
+      continue;
+    }
+    if (!inBlock) continue;
+    const match = /^(?:\t| {2})(.+?)\s*$/.exec(line);
+    if (match) paths.push(match[1]);
+    else inBlock = false;
+  }
+  return [...new Set(paths)];
+}
+
+/**
  * The real `Git` port: shells out to the `git` executable in the host process.
  * Every mutating call throws on non-zero exit so the orchestrator can react
  * (e.g. bump the run counter and retry on an atomic-create collision).
@@ -219,8 +243,10 @@ export class HostGit implements Git {
     // progress (MERGE_HEAD set, markers in the files) for someone to resolve;
     // a merge that stopped after the files were merged (a failing
     // pre-merge-commit hook: MERGE_HEAD set, nothing unmerged); or a refusal
-    // to even start (unknown ref, local changes in the way), which leaves the
-    // worktree exactly as it was. Only the first is an outcome.
+    // to even start, which leaves the worktree exactly as it was. A refusal
+    // over local changes in the way is an outcome too - the paths live only
+    // in git's message, so they are parsed out of it; every other refusal
+    // (unknown ref, ...) is an error.
     if (this.mergeInProgress(worktreePath)) {
       const files = this.conflictedFiles(worktreePath);
       if (files.length > 0) {
@@ -228,7 +254,18 @@ export class HostGit implements Git {
         return { status: 'conflict', files };
       }
     }
+    const inTheWay = overwrittenPaths(result.stderr ?? '');
+    if (inTheWay.length > 0) {
+      log.command(
+        `${description}: refused, in the way: ${inTheWay.join(', ')}`
+      );
+      return { status: 'refused', files: inTheWay };
+    }
     throw this.failure(description, result);
+  }
+
+  mergeInProgress(worktreePath: string): boolean {
+    return this.refResolves('MERGE_HEAD', worktreePath);
   }
 
   /** Paths with unmerged index entries, NUL-separated so `core.quotePath` never mangles a name. */
@@ -239,11 +276,6 @@ export class HostGit implements Git {
     )
       .split('\0')
       .filter(file => file.length > 0);
-  }
-
-  /** True while a merge is in progress in the worktree (`MERGE_HEAD` resolves). */
-  private mergeInProgress(worktreePath: string): boolean {
-    return this.refResolves('MERGE_HEAD', worktreePath);
   }
 
   /** True if `ref` resolves (`rev-parse --verify --quiet`), in `cwd` when given. */

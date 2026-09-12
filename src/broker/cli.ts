@@ -31,11 +31,15 @@ async function main(argv: string[]): Promise<number> {
               prompt: command.prompt,
             }),
           })
-        : await fetch(
-            command.id === undefined
-              ? `${base}/status`
-              : `${base}/status/${encodeURIComponent(command.id)}`
-          );
+        : command.kind === 'merge'
+          ? await fetch(`${base}/merge/${encodeURIComponent(command.id)}`, {
+              method: 'POST',
+            })
+          : await fetch(
+              command.id === undefined
+                ? `${base}/status`
+                : `${base}/status/${encodeURIComponent(command.id)}`
+            );
   } catch (err) {
     console.error(
       `spawn-brother: the runtime-broker at ${base} did not answer (${(err as Error).message}). ` +

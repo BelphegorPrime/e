@@ -49,3 +49,16 @@ test('brokerBaseUrl: reads $E_BROKER_URL without a trailing slash; unset is an e
   );
   assert.throws(() => brokerBaseUrl({}), /\$E_BROKER_URL is not set/);
 });
+
+test('parseSpawnBrotherArgs: --merge <id> signals one sibling; the id is required, and only one', () => {
+  assert.deepEqual(parseSpawnBrotherArgs(['--merge', 'sib-001']), {
+    kind: 'merge',
+    id: 'sib-001',
+  });
+  assert.throws(() => parseSpawnBrotherArgs(['--merge']), /exactly one/);
+  assert.throws(
+    () => parseSpawnBrotherArgs(['--merge', 'a', 'b']),
+    /exactly one/
+  );
+  assert.match(SPAWN_BROTHER_USAGE, /--merge <id>/);
+});

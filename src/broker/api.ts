@@ -10,7 +10,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { DEPTH_LIMIT_MESSAGE } from './constants.js';
+import { DEPTH_LIMIT_MESSAGE, MERGE_SIGNAL_STATES } from './constants.js';
 import {
   countInFlight,
   ensureSpool,
@@ -19,10 +19,12 @@ import {
   nextRequestId,
   readRecord,
   readRunInfo,
+  signalMerge,
   writeRequest,
 } from './spool.js';
 import type {
   ErrorResponse,
+  MergeSignalAccepted,
   SiblingRecord,
   SpawnAccepted,
   SpawnRequestBody,
@@ -39,6 +41,7 @@ export interface BrokerApiOptions {
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
 const STATUS_ONE_RE = /^\/status\/([^/]+)$/;
+const MERGE_ONE_RE = /^\/merge\/([^/]+)$/;
 /** A spawn request is one agent name and one prompt; anything bigger is abuse. */
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -49,6 +52,7 @@ function sendJson(
   status: number,
   body:
     | SpawnAccepted
+    | MergeSignalAccepted
     | StatusResponse
     | SiblingRecord
     | ErrorResponse
@@ -192,6 +196,34 @@ export function createBrokerApi(options: BrokerApiOptions): Handler {
         });
       }
       return sendJson(res, 200, record);
+    }
+
+    // The parent's merge signal (ticket 07): "the files you named are clear"
+    // or "the conflict is resolved" - the host retries that sibling's
+    // merge-back. Only a merge that is waiting on the parent takes one.
+    const mergeOne = MERGE_ONE_RE.exec(url.pathname);
+    if (mergeOne) {
+      if (method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
+      const id = decodeSegment(mergeOne[1]);
+      const record =
+        id !== null && isRequestId(id) ? readRecord(spoolDir, id) : undefined;
+      if (!record || id === null) {
+        return sendJson(res, 404, {
+          error: `Unknown sibling "${id ?? mergeOne[1]}".`,
+        });
+      }
+      const state = record.merge?.status;
+      if (state === undefined || !MERGE_SIGNAL_STATES.includes(state)) {
+        return sendJson(res, 409, {
+          error: `Nothing to retry for ${id}: its merge-back is ${state ?? 'not started'} (only ${MERGE_SIGNAL_STATES.join(' or ')} takes a signal).`,
+        });
+      }
+      signalMerge(spoolDir, id, now().toISOString());
+      return sendJson(res, 202, {
+        id,
+        status: 'merge-requested',
+        statusPath: `/status/${id}`,
+      });
     }
 
     return sendJson(res, 404, { error: 'Not found.' });

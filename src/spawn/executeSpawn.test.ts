@@ -68,6 +68,9 @@ class StubGit implements Git {
   merge(): MergeOutcome {
     return { status: 'merged' };
   }
+  mergeInProgress(): boolean {
+    return false;
+  }
 }
 
 const harness: Harness = {

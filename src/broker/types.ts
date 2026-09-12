@@ -20,6 +20,34 @@ export interface SpawnRequest extends SpawnRequestBody {
   requestedAt: string;
 }
 
+/**
+ * How far the host got folding a finished sibling's branch back into the
+ * parent worktree (the **merge-back** of ADR-0013, ticket 07). Written into
+ * the sibling's status once it has exited, and updated on every retry.
+ */
+export type MergeBackStatus =
+  /** A merge commit landed; the sibling's files are in the parent worktree. */
+  | 'merged'
+  /** The branch added nothing beyond the parent's checkpoint; nothing to merge. */
+  | 'up-to-date'
+  /** In progress with conflict markers in `files`; the parent resolves them and signals. */
+  | 'conflict'
+  /** Not started: the parent's edits to `files` were in the way; the parent clears them and signals. */
+  | 'held'
+  /** Git refused for another reason (`reason`); no retry will help. */
+  | 'failed'
+  /** Not attempted: the sibling failed or exited non-zero (`reason`). */
+  | 'skipped';
+
+/** The merge-back of one sibling, as the host reports it in the status. */
+export interface MergeBack {
+  status: MergeBackStatus;
+  /** `conflict`: the files carrying markers; `held`: the files the parent must clear first. */
+  files?: string[];
+  /** `held` / `failed` / `skipped`: why, in one sentence for the agent. */
+  reason?: string;
+}
+
 /** What the host writes back (`status/<id>.json`) as it handles a request. */
 export interface SiblingStatusPatch {
   status: SiblingState;
@@ -29,8 +57,20 @@ export interface SiblingStatusPatch {
   exitCode?: number;
   /** Why the sibling failed, when it did. */
   error?: string;
+  /** The merge-back into the parent worktree, once the sibling has exited. */
+  merge?: MergeBack;
+  /** Where the parent agent reads the sibling's report, relative to its worktree (`e-runs/<id>/report.md`). */
+  report?: string;
   /** ISO timestamp of the last host update. */
   updatedAt: string;
+}
+
+/** `202` body of `POST /merge/<id>`: the parent's signal is spooled for the host. */
+export interface MergeSignalAccepted {
+  id: string;
+  status: 'merge-requested';
+  /** Where to poll for the retried merge-back: `/status/<id>`. */
+  statusPath: string;
 }
 
 /** A request merged with whatever status the host has written for it. */

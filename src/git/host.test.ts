@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HostGit } from './host.js';
+import { HostGit, overwrittenPaths } from './host.js';
 import { git, initRepo } from './host.testSupport.js';
 import { buildRunIndex } from '../runs/runIndex.js';
 
@@ -498,7 +498,7 @@ test('HostGit.merge refuses while a previous merge is still in progress, leaving
   }
 });
 
-test('HostGit.merge throws, touching nothing, when local changes would be overwritten', () => {
+test('HostGit.merge reports refused with the file in the way, touching nothing, when local changes would be overwritten', () => {
   const { repo, worktree } = seedMergeRepo();
   try {
     cutBranch(repo, sibling, {
@@ -512,10 +512,10 @@ test('HostGit.merge throws, touching nothing, when local changes would be overwr
     );
     const before = git(worktree, 'rev-parse', 'HEAD');
 
-    assert.throws(
-      () => new HostGit().merge(worktree, sibling),
-      /git failed \(merge e\/demo\/sibling-1 into .*\): .*(overwritten|Please commit)/s
-    );
+    assert.deepEqual(new HostGit().merge(worktree, sibling), {
+      status: 'refused',
+      files: ['base.txt'],
+    });
     assert.equal(
       fs.readFileSync(path.join(worktree, 'base.txt'), 'utf8'),
       'uncommitted parent edit\n'
@@ -527,7 +527,7 @@ test('HostGit.merge throws, touching nothing, when local changes would be overwr
   }
 });
 
-test('HostGit.merge (--no-ff) also refuses a staged change in an unrelated file', () => {
+test('HostGit.merge (--no-ff) also refuses a staged change in an unrelated file, naming it', () => {
   const { repo, worktree } = seedMergeRepo();
   try {
     cutBranch(repo, sibling, {
@@ -540,12 +540,95 @@ test('HostGit.merge (--no-ff) also refuses a staged change in an unrelated file'
     fs.writeFileSync(path.join(worktree, 'unrelated.txt'), 'staged\n');
     git(worktree, 'add', 'unrelated.txt');
 
-    assert.throws(
-      () => new HostGit().merge(worktree, sibling),
-      /git failed \(merge/
-    );
+    assert.deepEqual(new HostGit().merge(worktree, sibling), {
+      status: 'refused',
+      files: ['unrelated.txt'],
+    });
     assert.equal(mergeInProgress(worktree), false);
     assert.equal(fs.existsSync(path.join(worktree, 'sibling.txt')), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.merge refuses over an untracked file the merge would overwrite, naming it too', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    cutBranch(repo, sibling, {
+      files: { 'sibling.txt': 'theirs\n' },
+      message: 'sibling work',
+    });
+    fs.writeFileSync(path.join(worktree, 'sibling.txt'), 'mine, untracked\n');
+
+    assert.deepEqual(new HostGit().merge(worktree, sibling), {
+      status: 'refused',
+      files: ['sibling.txt'],
+    });
+    assert.equal(
+      fs.readFileSync(path.join(worktree, 'sibling.txt'), 'utf8'),
+      'mine, untracked\n'
+    );
+    assert.equal(mergeInProgress(worktree), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('overwrittenPaths: every indented path under both "would be overwritten" blocks, nothing else', () => {
+  const stderr = [
+    'error: Your local changes to the following files would be overwritten by merge:',
+    '\tbase.txt',
+    '\tdir/with space.txt',
+    'Please commit your changes or stash them before you merge.',
+    'error: The following untracked working tree files would be overwritten by merge:',
+    '  untracked.txt',
+    'Please move or remove them before you merge.',
+    'Aborting',
+    'Merge with strategy ort failed.',
+  ].join('\n');
+  assert.deepEqual(overwrittenPaths(stderr), [
+    'base.txt',
+    'dir/with space.txt',
+    'untracked.txt',
+  ]);
+  assert.deepEqual(overwrittenPaths('fatal: not something we can merge'), []);
+  assert.deepEqual(
+    overwrittenPaths(
+      'fatal: You have not concluded your merge (MERGE_HEAD exists).'
+    ),
+    []
+  );
+});
+
+test('HostGit.mergeInProgress is true from a conflict until commitAll concludes it as the merge commit', () => {
+  const { repo, worktree } = seedMergeRepo();
+  try {
+    cutBranch(repo, sibling, {
+      files: { 'base.txt': 'sibling version\n' },
+      message: 'sibling edit',
+    });
+    fs.writeFileSync(path.join(worktree, 'base.txt'), 'parent version\n');
+    git(worktree, 'commit', '-q', '-am', 'parent edit');
+    const host = new HostGit();
+    assert.equal(host.mergeInProgress(worktree), false);
+
+    assert.equal(host.merge(worktree, sibling).status, 'conflict');
+    assert.equal(host.mergeInProgress(worktree), true);
+
+    // The agent resolves the markers by hand; the host concludes the merge
+    // the way it commits everything else - and that commit has two parents.
+    fs.writeFileSync(path.join(worktree, 'base.txt'), 'both versions\n');
+    host.commitAll(worktree, 'merge back sibling');
+    assert.equal(host.mergeInProgress(worktree), false);
+    assert.equal(git(worktree, 'rev-list', '--merges', '--count', 'HEAD'), '1');
+    assert.equal(
+      git(worktree, 'log', '-1', '--format=%s'),
+      'merge back sibling'
+    );
+    assert.equal(
+      git(worktree, 'log', '-1', '--format=%P').split(' ').length,
+      2
+    );
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

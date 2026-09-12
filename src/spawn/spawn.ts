@@ -41,6 +41,8 @@ import { localStack } from '../runtime/stack.js';
 
 import { log } from '../utils/log.js';
 import { env } from '../utils/env.js';
+import { siblingSummaryLine } from '../runs/runSiblings.js';
+import { mergeLanded } from '../runs/runMergeBack.js';
 
 /** The parsed `e spawn` CLI options, as Commander hands them to the action. */
 export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
@@ -415,6 +417,12 @@ export function registerSpawnCommand(program: Command): void {
           }
           if (result.pullRequestUrl) {
             log.success(`Pull request: ${result.pullRequestUrl}`);
+          }
+          // Siblings this run requested and how their work came back (ticket 07).
+          for (const sibling of result.siblings ?? []) {
+            const line = siblingSummaryLine(sibling);
+            if (mergeLanded(sibling.merge)) log.info(line);
+            else log.warn(line);
           }
           if (result.pullRequestWarning) {
             log.warn(`Warning: ${result.pullRequestWarning}`);

@@ -33,7 +33,7 @@ import {
   DEFAULT_SIBLING_READINESS,
   SiblingConsumer,
   type SiblingLauncher,
-  type SiblingMergeResult,
+  type SiblingOutcome,
 } from './runSiblings.js';
 import {
   brokerSidecarSpec,
@@ -168,8 +168,11 @@ export interface RunSpawnResult {
   pushWarning?: string;
   pullRequestUrl?: string;
   pullRequestWarning?: string;
-  /** Sibling runs merged back into this parent's worktree (ticket 07). */
-  mergedSiblings?: SiblingMergeResult[];
+  /**
+   * For a run with a broker: every sibling it requested, with how its work
+   * reached this run's worktree (the merge-back of ticket 07).
+   */
+  siblings?: SiblingOutcome[];
   error?: string;
 }
 
@@ -179,6 +182,14 @@ export interface RunSpawnResult {
  * sibling branches from. A clean parent needs no commit; its tip is the base.
  */
 function checkpointParent(git: Git, parent: ParentRun, slug: string): string {
+  // `commitAll` on a worktree with `MERGE_HEAD` set would conclude the
+  // merge-back in progress there, markers and all: the parent has a conflict
+  // to resolve and signal before it can spawn again.
+  if (git.mergeInProgress(parent.worktreePath)) {
+    throw new Error(
+      `Could not checkpoint ${parent.branch} before spawning ${slug}: a merge-back is in progress in the parent worktree; resolve its conflict and signal --merge first`
+    );
+  }
   if (git.isDirty(parent.worktreePath)) {
     try {
       git.commitAll(
@@ -231,8 +242,7 @@ export async function runSpawn(
   const scratch: Array<() => void> = [];
   // The consumer of sibling requests and its spool, for a run that has a broker.
   let consumer: SiblingConsumer | undefined;
-  /** Merge-back results, populated after the consumer stops (ticket 07). */
-  let mergedSiblings: SiblingMergeResult[] = [];
+  let consumerStopped = false;
   let brokerSpool: string | undefined;
   const role = params.role ?? 'parent';
   const maxSiblings = params.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
@@ -419,7 +429,6 @@ export async function runSpawn(
         launch: params.siblingHost!.launch,
         sleep,
         git: deps.git,
-        worktreesDir: worktreesDir,
       });
       consumer.start();
     }
@@ -442,12 +451,11 @@ export async function runSpawn(
     ]);
 
     // The agent is done: stop taking sibling requests and wait for the
-    // siblings in flight, so nothing of theirs outlives the run's network.
-    // Merge-back results are now stable (siblings have exited and been folded
-    // in), so capture them before the worktree may be torn down.
+    // siblings in flight (each is merged back as it exits), so nothing of
+    // theirs outlives the run's network.
     if (consumer) {
       await consumer.stop();
-      mergedSiblings = [...consumer.results];
+      consumerStopped = true;
     }
 
     // Commit when the run exited 0 and produced changes; push only a run of
@@ -457,8 +465,24 @@ export async function runSpawn(
     let pushWarning: string | undefined;
     if (exitCode === 0) {
       if (deps.git.isDirty(worktreePath)) {
+        // With a merge-back conflict still in progress this commit concludes
+        // it as the merge commit - with whatever the agent left in the files.
         deps.git.commitAll(worktreePath, `e: run output for ${branch}`);
         captured = true;
+      }
+      // The tree is quiet and committed: the last retry of every merge-back
+      // held over files in flight (ticket 07), before the branch is pushed so
+      // the merge commits travel with it. Each retry rewrites its report in
+      // the worktree, so what it left is committed too.
+      if (consumer) {
+        consumer.finish();
+        if (deps.git.isDirty(worktreePath)) {
+          deps.git.commitAll(
+            worktreePath,
+            `e: merge-back reports for ${branch}`
+          );
+          captured = true;
+        }
       }
       if (
         !params.sibling &&
@@ -471,15 +495,6 @@ export async function runSpawn(
           pushWarning = `could not push ${branch}: ${(err as Error).message}`;
         }
       }
-    }
-
-    // Retry the sibling merges held while the parent's WIP stood in the way:
-    // the commit above (or the run's end without one) is the clear signal
-    // that let a merge git previously refused land (ticket 07). Conflicts are
-    // not touched - they resolve only by the parent's own hand.
-    consumer?.retryHeld();
-    if (consumer) {
-      mergedSiblings = [...consumer.results];
     }
 
     // Open a PR/MR when a platform is configured and the branch was pushed.
@@ -504,13 +519,6 @@ export async function runSpawn(
 
     report({ status: 'done', branch, exitCode });
 
-    // Stop the sibling consumer so in-flight siblings are waited for and
-    // their merge-back results are stable before the run's result is returned.
-    if (consumer) {
-      await consumer.stop();
-      mergedSiblings = [...consumer.results];
-    }
-
     return {
       ran: true,
       exitCode,
@@ -521,7 +529,7 @@ export async function runSpawn(
       pushWarning,
       pullRequestUrl,
       pullRequestWarning,
-      mergedSiblings,
+      ...(consumer ? { siblings: consumer.outcomes } : {}),
     };
   } catch (err) {
     report({ status: 'failed', branch, error: (err as Error).message });
@@ -529,10 +537,7 @@ export async function runSpawn(
   } finally {
     // Best-effort teardown: never mask a result or an aborting error.
     try {
-      if (consumer) {
-        await consumer.stop();
-        mergedSiblings = [...consumer.results];
-      }
+      if (consumer && !consumerStopped) await consumer.stop();
       if (startedSpecs.length > 0) {
         await sidecarOrchestrator.stopAll(startedSpecs);
       }

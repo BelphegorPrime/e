@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   countInFlight,
   ensureSpool,
+  hasMergeSignal,
   isRequestId,
   listRecords,
   listRequestIds,
@@ -13,6 +14,8 @@ import {
   readRecord,
   readRunInfo,
   readStatus,
+  signalMerge,
+  takeMergeSignal,
   writeRequest,
   writeRunInfo,
   writeStatus,
@@ -176,5 +179,29 @@ test('countInFlight counts the requests in the given states', () => {
     assert.equal(countInFlight(root, ['requested', 'starting', 'running']), 2);
     assert.equal(countInFlight(root, ['starting', 'running']), 1);
     assert.equal(countInFlight(root, ['done']), 1);
+  });
+});
+
+test('merge signals (ticket 07): written once, seen, taken exactly once; a malformed id is refused', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    assert.equal(hasMergeSignal(root, 'sib-001'), false);
+    assert.equal(takeMergeSignal(root, 'sib-001'), false);
+
+    signalMerge(root, 'sib-001', '2026-09-12T10:00:00.000Z');
+    assert.equal(hasMergeSignal(root, 'sib-001'), true);
+    assert.deepEqual(
+      JSON.parse(
+        fs.readFileSync(path.join(root, 'signals', 'sib-001.json'), 'utf8')
+      ),
+      { id: 'sib-001', signaledAt: '2026-09-12T10:00:00.000Z' }
+    );
+    // Taking consumes it: the host retries once per signal.
+    assert.equal(takeMergeSignal(root, 'sib-001'), true);
+    assert.equal(hasMergeSignal(root, 'sib-001'), false);
+    assert.equal(takeMergeSignal(root, 'sib-001'), false);
+
+    assert.throws(() => signalMerge(root, '../x', 't'), /Invalid request id/);
+    assert.equal(hasMergeSignal(root, '../x'), false);
   });
 });

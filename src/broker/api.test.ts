@@ -5,8 +5,18 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createBrokerApi, parseSpawnBody } from './api.js';
-import { readRequest, writeRunInfo, writeStatus } from './spool.js';
-import type { SiblingRecord, SpawnAccepted, StatusResponse } from './types.js';
+import {
+  hasMergeSignal,
+  readRequest,
+  writeRunInfo,
+  writeStatus,
+} from './spool.js';
+import type {
+  MergeSignalAccepted,
+  SiblingRecord,
+  SpawnAccepted,
+  StatusResponse,
+} from './types.js';
 
 interface Fixture {
   url: string;
@@ -262,6 +272,81 @@ test('broker api: the fan-out cap counts requests in flight and frees up when on
     );
     assert.equal(third.status, 202);
     assert.equal((await json<SpawnAccepted>(third)).id, 'sib-002');
+  } finally {
+    await broker.close();
+  }
+});
+
+test('broker api: POST /merge/<id> spools the parent signal for a held or conflicted merge-back only', async () => {
+  const broker = await startBroker();
+  try {
+    await post(broker.url, JSON.stringify({ agent: 'a', prompt: 'one' }));
+    await post(broker.url, JSON.stringify({ agent: 'b', prompt: 'two' }));
+    await post(broker.url, JSON.stringify({ agent: 'c', prompt: 'three' }));
+    const signal = (id: string) =>
+      fetch(`${broker.url}/merge/${id}`, { method: 'POST' });
+
+    // Unknown, malformed, wrong method.
+    assert.equal((await signal('sib-999')).status, 404);
+    assert.equal((await signal('..%2Fx')).status, 404);
+    assert.equal(
+      (await fetch(`${broker.url}/merge/sib-001`, { method: 'GET' })).status,
+      405
+    );
+
+    // Nothing to retry yet (still running), nor once merged.
+    writeStatus(broker.spoolDir, 'sib-001', {
+      status: 'running',
+      branch: 'e/a/one-1',
+      updatedAt: 't',
+    });
+    const running = await signal('sib-001');
+    assert.equal(running.status, 409);
+    assert.match(
+      (await json<{ error: string }>(running)).error,
+      /Nothing to retry for sib-001: its merge-back is not started/
+    );
+    writeStatus(broker.spoolDir, 'sib-001', {
+      status: 'done',
+      branch: 'e/a/one-1',
+      exitCode: 0,
+      merge: { status: 'merged' },
+      updatedAt: 't',
+    });
+    assert.equal((await signal('sib-001')).status, 409);
+    assert.equal(hasMergeSignal(broker.spoolDir, 'sib-001'), false);
+
+    // Held over files in the way, or in progress with conflict markers: the
+    // signal is spooled and the caller is pointed back at the status.
+    writeStatus(broker.spoolDir, 'sib-002', {
+      status: 'done',
+      branch: 'e/b/two-1',
+      exitCode: 0,
+      merge: { status: 'held', files: ['src/a.ts'], reason: 'in flight' },
+      updatedAt: 't',
+    });
+    writeStatus(broker.spoolDir, 'sib-003', {
+      status: 'done',
+      branch: 'e/c/three-1',
+      exitCode: 0,
+      merge: { status: 'conflict', files: ['src/b.ts'] },
+      updatedAt: 't',
+    });
+    const held = await signal('sib-002');
+    assert.equal(held.status, 202);
+    assert.deepEqual(await json<MergeSignalAccepted>(held), {
+      id: 'sib-002',
+      status: 'merge-requested',
+      statusPath: '/status/sib-002',
+    });
+    assert.equal((await signal('sib-003')).status, 202);
+    assert.equal(hasMergeSignal(broker.spoolDir, 'sib-002'), true);
+    assert.equal(hasMergeSignal(broker.spoolDir, 'sib-003'), true);
+    // The merge state rides the status the agent polls.
+    const record = await json<SiblingRecord>(
+      await fetch(`${broker.url}/status/sib-003`)
+    );
+    assert.deepEqual(record.merge, { status: 'conflict', files: ['src/b.ts'] });
   } finally {
     await broker.close();
   }

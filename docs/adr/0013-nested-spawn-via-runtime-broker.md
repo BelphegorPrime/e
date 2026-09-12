@@ -42,6 +42,22 @@ An agent inside a run can request **sibling** runs (e.g. "I'll do A, spawn broth
 - Remaining overlap (in-flight between host commit and merge) → merge held pending; parent told to clear file(s) X; after signal host retries. No edit loss.
 - Delivery to parent: files land in worktree + report at `e-runs/<child>/report.md`; `spawn-brother` skill tells agent to poll after request.
 
+**Amendment (2026-09-12, ticket 07):** implemented as described, with the
+"signal" made concrete: the parent's merge signal is one more broker route,
+`POST /merge/<id>` (`spawn-brother.mjs --merge <id>`), spooled as
+`signals/<id>.json` and taken by the host's consumer. The "fold" is a
+checkpoint commit of the parent's WIP on its branch immediately before the
+merge commit (with `--no-ff` any staged change would make git refuse, so the
+checkpoint is the last index write), not a single squashed commit. A refusal
+over files in flight is a `Git.merge` outcome (`refused`, the paths git
+named), reported as `merge.status: held` with those files; a conflict is
+`conflict` with the marked files, concluded by the host's `commitAll` on the
+signal. `<child>` in the report path is the request id (`sib-NNN`). The
+merge state travels in the sibling's status too (`merge`, `report`), so
+`GET /status` shows it. The parent run's end retries held merges once more
+after the parent's own output commit (which concludes an open conflict with
+whatever the agent left).
+
 ### Depth cap (no grandchildren)
 
 - Children run at level 2 only. A child's `spawn-brother` request is honored by the host broker as a sibling of that child (not a child of a child), depth enforced host-side. Children inherit parent run's network and broker; no new sidecars per child.
