@@ -29,6 +29,7 @@ import {
 import { TerminalRequestError, TerminalSessions } from './terminalSessions.js';
 import { attachTerminalWebSocket } from './terminalSocket.js';
 import { selfInvocation } from '../utils/selfInvoke.js';
+import { readConfig } from '../store/config.js';
 
 const serveStatePath = path.join(eBaseDir(), 'serve.json');
 
@@ -236,6 +237,7 @@ function trackDetachedServer(server: Server, host: string, port: number): void {
 /** Dependency injection point for the BFF's live views (ADR-0010). */
 export interface ServeAppDeps {
   /** Base URL of the local llama.cpp router, e.g. `http://127.0.0.1:9931`. */
+  // TODO: Check if we need this property at all. We now have more ai runtimes.
   llamaBaseUrl?: string;
   /** Base URL of the egress container API (ADR-0012), e.g. `http://127.0.0.1:20129`. */
   egressApiUrl?: string;
@@ -289,6 +291,7 @@ export function createServeApp(
     terminal,
     listAgents = storeAgents,
   } = deps;
+
   const app = express();
   app.use('/api', express.json());
 
@@ -308,7 +311,21 @@ export function createServeApp(
 
   app.get('/api/agents', (_request, response) => {
     try {
-      response.json({ agents: listAgents() });
+      const root = findRoot();
+      const config = readConfig(root);
+
+      const agents = listAgents()
+        .map(agent => ({
+          ...agent,
+          default: agent.harness === config.defaultHarness,
+        }))
+        .sort((a, b) => {
+          if (a.default && !b.default) return -1;
+          if (!a.default && b.default) return 1;
+          return 0;
+        });
+
+      response.json({ agents });
     } catch (error) {
       response.status(500).json({ error: errorMessage(error) });
     }
