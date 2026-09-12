@@ -698,6 +698,11 @@ test('terminal routes list agents, start, inspect and remove sessions', async ()
     engine: fakeEngine({ containers: [] }),
     spawnChild: spawner.spawn,
     pollIntervalMs: 1000,
+    listSkills: () => ['caveman', 'web-search'],
+    listMcpServers: () => [
+      { name: 'everything', transport: 'container' },
+      { name: 'hosted', transport: 'remote' },
+    ],
   });
   const server = await startServeServer(
     createServeApp(uiDirectory, {
@@ -762,12 +767,51 @@ test('terminal routes list agents, start, inspect and remove sessions', async ()
       'fix-login',
     ]);
 
+    const options = await fetch(`${baseUrl}/api/terminal/options`);
+    assert.deepEqual(await options.json(), {
+      skills: ['caveman', 'web-search'],
+      mcp: [
+        { name: 'everything', transport: 'container' },
+        { name: 'hosted', transport: 'remote' },
+      ],
+    });
+
+    const advanced = await fetch(`${baseUrl}/api/terminal/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'smart-pi',
+        name: 'with-tools',
+        skills: ['caveman'],
+        mcp: ['everything'],
+      }),
+    });
+    assert.equal(advanced.status, 201);
+    assert.deepEqual(spawner.calls[1], [
+      'spawn',
+      'smart-pi',
+      '--name',
+      'with-tools',
+      '--skill',
+      'caveman',
+      '--mcp',
+      'everything',
+    ]);
+
+    const rejected = await fetch(`${baseUrl}/api/terminal/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'smart-pi',
+        skills: ['ghost-skill'],
+      }),
+    });
+    assert.equal(rejected.status, 400);
+
     const list = await fetch(`${baseUrl}/api/terminal/sessions`);
     const listed = (await list.json()) as { sessions: Array<{ id: string }> };
-    assert.deepEqual(
-      listed.sessions.map(entry => entry.id),
-      [session.id]
-    );
+    assert.equal(listed.sessions.length, 2);
+    assert.ok(listed.sessions.map(entry => entry.id).includes(session.id));
 
     const one = await fetch(`${baseUrl}/api/terminal/sessions/${session.id}`);
     assert.equal(one.status, 200);
@@ -786,6 +830,18 @@ test('terminal routes list agents, start, inspect and remove sessions', async ()
       method: 'DELETE',
     });
     assert.equal(gone.status, 204);
+    spawner.children[1].exit(0);
+    await new Promise(resolve => setImmediate(resolve));
+    const advancedId = (
+      (await advanced.json()) as {
+        session: { id: string };
+      }
+    ).session.id;
+    const advancedGone = await fetch(
+      `${baseUrl}/api/terminal/sessions/${advancedId}`,
+      { method: 'DELETE' }
+    );
+    assert.equal(advancedGone.status, 204);
     const after = await fetch(`${baseUrl}/api/terminal/sessions`);
     assert.deepEqual(await after.json(), { sessions: [] });
   } finally {

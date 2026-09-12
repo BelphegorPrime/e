@@ -69,6 +69,85 @@ test('start spawns a headless `e spawn` with a generated run name', () => {
   sessions.dispose();
 });
 
+test('start passes selected skills and MCP servers as spawn flags', () => {
+  const spawner = scriptedSpawner();
+  const sessions = new TerminalSessions({
+    engine: fakeEngine({}),
+    spawnChild: spawner.spawn,
+    listSkills: () => ['caveman', 'web-search'],
+    listMcpServers: () => [
+      { name: 'everything', transport: 'container' },
+      { name: 'hosted', transport: 'remote' },
+    ],
+  });
+  sessions.start({
+    agent: 'pi',
+    name: 'demo',
+    skills: ['caveman', 'web-search'],
+    mcp: ['everything', 'hosted'],
+  });
+  assert.deepEqual(spawner.calls, [
+    [
+      'spawn',
+      'pi',
+      '--name',
+      'demo',
+      '--skill',
+      'caveman',
+      '--skill',
+      'web-search',
+      '--mcp',
+      'everything',
+      '--mcp',
+      'hosted',
+    ],
+  ]);
+  sessions.dispose();
+});
+
+test('start refuses skills or MCP servers the store does not know', () => {
+  const spawner = scriptedSpawner();
+  const sessions = new TerminalSessions({
+    engine: fakeEngine({}),
+    spawnChild: spawner.spawn,
+    listSkills: () => ['caveman'],
+    listMcpServers: () => [{ name: 'everything', transport: 'container' }],
+  });
+  assert.throws(
+    () => sessions.start({ agent: 'pi', skills: ['ghost'] }),
+    /Unknown skill "ghost"/
+  );
+  assert.throws(
+    () => sessions.start({ agent: 'pi', mcp: ['ghost'] }),
+    /Unknown MCP server "ghost"/
+  );
+  assert.throws(
+    () => sessions.start({ agent: 'pi', skills: ['../evil'] }),
+    /Invalid skill name/
+  );
+  assert.equal(spawner.calls.length, 0);
+  sessions.dispose();
+});
+
+test('options lists the store skills and MCP servers with their transport', () => {
+  const sessions = new TerminalSessions({
+    engine: fakeEngine({}),
+    listSkills: () => ['caveman'],
+    listMcpServers: () => [
+      { name: 'everything', transport: 'container' },
+      { name: 'hosted', transport: 'remote' },
+    ],
+  });
+  assert.deepEqual(sessions.options(), {
+    skills: ['caveman'],
+    mcp: [
+      { name: 'everything', transport: 'container' },
+      { name: 'hosted', transport: 'remote' },
+    ],
+  });
+  sessions.dispose();
+});
+
 test('child output streams to clients with CRLF and replays to late joiners', async t => {
   const spawner = scriptedSpawner();
   const sessions = new TerminalSessions({

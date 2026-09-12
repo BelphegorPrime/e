@@ -7,6 +7,18 @@ export interface AgentSummary {
   default: boolean;
 }
 
+/** One selectable MCP server for a run; `container` servers run as sidecars. */
+export interface McpOption {
+  name: string;
+  transport: 'container' | 'remote';
+}
+
+/** The store's skills and MCP servers, for the terminal's advanced run options. */
+export interface TerminalOptions {
+  skills: string[];
+  mcp: McpOption[];
+}
+
 /** Lifecycle of a browser-started run (ADR-0014); mirrors the BFF type. */
 export type TerminalPhase = 'starting' | 'attached' | 'exited';
 
@@ -50,6 +62,10 @@ export async function fetchAgents(): Promise<AgentSummary[]> {
   return body.agents;
 }
 
+export async function fetchTerminalOptions(): Promise<TerminalOptions> {
+  return readJson<TerminalOptions>(await fetch('/api/terminal/options'));
+}
+
 export async function fetchSessions(): Promise<TerminalSessionInfo[]> {
   const body = await readJson<{ sessions: TerminalSessionInfo[] }>(
     await fetch('/api/terminal/sessions')
@@ -59,13 +75,18 @@ export async function fetchSessions(): Promise<TerminalSessionInfo[]> {
 
 export async function createSession(
   agent: string,
-  name?: string
+  name?: string,
+  options?: { skills?: string[]; mcp?: string[] }
 ): Promise<TerminalSessionInfo> {
+  const payload: Record<string, unknown> = { agent };
+  if (name) payload.name = name;
+  if (options?.skills?.length) payload.skills = options.skills;
+  if (options?.mcp?.length) payload.mcp = options.mcp;
   const body = await readJson<{ session: TerminalSessionInfo }>(
     await fetch('/api/terminal/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(name ? { agent, name } : { agent }),
+      body: JSON.stringify(payload),
     })
   );
   return body.session;
