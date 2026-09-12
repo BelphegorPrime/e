@@ -117,6 +117,11 @@ export function egressDir(root?: string): string {
   return path.join(eBaseDir(root), 'egress');
 }
 
+/** Directory holding the runtime-broker's build context (`Dockerfile` + bundled server, ADR-0013). */
+export function brokerDir(root?: string): string {
+  return path.join(eBaseDir(root), 'broker');
+}
+
 /** Absolute path to the store's egress blacklist file (host-editable, never clobbered). */
 export function egressBlacklistPath(root?: string): string {
   return path.join(eBaseDir(root), 'egress-blacklist');

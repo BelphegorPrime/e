@@ -11,6 +11,7 @@ import {
 import { HARNESSES } from '../harness/index.js';
 import { GLOBAL_BASE_URL_ENV } from '../harness/renderEnvTemplate.js';
 import type { McpServer } from '../mcp/index.js';
+import { defaultBrokerPlan } from '../runs/runBroker.js';
 
 function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
   return {
@@ -408,5 +409,46 @@ test('validateSpawn: a user -e on a role-contract variable is refused up front',
   // Other keys, and the internal E_SPAWN_ROLE marker, are not the contract.
   assert.doesNotThrow(() =>
     validateSpawn(facts({ env: ['FOO=1', 'E_SPAWN_ROLE=child'] }))
+  );
+});
+
+// The runtime-broker (ADR-0013) rides along exactly when the run carries the
+// spawn-brother skill - the skill is how the agent learns to call it.
+test('planSpawn: no spawn-brother skill, no broker sidecar', () => {
+  assert.equal(planSpawn(facts({})).broker, undefined);
+  assert.equal(
+    planSpawn(facts({ perRunSkills: ['web-search'] })).broker,
+    undefined
+  );
+});
+
+test('planSpawn: the spawn-brother skill, per-run or baked, plans the broker sidecar', () => {
+  const expected = defaultBrokerPlan();
+  assert.deepEqual(
+    planSpawn(facts({ perRunSkills: ['spawn-brother'] })).broker,
+    expected
+  );
+  assert.deepEqual(
+    planSpawn(facts({ bakedSkills: ['spawn-brother'] })).broker,
+    expected
+  );
+  // The URL the agent gets names that same port.
+  assert.ok(
+    planSpawn(facts({ perRunSkills: ['spawn-brother'] })).agentEnv.includes(
+      'E_BROKER_URL=http://runtime-broker:20130'
+    )
+  );
+});
+
+test("planSpawn: a child run gets no broker of its own - it inherits the parent's (ADR-0013)", () => {
+  assert.equal(
+    planSpawn(facts({ perRunSkills: ['spawn-brother'], role: 'child' })).broker,
+    undefined
+  );
+  // The URL still names the (parent's) broker.
+  assert.ok(
+    planSpawn(
+      facts({ perRunSkills: ['spawn-brother'], role: 'child' })
+    ).agentEnv.includes('E_BROKER_URL=http://runtime-broker:20130')
   );
 });

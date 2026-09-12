@@ -80,6 +80,8 @@ export interface SidecarSpec {
   healthcheck?: string[];
   /** Env files delivering the sidecar's own credentials (never the agent's). */
   envFile?: string[];
+  /** Bind mounts (the runtime-broker's spool; MCP sidecars mount nothing). */
+  volumes?: Mount[];
 }
 
 /**
@@ -188,6 +190,7 @@ export function sidecarRunArgs(spec: SidecarSpec): string[] {
     args.push('--network', spec.network, '--network-alias', spec.alias);
   }
   for (const f of spec.envFile ?? []) args.push('--env-file', f);
+  for (const v of spec.volumes ?? []) args.push('-v', formatMount(v));
   args.push(spec.image);
   return args;
 }

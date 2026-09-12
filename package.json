@@ -17,7 +17,7 @@
     "test:coverage": "npm run build:ts && node --test --experimental-test-coverage \"dist/**/*.test.js\"",
     "build:ui": "cd ui && webpack --config webpack.config.mjs --mode production",
     "dev:ui": "cd ui && webpack serve --config webpack.config.mjs --mode development",
-    "build:ts": "npm run build:egress-api && tsc",
+    "build:ts": "npm run build:egress-api && npm run build:broker && tsc",
     "prebuild:bin": "node scripts/ensure-ui-assets.mjs",
     "prebuild:version": "node scripts/generate-version.mjs",
     "build:bin": "npm run prebuild:version && npm run build:ts && pkg . --sea --output ./command/e --fallback-to-source && node scripts/restore-version.mjs",
@@ -29,7 +29,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "build:egress-api": "node scripts/build-egress-api.mjs"
+    "build:egress-api": "node scripts/build-egress-api.mjs",
+    "build:broker": "node scripts/build-broker.mjs"
   },
   "pkg": {
     "assets": [

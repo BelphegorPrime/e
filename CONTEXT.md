@@ -17,7 +17,7 @@ The model endpoint an Agent talks to, defined inline in the Agent (not a standal
 _Avoid_: model, backend, endpoint (informal)
 
 **Sidecar**:
-An auxiliary container composed alongside the agent container in a Run and chosen at spawn time - the running form of a `container`-transport MCP server (see below), built from its own Dockerfile under the Store's `mcp/` directory. The agent container is the primary; Sidecars support it over a private per-run network and are torn down with it.
+An auxiliary container composed alongside the agent container in a Run and chosen at spawn time - the running form of a `container`-transport MCP server (see below), built from its own Dockerfile under the Store's `mcp/` directory, or the Runtime-broker (below), built from `.e/broker/`. The agent container is the primary; Sidecars support it over a private per-run network and are torn down with it.
 _Avoid_: service, plugin, addon
 
 **MCP server**:
@@ -28,10 +28,10 @@ _Avoid_: service, plugin
 A capability directory with `SKILL.md` manifest and resources. Located by walking up from the working directory (or `--dir`), falling back to home.
 _Avoid_: plugin, addon
 
-The next five terms are the vocabulary of ADR-0013 (proposed; only the run-role contract, ticket 01, is implemented so far):
+The next six terms are the vocabulary of ADR-0013 (proposed; implemented so far: the run-role contract of ticket 01 and the broker sidecar with its `spawn-brother` skill of ticket 02; the host side that executes sibling requests is not):
 
 **Runtime-broker**:
-A sidecar that owns the host container-runtime socket for a Run and exposes a host-local-only HTTP contract (e.g. spawn siblings) to agent containers over the run's private network - so nested spawn can happen without a runtime socket inside the agent sandbox (ADR-0013). The broker is **not** a generic root shell: it surfaces only declared contracts.
+A sidecar (image `e-broker`, build context `.e/broker/`, alias `runtime-broker`, port 20130) that exposes the sibling-spawn HTTP contract (`POST /spawn`, `GET /status`) to agent containers over the run's network, and nothing else. It holds **no** container-runtime socket and no credentials (ADR-0002): it spools each request as a file into the run's **spool**, a host-owned directory bind-mounted into it, and serves back the status the host writes there. The host `e` process stays the only party that runs containers or git (ADR-0013 as refined by ticket 02). Planned for a Run exactly when the Run carries the `spawn-brother` skill.
 **Sibling run**:
 A child run requested from inside a parent run via its runtime-broker. Siblings execute on the parent run's private network + lifecycle and share its worktree branch only through the host's checkpoint-before-spawn + merge-back protocol (ADR-0001, ADR-0013). Depth is capped: children may request siblings, never children of children.
 **Checkpoint**:
@@ -40,6 +40,8 @@ The host-side `git commit -a` of a parent worktree's WIP to its run branch immed
 The host-side merge of a sibling's branched work back into the parent worktree after the sibling exits. Delivered as a merge commit whose files are reflected in the parent's live `/workspace`; on conflict the host folds the parent's current WIP into the merge and reports conflict markers for the parent agent to resolve (ADR-0013). Never uses git from inside the container.
 **Run role**:
 A container's place in a Run's tree, `parent` or `child`, delivered as host-set env: `E_ROLE`, with `E_BROKER_URL` naming the runtime-broker endpoint (by alias `runtime-broker` on a private run network, on loopback in the shared egress namespace) - never an image layer or a marker file in the worktree (ADR-0013; `src/runs/runRole.ts`). The `e spawn` process learns the role it hands out from its internal `E_SPAWN_ROLE` marker; unset means `parent`.
+**Spool**:
+The host-owned directory of one Run (`<worktreesDir>/.broker/<runName>`) bind-mounted into its Runtime-broker at `/var/lib/e-broker`: `run.json` (the Run's identity, written by the host before the broker starts), `requests/<id>.json` (written by the broker for each `POST /spawn`), `status/<id>.json` (written by the host as it handles a request). The only channel between broker and host - no socket, no network from the host side; removed with the Run unless `--keep-worktree`.
 
 **Run**:
 A RunScratch + primary container + sidecars, the unit that executes an Agent. With the local stack present, agent and sidecars share the global `e-egress` network namespace (ADR-0011); otherwise sidecars sit on a private per-run network. The pure description of a run is a `SpawnPlan` (`src/spawn/spawnPlan.ts`); `runSpawn` (`src/runs/runSpawn.ts`) executes it. Container configuration is a `RunOptions` (below).

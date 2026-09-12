@@ -15,7 +15,11 @@ import {
 import { resolveHarness, HARNESSES } from '../harness/index.js';
 import { findAgent, isKnownTarget } from '../agent/index.js';
 import { parseDotenv } from '../utils/dotenv.js';
-import { resolveSkill, parseSkillList } from '../skill/index.js';
+import {
+  ensureShippedSkill,
+  resolveSkill,
+  parseSkillList,
+} from '../skill/index.js';
 import {
   readMcpServer,
   listMcpServerNames,
@@ -215,6 +219,8 @@ export function gatherSpawnFacts(
   const perRunSkills = parseSkillList(opts.skill ?? []);
   const bakedSkills = agent.skills ?? [];
   for (const name of new Set([...bakedSkills, ...perRunSkills])) {
+    // A shipped skill missing from an older store is seeded on the spot.
+    ensureShippedSkill(name, root);
     resolveSkill(name, root);
   }
 

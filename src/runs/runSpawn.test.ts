@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import type { Git, RunCommit, RunRef, WorktreeSpec } from '../git/index.js';
 import type {
@@ -19,6 +21,7 @@ import {
   type SidecarPlan,
 } from './runSpawn.js';
 import { slugify } from '../identity/slugify.js';
+import { defaultBrokerPlan } from './runBroker.js';
 
 /** A `Git` fake that records what the orchestrator asked it to do. */
 class FakeGit implements Git {
@@ -666,6 +669,7 @@ test('brings up the group in order: network → sidecar → probe → agent → 
     'createNetwork',
     'startSidecar',
     'probeTcp',
+    'isRunning',
     'run',
     'removeContainer',
     'removeNetwork',
@@ -848,4 +852,159 @@ test('a child run is launched with the child role named in its prompt', async ()
     launchPrompt('Fix the flaky test', 'child'),
   ]);
   assert.match(runtime.command?.[2] ?? '', /role in this run is "child"/);
+});
+
+// The runtime-broker (ADR-0013) is one more sidecar, with the host-owned spool
+// bind-mounted in. Its spool lives under the worktrees dir, so the tests give
+// each run a throwaway one.
+const brokerPlan = defaultBrokerPlan();
+
+function withWorktreesDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-run-broker-'));
+  return fn(dir).finally(() =>
+    fs.rmSync(dir, { recursive: true, force: true })
+  );
+}
+
+test('a planned broker starts as a sidecar on the run network with the spool mounted', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, runtime } = makeDeps();
+    const result = await runSpawn(
+      deps,
+      makeParams({ worktreesDir, broker: brokerPlan, readiness: fastReadiness })
+    );
+    assert.equal(result.ran, true);
+
+    const slug = slugify('Fix the flaky test');
+    const runName = `e-demo-${slug}-1`;
+    assert.deepEqual(runtime.networks, [`${runName}-net`]);
+    assert.equal(runtime.startedSidecars.length, 1);
+    const [spec] = runtime.startedSidecars;
+    assert.equal(spec.name, `${runName}-broker`);
+    assert.equal(spec.alias, 'runtime-broker');
+    assert.equal(spec.image, 'e-broker');
+    assert.equal(spec.port, 20130);
+    assert.equal(spec.network, `${runName}-net`);
+    assert.equal(spec.netns, undefined);
+    assert.equal(spec.envFile, undefined);
+    assert.deepEqual(spec.volumes, [
+      {
+        host: path.join(worktreesDir, '.broker', runName),
+        container: '/var/lib/e-broker',
+      },
+    ]);
+    // The agent joins the same network, so `runtime-broker` resolves for it.
+    assert.deepEqual(runtime.options?.networks, [`${runName}-net`]);
+    // Teardown: broker removed, network removed, spool gone.
+    assert.deepEqual(runtime.removedContainers, [`${runName}-broker`]);
+    assert.deepEqual(runtime.removedNetworks, [`${runName}-net`]);
+    assert.equal(fs.existsSync(path.join(worktreesDir, '.broker')), true);
+    assert.equal(
+      fs.existsSync(path.join(worktreesDir, '.broker', runName)),
+      false
+    );
+  });
+});
+
+test('the broker spool carries the run identity for GET /status; --keep-worktree keeps it', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps } = makeDeps();
+    await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        keepWorktree: true,
+      })
+    );
+    const slug = slugify('Fix the flaky test');
+    const spool = path.join(worktreesDir, '.broker', `e-demo-${slug}-1`);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(spool, 'run.json'), 'utf8')),
+      {
+        name: `e-demo-${slug}-1`,
+        branch: `e/demo/${slug}-1`,
+        agent: 'demo',
+        role: 'parent',
+      }
+    );
+    assert.ok(fs.statSync(path.join(spool, 'requests')).isDirectory());
+    assert.ok(fs.statSync(path.join(spool, 'status')).isDirectory());
+  });
+});
+
+test('with the local stack the broker shares the egress namespace like every sidecar', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, runtime } = makeDeps();
+    await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        runOptions: { rm: true, netns: 'e-egress' },
+      })
+    );
+    const [spec] = runtime.startedSidecars;
+    assert.equal(spec.netns, 'e-egress');
+    assert.equal(spec.network, undefined);
+    assert.deepEqual(runtime.networks, []);
+    // Readiness is probed on the namespace's loopback.
+    assert.ok(runtime.probedNetworks.includes('container:e-egress 127.0.0.1'));
+  });
+});
+
+test('a broker that never becomes ready fails the run before the agent starts', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, runtime } = makeDeps();
+    runtime.tcpScript['runtime-broker'] = [false];
+    const result = await runSpawn(
+      deps,
+      makeParams({ worktreesDir, broker: brokerPlan, readiness: fastReadiness })
+    );
+    assert.equal(result.ran, false);
+    assert.match(
+      result.error ?? '',
+      /Sidecar "runtime-broker" did not become ready/
+    );
+    assert.equal(runtime.ran, false);
+    assert.equal(fs.existsSync(path.join(worktreesDir, '.broker')), true);
+  });
+});
+
+test('a sidecar that dies right after passing the probe fails the run (a port taken in the shared namespace)', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, runtime } = makeDeps();
+    const slug = slugify('Fix the flaky test');
+    runtime.crashed.add(`e-demo-${slug}-1-broker`);
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        runOptions: { rm: true, netns: 'e-egress' },
+      })
+    );
+    assert.equal(result.ran, false);
+    assert.match(
+      result.error ?? '',
+      /Sidecar "runtime-broker" exited right after starting/
+    );
+    assert.equal(runtime.ran, false);
+    // Teardown still removes what was started.
+    assert.deepEqual(runtime.removedContainers, [`e-demo-${slug}-1-broker`]);
+  });
+});
+
+test('an MCP sidecar that never becomes ready is reported by its alias', async () => {
+  const { deps, runtime } = makeDeps();
+  runtime.tcpScript['everything'] = [false];
+  const result = await runSpawn(
+    deps,
+    makeParams({ sidecars: [sidecar], readiness: fastReadiness })
+  );
+  assert.equal(result.ran, false);
+  assert.match(result.error ?? '', /Sidecar "everything" did not become ready/);
 });

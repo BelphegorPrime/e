@@ -20,6 +20,13 @@ import {
 import { ProductionPullRequestManager } from './runPrManager.js';
 import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
 import { runRoleInstructions, type RunRole } from './runRole.js';
+import {
+  brokerSidecarSpec,
+  brokerSpoolDirFor,
+  prepareBrokerSpool,
+  removeBrokerSpool,
+  type BrokerPlan,
+} from './runBroker.js';
 
 export type { ReadinessPolicy } from './runSidecarOrchestrator.js';
 
@@ -82,6 +89,8 @@ export interface RunSpawnParams {
   keepWorktree?: boolean;
   /** The role named in the launch prompt (`parent` by default); the env is the plan's. */
   role?: RunRole;
+  /** The runtime-broker sidecar to bring up with the run (ADR-0013), if planned. */
+  broker?: BrokerPlan;
 }
 
 /** Orchestrated run output. */
@@ -126,6 +135,7 @@ export async function runSpawn(
   let network: string | undefined;
   let openedNetwork = false;
   let startedSpecs: SidecarSpec[] = [];
+  let brokerSpool: string | undefined;
 
   try {
     // Pin the base to the commit HEAD points at now, before creating the worktree.
@@ -156,6 +166,27 @@ export async function runSpawn(
       envFile: plan.envFile,
     }));
 
+    // The runtime-broker (ADR-0013) rides along as one more sidecar. The host
+    // owns its spool: the run's identity goes in before the broker starts, the
+    // broker spools sibling requests there, and the directory goes with the run.
+    if (params.broker) {
+      brokerSpool = brokerSpoolDirFor(worktreesDir, runName);
+      prepareBrokerSpool(brokerSpool, {
+        name: runName,
+        branch,
+        agent: params.agent.name,
+        role: params.role ?? 'parent',
+      });
+      specs.unshift(
+        brokerSidecarSpec(params.broker, {
+          runName,
+          netns,
+          network: runNetwork,
+          spoolDir: brokerSpool,
+        })
+      );
+    }
+
     // Create the run network only when sidecars exist and no netns is shared.
     network = specs.length > 0 ? runNetwork : undefined;
     if (network) {
@@ -178,7 +209,19 @@ export async function runSpawn(
         return {
           ran: false,
           exitCode: 1,
-          error: `MCP sidecar "${notReady[0].alias}" did not become ready in time`,
+          error: `Sidecar "${notReady[0].alias}" did not become ready in time`,
+        };
+      }
+      // Ready is not alive: in the shared egress namespace the probe hits
+      // whoever holds the port, so a sidecar that lost its port to another
+      // run's sidecar (EADDRINUSE) would look ready while the agent talked to
+      // a stranger's container. Insist that each one is still running.
+      const dead = specs.find(spec => !deps.runtime.isRunning(spec.name));
+      if (dead) {
+        return {
+          ran: false,
+          exitCode: 1,
+          error: `Sidecar "${dead.alias}" exited right after starting; in the shared egress namespace its port may already be taken by another run`,
         };
       }
     }
@@ -276,6 +319,9 @@ export async function runSpawn(
       }
       if (openedNetwork) {
         await networkManager.removeNetwork(network as string);
+      }
+      if (brokerSpool && !params.keepWorktree) {
+        removeBrokerSpool(brokerSpool);
       }
       if (
         worktreePath &&

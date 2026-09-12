@@ -18,7 +18,8 @@ UI (which lives in the repo root now):
   webpack into `dist/ui`)
 - `src/**` (the Node CLI) uses the global config
 - Ignored: `dist/`, `command/` (packaged binaries), the local `.e/` state
-  directory, and the generated `src/egress/bundle.generated.ts`
+  directory, and the generated `src/egress/bundle.generated.ts` and
+  `src/broker/bundle.generated.ts`
 
 ## Available Scripts
 

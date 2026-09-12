@@ -18,8 +18,15 @@ import {
 } from './spawnPlan.js';
 import { RunScratch } from '../runs/runScratch.js';
 import { writeIfAbsent } from '../scaffold.js';
-import { harnessDir, agentDir, mcpDir, skillDir } from '../store/paths.js';
+import {
+  harnessDir,
+  agentDir,
+  brokerDir,
+  mcpDir,
+  skillDir,
+} from '../store/paths.js';
 import { isInitialized } from '../store/config.js';
+import { renderBrokerFiles } from '../init/renderBroker.js';
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {
@@ -92,6 +99,19 @@ function buildImages(
   for (const sc of plan.sidecars) {
     if (rebuild || !runtime.imageExists(sc.image)) {
       runtime.build(sc.image, mcpDir(sc.alias, root));
+    }
+  }
+
+  // The runtime-broker's build context is seeded on demand (never clobbering
+  // a hand edit), so a store initialized before the broker existed still
+  // works; `e init` seeds the same files.
+  if (plan.broker) {
+    const dir = brokerDir(root);
+    for (const [fileName, content] of Object.entries(renderBrokerFiles())) {
+      writeIfAbsent(dir, path.join(dir, fileName), content);
+    }
+    if (rebuild || !runtime.imageExists(plan.broker.image)) {
+      runtime.build(plan.broker.image, dir);
     }
   }
   return tag;
@@ -201,6 +221,7 @@ export async function executeSpawn(
       keepWorktree: facts.keepWorktree,
       worktreesDir: facts.worktreesDir,
       role: facts.role,
+      broker: plan.broker,
     }
   );
 }

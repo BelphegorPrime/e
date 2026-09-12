@@ -33,6 +33,8 @@ import {
 import { planMcpSelection, type McpServer } from '../mcp/index.js';
 import type { Mount } from '../runtime/index.js';
 import type { SidecarPlan } from '../runs/runSpawn.js';
+import { defaultBrokerPlan, type BrokerPlan } from '../runs/runBroker.js';
+import { SPAWN_BROTHER_SKILL } from '../broker/constants.js';
 import {
   brokerUrl,
   isRoleContractEntry,
@@ -290,6 +292,15 @@ export interface SpawnPlan {
   providerEnvContent?: string;
   /** Container MCP sidecars to bring up (without their credential env-file, wired at execute). */
   sidecars: SidecarPlan[];
+  /**
+   * The runtime-broker sidecar (ADR-0013), planned when the run carries the
+   * `spawn-brother` skill - baked into the agent or added with `--skill`. The
+   * skill is how the agent learns to call the broker, so it is also what
+   * brings the broker along; a run without it gets no broker. A `child` run
+   * never gets one either: children inherit the parent's broker over the
+   * parent's network (ADR-0013, "no new sidecars per child").
+   */
+  broker?: BrokerPlan;
   /** Rendered credential env-file content per sidecar alias (for sidecars that need it). */
   sidecarCredentials: Record<string, string>;
   /** Rendered credential env-file content delivered to the agent (remote MCP servers). */
@@ -442,10 +453,19 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     brokerUrl(facts.localStackPresent === true)
   );
 
+  const wantsSiblings = [...facts.bakedSkills, ...facts.perRunSkills].includes(
+    SPAWN_BROTHER_SKILL
+  );
+  const broker: BrokerPlan | undefined =
+    wantsSiblings && (facts.role ?? 'parent') !== 'child'
+      ? defaultBrokerPlan()
+      : undefined;
+
   return {
     delivery,
     providerEnvContent,
     baseEnvWhitelist: [...allowedEnvKeys],
+    broker,
 
     sidecars,
     sidecarCredentials,

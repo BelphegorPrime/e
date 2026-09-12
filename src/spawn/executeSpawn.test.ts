@@ -14,6 +14,7 @@ import { executeSpawn } from './executeSpawn.js';
 import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
+import { defaultBrokerPlan } from '../runs/runBroker.js';
 
 // The preflight guards (a git repo, foreground) run before any build, so they
 // are reachable with a fake git and an untouched runtime.
@@ -148,6 +149,10 @@ class RecordingRuntime extends ContainerRuntime {
   }
 
   probeTcp(): boolean {
+    return true;
+  }
+
+  isRunning(): boolean {
     return true;
   }
 }
@@ -343,5 +348,58 @@ test('the role reaches the orchestrator: a child run is launched with the child 
     assert.deepEqual(runtime.options?.env, ['E_ROLE=child']);
     // ... and the launch prompt names the same role.
     assert.match(runtime.ranCommand?.[2] ?? '', /role in this run is "child"/);
+  });
+});
+
+test('a planned broker seeds .e/broker on demand, builds e-broker, and starts the sidecar', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    const worktreesDir = path.join(root, 'wt');
+    const result = await executeSpawn(
+      facts({ root, worktreesDir, name: 'sib-test' }),
+      {
+        ...emptyPlan,
+        broker: defaultBrokerPlan(),
+      },
+      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+    );
+    assert.equal(result.ran, true);
+    // Build context written without e init having done so.
+    const dockerfile = path.join(root, '.e', 'broker', 'Dockerfile');
+    assert.ok(fs.existsSync(dockerfile));
+    assert.ok(fs.existsSync(path.join(root, '.e', 'broker', 'broker.mjs')));
+    assert.match(fs.readFileSync(dockerfile, 'utf8'), /FROM node:24-alpine/);
+    assert.ok(runtime.built.includes('e-broker'));
+    const broker = runtime.sidecars.find(s => s.alias === 'runtime-broker');
+    assert.ok(broker);
+    assert.equal(
+      broker.volumes?.[0].host,
+      path.join(worktreesDir, '.broker', 'e-demo-sib-test-1')
+    );
+  });
+});
+
+test('an edited .e/broker/Dockerfile is never clobbered by a spawn', async () => {
+  await withDemoStore(async root => {
+    const dir = path.join(root, '.e', 'broker');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'Dockerfile'), 'FROM scratch\n');
+    await executeSpawn(
+      facts({ root, worktreesDir: path.join(root, 'wt') }),
+      {
+        ...emptyPlan,
+        broker: defaultBrokerPlan(),
+      },
+      {
+        git: new StubGit(true),
+        runtime: new RecordingRuntime(),
+        scratch: new RunScratch(),
+      }
+    );
+    assert.equal(
+      fs.readFileSync(path.join(dir, 'Dockerfile'), 'utf8'),
+      'FROM scratch\n'
+    );
+    assert.ok(fs.existsSync(path.join(dir, 'broker.mjs')));
   });
 });

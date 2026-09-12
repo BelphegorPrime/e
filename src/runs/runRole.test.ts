@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { BROKER_ALIAS, BROKER_PORT } from '../broker/constants.js';
 import {
-  BROKER_ALIAS,
-  BROKER_PORT,
   BROKER_URL_ENV,
   ROLE_ENV,
   brokerUrl,

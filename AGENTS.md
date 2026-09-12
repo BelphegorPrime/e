@@ -47,22 +47,27 @@ sandbox limits of its run. The full model: what a spawned agent receives, how
 results return to the parent, and delegation patterns, documented in
 `docs/agents/e.md`.
 
-### Spawning siblings from inside a run (role contract only)
+### Spawning siblings from inside a run (broker in place, host pickup pending)
 
 The design is ADR-0013 (status: Proposed; tickets `docs/tickets/01-08`).
-What exists today is the **role contract** (ticket 01): every run container
-receives `E_ROLE` (`parent` | `child`) and `E_BROKER_URL` as host-set env,
-and the one-shot launch prompt points you at them. The runtime-broker
-sidecar, the `spawn-brother` skill, checkpoint and merge-back (tickets 02-08)
-are not built yet, so `$E_BROKER_URL` names an endpoint nothing listens on
-until they ship. Until then, delegation from inside a run means writing the
-follow-up task down in `/workspace` and exiting 0 (see `docs/agents/e.md`,
-Recursive spawning). The intended shape, for when it lands:
+What exists today: the **role contract** (ticket 01: every run container
+receives `E_ROLE` and `E_BROKER_URL` as host-set env) and the **runtime-broker
+sidecar with the `spawn-brother` skill** (ticket 02). A run that carries the
+skill (`e spawn <agent> --skill spawn-brother`, or an agent that bakes it)
+starts the broker next to the agent; the skill's script posts sibling
+requests to it and reads their status. The broker holds no container-runtime
+socket and no credentials: it spools requests into a host-owned directory. The
+host side that picks a request up, checkpoints your worktree, runs the sibling
+and merges its work back (tickets 03-07) is not built yet, so today a request
+stays `requested`. Until that ships, delegation from inside a run means
+writing the follow-up task down in `/workspace` and exiting 0 (see
+`docs/agents/e.md`, Recursive spawning). The shape:
 
 ```bash
-# Via the spawn-brother skill (post to the runtime-broker sidecar over
-# the run's private network - no docker socket inside this container):
-e spawn-brother "<task description for the brother agent>"
+# The spawn-brother skill's script (bundled Node, no curl needed) posts to the
+# runtime-broker over the run's network - no docker socket inside this container:
+node ~/.agents/skills/spawn-brother/spawn-brother.mjs <agent> "<task description>"
+node ~/.agents/skills/spawn-brother/spawn-brother.mjs --status
 ```
 
 - Spawn is **non-blocking**; multiple siblings run in parallel
@@ -78,8 +83,8 @@ e spawn-brother "<task description for the brother agent>"
 - Your role is set via env vars - check `$E_ROLE` (`parent` | `child`) and
   `$E_BROKER_URL` (`http://<host>:<port>`, no trailing slash). Do not create
   or depend on `child` / `parent` marker files in the worktree; role is not a
-  filesystem concept here. If the broker does not answer, fall back to the
-  handoff-file pattern above.
+  filesystem concept here. If the broker does not answer, or a request stays
+  `requested`, fall back to the handoff-file pattern above.
 
 ### Common things
 

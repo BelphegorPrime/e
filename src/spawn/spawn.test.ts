@@ -363,3 +363,23 @@ test('spawn CLI: every option parses to the field the action reads', async () =>
   assert.deepEqual(opts.port, ['8080:80', '9000:90']);
   assert.deepEqual(opts.env, ['X=1', 'Y=2']);
 });
+
+test('a shipped skill missing from an older store is seeded when a spawn asks for it', () => {
+  withStore(root => {
+    const facts = gather(root, 'x', [], { skill: ['spawn-brother'] });
+    assert.deepEqual(facts.perRunSkills, ['spawn-brother']);
+    assert.ok(
+      fs.existsSync(path.join(skillDir('spawn-brother', root), 'SKILL.md'))
+    );
+    assert.ok(
+      fs.existsSync(
+        path.join(skillDir('spawn-brother', root), 'spawn-brother.mjs')
+      )
+    );
+    // A skill that is not shipped is still an error.
+    assert.throws(
+      () => gather(root, 'x', [], { skill: ['nope'] }),
+      /Unknown skill "nope"/
+    );
+  });
+});

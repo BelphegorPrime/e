@@ -2,7 +2,7 @@
 
 **What to build:** The runtime-broker from #02 wires its HTTP surface: `POST /spawn` accepts a sibling request, assigns a sibling branch, enforces depth ≤ 2 (children may request siblings, never children of children) and concurrency cap ≤ 3 (default, configurable), returns run identity; readiness follows existing `SidecarOrchestrator` policy.
 
-**Blocked by:** 02 - runtime-broker sidecar image and spawn-brother skill.
+**Blocked by:** 02 shipped (2026-09-12): the HTTP surface (`POST /spawn` -> `202 {id}`, `GET /status`) and the spool exist; what remains here is the host side that consumes `requests/`, assigns the sibling branch, enforces depth and cap, and writes `status/`.
 
 **Status:** blocked
 

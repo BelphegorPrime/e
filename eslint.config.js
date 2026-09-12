@@ -17,6 +17,7 @@ export default tseslint.config(
       '.e/',
       'command/',
       'src/egress/bundle.generated.ts',
+      'src/broker/bundle.generated.ts',
     ],
   },
   {

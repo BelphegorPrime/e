@@ -5,6 +5,7 @@ import { renderEnvTemplate } from '../harness/renderEnvTemplate.js';
 import { renderCompose } from './renderCompose.js';
 import { renderBootstrap } from './renderBootstrap.js';
 import { EGRESS_FILES, renderEgressFiles } from './renderEgress.js';
+import { renderBrokerFiles } from './renderBroker.js';
 import { HARNESSES, envHarnessSections } from '../harness/index.js';
 import { renderDefaultAgent } from '../agent/index.js';
 import { parseDotenv } from '../utils/dotenv.js';
@@ -23,6 +24,7 @@ import {
   agentDir,
   agentFilePath,
   bootstrapScriptPath,
+  brokerDir,
   dockerComposePath,
   dockerfilePath,
   egressBlacklistPath,
@@ -325,6 +327,20 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
     clobber: 'never',
   });
   steps.push({ kind: 'writes', writes: egressWrites });
+
+  // Step 2c - the runtime-broker build context (ADR-0013), seeded like the
+  // egress one. Built into `e-broker` and started per run when the run
+  // carries the spawn-brother skill.
+  const brokerCtx = brokerDir(root);
+  const brokerWrites: InitWrite[] = Object.entries(renderBrokerFiles()).map(
+    ([fileName, content]) => ({
+      directory: brokerCtx,
+      file: path.join(brokerCtx, fileName),
+      content,
+      clobber: 'never' as const,
+    })
+  );
+  steps.push({ kind: 'writes', writes: brokerWrites });
 
   // Step 3 - selected runtimes' derived bootstrap state (provider registration
   // only; model downloads happen on demand via `e <runtime> download <model>`).

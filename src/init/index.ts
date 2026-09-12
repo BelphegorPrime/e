@@ -7,7 +7,7 @@ import { HARNESSES, requiredEnvKeys } from '../harness/index.js';
 import { parseDotenv } from '../utils/dotenv.js';
 import { SHIPPED_MCP_SERVERS } from '../mcp/index.js';
 import { SHIPPED_SKILLS, SHIPPED_SKILL_COLLECTIONS } from '../skill/index.js';
-import { envFilePath, harnessesBaseDir } from '../store/paths.js';
+import { envFilePath, brokerDir, harnessesBaseDir } from '../store/paths.js';
 import { GIT_PLATFORMS, readConfig, writeConfig } from '../store/config.js';
 import { log } from '../utils/log.js';
 import {
@@ -172,6 +172,9 @@ function applyPlan(
   );
   log.info(
     `Skills ready: ${Object.keys(SHIPPED_SKILLS).join(', ')} (add with \`--skill <name>\` or bake into an agent); collections ${SHIPPED_SKILL_COLLECTIONS.join(', ')} install into every harness image at build time.`
+  );
+  log.info(
+    `Runtime-broker ready: build context in ${brokerDir(root)} (starts as a sidecar when a run carries the spawn-brother skill).`
   );
   log.info('\n\n');
   log.info('\n--- Next Steps ---');

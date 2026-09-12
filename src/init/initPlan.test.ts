@@ -261,6 +261,7 @@ test('planInit: steps are ordered - harnesses, shipped servers, bootstrap, then 
     ...HARNESS_NAMES.map(() => 'harness'),
     'writes', // shipped MCP servers + skills
     'writes', // egress build context + blacklist template (ADR-0011)
+    'writes', // runtime-broker build context (ADR-0013)
     'bootstrap',
     'compose',
   ]);
@@ -332,6 +333,23 @@ test('planInit: seeds the egress build context and blacklist template (never clo
   assert.ok(files.some(f => f.endsWith('.e/egress-blacklist')));
   assert.ok(files.some(f => f.endsWith('.e/egress-iptables.rules')));
   for (const write of egressStep.writes) {
+    assert.equal(write.clobber, 'never');
+  }
+});
+
+test('planInit: seeds the runtime-broker build context (never clobbered)', () => {
+  const plan = planInit(state(), {});
+  const brokerStep = plan.steps.find(
+    step =>
+      step.kind === 'writes' &&
+      step.writes.some(w => w.file.includes('.e/broker/'))
+  );
+  assert.ok(brokerStep, 'expected a broker write step');
+  assert.ok(brokerStep.kind === 'writes');
+  const files = brokerStep.writes.map(w => w.file);
+  assert.ok(files.some(f => f.endsWith('.e/broker/Dockerfile')));
+  assert.ok(files.some(f => f.endsWith('.e/broker/broker.mjs')));
+  for (const write of brokerStep.writes) {
     assert.equal(write.clobber, 'never');
   }
 });

@@ -13,6 +13,7 @@ import {
   SHIPPED_SKILLS,
   SHIPPED_SKILL_COLLECTIONS,
   SKILL_MANIFEST,
+  ensureShippedSkill,
 } from './index.js';
 import { skillDir, skillManifestPath } from '../store/paths.js';
 
@@ -63,6 +64,8 @@ test('e init ships at least one skill', () => {
   assert.ok(Object.keys(SHIPPED_SKILLS).length >= 1);
   assert.ok('conventional-commits' in SHIPPED_SKILLS);
   assert.ok('web-search' in SHIPPED_SKILLS);
+  assert.ok('spawn-brother' in SHIPPED_SKILLS);
+  assert.ok('spawn-brother.mjs' in SHIPPED_SKILLS['spawn-brother']());
 });
 
 test('the shared Caveman collection is a cross-harness image source, not a local Claude path', () => {
@@ -107,4 +110,22 @@ test('the shipped web-search skill has a valid SKILL.md with frontmatter', () =>
   // ... and document the reachable endpoint for direct fallback
   assert.match(files['SKILL.md'], /localhost:8080/);
   assert.match(files['SKILL.md'], /format=json/);
+});
+
+test('ensureShippedSkill: seeds a missing shipped skill, leaves a present one and unknown names alone', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-skill-seed-'));
+  try {
+    ensureShippedSkill('spawn-brother', root);
+    const manifest = path.join(skillDir('spawn-brother', root), 'SKILL.md');
+    assert.ok(fs.existsSync(manifest));
+    fs.writeFileSync(manifest, '# edited\n');
+    ensureShippedSkill('spawn-brother', root);
+    assert.equal(fs.readFileSync(manifest, 'utf8'), '# edited\n');
+    ensureShippedSkill('not-shipped', root);
+    assert.equal(fs.existsSync(skillDir('not-shipped', root)), false);
+    ensureShippedSkill('constructor', root);
+    assert.equal(fs.existsSync(skillDir('constructor', root)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

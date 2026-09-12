@@ -1,6 +1,10 @@
 import fs from 'fs';
+import path from 'path';
 import { skillManifestPath, skillDir, skillsBaseDir } from '../store/paths.js';
+import { writeIfAbsent } from '../scaffold.js';
 import type { Mount } from '../runtime/index.js';
+import { renderSpawnBrotherSkill } from '../broker/skill.js';
+import { SPAWN_BROTHER_SKILL } from '../broker/constants.js';
 
 /**
  * The **Skill** context (ADR-0006): a packaged capability - a `SKILL.md` plus
@@ -39,6 +43,21 @@ export function resolveSkill(name: string, root?: string): string {
     );
   }
   return dir;
+}
+
+/**
+ * Seeds a shipped skill into the store when it is not there yet - a store
+ * initialized before the skill existed - and never touches a present one.
+ * Names that are not shipped are left to {@link resolveSkill} to report.
+ */
+export function ensureShippedSkill(name: string, root?: string): void {
+  if (!Object.hasOwn(SHIPPED_SKILLS, name)) return;
+  const dir = skillDir(name, root);
+  if (fs.existsSync(dir)) return;
+  for (const [relPath, content] of Object.entries(SHIPPED_SKILLS[name]())) {
+    const file = path.join(dir, relPath);
+    writeIfAbsent(path.dirname(file), file, content);
+  }
 }
 
 /** Lists the skill names under the store's `skills/` directory (dirs with any layout). */
@@ -194,6 +213,9 @@ export function renderWebSearchSkill(): SkillFiles {
 export const SHIPPED_SKILLS: Record<string, () => SkillFiles> = {
   'conventional-commits': renderConventionalCommitsSkill,
   'web-search': renderWebSearchSkill,
+  // Requesting sibling runs through the runtime-broker (ADR-0013); selecting
+  // it for a run also plans the broker sidecar.
+  [SPAWN_BROTHER_SKILL]: renderSpawnBrotherSkill,
 };
 
 /**

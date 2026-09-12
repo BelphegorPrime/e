@@ -641,3 +641,27 @@ test('run: headless TTY treats an unparsable wait result as failure', async () =
   );
   assert.equal(code, 1);
 });
+
+test('sidecarRunArgs: bind mounts follow the env-files and precede the image', () => {
+  const spec: SidecarSpec = {
+    name: 'run-1-broker',
+    alias: 'runtime-broker',
+    image: 'e-broker',
+    network: 'run-1-net',
+    port: 20130,
+    volumes: [{ host: '/tmp/spool', container: '/var/lib/e-broker' }],
+  };
+  assert.deepEqual(sidecarRunArgs(spec), [
+    'run',
+    '-d',
+    '--name',
+    'run-1-broker',
+    '--network',
+    'run-1-net',
+    '--network-alias',
+    'runtime-broker',
+    '-v',
+    '/tmp/spool:/var/lib/e-broker',
+    'e-broker',
+  ]);
+});

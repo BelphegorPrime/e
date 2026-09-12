@@ -8,6 +8,17 @@
  * (ticket 02, which listens where `E_BROKER_URL` points) cannot disagree.
  */
 
+import {
+  BROKER_ALIAS,
+  BROKER_PORT,
+  BROKER_URL_ENV,
+  ROLE_ENV,
+} from '../broker/constants.js';
+
+// The variable names are owned by the broker module (a leaf that is bundled
+// into the container programs); they are re-exported here for host-side callers.
+export { BROKER_URL_ENV, ROLE_ENV };
+
 /**
  * A container's place in the run tree: `parent` for the run the user (or
  * `serve`) started, `child` for a sibling requested through the runtime-broker.
@@ -15,22 +26,6 @@
 export type RunRole = 'parent' | 'child';
 
 const RUN_ROLES: readonly RunRole[] = ['parent', 'child'];
-
-/** Container env: the role (`parent` | `child`). */
-export const ROLE_ENV = 'E_ROLE';
-
-/** Container env: the runtime-broker base URL (`http://<host>:<port>`). */
-export const BROKER_URL_ENV = 'E_BROKER_URL';
-
-/** The broker sidecar's alias on the run's private network (ticket 02). */
-export const BROKER_ALIAS = 'runtime-broker';
-
-/**
- * The port the broker listens on. In the shared `e-egress` namespace
- * (ADR-0011) it shares loopback with OmniRoute (20128) and the egress API
- * (20129), so it takes the next fixed port.
- */
-export const BROKER_PORT = 20130;
 
 /**
  * Parses a role value read from the environment. Unset or blank means
@@ -89,8 +84,9 @@ export function runRoleInstructions(role: RunRole): string {
   return (
     `Your role in this run is "${role}": read it from $${ROLE_ENV}. ` +
     `$${BROKER_URL_ENV} names the runtime-broker endpoint for spawning sibling runs; ` +
-    `if nothing answers there, sibling spawning is unavailable in this run - record ` +
-    `follow-up tasks as files in the worktree instead. Roles are set by the host ` +
+    `if nothing answers there, or a request never leaves "requested", sibling ` +
+    `spawning is unavailable in this run - record follow-up tasks as files in the ` +
+    `worktree instead. Roles are set by the host ` +
     `through the environment; do not create or rely on parent/child marker files ` +
     `in the worktree.`
   );
