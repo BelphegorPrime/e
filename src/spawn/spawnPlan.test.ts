@@ -25,6 +25,8 @@ function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
     prompt: 'do it',
     rebuild: false,
     env: [],
+    siblingArtifacts: ['node_modules'],
+    maxSiblings: 3,
     ...overrides,
   };
 }
@@ -451,4 +453,17 @@ test("planSpawn: a child run gets no broker of its own - it inherits the parent'
       facts({ perRunSkills: ['spawn-brother'], role: 'child' })
     ).agentEnv.includes('E_BROKER_URL=http://runtime-broker:20130')
   );
+});
+
+test('validateSpawn: a sibling spawn must carry the child role', () => {
+  const sibling = {
+    parent: { worktreePath: '/wt/parent', branch: 'e/demo/parent-1' },
+    spoolDir: '/spool',
+    id: 'sib-001',
+  };
+  assert.throws(
+    () => validateSpawn(facts({ sibling })),
+    /sibling sib-001 must carry E_SPAWN_ROLE=child/
+  );
+  assert.doesNotThrow(() => validateSpawn(facts({ sibling, role: 'child' })));
 });

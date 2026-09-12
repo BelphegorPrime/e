@@ -45,6 +45,9 @@ export class FakeRuntime implements ContainerRunner {
 
   constructor(private exitCode = 0) {}
 
+  /** Runs while the "container" runs: a test plays the agent here (e.g. posts a sibling request). */
+  onRun?: (options: RunOptions) => void | Promise<void>;
+
   async run(
     image: string,
     options: RunOptions,
@@ -55,6 +58,7 @@ export class FakeRuntime implements ContainerRunner {
     this.image = image;
     this.options = options;
     this.command = command;
+    if (this.onRun) await this.onRun(options);
     return this.exitCode;
   }
 

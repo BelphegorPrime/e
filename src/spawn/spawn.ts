@@ -194,7 +194,8 @@ export function gatherSpawnFacts(
   opts: SpawnCommandOptions
 ): SpawnFacts {
   const root = findRoot(opts.dir);
-  const defaultHarness = readConfig(root).defaultHarness;
+  const config = readConfig(root);
+  const defaultHarness = config.defaultHarness;
 
   // The target is an agent/harness name resolved directly (a bare harness →
   // its default agent).
@@ -261,6 +262,11 @@ export function gatherSpawnFacts(
     worktreesDir: defaultWorktreesDir(),
     // `parent` unless the `E_SPAWN_ROLE` marker says `child` (ADR-0013).
     role: env.spawnRole,
+    // Set by a parent run's host for a sibling request (ADR-0013).
+    sibling: env.sibling,
+    // The store's sibling settings, read once with the rest of config.json.
+    siblingArtifacts: config.siblingArtifacts,
+    maxSiblings: config.maxSiblings,
   };
 }
 
@@ -321,6 +327,13 @@ export function registerSpawnCommand(program: Command): void {
         // RunScratch owns every rendered secret file; one dispose() cleans up, and
         // one try/catch turns any failure into a clean exit (ADR-0008).
         const scratch = new RunScratch();
+        // A sibling its parent's host gives up on gets SIGTERM; drop the
+        // rendered secret files before exiting (Node's default would exit
+        // without running any cleanup).
+        process.once('SIGTERM', () => {
+          scratch.dispose();
+          process.exit(143);
+        });
         try {
           const facts = gatherSpawnFacts(target, prompt, opts);
           validateSpawn(facts);

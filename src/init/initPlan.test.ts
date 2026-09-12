@@ -26,6 +26,7 @@ function state(overrides: Partial<InitState> = {}): InitState {
     currentModels: [],
     currentLocalRuntimes: ['llamacpp'],
     currentSiblingArtifacts: ['node_modules'],
+    currentMaxSiblings: 3,
     existingEnvContent: undefined,
     runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
@@ -47,6 +48,7 @@ test('planInit: blank or unanswered answers keep the configured current', () => 
     localRuntimes: ['llamacpp'],
     gitPlatform: undefined,
     siblingArtifacts: ['node_modules'],
+    maxSiblings: 3,
   });
 });
 
@@ -119,6 +121,7 @@ test('planInit: a named git platform is recorded in the config', () => {
     localRuntimes: ['llamacpp'],
     gitPlatform: 'gitlab',
     siblingArtifacts: ['node_modules'],
+    maxSiblings: 3,
   });
 });
 
@@ -371,5 +374,13 @@ test('planInit: config.json carries the configured sibling artifacts, defaulting
     planInit(state({ currentSiblingArtifacts: [] }), {}).config
       .siblingArtifacts,
     []
+  );
+});
+
+test('planInit: config.json carries the configured fan-out bound for siblings', () => {
+  assert.equal(planInit(state(), {}).config.maxSiblings, 3);
+  assert.equal(
+    planInit(state({ currentMaxSiblings: 5 }), {}).config.maxSiblings,
+    5
   );
 });

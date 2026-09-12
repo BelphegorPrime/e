@@ -26,6 +26,8 @@ import {
   skillDir,
 } from '../store/paths.js';
 import { isInitialized } from '../store/config.js';
+import { Env } from '../utils/env.js';
+import { spawnSiblingProcess } from '../runs/runSiblings.js';
 import { renderBrokerFiles } from '../init/renderBroker.js';
 
 /** The effect-performing collaborators the executor drives. */
@@ -193,6 +195,10 @@ export async function executeSpawn(
   }
   configMounts.push(...plan.skillMounts);
 
+  // A sibling (ADR-0013) joins its parent's private run network so the
+  // `runtime-broker` alias resolves for it too; in the shared egress
+  // namespace everyone is on loopback and no network is joined.
+  const sibling = facts.sibling;
   const runOptions: RunOptions = {
     interactive: !facts.detached,
     headlessTty: facts.headlessTty,
@@ -201,6 +207,10 @@ export async function executeSpawn(
     env: plan.agentEnv,
     envFile: envFiles,
     netns: facts.localStackPresent ? 'e-egress' : undefined,
+    networks:
+      sibling?.parent.network && !facts.localStackPresent
+        ? [sibling.parent.network]
+        : undefined,
   };
 
   return runSpawn(
@@ -222,6 +232,27 @@ export async function executeSpawn(
       worktreesDir: facts.worktreesDir,
       role: facts.role,
       broker: plan.broker,
+      maxSiblings: facts.maxSiblings,
+      parent: sibling
+        ? {
+            worktreePath: sibling.parent.worktreePath,
+            branch: sibling.parent.branch,
+            artifacts: facts.siblingArtifacts,
+          }
+        : undefined,
+      sibling: sibling
+        ? { spoolDir: sibling.spoolDir, id: sibling.id }
+        : undefined,
+      // What every sibling `e spawn` inherits from this invocation: the same
+      // store, the same user env-file, the same container engine.
+      siblingHost: {
+        launch: spawnSiblingProcess,
+        passthroughArgs: [
+          ...(facts.dirOpt ? ['--dir', facts.dirOpt] : []),
+          ...(facts.userEnvFile ? ['--env-file', facts.userEnvFile] : []),
+        ],
+        passthroughEnv: { [Env.RUNTIME_VAR]: runtime.command },
+      },
     }
   );
 }

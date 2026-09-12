@@ -95,6 +95,8 @@ export interface InitState {
   currentGitPlatform?: GitPlatform;
   /** The configured sibling-artifact allowlist (ADR-0013), kept as is by a re-init. */
   currentSiblingArtifacts: string[];
+  /** The configured fan-out bound for siblings (ADR-0013), kept as is by a re-init. */
+  currentMaxSiblings: number;
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
 }
@@ -166,6 +168,7 @@ export interface InitPlan {
     localRuntimes: LocalRuntime[];
     gitPlatform?: GitPlatform;
     siblingArtifacts: string[];
+    maxSiblings: number;
   };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
@@ -382,6 +385,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       // Not asked by the wizard; edited by hand in config.json, so a re-init
       // must carry it over rather than reset it.
       siblingArtifacts: state.currentSiblingArtifacts,
+      maxSiblings: state.currentMaxSiblings,
     },
     defaultHarness,
     models,

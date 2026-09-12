@@ -10,7 +10,9 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { DEPTH_LIMIT_MESSAGE } from './constants.js';
 import {
+  countInFlight,
   ensureSpool,
   isRequestId,
   listRecords,
@@ -136,6 +138,26 @@ export function createBrokerApi(options: BrokerApiOptions): Handler {
       if (method !== 'POST') return sendJson(res, 405, { error: 'Use POST.' });
       const parsed = parseSpawnBody(await readBody(req));
       if (!parsed.ok) return sendJson(res, 400, { error: parsed.error });
+      // Depth and fan-out (ADR-0013), answered right away so the agent does
+      // not wait on a request the host would refuse anyway; the host enforces
+      // both again when it picks requests up.
+      const run = readRunInfo(spoolDir);
+      if (run?.role === 'child') {
+        return sendJson(res, 403, { error: DEPTH_LIMIT_MESSAGE });
+      }
+      if (run) {
+        // Accepted-but-not-yet-picked-up counts too: the host will pick it up.
+        const inFlight = countInFlight(spoolDir, [
+          'requested',
+          'starting',
+          'running',
+        ]);
+        if (inFlight >= run.maxSiblings) {
+          return sendJson(res, 429, {
+            error: `Sibling cap reached (${run.maxSiblings} in flight); retry when one finishes.`,
+          });
+        }
+      }
       ensureSpool(spoolDir);
       const id = nextRequestId(spoolDir);
       writeRequest(spoolDir, {

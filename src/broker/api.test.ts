@@ -154,6 +154,7 @@ test('broker api: GET /status merges the run info and the host status per siblin
       branch: 'e/demo/task-1',
       agent: 'demo',
       role: 'parent',
+      maxSiblings: 3,
     });
     await post(broker.url, JSON.stringify({ agent: 'a', prompt: 'one' }));
     await post(broker.url, JSON.stringify({ agent: 'b', prompt: 'two' }));
@@ -198,6 +199,69 @@ test('broker api: unknown siblings, malformed ids, unknown paths and wrong metho
       (await fetch(`${broker.url}/status`, { method: 'POST' })).status,
       405
     );
+  } finally {
+    await broker.close();
+  }
+});
+
+test('broker api: a spool whose run is itself a sibling refuses every request (depth limit)', async () => {
+  const broker = await startBroker();
+  try {
+    writeRunInfo(broker.spoolDir, {
+      name: 'e-demo-sib-1',
+      branch: 'e/demo/sib-1',
+      agent: 'demo',
+      role: 'child',
+      maxSiblings: 3,
+    });
+    const res = await post(
+      broker.url,
+      JSON.stringify({ agent: 'a', prompt: 'x' })
+    );
+    assert.equal(res.status, 403);
+    assert.match((await json<{ error: string }>(res)).error, /Depth limit/);
+    assert.equal(fs.existsSync(path.join(broker.spoolDir, 'requests')), false);
+  } finally {
+    await broker.close();
+  }
+});
+
+test('broker api: the fan-out cap counts requests in flight and frees up when one finishes', async () => {
+  const broker = await startBroker();
+  try {
+    writeRunInfo(broker.spoolDir, {
+      name: 'e-demo-task-1',
+      branch: 'e/demo/task-1',
+      agent: 'demo',
+      role: 'parent',
+      maxSiblings: 1,
+    });
+    const first = await post(
+      broker.url,
+      JSON.stringify({ agent: 'a', prompt: 'one' })
+    );
+    assert.equal(first.status, 202);
+    // Still `requested` (not yet picked up) counts against the cap.
+    const second = await post(
+      broker.url,
+      JSON.stringify({ agent: 'b', prompt: 'two' })
+    );
+    assert.equal(second.status, 429);
+    assert.match(
+      (await json<{ error: string }>(second)).error,
+      /Sibling cap reached \(1 in flight\)/
+    );
+    writeStatus(broker.spoolDir, 'sib-001', {
+      status: 'done',
+      exitCode: 0,
+      updatedAt: 't',
+    });
+    const third = await post(
+      broker.url,
+      JSON.stringify({ agent: 'b', prompt: 'two' })
+    );
+    assert.equal(third.status, 202);
+    assert.equal((await json<SpawnAccepted>(third)).id, 'sib-002');
   } finally {
     await broker.close();
   }

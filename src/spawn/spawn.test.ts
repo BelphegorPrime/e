@@ -25,7 +25,15 @@ import {
 // hands back a pure `SpawnFacts`. Every test below points it at a throwaway
 // store through `--dir`, so no cwd or home-directory walk is involved.
 
-const MARKERS = [Env.SPAWN_ROLE_VAR, Env.TTY_HEADLESS_VAR] as const;
+const MARKERS = [
+  Env.SPAWN_ROLE_VAR,
+  Env.TTY_HEADLESS_VAR,
+  Env.SPAWN_PARENT_WORKTREE_VAR,
+  Env.SPAWN_PARENT_BRANCH_VAR,
+  Env.SPAWN_PARENT_NETWORK_VAR,
+  Env.SPAWN_SPOOL_VAR,
+  Env.SPAWN_SIBLING_ID_VAR,
+] as const;
 let saved: Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -99,6 +107,9 @@ test('a bare spawn runs the favorite harness (pi by default) with an empty promp
     // No `.e/.env` on disk: no base env-file is layered.
     assert.equal(facts.baseEnvFile, undefined);
     assert.equal(facts.egressBlacklistFile, egressBlacklistPath(root));
+    // The store's sibling settings ride along (defaults without a config.json).
+    assert.deepEqual(facts.siblingArtifacts, ['node_modules']);
+    assert.equal(facts.maxSiblings, 3);
     assert.equal(facts.dirOpt, root);
     assert.equal(typeof facts.worktreesDir, 'string');
   });
@@ -116,7 +127,11 @@ test('config.json picks the favorite harness a bare spawn resolves to', () => {
   withStore(root => {
     fs.writeFileSync(
       configFilePath(root),
-      JSON.stringify({ defaultHarness: 'claudeCode' })
+      JSON.stringify({
+        defaultHarness: 'claudeCode',
+        siblingArtifacts: ['dist'],
+        maxSiblings: 2,
+      })
     );
     // Commander hands the first word over as `target`; unknown -> prompt text.
     const facts = gather(root, 'hello', []);
@@ -126,6 +141,8 @@ test('config.json picks the favorite harness a bare spawn resolves to', () => {
     });
     assert.equal(facts.harness.name, 'claudeCode');
     assert.equal(facts.prompt, 'hello');
+    assert.deepEqual(facts.siblingArtifacts, ['dist']);
+    assert.equal(facts.maxSiblings, 2);
   });
 });
 
@@ -381,5 +398,27 @@ test('a shipped skill missing from an older store is seeded when a spawn asks fo
       () => gather(root, 'x', [], { skill: ['nope'] }),
       /Unknown skill "nope"/
     );
+  });
+});
+
+test('the sibling markers reach the facts as the sibling to report to', () => {
+  withStore(root => {
+    process.env[Env.SPAWN_ROLE_VAR] = 'child';
+    process.env[Env.SPAWN_PARENT_WORKTREE_VAR] = '/wt/parent';
+    process.env[Env.SPAWN_PARENT_BRANCH_VAR] = 'e/demo/parent-1';
+    process.env[Env.SPAWN_PARENT_NETWORK_VAR] = 'e-demo-parent-1-net';
+    process.env[Env.SPAWN_SPOOL_VAR] = '/wt/.broker/e-demo-parent-1';
+    process.env[Env.SPAWN_SIBLING_ID_VAR] = 'sib-001';
+    const facts = gather(root, 'x', []);
+    assert.equal(facts.role, 'child');
+    assert.deepEqual(facts.sibling, {
+      parent: {
+        worktreePath: '/wt/parent',
+        branch: 'e/demo/parent-1',
+        network: 'e-demo-parent-1-net',
+      },
+      spoolDir: '/wt/.broker/e-demo-parent-1',
+      id: 'sib-001',
+    });
   });
 });

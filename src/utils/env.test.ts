@@ -7,6 +7,12 @@ const VARS = [
   'SHOULD_WRITE_LOG_FILE',
   Env.SERVE_DETACHED_VAR,
   Env.SPAWN_ROLE_VAR,
+  Env.SPAWN_PARENT_WORKTREE_VAR,
+  Env.SPAWN_PARENT_BRANCH_VAR,
+  Env.SPAWN_PARENT_NETWORK_VAR,
+  Env.SPAWN_SPOOL_VAR,
+  Env.SPAWN_SIBLING_ID_VAR,
+  Env.TTY_HEADLESS_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -70,4 +76,72 @@ test('spawnRole reflects the marker and rejects unknown roles', () => {
     () => env.spawnRole,
     /Unknown run role "grandchild" in E_SPAWN_ROLE/
   );
+});
+
+test('sibling is undefined when no marker is set, complete when all are, an error in between', () => {
+  for (const name of [
+    Env.SPAWN_PARENT_WORKTREE_VAR,
+    Env.SPAWN_PARENT_BRANCH_VAR,
+    Env.SPAWN_PARENT_NETWORK_VAR,
+    Env.SPAWN_SPOOL_VAR,
+    Env.SPAWN_SIBLING_ID_VAR,
+  ]) {
+    delete process.env[name];
+  }
+  const none = env.sibling;
+  assert.equal(none, undefined);
+  process.env[Env.SPAWN_PARENT_WORKTREE_VAR] = '/wt/parent';
+  process.env[Env.SPAWN_PARENT_BRANCH_VAR] = 'e/demo/parent-1';
+  process.env[Env.SPAWN_SPOOL_VAR] = '/wt/.broker/e-demo-parent-1';
+  assert.throws(() => env.sibling, /Incomplete sibling markers/);
+  process.env[Env.SPAWN_SIBLING_ID_VAR] = 'sib-001';
+  const complete = env.sibling;
+  assert.deepEqual(complete, {
+    parent: {
+      worktreePath: '/wt/parent',
+      branch: 'e/demo/parent-1',
+      network: undefined,
+    },
+    spoolDir: '/wt/.broker/e-demo-parent-1',
+    id: 'sib-001',
+  });
+  process.env[Env.SPAWN_PARENT_NETWORK_VAR] = 'e-demo-parent-1-net';
+  const withNetwork = env.sibling;
+  assert.equal(withNetwork?.parent.network, 'e-demo-parent-1-net');
+});
+
+test('withSibling sets the child role and every marker, drops the serve and terminal markers, and does not mutate the base', () => {
+  const base = {
+    FOO: 'bar',
+    [Env.SERVE_DETACHED_VAR]: '1',
+    [Env.TTY_HEADLESS_VAR]: '1',
+    [Env.SPAWN_PARENT_NETWORK_VAR]: 'stale-net',
+  };
+  const result = env.withSibling(
+    {
+      parent: { worktreePath: '/wt/parent', branch: 'e/demo/parent-1' },
+      spoolDir: '/spool',
+      id: 'sib-002',
+    },
+    base
+  );
+  assert.equal(result.FOO, 'bar');
+  assert.equal(result[Env.SPAWN_ROLE_VAR], 'child');
+  assert.equal(result[Env.SPAWN_PARENT_WORKTREE_VAR], '/wt/parent');
+  assert.equal(result[Env.SPAWN_PARENT_BRANCH_VAR], 'e/demo/parent-1');
+  assert.equal(Env.SPAWN_PARENT_NETWORK_VAR in result, false);
+  assert.equal(result[Env.SPAWN_SPOOL_VAR], '/spool');
+  assert.equal(result[Env.SPAWN_SIBLING_ID_VAR], 'sib-002');
+  assert.equal(Env.SERVE_DETACHED_VAR in result, false);
+  assert.equal(Env.TTY_HEADLESS_VAR in result, false);
+  assert.equal(base[Env.SERVE_DETACHED_VAR], '1');
+  const withNet = env.withSibling(
+    {
+      parent: { worktreePath: '/p', branch: 'b', network: 'p-net' },
+      spoolDir: '/s',
+      id: 'sib-003',
+    },
+    {}
+  );
+  assert.equal(withNet[Env.SPAWN_PARENT_NETWORK_VAR], 'p-net');
 });

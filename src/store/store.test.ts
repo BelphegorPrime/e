@@ -89,6 +89,7 @@ test('resolveConfig: a missing config yields the built-in defaults', () => {
     models: MODELS,
     localRuntimes: ['llamacpp'],
     siblingArtifacts: ['node_modules'],
+    maxSiblings: 3,
     gitPlatform: undefined,
   });
 });
@@ -99,6 +100,7 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
     models: MODELS,
     localRuntimes: ['llamacpp'],
     siblingArtifacts: ['node_modules'],
+    maxSiblings: 3,
     gitPlatform: undefined,
   });
 });
@@ -158,6 +160,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
         localRuntimes: ['llamacpp'],
         gitPlatform: 'gitlab',
         siblingArtifacts: ['node_modules', 'dist'],
+        maxSiblings: 2,
       },
       root
     );
@@ -168,6 +171,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
       localRuntimes: ['llamacpp'],
       gitPlatform: 'gitlab',
       siblingArtifacts: ['node_modules', 'dist'],
+      maxSiblings: 2,
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -182,6 +186,7 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
       models: MODELS,
       localRuntimes: ['llamacpp'],
       siblingArtifacts: ['node_modules'],
+      maxSiblings: 3,
       gitPlatform: undefined,
     });
     assert.ok(!fs.existsSync(configFilePath(root)));
@@ -287,4 +292,17 @@ test('resolveConfig: siblingArtifacts is kept as configured (an empty list disab
     resolveConfig({ siblingArtifacts: ['ok', 42] }).siblingArtifacts,
     ['node_modules']
   );
+});
+
+test('resolveConfig: maxSiblings is a positive integer, default 3, malformed falls back', () => {
+  assert.equal(resolveConfig(undefined).maxSiblings, 3);
+  assert.equal(resolveConfig({ maxSiblings: 5 }).maxSiblings, 5);
+  assert.equal(resolveConfig({ maxSiblings: 1 }).maxSiblings, 1);
+  for (const bad of [0, -1, 2.5, '3', null]) {
+    assert.equal(
+      resolveConfig({ maxSiblings: bad }).maxSiblings,
+      3,
+      String(bad)
+    );
+  }
 });

@@ -38,6 +38,9 @@ export const GIT_PLATFORMS: readonly GitPlatform[] = [
  */
 export const DEFAULT_SIBLING_ARTIFACTS: readonly string[] = ['node_modules'];
 
+/** The fan-out bound when `config.json` sets none: siblings in flight per run (ADR-0013). */
+export const DEFAULT_MAX_SIBLINGS = 3;
+
 /** Host-only orchestration settings, persisted in `config.json`. */
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
@@ -55,6 +58,8 @@ export type StoreConfig = {
    * An empty list disables the sync.
    */
   siblingArtifacts: string[];
+  /** Siblings a run may have in flight at once (ADR-0013); a positive integer, default 3. */
+  maxSiblings: number;
 };
 
 export type ModelDataEntry = {
@@ -96,12 +101,19 @@ export function resolveConfig(raw: unknown): StoreConfig {
     parsed.siblingArtifacts.every(entry => typeof entry === 'string')
       ? parsed.siblingArtifacts
       : [...DEFAULT_SIBLING_ARTIFACTS];
+  const maxSiblings =
+    typeof parsed.maxSiblings === 'number' &&
+    Number.isInteger(parsed.maxSiblings) &&
+    parsed.maxSiblings >= 1
+      ? parsed.maxSiblings
+      : DEFAULT_MAX_SIBLINGS;
   return {
     defaultHarness,
     models,
     localRuntimes,
     gitPlatform,
     siblingArtifacts,
+    maxSiblings,
   };
 }
 

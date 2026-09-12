@@ -19,6 +19,7 @@ import {
 import type {
   BrokerRunInfo,
   SiblingRecord,
+  SiblingState,
   SiblingStatusPatch,
   SpawnRequest,
 } from './types.js';
@@ -135,4 +136,13 @@ export function listRecords(root: string): SiblingRecord[] {
   return listRequestIds(root)
     .map(id => readRecord(root, id))
     .filter((record): record is SiblingRecord => record !== undefined);
+}
+
+/** How many requests are in one of `states` - the fan-out count, defined once for broker and host. */
+export function countInFlight(
+  root: string,
+  states: readonly SiblingState[]
+): number {
+  return listRecords(root).filter(record => states.includes(record.status))
+    .length;
 }

@@ -32,6 +32,7 @@ import {
 } from '../harness/deriveImage.js';
 import { planMcpSelection, type McpServer } from '../mcp/index.js';
 import type { Mount } from '../runtime/index.js';
+import type { SiblingSpawn } from '../utils/env.js';
 import type { SidecarPlan } from '../runs/runSpawn.js';
 import { defaultBrokerPlan, type BrokerPlan } from '../runs/runBroker.js';
 import { SPAWN_BROTHER_SKILL } from '../broker/constants.js';
@@ -203,6 +204,16 @@ export interface SpawnFacts {
    * through the runtime-broker. Absent → `parent`.
    */
   role?: RunRole;
+  /**
+   * Present when this process was started by a parent run's host for a sibling
+   * request (the `E_SPAWN_*` markers): the parent to checkpoint and branch
+   * from, the network to join, and where to report status.
+   */
+  sibling?: SiblingSpawn;
+  /** The store's `siblingArtifacts` (`config.json`): what a sibling copies from its parent (ADR-0013). */
+  siblingArtifacts: readonly string[];
+  /** The store's `maxSiblings` (`config.json`): siblings a run may have in flight at once (ADR-0013). */
+  maxSiblings: number;
 }
 
 /**
@@ -218,6 +229,13 @@ export interface SpawnFacts {
 export function validateSpawn(facts: SpawnFacts): void {
   const { agent, harness } = facts;
   const caps = harnessCapabilities(harness);
+
+  // A sibling is a child by definition; the two markers must agree.
+  if (facts.sibling && (facts.role ?? 'parent') !== 'child') {
+    throw new Error(
+      `A spawn started for sibling ${facts.sibling.id} must carry E_SPAWN_ROLE=child.`
+    );
+  }
 
   // The role contract is the host's to set for every run container (ADR-0013);
   // a user `-e` naming it would only be out-ranked by the host's entry, so it

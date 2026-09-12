@@ -26,6 +26,14 @@ import {
   syncArtifacts,
 } from './runArtifacts.js';
 import { log } from '../utils/log.js';
+import { writeStatus } from '../broker/spool.js';
+import type { SiblingStatusPatch } from '../broker/types.js';
+import { DEFAULT_MAX_SIBLINGS } from '../store/config.js';
+import {
+  DEFAULT_SIBLING_READINESS,
+  SiblingConsumer,
+  type SiblingLauncher,
+} from './runSiblings.js';
 import {
   brokerSidecarSpec,
   brokerSpoolDirFor,
@@ -123,6 +131,28 @@ export interface RunSpawnParams {
    * whose branch tip the sibling branches from, instead of the host's HEAD.
    */
   parent?: ParentRun;
+  /**
+   * Present for a sibling run: where it reports its status (`running` with
+   * its branch, then `done` or `failed`) - the parent's spool and its request
+   * id. A sibling neither pushes nor opens a PR: its delivery is the merge
+   * back into the parent (ADR-0013).
+   */
+  sibling?: { spoolDir: string; id: string };
+  /** Fan-out bound for a run with a broker (`config.json` `maxSiblings`; default 3). */
+  maxSiblings?: number;
+  /**
+   * How this run hosts siblings (with a broker): the poll/readiness pacing,
+   * what every sibling `e spawn` inherits from this invocation, and the
+   * launcher. Required whenever `broker` is set - there is no default
+   * launcher, on purpose: the production one re-invokes the CLI, and a caller
+   * that did not choose it (a test) must never end up spawning processes.
+   */
+  siblingHost?: {
+    readiness?: ReadinessPolicy;
+    passthroughArgs?: string[];
+    passthroughEnv?: Record<string, string>;
+    launch: SiblingLauncher;
+  };
 }
 
 /** Orchestrated run output. */
@@ -196,6 +226,25 @@ export async function runSpawn(
   // Host-side scratch a run leaves behind (a sibling's synced artifacts, the
   // broker spool); removed at teardown unless the worktree is kept too.
   const scratch: Array<() => void> = [];
+  // The consumer of sibling requests and its spool, for a run that has a broker.
+  let consumer: SiblingConsumer | undefined;
+  let brokerSpool: string | undefined;
+  const role = params.role ?? 'parent';
+  const maxSiblings = params.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
+  if (params.broker && !params.siblingHost?.launch) {
+    throw new Error(
+      'A run with a broker needs siblingHost.launch: refusing to host siblings without a launcher'
+    );
+  }
+
+  /** A sibling reports into its parent's spool; every other run has nowhere to. */
+  const report = (patch: Omit<SiblingStatusPatch, 'updatedAt'>): void => {
+    if (!params.sibling) return;
+    writeStatus(params.sibling.spoolDir, params.sibling.id, {
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    });
+  };
 
   try {
     const slug = params.name ?? slugify(params.prompt);
@@ -210,6 +259,9 @@ export async function runSpawn(
     ({ branch } = await branchNamer.nextBranch(params.agent, slug, base));
     worktreePath = worktreePathFor(worktreesDir, branch);
     const runName = branch.replace(/\//g, '-');
+    // A sibling has its identity now: the parent's status shows the branch
+    // before any image build or container.
+    report({ status: 'starting', branch });
 
     // Artifact sync (ADR-0013): the sibling's worktree holds only committed
     // state, so the parent's gitignored build artifacts are copied into a
@@ -265,13 +317,15 @@ export async function runSpawn(
     // owns its spool: the run's identity goes in before the broker starts, the
     // broker spools sibling requests there, and the directory goes with the run.
     if (params.broker) {
-      const brokerSpool = brokerSpoolDirFor(worktreesDir, runName);
-      scratch.push(() => removeBrokerSpool(brokerSpool));
-      prepareBrokerSpool(brokerSpool, {
+      const spool = brokerSpoolDirFor(worktreesDir, runName);
+      brokerSpool = spool;
+      scratch.push(() => removeBrokerSpool(spool));
+      prepareBrokerSpool(spool, {
         name: runName,
         branch,
         agent: params.agent.name,
-        role: params.role ?? 'parent',
+        role,
+        maxSiblings,
       });
       specs.unshift(
         brokerSidecarSpec(params.broker, {
@@ -345,13 +399,34 @@ export async function runSpawn(
       workdir: '/workspace',
     };
 
+    // With the broker up, sibling requests can arrive: the host picks them up
+    // from the spool for as long as the agent runs (ADR-0013). The consumer
+    // re-invokes this CLI per request; each sibling checkpoints this worktree
+    // and branches from it.
+    if (brokerSpool && worktreePath) {
+      consumer = new SiblingConsumer({
+        spoolDir: brokerSpool,
+        parent: { worktreePath, branch, network, role },
+        maxSiblings,
+        readiness: params.siblingHost?.readiness ?? DEFAULT_SIBLING_READINESS,
+        passthroughArgs: params.siblingHost?.passthroughArgs,
+        passthroughEnv: params.siblingHost?.passthroughEnv,
+        launch: params.siblingHost!.launch,
+        sleep,
+      });
+      consumer.start();
+    }
+
     // Build command.
     const command = params.interactive
       ? params.harness.buildInteractiveCommand(params.model)
       : params.harness.buildCommand(
-          launchPrompt(params.prompt, params.role),
+          launchPrompt(params.prompt, role),
           params.model
         );
+
+    // A sibling is now identifiable: report it running under its branch.
+    report({ status: 'running', branch });
 
     // Execute the agent container in the foreground.
     const exitCode = await deps.runtime.run(params.imageTag, runOptions, [
@@ -359,7 +434,15 @@ export async function runSpawn(
       ...(params.mcpArgs ?? []),
     ]);
 
-    // Commit and push only when the run exited 0 and produced changes.
+    // The agent is done: stop taking sibling requests and wait for the
+    // siblings in flight, so nothing of theirs outlives the run's network.
+    if (consumer) {
+      await consumer.stop();
+      consumer = undefined;
+    }
+
+    // Commit when the run exited 0 and produced changes; push only a run of
+    // the user's own - a sibling's work reaches the parent by merge-back.
     let captured = false;
     let pushed = false;
     let pushWarning: string | undefined;
@@ -368,7 +451,10 @@ export async function runSpawn(
         deps.git.commitAll(worktreePath, `e: run output for ${branch}`);
         captured = true;
       }
-      if (captured || deps.git.hasCommitsBeyondBase(branch, base)) {
+      if (
+        !params.sibling &&
+        (captured || deps.git.hasCommitsBeyondBase(branch, base))
+      ) {
         try {
           deps.git.push(branch);
           pushed = true;
@@ -398,6 +484,8 @@ export async function runSpawn(
       pullRequestWarning = prResult.warning;
     }
 
+    report({ status: 'done', branch, exitCode });
+
     return {
       ran: true,
       exitCode,
@@ -409,9 +497,13 @@ export async function runSpawn(
       pullRequestUrl,
       pullRequestWarning,
     };
+  } catch (err) {
+    report({ status: 'failed', branch, error: (err as Error).message });
+    throw err;
   } finally {
     // Best-effort teardown: never mask a result or an aborting error.
     try {
+      if (consumer) await consumer.stop();
       if (startedSpecs.length > 0) {
         await sidecarOrchestrator.stopAll(startedSpecs);
       }

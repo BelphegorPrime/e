@@ -28,6 +28,19 @@ export class Env {
   static readonly SPAWN_ROLE_VAR = 'E_SPAWN_ROLE';
 
   /**
+   * Set together on an `e spawn` process the host starts for a sibling request
+   * (ADR-0013): the parent run's worktree and branch (checkpointed and
+   * branched from), its private network (absent in the shared egress
+   * namespace), the parent's spool and the request id the sibling reports its
+   * status under. All four required ones present, or none.
+   */
+  static readonly SPAWN_PARENT_WORKTREE_VAR = 'E_SPAWN_PARENT_WORKTREE';
+  static readonly SPAWN_PARENT_BRANCH_VAR = 'E_SPAWN_PARENT_BRANCH';
+  static readonly SPAWN_PARENT_NETWORK_VAR = 'E_SPAWN_PARENT_NETWORK';
+  static readonly SPAWN_SPOOL_VAR = 'E_SPAWN_SPOOL';
+  static readonly SPAWN_SIBLING_ID_VAR = 'E_SPAWN_SIBLING_ID';
+
+  /**
    * The container runtime to use when `--runtime` is not passed - one of the
    * registry names (`docker`, `podman`, `nerdctl`, `finch`; see
    * `runtime/registry.ts`). Unset: the first one found on `PATH`.
@@ -116,6 +129,78 @@ export class Env {
   get spawnRole(): RunRole {
     return parseRunRole(process.env[Env.SPAWN_ROLE_VAR], Env.SPAWN_ROLE_VAR);
   }
+
+  /**
+   * The sibling markers of this `e spawn` process (see {@link Env.SPAWN_SPOOL_VAR}),
+   * or undefined for an ordinary spawn. Throws when only some are set.
+   */
+  get sibling(): SiblingSpawn | undefined {
+    const read = (name: string) => process.env[name]?.trim() || undefined;
+    const worktreePath = read(Env.SPAWN_PARENT_WORKTREE_VAR);
+    const branch = read(Env.SPAWN_PARENT_BRANCH_VAR);
+    const spoolDir = read(Env.SPAWN_SPOOL_VAR);
+    const id = read(Env.SPAWN_SIBLING_ID_VAR);
+    const present = [worktreePath, branch, spoolDir, id].filter(
+      value => value !== undefined
+    ).length;
+    if (present === 0) return undefined;
+    if (present < 4 || !worktreePath || !branch || !spoolDir || !id) {
+      throw new Error(
+        `Incomplete sibling markers: ${Env.SPAWN_PARENT_WORKTREE_VAR}, ${Env.SPAWN_PARENT_BRANCH_VAR}, ${Env.SPAWN_SPOOL_VAR} and ${Env.SPAWN_SIBLING_ID_VAR} must all be set.`
+      );
+    }
+    return {
+      parent: {
+        worktreePath,
+        branch,
+        network: read(Env.SPAWN_PARENT_NETWORK_VAR),
+      },
+      spoolDir,
+      id,
+    };
+  }
+
+  /**
+   * Copies `base` (defaulting to the current environment) for a sibling `e
+   * spawn` process: the role marker says `child`, the sibling markers are set,
+   * and the serve/terminal markers are dropped so the sibling never mistakes
+   * itself for one of those.
+   */
+  withSibling(
+    sibling: SiblingSpawn,
+    base: Record<string, string | undefined> = process.env
+  ): Record<string, string | undefined> {
+    const copy: Record<string, string | undefined> = { ...base };
+    delete copy[Env.SERVE_DETACHED_VAR];
+    delete copy[Env.TTY_HEADLESS_VAR];
+    copy[Env.SPAWN_ROLE_VAR] = 'child';
+    copy[Env.SPAWN_PARENT_WORKTREE_VAR] = sibling.parent.worktreePath;
+    copy[Env.SPAWN_PARENT_BRANCH_VAR] = sibling.parent.branch;
+    if (sibling.parent.network) {
+      copy[Env.SPAWN_PARENT_NETWORK_VAR] = sibling.parent.network;
+    } else {
+      delete copy[Env.SPAWN_PARENT_NETWORK_VAR];
+    }
+    copy[Env.SPAWN_SPOOL_VAR] = sibling.spoolDir;
+    copy[Env.SPAWN_SIBLING_ID_VAR] = sibling.id;
+    return copy;
+  }
+}
+
+/** What the sibling markers describe: the parent run and where to report. */
+export interface SiblingSpawn {
+  parent: {
+    /** Host path of the parent's worktree. */
+    worktreePath: string;
+    /** The parent's run branch. */
+    branch: string;
+    /** The parent's private run network to join; absent in the shared egress namespace. */
+    network?: string;
+  };
+  /** The parent's spool (the broker's bind mount). */
+  spoolDir: string;
+  /** The request id (`sib-NNN`) this sibling reports its status under. */
+  id: string;
 }
 
 export const env = new Env();

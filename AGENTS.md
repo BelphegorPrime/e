@@ -47,21 +47,20 @@ sandbox limits of its run. The full model: what a spawned agent receives, how
 results return to the parent, and delegation patterns, documented in
 `docs/agents/e.md`.
 
-### Spawning siblings from inside a run (broker in place, host pickup pending)
+### Spawning siblings from inside a run (merge-back pending)
 
 The design is ADR-0013 (status: Proposed; tickets `docs/tickets/01-08`).
-What exists today: the **role contract** (ticket 01: every run container
-receives `E_ROLE` and `E_BROKER_URL` as host-set env) and the **runtime-broker
-sidecar with the `spawn-brother` skill** (ticket 02). A run that carries the
-skill (`e spawn <agent> --skill spawn-brother`, or an agent that bakes it)
-starts the broker next to the agent; the skill's script posts sibling
-requests to it and reads their status. The broker holds no container-runtime
-socket and no credentials: it spools requests into a host-owned directory. The
-host side that picks a request up, runs the sibling and merges its work back
-(tickets 05-07) is not built yet, so today a request stays `requested`; the
-git primitives it will use (`Git.merge`, the checkpoint in `runSpawn`) exist. Until that ships, delegation from inside a run means
-writing the follow-up task down in `/workspace` and exiting 0 (see
-`docs/agents/e.md`, Recursive spawning). The shape:
+Siblings work end to end up to the merge-back: a run that carries the
+`spawn-brother` skill (`e spawn <agent> --skill spawn-brother`, or an agent
+that bakes it) gets the runtime-broker sidecar; the skill's script posts a
+sibling request, the host checkpoints your worktree, starts the sibling from
+that snapshot with your build artifacts, and reports its status. A sibling's
+work ends up on its own branch `e/<agent>/<slug>-N` (named in its status);
+merging it back into your worktree is ticket 07, so until it ships read the
+branch or the status yourself. A sibling has no broker of its own: its
+requests go through the parent's broker and become siblings, so nothing ever
+reaches depth 3. Requests are refused with `429` while the fan-out cap
+(default 3) is full; retry after a sibling finishes. The shape:
 
 ```bash
 # The spawn-brother skill's script (bundled Node, no curl needed) posts to the
@@ -71,20 +70,21 @@ node ~/.agents/skills/spawn-brother/spawn-brother.mjs --status
 ```
 
 - Spawn is **non-blocking**; multiple siblings run in parallel
-  (default cap 3, host-enforced).
+  (default cap 3, host-enforced, `maxSiblings` in `.e/config.json`).
 - Children may request siblings; siblings may never spawn children
   (depth 2).
 - Children start from the host's checkpoint commit of your current
   worktree - build artifacts (`node_modules`) are synchronized as needed.
 - On completion, the host merges your worktree with your brother's
-  branch automatically. If a conflict is detected, merge conflict
-  markers appear in your worktree; resolve, then signal the host to
-  finalize.
+  branch automatically (ticket 07, pending). If a conflict is detected,
+  merge conflict markers appear in your worktree; resolve, then signal the
+  host to finalize.
 - Your role is set via env vars - check `$E_ROLE` (`parent` | `child`) and
   `$E_BROKER_URL` (`http://<host>:<port>`, no trailing slash). Do not create
   or depend on `child` / `parent` marker files in the worktree; role is not a
   filesystem concept here. If the broker does not answer, or a request stays
-  `requested`, fall back to the handoff-file pattern above.
+  `requested`, fall back to writing the follow-up task down in `/workspace`
+  and exiting 0 (see `docs/agents/e.md`, Recursive spawning).
 
 ### Common things
 

@@ -195,7 +195,9 @@ Recursion is bounded by the sandbox limits of the current run: a run container
 has no container runtime (docker/podman socket), no host git credentials, and
 its worktree's `.git` is not reachable inside the container, so a nested
 containerized run cannot execute from inside a single-run sandbox (ADR-0001,
-ADR-0002). In that situation, delegation means requesting a new run at the
+ADR-0002). The one sanctioned way around it is the `spawn-brother` skill
+(ADR-0013): with it, the host starts **sibling** runs for you through the
+runtime-broker sidecar - check `$E_ROLE` and `$E_BROKER_URL`, see `AGENTS.md`. In that situation, delegation means requesting a new run at the
 layer that owns the runtime: record the task and its acceptance criteria as a
 file in the worktree, exit 0, and let the parent (or the host) spawn the
 follow-up run. Recursive spawning therefore follows the limits the

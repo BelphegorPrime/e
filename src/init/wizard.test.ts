@@ -27,6 +27,7 @@ function state(): InitState {
     currentModels: WIZARD_STATE.currentModels,
     currentLocalRuntimes: WIZARD_STATE.currentLocalRuntimes,
     currentSiblingArtifacts: ['node_modules'],
+    currentMaxSiblings: 3,
     existingEnvContent: undefined,
     runtimeCatalogs: WIZARD_STATE.runtimeCatalogs,
     gitPlatforms: [...GIT_PLATFORMS] as const,

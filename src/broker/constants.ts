@@ -42,6 +42,12 @@ export const BROKER_SPOOL_ENV = 'BROKER_SPOOL';
 export const SPOOL_RUN_FILE = 'run.json';
 export const SPOOL_REQUESTS_DIR = 'requests';
 export const SPOOL_STATUS_DIR = 'status';
+/** Spool layout: the sibling processes' stdout/stderr, one file per request. */
+export const SPOOL_LOGS_DIR = 'logs';
+
+/** Why a spool whose run is itself a sibling refuses requests (broker and host alike). */
+export const DEPTH_LIMIT_MESSAGE =
+  'Depth limit: a sibling run may not spawn children; siblings are requested through the parent run.';
 
 /** The Store skill that teaches an agent to call the broker; selecting it plans the sidecar. */
 export const SPAWN_BROTHER_SKILL = 'spawn-brother';

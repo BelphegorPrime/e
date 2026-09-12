@@ -47,6 +47,8 @@ export interface BrokerRunInfo {
   agent: string;
   /** The run's role (`E_ROLE`). */
   role: 'parent' | 'child';
+  /** Fan-out bound: siblings in flight at once (`config.json` `maxSiblings`). */
+  maxSiblings: number;
 }
 
 /** `202` body of `POST /spawn`. */

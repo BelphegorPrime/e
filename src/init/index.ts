@@ -86,6 +86,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     gitPlatforms: [...GIT_PLATFORMS],
     currentGitPlatform: config.gitPlatform,
     currentSiblingArtifacts: config.siblingArtifacts,
+    currentMaxSiblings: config.maxSiblings,
     hardware: detectHardware(),
   };
 

@@ -21,6 +21,7 @@ import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../harness/index.js';
 import type { Agent } from '../agent/index.js';
 import { defaultBrokerPlan } from '../runs/runBroker.js';
+import { ensureSpool, readStatus } from '../broker/spool.js';
 
 // The preflight guards (a git repo, foreground) run before any build, so they
 // are reachable with a fake git and an untouched runtime.
@@ -92,6 +93,8 @@ function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
     prompt: 'do it',
     rebuild: false,
     env: [],
+    siblingArtifacts: ['node_modules'],
+    maxSiblings: 3,
     ...overrides,
   };
 }
@@ -410,5 +413,52 @@ test('an edited .e/broker/Dockerfile is never clobbered by a spawn', async () =>
       'FROM scratch\n'
     );
     assert.ok(fs.existsSync(path.join(dir, 'broker.mjs')));
+  });
+});
+
+test('a sibling spawn joins the parent network, syncs the configured artifacts, and reports into the parent spool', async () => {
+  await withDemoStore(async root => {
+    const worktreesDir = path.join(root, 'wt');
+    const parentWorktree = path.join(root, 'parent');
+    fs.mkdirSync(path.join(parentWorktree, 'node_modules', 'pkg'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(parentWorktree, 'node_modules', 'pkg', 'index.js'),
+      '1'
+    );
+    const spool = path.join(root, 'spool');
+    ensureSpool(spool);
+
+    const runtime = new RecordingRuntime();
+    const result = await executeSpawn(
+      facts({
+        root,
+        worktreesDir,
+        name: 'sib-run',
+        role: 'child',
+        detached: true,
+        sibling: {
+          parent: {
+            worktreePath: parentWorktree,
+            branch: 'e/demo/parent-1',
+            network: 'e-demo-parent-1-net',
+          },
+          spoolDir: spool,
+          id: 'sib-001',
+        },
+      }),
+      emptyPlan,
+      { git: new StubGit(true), runtime, scratch: new RunScratch() }
+    );
+    assert.equal(result.ran, true);
+    assert.deepEqual(runtime.options?.networks, ['e-demo-parent-1-net']);
+    assert.deepEqual(
+      runtime.options?.volumes?.map(v => v.container),
+      ['/workspace', '/workspace/node_modules']
+    );
+    const status = readStatus(spool, 'sib-001');
+    assert.equal(status?.status, 'done');
+    assert.equal(status?.branch, 'e/demo/sib-run-1');
   });
 });

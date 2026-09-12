@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  countInFlight,
   ensureSpool,
   isRequestId,
   listRecords,
@@ -148,6 +149,7 @@ test('run info: null until the host writes it, then round-trips', () => {
       branch: 'e/demo/task-1',
       agent: 'demo',
       role: 'parent' as const,
+      maxSiblings: 3,
     };
     writeRunInfo(root, info);
     assert.deepEqual(readRunInfo(root), info);
@@ -156,5 +158,23 @@ test('run info: null until the host writes it, then round-trips', () => {
       fs.readdirSync(root).filter(f => f.endsWith('.tmp')),
       []
     );
+  });
+});
+
+test('countInFlight counts the requests in the given states', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    writeRequest(root, request('sib-001'));
+    writeRequest(root, request('sib-002'));
+    writeRequest(root, request('sib-003'));
+    writeStatus(root, 'sib-002', { status: 'running', updatedAt: 't' });
+    writeStatus(root, 'sib-003', {
+      status: 'done',
+      exitCode: 0,
+      updatedAt: 't',
+    });
+    assert.equal(countInFlight(root, ['requested', 'starting', 'running']), 2);
+    assert.equal(countInFlight(root, ['starting', 'running']), 1);
+    assert.equal(countInFlight(root, ['done']), 1);
   });
 });

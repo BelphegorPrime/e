@@ -30,6 +30,15 @@ import {
   seedParentArtifacts,
 } from './runSpawn.testSupport.js';
 import { defaultBrokerPlan } from './runBroker.js';
+import {
+  ensureSpool,
+  readRunInfo,
+  readStatus,
+  writeRequest,
+  writeStatus,
+} from '../broker/spool.js';
+import type { SiblingLaunch, SiblingLauncher } from './runSiblings.js';
+import { Env } from '../utils/env.js';
 
 /** A `Git` fake that records what the orchestrator asked it to do. */
 class FakeGit implements Git {
@@ -188,6 +197,15 @@ function makeDeps(overrides: Partial<RunSpawnDeps> = {}) {
   return { deps, git: git as FakeGit, runtime };
 }
 
+/**
+ * A broker run must say how siblings are launched; tests that expect none get
+ * a launcher that fails loudly. (The production launcher re-invokes the CLI,
+ * which under the test runner would be this very file: never let that happen.)
+ */
+const noSiblingsExpected: SiblingLauncher = launch => {
+  throw new Error(`unexpected sibling launch for ${launch.request.id}`);
+};
+
 function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
   return {
     agent,
@@ -196,6 +214,7 @@ function makeParams(overrides: Partial<RunSpawnParams> = {}): RunSpawnParams {
     imageTag: 'e-harness-demo',
     runOptions: { rm: true },
     worktreesDir: '/tmp/e-worktrees',
+    siblingHost: { launch: noSiblingsExpected },
     ...overrides,
   };
 }
@@ -831,6 +850,7 @@ test('the broker spool carries the run identity for GET /status; --keep-worktree
         branch: `e/demo/${slug}-1`,
         agent: 'demo',
         role: 'parent',
+        maxSiblings: 3,
       }
     );
     assert.ok(fs.statSync(path.join(spool, 'requests')).isDirectory());
@@ -1067,4 +1087,195 @@ test('an empty allowlist syncs nothing', async () => {
       ['/workspace']
     );
   });
+});
+
+// Sibling requests (ticket 06): while the agent runs, the host picks requests
+// up from the broker's spool and launches each as a child `e spawn`; the
+// sibling process reports its own status. Here the launcher is scripted and
+// the fake runtime plays the agent posting a request mid-run.
+const yielding = (ms: number) =>
+  new Promise<void>(resolve => setTimeout(resolve, Math.min(ms, 2)));
+
+test('a run with a broker launches sibling requests as child spawns while its agent runs', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, git, runtime } = makeDeps();
+    const slug = slugify('Fix the flaky test');
+    const runName = `e-demo-${slug}-1`;
+    const spool = path.join(worktreesDir, '.broker', runName);
+    const launches: SiblingLaunch[] = [];
+    const launch: SiblingLauncher = l => {
+      launches.push(l);
+      // The sibling process reports for itself, as a real `e spawn` does.
+      writeStatus(spool, l.request.id, {
+        status: 'running',
+        branch: 'e/researcher/look-into-x-1',
+        updatedAt: 't',
+      });
+      writeStatus(spool, l.request.id, {
+        status: 'done',
+        branch: 'e/researcher/look-into-x-1',
+        exitCode: 0,
+        updatedAt: 't',
+      });
+      return { exited: Promise.resolve(0), kill: () => {} };
+    };
+    runtime.onRun = async () => {
+      // The broker spools the agent's request; the agent keeps working a bit.
+      writeRequest(spool, {
+        id: 'sib-001',
+        agent: 'researcher',
+        prompt: 'look into X',
+        requestedAt: 't',
+      });
+      while (launches.length === 0) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    };
+
+    const result = await runSpawn(
+      { ...deps, sleep: yielding },
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        keepWorktree: true,
+        maxSiblings: 2,
+        siblingHost: {
+          launch,
+          readiness: { attempts: 600, intervalMs: 1 },
+          passthroughArgs: ['--dir', '/store'],
+          passthroughEnv: { [Env.RUNTIME_VAR]: 'podman' },
+        },
+      })
+    );
+    assert.equal(result.ran, true);
+    assert.equal(launches.length, 1);
+    const [l] = launches;
+    assert.equal(l.request.agent, 'researcher');
+    assert.deepEqual(l.args, [
+      'spawn',
+      'researcher',
+      '--detached',
+      '--dir',
+      '/store',
+      '--',
+      'look into X',
+    ]);
+    assert.equal(l.env[Env.SPAWN_ROLE_VAR], 'child');
+    assert.equal(l.env[Env.SPAWN_PARENT_WORKTREE_VAR], git.worktrees[0].path);
+    assert.equal(l.env[Env.SPAWN_PARENT_BRANCH_VAR], `e/demo/${slug}-1`);
+    assert.equal(l.env[Env.SPAWN_PARENT_NETWORK_VAR], `${runName}-net`);
+    assert.equal(l.env[Env.SPAWN_SPOOL_VAR], spool);
+    assert.equal(l.env[Env.SPAWN_SIBLING_ID_VAR], 'sib-001');
+    assert.equal(l.env[Env.RUNTIME_VAR], 'podman');
+    assert.equal(l.logFile, path.join(spool, 'logs', 'sib-001.log'));
+    assert.equal(readStatus(spool, 'sib-001')?.status, 'done');
+    // run.json carries the fan-out bound for the broker's own synchronous check.
+    assert.equal(readRunInfo(spool)?.maxSiblings, 2);
+  });
+});
+
+test('a request still waiting when the agent exits is failed: nobody is left to receive its work', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, runtime } = makeDeps();
+    const slug = slugify('Fix the flaky test');
+    const spool = path.join(worktreesDir, '.broker', `e-demo-${slug}-1`);
+    const launches: SiblingLaunch[] = [];
+    runtime.onRun = () => {
+      // Posted in the agent's last moment: the consumer is asleep until stop.
+      writeRequest(spool, {
+        id: 'sib-001',
+        agent: 'a',
+        prompt: 'late',
+        requestedAt: 't',
+      });
+    };
+    await runSpawn(
+      { ...deps, sleep: () => new Promise(resolve => setTimeout(resolve, 30)) },
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        keepWorktree: true,
+        siblingHost: {
+          launch: l => (
+            launches.push(l),
+            { exited: Promise.resolve(0), kill: () => {} }
+          ),
+        },
+      })
+    );
+    assert.equal(launches.length, 0);
+    assert.match(
+      readStatus(spool, 'sib-001')?.error ?? '',
+      /parent run ended before the request was picked up/
+    );
+  });
+});
+
+test('a sibling reports running with its branch, then done, into its parent spool; it neither pushes nor opens a PR', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, 'spool');
+    ensureSpool(spool);
+    const pullRequest = new FakePullRequest();
+    const { deps, git, runtime } = makeDeps({ pullRequest });
+    let seenWhileRunning: string | undefined;
+    runtime.onRun = () => {
+      seenWhileRunning = readStatus(spool, 'sib-001')?.status;
+    };
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        role: 'child',
+        gitPlatform: 'github',
+        parent,
+        sibling: { spoolDir: spool, id: 'sib-001' },
+      })
+    );
+    assert.equal(seenWhileRunning, 'running');
+    const status = readStatus(spool, 'sib-001');
+    assert.equal(status?.status, 'done');
+    assert.equal(status?.branch, result.branch);
+    assert.equal(status?.exitCode, 0);
+    // Delivery is the merge back into the parent, not a push or PR.
+    assert.ok(!git.calls.includes('push'));
+    assert.deepEqual(pullRequest.specs, []);
+    assert.equal(result.pushed, false);
+  });
+});
+
+test('a sibling that fails before its container reports failed with the reason', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, 'spool');
+    ensureSpool(spool);
+    const { deps } = makeDeps({
+      git: new FakeGit({ dirty: true, commitFails: 'hook failed' }),
+    });
+    await assert.rejects(
+      runSpawn(
+        deps,
+        makeParams({
+          worktreesDir,
+          role: 'child',
+          parent,
+          sibling: { spoolDir: spool, id: 'sib-002' },
+        })
+      ),
+      /Could not checkpoint/
+    );
+    const status = readStatus(spool, 'sib-002');
+    assert.equal(status?.status, 'failed');
+    assert.match(status?.error ?? '', /Could not checkpoint e\/demo\/parent-1/);
+  });
+});
+
+test('a run with a broker refuses to start without an explicit sibling launcher', async () => {
+  const { deps, runtime } = makeDeps();
+  await assert.rejects(
+    runSpawn(deps, makeParams({ broker: brokerPlan, siblingHost: undefined })),
+    /needs siblingHost\.launch/
+  );
+  assert.equal(runtime.ran, false);
+  assert.deepEqual(runtime.startedSidecars, []);
 });
