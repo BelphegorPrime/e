@@ -15,14 +15,15 @@ import {
   ROLE_ENV,
 } from '../../sidecars/broker/contract/constants.js';
 
-// The variable names are owned by the broker module (a leaf that is bundled
-// into the container programs); they are re-exported here for host-side callers.
-export { BROKER_URL_ENV, ROLE_ENV };
-
-// The role value itself lives in `shared` so `shared/utils/env.ts` can parse
-// `E_ROLE` without reaching up into the engine; re-exported here so callers
-// keep reading the whole role contract from one module.
-export { parseRunRole, type RunRole } from '../../shared/runRole.js';
+// The role *type* travels with this module, because `runSpawn`, `runSiblings`
+// and the spawn plan read the contract here and would otherwise import one
+// half of it from `shared`. The variable names (owned by the broker contract,
+// a leaf bundled into the container programs) and `parseRunRole` (owned by
+// `shared`, so `shared/utils/env.ts` can parse `E_ROLE` without reaching up
+// into the engine) are not re-exported: every production caller of those
+// already imports them from their owner, so a forward here would have been a
+// second name for the same thing.
+export type { RunRole } from '../../shared/runRole.js';
 import type { RunRole } from '../../shared/runRole.js';
 
 /**

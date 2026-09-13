@@ -5,14 +5,16 @@ import {
   BROKER_PORT,
 } from '../../sidecars/broker/contract/constants.js';
 import {
-  BROKER_URL_ENV,
-  ROLE_ENV,
   brokerUrl,
   isRoleContractEntry,
-  parseRunRole,
   roleEnv,
   runRoleInstructions,
 } from './runRole.js';
+import {
+  BROKER_URL_ENV,
+  ROLE_ENV,
+} from '../../sidecars/broker/contract/constants.js';
+import { parseRunRole } from '../../shared/runRole.js';
 
 // The contract names are what agents read (`$E_ROLE`, `$E_BROKER_URL`) and
 // what AGENTS.md documents, so they are pinned here.
