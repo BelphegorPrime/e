@@ -187,3 +187,28 @@ test('without a request id the metadata carries only the source', async () => {
     { text: 'look into X', metadata: { source: 'e' } },
   ]);
 });
+
+test('an abort while the prompt is in flight still cancels the remote task', async () => {
+  // The window this closes: the server has the prompt as soon as it reads the
+  // request, but `taskId` is only known once the response comes back. An abort
+  // in between used to find no id, send no cancel, and leave the remote
+  // working for nobody. Reproduced under load as a 30s hang in the A2A interop
+  // test, waiting for a cancel that was never sent.
+  const controller = new AbortController();
+  const c = client({
+    send: async () => {
+      controller.abort();
+      return { kind: 'task', task: task('working') };
+    },
+    wait: async () => {
+      throw new Error('waitForTask must not be reached after an early abort');
+    },
+  });
+  const outcome = await call(c, { signal: controller.signal });
+  assert.deepEqual(outcome, { kind: 'canceled', taskId: 'task-1', answer: '' });
+  assert.deepEqual(
+    c.canceled,
+    ['task-1'],
+    'the remote must be told even though the abort beat the task id'
+  );
+});

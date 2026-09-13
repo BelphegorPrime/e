@@ -104,6 +104,14 @@ export async function callRemoteAgent(
       return { kind: 'answer', answer: partsText(sent.message.parts) };
     }
     taskId = sent.task.id;
+    // An abort that arrived while `sendMessage` was in flight found no id to
+    // cancel, so the remote would have kept working with nobody waiting for
+    // it. The window is real: the server has the prompt as soon as it reads
+    // the request, while this line waits for the response to come back.
+    if (signal?.aborted) {
+      void client.cancelTask(endpoint, taskId);
+      return { kind: 'canceled', taskId, answer: '' };
+    }
     const task = await client.waitForTask(endpoint, sent.task, {
       pollMs: options.pollMs ?? DEFAULT_POLL_MS,
       sleep: options.sleep,
