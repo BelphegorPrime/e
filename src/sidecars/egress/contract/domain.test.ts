@@ -116,15 +116,16 @@ test('isValidDomain: rejects raw unicode but accepts its punycode (LDH) form', (
   assert.equal(isValidDomain('xn--r8jz45g.xn--zckzah'), true);
 });
 
-test('isValidDomain: a unicode character that case-folds to ASCII is accepted as its folded form', () => {
-  // U+212A KELVIN SIGN lowercases to 'k', so the guard sees a plain LDH name.
-  // Harmless for the config file - the same normalization runs before the
-  // directive is written - but it means "valid" does not imply "ASCII input".
+test('isValidDomain: a unicode character that case-folds to ASCII is refused', () => {
+  // U+212A KELVIN SIGN lowercases to 'k'. Validating the lowercased form would
+  // accept this and then block `kelvin.example` - a name the user never typed.
   // Built from its code point so it cannot be misread as an ASCII 'K'.
   const kelvinSign = String.fromCharCode(0x212a);
   const domain = `${kelvinSign}elvin.example`;
   assert.notEqual(domain, 'Kelvin.example');
-  assert.equal(isValidDomain(domain), true);
+  assert.equal(isValidDomain(domain), false);
+  // The normalizer still folds it - which is exactly why the guard has to run
+  // on the input, before normalization, rather than after.
   assert.equal(normalizeDomain(domain), 'kelvin.example');
   assert.equal(
     appendBlacklistDomain('', domain),
@@ -172,9 +173,9 @@ test('isDomainOrSubdomain: matches the name itself and any subdomain, never a su
   assert.equal(isDomainOrSubdomain('example.com', 'a.example.com'), false);
 });
 
-test('isDomainOrSubdomain: only the child is normalized, so the parent must already be', () => {
-  assert.equal(isDomainOrSubdomain('example.com', 'Example.com'), false);
-  assert.equal(isDomainOrSubdomain('a.example.com', 'example.com.'), false);
+test('isDomainOrSubdomain: both sides are normalized', () => {
+  assert.equal(isDomainOrSubdomain('example.com', 'Example.com'), true);
+  assert.equal(isDomainOrSubdomain('a.example.com', 'example.com.'), true);
 });
 
 test('isLocalhost: localhost and localhost.localdomain, plus their subdomains', () => {
