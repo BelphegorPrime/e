@@ -7,7 +7,7 @@ import type { Mount } from '../../core/mount.js';
 export type { Mount } from '../../core/mount.js';
 
 /** Formats a {@link Mount} into the runtime's `-v host:container[:ro]` value. */
-export function formatMount(m: Mount): string {
+function formatMount(m: Mount): string {
   return m.ro ? `${m.host}:${m.container}:ro` : `${m.host}:${m.container}`;
 }
 
@@ -171,26 +171,32 @@ export interface ContainerRunner {
 }
 
 /** `wait <container>`: blocks until the container stops, printing its exit code. */
-export function waitArgs(container: string): string[] {
+function waitArgs(container: string): string[] {
   return ['wait', container];
 }
 
 /**
  * Pure argv builders - one per runtime subcommand. Each returns the arguments
  * that follow the runtime executable, so the corresponding method reduces to
- * `spawnSync(this.engine, xArgs(...))`. Extracted so every subcommand's argv is
- * assertable without spawning a process (only `run`'s builder, {@link
- * ContainerRuntime.buildRunArgs}, used to be reachable by a test).
+ * `this.exec(this.engine, xArgs(...))`.
+ *
+ * **Private, on purpose.** They were exported so the tests could assert argv
+ * without spawning a process, and that is exactly what made the argv the only
+ * tested thing here: a builder verified on its own proves the string is right
+ * and nothing about the call that uses it, while the 600-line class that makes
+ * those calls had no test at all. The tests now drive the class through
+ * {@link ContainerRuntime}'s `exec` seam, so a wrong argv and a wrong call site
+ * both fail.
  */
-export function versionArgs(): string[] {
+function versionArgs(): string[] {
   return ['--version'];
 }
 
-export function imageInspectArgs(imageTag: string): string[] {
+function imageInspectArgs(imageTag: string): string[] {
   return ['image', 'inspect', imageTag];
 }
 
-export function buildImageArgs(
+function buildImageArgs(
   imageTag: string,
   contextDir: string,
   dockerfile?: string
@@ -201,15 +207,15 @@ export function buildImageArgs(
   return args;
 }
 
-export function networkCreateArgs(name: string): string[] {
+function networkCreateArgs(name: string): string[] {
   return ['network', 'create', name];
 }
 
-export function networkRemoveArgs(name: string): string[] {
+function networkRemoveArgs(name: string): string[] {
   return ['network', 'rm', name];
 }
 
-export function sidecarRunArgs(spec: SidecarSpec): string[] {
+function sidecarRunArgs(spec: SidecarSpec): string[] {
   const args = ['run', '-d', '--name', spec.name];
   if (spec.netns) {
     args.push('--network', `container:${spec.netns}`);
@@ -222,15 +228,11 @@ export function sidecarRunArgs(spec: SidecarSpec): string[] {
   return args;
 }
 
-export function containerRemoveArgs(name: string): string[] {
+function containerRemoveArgs(name: string): string[] {
   return ['rm', '-f', name];
 }
 
-export function tcpProbeArgs(
-  network: string,
-  host: string,
-  port: number
-): string[] {
+function tcpProbeArgs(network: string, host: string, port: number): string[] {
   // BusyBox `nc HOST PORT` (2s connect timeout) exits 0 on connect. Passed as
   // argv, never through `sh -c`: `host` is a user-chosen MCP alias. Without
   // `-i` the container's stdin is already closed, so nc exits once connected.
@@ -248,25 +250,22 @@ export function tcpProbeArgs(
   ];
 }
 
-export function execArgs(container: string, command: string[]): string[] {
+function execArgs(container: string, command: string[]): string[] {
   return ['exec', container, ...command];
 }
 
-export function runningInspectArgs(name: string): string[] {
+function runningInspectArgs(name: string): string[] {
   return ['inspect', '-f', '{{.State.Running}}', name];
 }
 
-export function volumeInspectArgs(volumeName: string): string[] {
+function volumeInspectArgs(volumeName: string): string[] {
   return ['volume', 'inspect', volumeName];
 }
-export function volumeCreateArgs(volumeName: string): string[] {
+function volumeCreateArgs(volumeName: string): string[] {
   return ['volume', 'create', volumeName];
 }
 /** `alpine` copy run: volume -> host dir (`cp -a /source/. /dest/`). */
-export function volumeCopyOutArgs(
-  volumeName: string,
-  hostDir: string
-): string[] {
+function volumeCopyOutArgs(volumeName: string, hostDir: string): string[] {
   return [
     'run',
     '--rm',
@@ -281,7 +280,7 @@ export function volumeCopyOutArgs(
   ];
 }
 /** `alpine` copy run: host dir -> volume; `wipe` first clears the volume. */
-export function volumeCopyInArgs(
+function volumeCopyInArgs(
   hostDir: string,
   volumeName: string,
   wipe?: boolean
@@ -316,15 +315,21 @@ export class ContainerRuntime implements ContainerRunner {
    *   also the `--runtime` name it answers to ({@link ContainerRunner.engine}).
    * @param spawnImpl Process spawner for the long-running `run`/`wait` calls;
    *   tests inject a fake, production uses `child_process.spawn`.
+   * @param exec Synchronous runner for every other subcommand - build, inspect,
+   *   network, volume, probe. The seam the tests drive: they assert the argv
+   *   this class hands the engine, which is why none of the argv builders are
+   *   exported. A builder verified on its own proves the string is right and
+   *   nothing about the call that uses it.
    */
   constructor(
     readonly engine: string,
-    private readonly spawnImpl: typeof spawn = spawn
+    private readonly spawnImpl: typeof spawn = spawn,
+    private readonly exec: typeof spawnSync = spawnSync
   ) {}
 
   /** Returns true if this runtime is installed and responds to `--version`. */
   isAvailable(): boolean {
-    const result = spawnSync(this.engine, versionArgs(), {
+    const result = this.exec(this.engine, versionArgs(), {
       stdio: 'ignore',
       shell: false,
     });
@@ -334,7 +339,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Returns true if an image with the given tag already exists locally. */
   imageExists(imageTag: string): boolean {
-    const result = spawnSync(this.engine, imageInspectArgs(imageTag), {
+    const result = this.exec(this.engine, imageInspectArgs(imageTag), {
       stdio: 'ignore',
       shell: false,
     });
@@ -352,7 +357,7 @@ export class ContainerRuntime implements ContainerRunner {
 
     log.command(`> ${this.engine} ${args.join(' ')}`);
     log.debug(`Context: ${contextDir}, Dockerfile: ${dockerfile ?? 'default'}`);
-    const result = spawnSync(this.engine, args, {
+    const result = this.exec(this.engine, args, {
       stdio: 'inherit',
       shell: false,
     });
@@ -492,7 +497,7 @@ export class ContainerRuntime implements ContainerRunner {
   /** Create a private container network. Throws on failure (a pre-run, fail-fast step). */
   createNetwork(name: string): void {
     log.debug(`Creating network: ${name}`);
-    const result = spawnSync(this.engine, networkCreateArgs(name), {
+    const result = this.exec(this.engine, networkCreateArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -512,7 +517,7 @@ export class ContainerRuntime implements ContainerRunner {
   /** Remove a network. Best-effort: swallows every failure so teardown never masks the run result. */
   removeNetwork(name: string): void {
     log.debug(`Removing network: ${name}`);
-    spawnSync(this.engine, networkRemoveArgs(name), {
+    this.exec(this.engine, networkRemoveArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -528,7 +533,7 @@ export class ContainerRuntime implements ContainerRunner {
     const args = sidecarRunArgs(spec);
 
     log.command(`> ${this.engine} ${args.join(' ')}`);
-    const result = spawnSync(this.engine, args, {
+    const result = this.exec(this.engine, args, {
       stdio: ['ignore', 'ignore', 'inherit'],
       shell: false,
     });
@@ -546,7 +551,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Force-remove a container by name (even if running). Best-effort: never throws (teardown). */
   removeContainer(name: string): void {
-    spawnSync(this.engine, containerRemoveArgs(name), {
+    this.exec(this.engine, containerRemoveArgs(name), {
       stdio: 'ignore',
       shell: false,
     });
@@ -560,7 +565,7 @@ export class ContainerRuntime implements ContainerRunner {
    * `busybox` image is a tiny public image the runtime auto-pulls on first use.
    */
   probeTcp(network: string, host: string, port: number): boolean {
-    const result = spawnSync(this.engine, tcpProbeArgs(network, host, port), {
+    const result = this.exec(this.engine, tcpProbeArgs(network, host, port), {
       stdio: 'ignore',
       shell: false,
     });
@@ -573,7 +578,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** Run a readiness command inside the sidecar (`exec`); true iff it exits 0. */
   probeHealthcheck(container: string, command: string[]): boolean {
-    const result = spawnSync(this.engine, execArgs(container, command), {
+    const result = this.exec(this.engine, execArgs(container, command), {
       stdio: 'ignore',
       shell: false,
     });
@@ -586,7 +591,7 @@ export class ContainerRuntime implements ContainerRunner {
 
   /** True if the named container is still running (`inspect` reports `Running: true`). */
   isRunning(name: string): boolean {
-    const result = spawnSync(this.engine, runningInspectArgs(name), {
+    const result = this.exec(this.engine, runningInspectArgs(name), {
       encoding: 'utf8',
       shell: false,
     });
@@ -594,7 +599,7 @@ export class ContainerRuntime implements ContainerRunner {
   }
 
   volumeExists(volumeName: string): boolean {
-    const result = spawnSync(this.engine, volumeInspectArgs(volumeName), {
+    const result = this.exec(this.engine, volumeInspectArgs(volumeName), {
       stdio: 'ignore',
       shell: false,
     });
@@ -627,7 +632,7 @@ export class ContainerRuntime implements ContainerRunner {
    * import): stderr passes through for the user, anything else is silent.
    */
   private runOrThrow(args: string[], what: string): void {
-    const result = spawnSync(this.engine, args, {
+    const result = this.exec(this.engine, args, {
       stdio: ['ignore', 'ignore', 'inherit'],
       shell: false,
     });

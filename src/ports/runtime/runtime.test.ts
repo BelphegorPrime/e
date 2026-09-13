@@ -1,23 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   ContainerRuntime,
-  formatMount,
-  versionArgs,
-  imageInspectArgs,
-  buildImageArgs,
-  networkCreateArgs,
-  networkRemoveArgs,
-  sidecarRunArgs,
-  containerRemoveArgs,
-  tcpProbeArgs,
-  execArgs,
-  runningInspectArgs,
-  volumeInspectArgs,
-  volumeCreateArgs,
-  volumeCopyOutArgs,
-  volumeCopyInArgs,
-  waitArgs,
   type RunOptions,
   type SidecarSpec,
 } from './index.js';
@@ -32,6 +17,27 @@ import {
 // argument list. `command` is irrelevant here (it's the executable, not an
 // arg), so any value does.
 const runtime = new ContainerRuntime('docker');
+
+/**
+ * A {@link ContainerRuntime} whose synchronous engine calls are recorded
+ * instead of run. The argv builders are private now, so this is how a test
+ * sees the argv - through the method that uses it, which is the only place a
+ * wrong builder and a wrong call site both show up.
+ */
+function recording(stdout = ''): {
+  runtime: ContainerRuntime;
+  calls: string[][];
+} {
+  const calls: string[][] = [];
+  const exec = ((_engine: string, args: readonly string[]) => {
+    calls.push([...args]);
+    return { status: 0, stdout, stderr: '', signal: null, output: [], pid: 0 };
+  }) as unknown as typeof spawnSync;
+  return {
+    runtime: new ContainerRuntime('docker', undefined, exec),
+    calls,
+  };
+}
 
 function argsFor(
   opts: RunOptions,
@@ -302,21 +308,21 @@ test('composeUp: no-runtime path uses ordinary compose-up argv', () => {
 
 // --- structured mounts ---
 
-test('formatMount: read-write omits :ro', () => {
-  assert.equal(
-    formatMount({ host: '/wt', container: '/workspace' }),
-    '/wt:/workspace'
+test('a read-write mount renders host:container', () => {
+  assert.deepEqual(
+    argsFor({ volumes: [{ host: '/wt', container: '/workspace' }] }),
+    ['run', '-v', '/wt:/workspace', 'img']
   );
 });
 
-test('formatMount: ro appends :ro', () => {
-  assert.equal(
-    formatMount({
-      host: '/s',
-      container: '/home/node/.claude/skills/x',
-      ro: true,
+test('a read-only mount appends :ro', () => {
+  assert.deepEqual(
+    argsFor({
+      volumes: [
+        { host: '/s', container: '/home/node/.claude/skills/x', ro: true },
+      ],
     }),
-    '/s:/home/node/.claude/skills/x:ro'
+    ['run', '-v', '/s:/home/node/.claude/skills/x:ro', 'img']
   );
 });
 
@@ -331,29 +337,28 @@ test('buildRunArgs: a read-only mount renders host:container:ro', () => {
 
 // --- pure subcommand arg builders (previously trapped inside spawnSync) ---
 
-test('versionArgs', () => {
-  assert.deepEqual(versionArgs(), ['--version']);
+test('isAvailable asks the engine for its version', () => {
+  const { runtime, calls } = recording();
+  runtime.isAvailable();
+  assert.deepEqual(calls[0], ['--version']);
 });
 
-test('imageInspectArgs', () => {
-  assert.deepEqual(imageInspectArgs('e-harness-codex'), [
-    'image',
-    'inspect',
-    'e-harness-codex',
-  ]);
+test('imageExists inspects the image', () => {
+  const { runtime, calls } = recording();
+  runtime.imageExists('e-harness-codex');
+  assert.deepEqual(calls[0], ['image', 'inspect', 'e-harness-codex']);
 });
 
-test('buildImageArgs: tag then context, default Dockerfile', () => {
-  assert.deepEqual(buildImageArgs('e-agent-x', '/ctx'), [
-    'build',
-    '-t',
-    'e-agent-x',
-    '/ctx',
-  ]);
+test('build: tag then context, default Dockerfile', () => {
+  const { runtime, calls } = recording();
+  runtime.build('e-agent-x', '/ctx');
+  assert.deepEqual(calls[0], ['build', '-t', 'e-agent-x', '/ctx']);
 });
 
-test('buildImageArgs: explicit -f Dockerfile precedes the context', () => {
-  assert.deepEqual(buildImageArgs('e-agent-x', '/ctx', '/ctx/Other'), [
+test('build: explicit -f Dockerfile precedes the context', () => {
+  const { runtime, calls } = recording();
+  runtime.build('e-agent-x', '/ctx', '/ctx/Other');
+  assert.deepEqual(calls[0], [
     'build',
     '-t',
     'e-agent-x',
@@ -363,28 +368,24 @@ test('buildImageArgs: explicit -f Dockerfile precedes the context', () => {
   ]);
 });
 
-test('networkCreateArgs / networkRemoveArgs', () => {
-  assert.deepEqual(networkCreateArgs('run-1-net'), [
-    'network',
-    'create',
-    'run-1-net',
-  ]);
-  assert.deepEqual(networkRemoveArgs('run-1-net'), [
-    'network',
-    'rm',
-    'run-1-net',
+test('createNetwork and removeNetwork name the network once each', () => {
+  const { runtime, calls } = recording();
+  runtime.createNetwork('run-1-net');
+  runtime.removeNetwork('run-1-net');
+  assert.deepEqual(calls, [
+    ['network', 'create', 'run-1-net'],
+    ['network', 'rm', 'run-1-net'],
   ]);
 });
 
-test('containerRemoveArgs force-removes by name', () => {
-  assert.deepEqual(containerRemoveArgs('run-1-mcp-everything'), [
-    'rm',
-    '-f',
-    'run-1-mcp-everything',
-  ]);
+test('removeContainer force-removes by name', () => {
+  const { runtime, calls } = recording();
+  runtime.removeContainer('run-1-mcp-everything');
+  assert.deepEqual(calls[0], ['rm', '-f', 'run-1-mcp-everything']);
 });
 
-test('sidecarRunArgs: detached, named, on its network with an alias', () => {
+test('startSidecar: detached, named, on its network with an alias', () => {
+  const { runtime, calls } = recording();
   const spec: SidecarSpec = {
     name: 'run-1-mcp-everything',
     alias: 'everything',
@@ -392,7 +393,8 @@ test('sidecarRunArgs: detached, named, on its network with an alias', () => {
     network: 'run-1-net',
     port: 3001,
   };
-  assert.deepEqual(sidecarRunArgs(spec), [
+  runtime.startSidecar(spec);
+  assert.deepEqual(calls[0], [
     'run',
     '-d',
     '--name',
@@ -405,7 +407,8 @@ test('sidecarRunArgs: detached, named, on its network with an alias', () => {
   ]);
 });
 
-test('sidecarRunArgs: env-files precede the image, in order', () => {
+test('startSidecar: env-files precede the image, in order', () => {
+  const { runtime, calls } = recording();
   const spec: SidecarSpec = {
     name: 'run-1-mcp-x',
     alias: 'x',
@@ -414,7 +417,8 @@ test('sidecarRunArgs: env-files precede the image, in order', () => {
     port: 8000,
     envFile: ['/a.env', '/b.env'],
   };
-  assert.deepEqual(sidecarRunArgs(spec), [
+  runtime.startSidecar(spec);
+  assert.deepEqual(calls[0], [
     'run',
     '-d',
     '--name',
@@ -431,8 +435,10 @@ test('sidecarRunArgs: env-files precede the image, in order', () => {
   ]);
 });
 
-test('tcpProbeArgs: throwaway busybox nc on the private network', () => {
-  assert.deepEqual(tcpProbeArgs('run-1-net', 'everything', 3001), [
+test('probeTcp: throwaway busybox nc on the private network', () => {
+  const { runtime, calls } = recording();
+  runtime.probeTcp('run-1-net', 'everything', 3001);
+  assert.deepEqual(calls[0], [
     'run',
     '--rm',
     '--network',
@@ -462,18 +468,16 @@ test('volume operations surface a failing or missing runtime instead of returnin
   assert.throws(() => missing.createVolume('v'), /Failed to start/);
 });
 
-test('execArgs: the command trails exec <container>', () => {
-  assert.deepEqual(execArgs('run-1-mcp-x', ['sh', '-c', 'true']), [
-    'exec',
-    'run-1-mcp-x',
-    'sh',
-    '-c',
-    'true',
-  ]);
+test('probeHealthcheck: the command trails exec <container>', () => {
+  const { runtime, calls } = recording();
+  runtime.probeHealthcheck('run-1-mcp-x', ['sh', '-c', 'true']);
+  assert.deepEqual(calls[0], ['exec', 'run-1-mcp-x', 'sh', '-c', 'true']);
 });
 
-test('runningInspectArgs: inspect the Running state', () => {
-  assert.deepEqual(runningInspectArgs('run-1-mcp-x'), [
+test('isRunning inspects the Running state', () => {
+  const { runtime, calls } = recording();
+  runtime.isRunning('run-1-mcp-x');
+  assert.deepEqual(calls[0], [
     'inspect',
     '-f',
     '{{.State.Running}}',
@@ -481,24 +485,22 @@ test('runningInspectArgs: inspect the Running state', () => {
   ]);
 });
 
-test('volumeInspectArgs: inspect a docker volume', () => {
-  assert.deepEqual(volumeInspectArgs('omniroute-data'), [
-    'volume',
-    'inspect',
-    'omniroute-data',
-  ]);
+test('volumeExists inspects the volume', () => {
+  const { runtime, calls } = recording();
+  runtime.volumeExists('omniroute-data');
+  assert.deepEqual(calls[0], ['volume', 'inspect', 'omniroute-data']);
 });
 
-test('volumeCreateArgs: create a docker volume', () => {
-  assert.deepEqual(volumeCreateArgs('omniroute-data'), [
-    'volume',
-    'create',
-    'omniroute-data',
-  ]);
+test('createVolume creates the volume', () => {
+  const { runtime, calls } = recording();
+  runtime.createVolume('omniroute-data');
+  assert.deepEqual(calls[0], ['volume', 'create', 'omniroute-data']);
 });
 
-test('volumeCopyOutArgs: volume -> host dir via alpine cp', () => {
-  assert.deepEqual(volumeCopyOutArgs('omniroute-data', '/tmp/out'), [
+test('copyVolumeToDir: volume -> host dir via alpine cp', () => {
+  const { runtime, calls } = recording();
+  runtime.copyVolumeToDir('omniroute-data', '/tmp/out');
+  assert.deepEqual(calls[0], [
     'run',
     '--rm',
     '-v',
@@ -512,8 +514,10 @@ test('volumeCopyOutArgs: volume -> host dir via alpine cp', () => {
   ]);
 });
 
-test('volumeCopyInArgs: host dir -> volume without a wipe guard', () => {
-  assert.deepEqual(volumeCopyInArgs('/tmp/in', 'omniroute-data'), [
+test('copyDirToVolume: host dir -> volume without a wipe guard', () => {
+  const { runtime, calls } = recording();
+  runtime.copyDirToVolume('/tmp/in', 'omniroute-data');
+  assert.deepEqual(calls[0], [
     'run',
     '--rm',
     '-v',
@@ -527,8 +531,10 @@ test('volumeCopyInArgs: host dir -> volume without a wipe guard', () => {
   ]);
 });
 
-test('volumeCopyInArgs: wipe=true prepends the destructive rm guard', () => {
-  assert.deepEqual(volumeCopyInArgs('/tmp/in', 'omniroute-data', true), [
+test('copyDirToVolume: wipe=true prepends the destructive rm guard', () => {
+  const { runtime, calls } = recording();
+  runtime.copyDirToVolume('/tmp/in', 'omniroute-data', true);
+  assert.deepEqual(calls[0], [
     'run',
     '--rm',
     '-v',
@@ -540,10 +546,6 @@ test('volumeCopyInArgs: wipe=true prepends the destructive rm guard', () => {
     '-c',
     'rm -rf /dest/* /dest/..?* /dest/.[!.]* 2>/dev/null || true && cp -a /source/. /dest/',
   ]);
-});
-
-test('waitArgs blocks on a container and prints its exit code', () => {
-  assert.deepEqual(waitArgs('abc123'), ['wait', 'abc123']);
 });
 
 // --- run(): foreground vs headless-TTY ---------------------------------------
@@ -642,7 +644,8 @@ test('run: headless TTY treats an unparsable wait result as failure', async () =
   assert.equal(code, 1);
 });
 
-test('sidecarRunArgs: bind mounts follow the env-files and precede the image', () => {
+test('startSidecar: bind mounts follow the env-files and precede the image', () => {
+  const { runtime, calls } = recording();
   const spec: SidecarSpec = {
     name: 'run-1-broker',
     alias: 'runtime-broker',
@@ -651,7 +654,8 @@ test('sidecarRunArgs: bind mounts follow the env-files and precede the image', (
     port: 20130,
     volumes: [{ host: '/tmp/spool', container: '/var/lib/e-broker' }],
   };
-  assert.deepEqual(sidecarRunArgs(spec), [
+  runtime.startSidecar(spec);
+  assert.deepEqual(calls[0], [
     'run',
     '-d',
     '--name',
@@ -664,4 +668,58 @@ test('sidecarRunArgs: bind mounts follow the env-files and precede the image', (
     '/tmp/spool:/var/lib/e-broker',
     'e-broker',
   ]);
+});
+
+// --- what the class does with a failing engine ---------------------------
+//
+// These were unreachable while the argv builders were the test surface: a
+// builder cannot fail, only the call that uses it can.
+
+/** A recorder whose engine answers with `status`, or fails to start at all. */
+function failing(result: { status?: number; error?: Error }): ContainerRuntime {
+  const exec = ((): unknown => ({
+    status: result.status ?? 1,
+    stdout: '',
+    stderr: '',
+    signal: null,
+    output: [],
+    pid: 0,
+    ...(result.error ? { error: result.error } : {}),
+  })) as unknown as typeof spawnSync;
+  return new ContainerRuntime('docker', undefined, exec);
+}
+
+test('build throws when the engine exits non-zero, so a broken image ends the spawn', () => {
+  assert.throws(
+    () => failing({ status: 1 }).build('e-agent-x', '/ctx'),
+    /Build failed|failed/i
+  );
+});
+
+test('build throws when the engine cannot start at all', () => {
+  assert.throws(
+    () => failing({ error: new Error('ENOENT') }).build('e-agent-x', '/ctx'),
+    /Failed to start docker/
+  );
+});
+
+test('createNetwork throws, because a run without its network cannot proceed', () => {
+  assert.throws(() => failing({ status: 1 }).createNetwork('run-1-net'));
+});
+
+test('removeNetwork never throws: it runs in teardown, where a failure must not mask the result', () => {
+  assert.doesNotThrow(() => failing({ status: 1 }).removeNetwork('run-1-net'));
+});
+
+test('removeContainer never throws either, for the same reason', () => {
+  assert.doesNotThrow(() => failing({ status: 1 }).removeContainer('c'));
+});
+
+test('a failing probe is a negative answer, not an error', () => {
+  const runtime = failing({ status: 1 });
+  assert.equal(runtime.probeTcp('net', 'host', 80), false);
+  assert.equal(runtime.isRunning('c'), false);
+  assert.equal(runtime.imageExists('img'), false);
+  assert.equal(runtime.volumeExists('v'), false);
+  assert.equal(runtime.isAvailable(), false);
 });
