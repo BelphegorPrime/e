@@ -72,14 +72,16 @@ test('composeModelCatalog: the shipped catalogs are disjoint, so selecting all t
 test('composeModelCatalog: deduplicates by id, keeping the first runtime that offers it', () => {
   const catalogs: Catalogs = {
     llamacpp: [
-      { id: 'shared/model', sizeBytes: 1 },
-      { id: 'only/llamacpp', sizeBytes: 2 },
+      { id: 'shared/model', sizeBytes: 1, paramsB: 1, activeParamsB: 1 },
+      { id: 'only/llamacpp', sizeBytes: 2, paramsB: 1, activeParamsB: 1 },
     ],
     ollama: [
-      { id: 'shared/model', sizeBytes: 999 },
-      { id: 'only/ollama', sizeBytes: 3 },
+      { id: 'shared/model', sizeBytes: 999, paramsB: 1, activeParamsB: 1 },
+      { id: 'only/ollama', sizeBytes: 3, paramsB: 1, activeParamsB: 1 },
     ],
-    vllm: [{ id: 'shared/model', sizeBytes: 777 }],
+    vllm: [
+      { id: 'shared/model', sizeBytes: 777, paramsB: 1, activeParamsB: 1 },
+    ],
   };
   const merged = composeModelCatalog(['llamacpp', 'ollama', 'vllm'], catalogs);
   assert.deepEqual(ids(merged), [

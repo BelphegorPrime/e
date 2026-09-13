@@ -5,6 +5,7 @@ import { RUNTIME_CATALOGS } from '../../core/localRuntimes.js';
 import { GIT_PLATFORMS } from '../../core/store/config.js';
 import { type WizardState } from '../init/wizard.js';
 import { applyMenuResult, buildInitRows } from './index.js';
+import { testProfile } from '../../ports/hardware/profile.testSupport.js';
 
 const WIZARD_STATE: WizardState = {
   harnessNames: Object.keys(HARNESSES),
@@ -12,6 +13,7 @@ const WIZARD_STATE: WizardState = {
   promptKeys: ['ANTHROPIC_API_KEY'],
   askOmniroutePassword: true,
   runtimeCatalogs: RUNTIME_CATALOGS,
+  hardware: testProfile(),
   currentModels: ['llama3.1-8b'],
   currentLocalRuntimes: ['llamacpp'],
   gitPlatforms: [...GIT_PLATFORMS],

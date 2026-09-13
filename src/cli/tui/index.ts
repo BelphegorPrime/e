@@ -1,6 +1,6 @@
-import { formatBytes, type ModelCatalogEntry } from '../../core/modelStatus.js';
+import { type ModelCatalogEntry } from '../../core/modelStatus.js';
 import { type InitAnswers } from '../init/initPlan.js';
-import { type WizardState } from '../init/wizard.js';
+import { modelHint, type WizardState } from '../init/wizard.js';
 import {
   LOCAL_RUNTIMES,
   composeModelCatalog,
@@ -42,7 +42,10 @@ export function buildInitRows(
       checked: selectedRuntimes.includes(runtime.id),
     })),
 
-    { kind: 'header', label: 'Local models to provision' },
+    {
+      kind: 'header',
+      label: 'Local models to provision (only what this hardware can hold)',
+    },
 
     ...composeModelCatalog(selectedRuntimes, state.runtimeCatalogs).map(
       (model: ModelCatalogEntry) => ({
@@ -50,7 +53,7 @@ export function buildInitRows(
         id: model.id,
         target: 'models',
         label: model.id,
-        hint: formatBytes(model.sizeBytes),
+        hint: modelHint(model, state.hardware),
         checked: selectedModels.includes(model.id),
       })
     ),

@@ -18,6 +18,13 @@ import {
   RUNTIME_CATALOGS,
   type LocalRuntime,
 } from '../../core/localRuntimes.js';
+import {
+  nvidiaProfile,
+  testProfile,
+} from '../../ports/hardware/profile.testSupport.js';
+
+/** No GPU: every runtime renders its CPU image and no device passthrough. */
+const CPU = testProfile();
 
 // parseHarnessChoice is pure: it maps a prompt answer to a harness name, taking
 // the fallback for a blank answer and undefined for anything unrecognized.
@@ -47,9 +54,9 @@ test('parseHarnessChoice: an out-of-range index or unknown name is unrecognized'
 // parseModelChoice is pure: it maps a multi-select prompt answer to a set of
 // catalog model ids, taking the fallback for a blank answer.
 const CATALOG = [
-  { id: 'org/model-a', sizeBytes: 1 },
-  { id: 'org/model-b', sizeBytes: 2 },
-  { id: 'org/model-c', sizeBytes: 3 },
+  { id: 'org/model-a', sizeBytes: 1, paramsB: 1, activeParamsB: 1 },
+  { id: 'org/model-b', sizeBytes: 2, paramsB: 2, activeParamsB: 2 },
+  { id: 'org/model-c', sizeBytes: 3, paramsB: 3, activeParamsB: 3 },
 ];
 
 test('parseModelChoice: a blank answer takes the fallback', () => {
@@ -183,7 +190,7 @@ test('seedStackSecrets: a blank key counts as absent and is generated', () => {
 });
 
 test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networking', () => {
-  const compose = renderCompose('cpu');
+  const compose = renderCompose(CPU);
   assert.match(
     compose,
     /egress:\n\s+build:\n\s+context: \.\/egress\n\s+image: e-egress/
@@ -222,7 +229,7 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
 });
 
 test('renderCompose: bind-mounts both host-editable egress policy files into the egress container', () => {
-  const compose = renderCompose('cpu', []);
+  const compose = renderCompose(CPU, []);
   assert.match(
     compose,
     /- \.\/egress-blacklist:\/etc\/egress\.d\/dnsmasq\.blacklist:rw/
@@ -235,14 +242,17 @@ test('renderCompose: bind-mounts both host-editable egress policy files into the
 });
 
 test('renderCompose: adds the Ollama and vLLM containers when selected', () => {
-  const compose = renderCompose('cpu', ['llamacpp', 'ollama', 'vllm']);
+  const compose = renderCompose(CPU, ['llamacpp', 'ollama', 'vllm']);
   assert.match(compose, /\n {2}llama:/);
   assert.match(compose, /\n {2}ollama:/);
   assert.match(compose, /image: ollama\/ollama:latest/);
   assert.match(compose, /127\.0\.0\.1:11434:11434/);
   assert.match(compose, /- ollama-data:\/root\/\.ollama/);
   assert.match(compose, /\n {2}vllm:/);
-  assert.match(compose, /image: vllm\/vllm-openai:latest/);
+  assert.match(
+    compose,
+    /image: public\.ecr\.aws\/q9t5s3a7\/vllm-cpu-release-repo:latest/
+  );
   assert.match(compose, /127\.0\.0\.1:8000:8000/);
   assert.match(compose, /- vllm-data:\/root\/\.cache/);
   assert.match(
@@ -254,7 +264,7 @@ test('renderCompose: adds the Ollama and vLLM containers when selected', () => {
 });
 
 test('renderCompose: an Ollama-only stack renders no llama service', () => {
-  const compose = renderCompose('cpu', ['ollama']);
+  const compose = renderCompose(CPU, ['ollama']);
   assert.doesNotMatch(compose, /\n {2}llama:/);
   assert.doesNotMatch(compose, /LLAMA_ARG_/);
   assert.match(compose, /\n {2}ollama:/);
@@ -263,7 +273,7 @@ test('renderCompose: an Ollama-only stack renders no llama service', () => {
 });
 
 test('renderCompose: no runtime selection renders no bootstrap service and no runtime containers', () => {
-  const compose = renderCompose('cpu', []);
+  const compose = renderCompose(CPU, []);
   assert.doesNotMatch(compose, /\n {2}bootstrap:/);
   assert.doesNotMatch(compose, /\n {2}llama:/);
   assert.doesNotMatch(compose, /\n {2}ollama:/);
@@ -274,7 +284,7 @@ test('renderCompose: no runtime selection renders no bootstrap service and no ru
 });
 
 test('renderCompose: does not expose ports from services sharing the egress network namespace', () => {
-  const compose = renderCompose('cpu');
+  const compose = renderCompose(CPU);
   const redis = compose.slice(
     compose.indexOf('\n  redis:'),
     compose.indexOf('\nnetworks:')
@@ -285,7 +295,7 @@ test('renderCompose: does not expose ports from services sharing the egress netw
 });
 
 test('renderCompose: binds OmniRoute to localhost only - no LAN exposure', () => {
-  const compose = renderCompose('cpu');
+  const compose = renderCompose(CPU);
   // The OmniRoute dashboard is a login surface; only the host itself may reach it.
   assert.doesNotMatch(compose, /\s- "20128:20128"/);
   assert.doesNotMatch(compose, /0\.0\.0\.0:20128/);
@@ -304,7 +314,7 @@ test('renderCompose: binds OmniRoute to localhost only - no LAN exposure', () =>
 });
 
 test('renderCompose: no default secrets - every stack var must come from .env', () => {
-  const compose = renderCompose('cpu');
+  const compose = renderCompose(CPU);
   // Fallback defaults are gone; an unseeded stack fails closed instead of
   // shipping the well-known local-development credentials.
   assert.doesNotMatch(compose, /local-development/);
@@ -469,23 +479,82 @@ test(
   }
 );
 
+/** An AMD host: ROCm through `/dev/kfd`, 16 GB of VRAM. */
+const AMD = testProfile({
+  amdKfdPresent: true,
+  gpus: [{ vendor: 'amd', name: 'Test AMD GPU', vramBytes: 16 * 1024 ** 3 }],
+});
+
+/** An Intel host: an integrated GPU, so no VRAM of its own. */
+const INTEL = testProfile({
+  intelGpuPresent: true,
+  gpus: [{ vendor: 'intel', name: 'Test Intel GPU', vramBytes: 0 }],
+});
+
+const ALL_RUNTIMES = ['llamacpp', 'ollama', 'vllm'] as const;
+
 test('renderCompose: picks the CUDA image and reserves an nvidia GPU for the nvidia vendor', () => {
-  const compose = renderCompose('nvidia');
+  const compose = renderCompose(nvidiaProfile());
   assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-cuda/);
   assert.match(compose, /driver: nvidia/);
   assert.match(compose, /capabilities: \[gpu\]/);
 });
 
 test('renderCompose: picks the ROCm image and passes through /dev/kfd for the amd vendor', () => {
-  const compose = renderCompose('amd');
+  const compose = renderCompose(AMD);
   assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-rocm/);
   assert.match(compose, /\/dev\/kfd/);
 });
 
 test('renderCompose: picks the SYCL image and passes through /dev/dri for the intel vendor', () => {
-  const compose = renderCompose('intel');
+  const compose = renderCompose(INTEL);
   assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-intel/);
   assert.match(compose, /\/dev\/dri/);
+});
+
+test('renderCompose: every runtime takes the build made for the detected vendor', () => {
+  const nvidia = renderCompose(nvidiaProfile(), ALL_RUNTIMES);
+  assert.match(nvidia, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-cuda/);
+  assert.match(nvidia, /image: ollama\/ollama:latest/);
+  assert.match(nvidia, /image: vllm\/vllm-openai:latest/);
+
+  const amd = renderCompose(AMD, ALL_RUNTIMES);
+  assert.match(amd, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-rocm/);
+  assert.match(amd, /image: ollama\/ollama:rocm/);
+  assert.match(amd, /image: rocm\/vllm:latest/);
+
+  const intel = renderCompose(INTEL, ALL_RUNTIMES);
+  assert.match(intel, /image: ghcr\.io\/ggml-org\/llama\.cpp:server-intel/);
+  assert.match(intel, /image: intel\/vllm:xpu/);
+});
+
+test('renderCompose: every runtime service gets the GPU passthrough, not just llama.cpp', () => {
+  // Without this each non-llama runtime would pull a GPU image and then run on
+  // the CPU, because no device ever reached its container.
+  const nvidia = renderCompose(nvidiaProfile(), ALL_RUNTIMES);
+  assert.equal(nvidia.match(/driver: nvidia/g)?.length, 3);
+
+  const amd = renderCompose(AMD, ALL_RUNTIMES);
+  assert.equal(amd.match(/- \/dev\/kfd/g)?.length, 3);
+
+  // A CPU host still renders no passthrough at all.
+  assert.doesNotMatch(
+    renderCompose(CPU, ALL_RUNTIMES),
+    /devices:|driver: nvidia/
+  );
+});
+
+test('renderCompose: the header records the detected hardware and each runtime image', () => {
+  const compose = renderCompose(nvidiaProfile(), ALL_RUNTIMES);
+  const header = compose.slice(0, compose.indexOf('# Start with:'));
+  assert.match(header, /Hardware detected: nvidia/);
+  assert.match(header, /Test NVIDIA GPU \(24\.0 GB VRAM\)/);
+  assert.match(
+    header,
+    /llama\.cpp -> ghcr\.io\/ggml-org\/llama\.cpp:server-cuda/
+  );
+  assert.match(header, /Ollama -> ollama\/ollama:latest/);
+  assert.match(header, /vLLM -> vllm\/vllm-openai:latest/);
 });
 
 test('runtime model catalogs: each runtime offers its own models for the init selection', () => {

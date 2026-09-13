@@ -7,6 +7,7 @@ import { HARNESSES } from '../../core/harness/index.js';
 import { MODEL_CATALOG } from '../../core/modelStatus.js';
 import { RUNTIME_CATALOGS } from '../../core/localRuntimes.js';
 import { GIT_PLATFORMS } from '../../core/store/config.js';
+import { testProfile } from '../../ports/hardware/profile.testSupport.js';
 import {
   OMNIROUTE_STACK_SECRETS,
   parseGitPlatformChoice,
@@ -33,7 +34,7 @@ function state(overrides: Partial<InitState> = {}): InitState {
     existingEnvContent: undefined,
     runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
-    hardware: 'cpu',
+    hardware: testProfile(),
     ...overrides,
   };
 }

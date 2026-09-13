@@ -1,7 +1,9 @@
 import {
-  llamaCppImage,
-  llamaGpuCompose,
-  type HardwareVendor,
+  describeHardware,
+  gpuComposeFragment,
+  runtimeImage,
+  buildProfile,
+  type HardwareProfile,
 } from '../../ports/hardware/index.js';
 import Mustache from 'mustache';
 import { STACK_NETWORK } from '../../shared/constants.js';
@@ -15,8 +17,9 @@ import type { LocalRuntime } from '../../core/localRuntimes.js';
 
 /** Compose template; conditional blocks keep each local runtime self-contained. */
 const TEMPLATE = `# Local OmniRoute gateway with {{{runtimeSummary}}}.
-# Hardware detected: {{{vendor}}} -> {{{image}}}
-# Start with: docker compose -f .e/compose.yaml up -d
+# Hardware detected: {{{hardwareSummary}}}
+{{#runtimeImages}}#   {{{label}}} -> {{{image}}}
+{{/runtimeImages}}# Start with: docker compose -f .e/compose.yaml up -d
 # OmniRoute secrets (OMNIROUTE_INITIAL_PASSWORD, JWT_SECRET, API_KEY_SECRET) are
 # interpolated from .e/.env - e init seeds random values there; there are no
 # fallback defaults, so an unseeded stack simply has no known password.
@@ -113,7 +116,7 @@ services:
     restart: "no"
 {{/anyRuntime}}
 {{#llama}}  llama:
-    image: {{{image}}}
+    image: {{{llamaImage}}}
     container_name: llama
     restart: unless-stopped
     network_mode: "service:egress"
@@ -130,7 +133,7 @@ services:
       - llama-data:/root/.cache
 {{{gpu}}}{{/llama}}{{#ollama}}
   ollama:
-    image: ollama/ollama:latest
+    image: {{{ollamaImage}}}
     container_name: ollama
     restart: unless-stopped
     network_mode: "service:egress"
@@ -141,9 +144,9 @@ services:
       OLLAMA_HOST: "0.0.0.0"
     volumes:
       - ollama-data:/root/.ollama
-{{/ollama}}{{#vllm}}
+{{{gpu}}}{{/ollama}}{{#vllm}}
   vllm:
-    image: vllm/vllm-openai:latest
+    image: {{{vllmImage}}}
     container_name: vllm
     restart: unless-stopped
     network_mode: "service:egress"
@@ -154,7 +157,7 @@ services:
       VLLM_HOST: "0.0.0.0"
     volumes:
       - vllm-data:/root/.cache
-{{/vllm}}
+{{{gpu}}}{{/vllm}}
   redis:
     image: redis:8-alpine
     container_name: omniroute-redis
@@ -209,19 +212,41 @@ volumes:
     name: e-egress-logs
 `;
 
+/**
+ * The fallback profile a caller gets without one: no GPU, no memory known, so
+ * every runtime renders its CPU image and no device passthrough.
+ */
+const CPU_ONLY: HardwareProfile = buildProfile({
+  platform: 'linux',
+  arch: 'x64',
+  cpuCount: 0,
+  totalMemoryBytes: 0,
+  nvidiaSmiAvailable: false,
+  amdKfdPresent: false,
+  rocminfoAvailable: false,
+  intelGpuPresent: false,
+  gpus: [],
+  unifiedMemory: false,
+});
+
 const RUNTIME_LABELS: Readonly<Record<LocalRuntime, string>> = {
   llamacpp: 'llama.cpp',
   ollama: 'Ollama',
   vllm: 'vLLM',
 };
 
-/** Renders the local OmniRoute + selected runtime(s) development stack for `vendor`'s GPU. */
+/**
+ * Renders the local OmniRoute + selected runtime(s) development stack for the
+ * detected hardware. Each runtime takes the upstream image built for that GPU
+ * vendor and the same device-passthrough fragment, so an NVIDIA host runs
+ * CUDA builds of all three and an AMD host ROCm builds of all three.
+ */
 export function renderCompose(
-  vendor: HardwareVendor = 'cpu',
+  hardware: HardwareProfile = CPU_ONLY,
   runtimes: readonly LocalRuntime[] = ['llamacpp']
 ): string {
-  const image = llamaCppImage(vendor);
-  const gpu = llamaGpuCompose(vendor);
+  const vendor = hardware.vendor;
+  const gpu = gpuComposeFragment(vendor);
   const llama = runtimes.includes('llamacpp');
   const ollama = runtimes.includes('ollama');
   const vllm = runtimes.includes('vllm');
@@ -231,8 +256,14 @@ export function renderCompose(
       ? runtimes.map(runtime => RUNTIME_LABELS[runtime]).join(', ')
       : 'no local inference runtime selected';
   return Mustache.render(TEMPLATE, {
-    vendor,
-    image,
+    hardwareSummary: describeHardware(hardware),
+    runtimeImages: runtimes.map(runtime => ({
+      label: RUNTIME_LABELS[runtime],
+      image: runtimeImage(runtime, vendor),
+    })),
+    llamaImage: runtimeImage('llamacpp', vendor),
+    ollamaImage: runtimeImage('ollama', vendor),
+    vllmImage: runtimeImage('vllm', vendor),
     gpu,
     llama,
     ollama,

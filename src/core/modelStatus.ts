@@ -1,10 +1,22 @@
 import { log } from '../shared/utils/log.js';
 
-/** A locally-provisionable llama.cpp model, with its approximate download size. */
+/**
+ * A locally-provisionable model, with what it costs to run: the download size
+ * (quantized weights) plus the parameter counts `e init` needs to tell whether
+ * the detected hardware can hold it (see `ports/hardware/modelFit.ts`).
+ */
 export interface ModelCatalogEntry {
   id: string;
   /** Approximate download size in bytes - shown during `e init` selection. */
   sizeBytes: number;
+  /** Total parameters, in billions: what `sizeBytes` holds at this quantization. */
+  paramsB: number;
+  /**
+   * Parameters active per token, in billions. Equal to `paramsB` for a dense
+   * model; smaller for a Mixture-of-Experts one, whose idle experts can stay
+   * in system RAM while only this share occupies VRAM.
+   */
+  activeParamsB: number;
 }
 
 /** Models `e init` offers to provision locally, in preference order - first is the default. */
@@ -12,14 +24,20 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
   {
     id: 'unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M',
     sizeBytes: 16_500_000_000,
+    paramsB: 27,
+    activeParamsB: 27,
   },
   {
     id: 'unsloth/Qwen3.6-35B-A3B-GGUF:UD-IQ4_XS',
     sizeBytes: 17_700_000_000,
+    paramsB: 35,
+    activeParamsB: 3,
   },
   {
     id: 'ornith-ai/Ornith-1.5-35B-A3B-GGUF:Q4_K_M',
     sizeBytes: 21_000_000_000,
+    paramsB: 35,
+    activeParamsB: 3,
   },
 ];
 

@@ -1,7 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
-import { detectHardware, llamaCppImage } from '../../ports/hardware/index.js';
+import {
+  affordableCatalogs,
+  describeHardware,
+  detectHardware,
+  runtimeImage,
+} from '../../ports/hardware/index.js';
 import { writeIfAbsent } from '../../shared/scaffold.js';
 import { HARNESSES, requiredEnvKeys } from '../../core/harness/index.js';
 import { parseDotenv } from '../../shared/utils/dotenv.js';
@@ -29,7 +34,11 @@ import {
   type InitWrite,
 } from './initPlan.js';
 import { defaultsWizard, interactiveWizard, type Wizard } from './wizard.js';
-import { RUNTIME_CATALOGS } from '../../core/localRuntimes.js';
+import {
+  RUNTIME_CATALOGS,
+  type LocalRuntime,
+} from '../../core/localRuntimes.js';
+import type { ModelCatalogEntry } from '../../core/modelStatus.js';
 import { completionSourceCommand, ensureShellRcEntry } from './shellRc.js';
 
 interface InitCommandOptions {
@@ -94,6 +103,18 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     ? parseDotenv(existingEnvContent)
     : {};
 
+  // Hardware drives two things: which upstream image each runtime gets in the
+  // compose file, and which catalog models `e init` is allowed to offer. A
+  // model that fits nowhere is not a choice, so it is filtered out - except
+  // one the store already has configured, which stays visible so a re-init can
+  // still show and untick it.
+  const hardware = detectHardware();
+  const catalogs = affordableCatalogs(
+    RUNTIME_CATALOGS,
+    hardware,
+    config.models
+  );
+
   const state: InitState = {
     root: root ?? undefined,
     harnessNames: Object.keys(HARNESSES),
@@ -101,14 +122,17 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     currentModels: config.models,
     currentLocalRuntimes: config.localRuntimes,
     existingEnvContent,
-    runtimeCatalogs: RUNTIME_CATALOGS,
+    runtimeCatalogs: catalogs,
     gitPlatforms: [...GIT_PLATFORMS],
     currentGitPlatform: config.gitPlatform,
     currentSiblingArtifacts: config.siblingArtifacts,
     currentMaxSiblings: config.maxSiblings,
-    hardware: detectHardware(),
+    hardware,
     force: opts.force,
   };
+
+  log.info(`Detected hardware: ${describeHardware(hardware)}`);
+  reportEmptyCatalogs(catalogs);
 
   log.info(
     `init interactive=${interactive} force=${opts.force ?? false} stdinTTY=${process.stdin.isTTY} stdoutTTY=${process.stdout.isTTY}`
@@ -127,7 +151,8 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     // an already-set password is never re-asked and never rotated.
     askOmniroutePassword:
       (existingValues.OMNIROUTE_INITIAL_PASSWORD ?? '').trim() === '',
-    runtimeCatalogs: RUNTIME_CATALOGS,
+    runtimeCatalogs: catalogs,
+    hardware,
     currentModels: state.currentModels,
     currentLocalRuntimes: state.currentLocalRuntimes,
     gitPlatforms: state.gitPlatforms,
@@ -140,6 +165,24 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     state.root = answers.root;
   }
   applyPlan(state.root, planInit(state, answers), answers.shell);
+}
+
+/**
+ * Warns about a runtime whose whole catalog exceeds the detected memory: the
+ * model prompt will simply be empty for it, which is worth saying out loud
+ * rather than leaving the user wondering where the models went.
+ */
+function reportEmptyCatalogs(
+  catalogs: Record<LocalRuntime, readonly ModelCatalogEntry[]>
+): void {
+  const empty = (Object.keys(catalogs) as LocalRuntime[]).filter(
+    runtime => catalogs[runtime].length === 0
+  );
+  if (empty.length > 0) {
+    log.warn(
+      `No catalog model fits this hardware for: ${empty.join(', ')}. Provision a model by hand with \`e <runtime> download <model>\`.`
+    );
+  }
 }
 
 /** Applies an {@link InitPlan} to disk - the only layer that touches the filesystem. */
@@ -168,10 +211,13 @@ function applyPlan(
     }
   }
 
-  if (plan.localRuntimes.includes('llamacpp')) {
-    log.info(
-      `Detected hardware: ${plan.hardware} -> using ${llamaCppImage(plan.hardware)} for local llama.cpp.`
-    );
+  if (plan.localRuntimes.length > 0) {
+    log.info(`Runtime images for ${plan.hardware.vendor}:`);
+    for (const runtime of plan.localRuntimes) {
+      log.info(
+        `  ${runtime} -> ${runtimeImage(runtime, plan.hardware.vendor)}`
+      );
+    }
   } else {
     log.info('Local AI runtime: none selected.');
   }

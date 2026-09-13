@@ -5,6 +5,7 @@ import { RUNTIME_CATALOGS } from '../../core/localRuntimes.js';
 import { GIT_PLATFORMS } from '../../core/store/config.js';
 import { planInit, type InitState } from './initPlan.js';
 import { defaultsWizard, type Wizard, type WizardState } from './wizard.js';
+import { testProfile } from '../../ports/hardware/profile.testSupport.js';
 
 const WIZARD_STATE: WizardState = {
   harnessNames: Object.keys(HARNESSES),
@@ -12,6 +13,7 @@ const WIZARD_STATE: WizardState = {
   promptKeys: ['ANTHROPIC_API_KEY'],
   askOmniroutePassword: true,
   runtimeCatalogs: RUNTIME_CATALOGS,
+  hardware: testProfile(),
   currentModels: [],
   currentLocalRuntimes: ['llamacpp'],
   gitPlatforms: [...GIT_PLATFORMS],
@@ -31,7 +33,7 @@ function state(): InitState {
     existingEnvContent: undefined,
     runtimeCatalogs: WIZARD_STATE.runtimeCatalogs,
     gitPlatforms: [...GIT_PLATFORMS] as const,
-    hardware: 'cpu',
+    hardware: testProfile(),
   };
 }
 

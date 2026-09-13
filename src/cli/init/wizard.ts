@@ -23,6 +23,10 @@ import {
   composeModelCatalog,
   type LocalRuntime,
 } from '../../core/localRuntimes.js';
+import {
+  describeModelFit,
+  type HardwareProfile,
+} from '../../ports/hardware/index.js';
 
 /** What the `e init` wizard needs to know to ask its questions. */
 export interface WizardState {
@@ -38,8 +42,14 @@ export interface WizardState {
    * is never re-asked and never rotated.
    */
   askOmniroutePassword: boolean;
-  /** Per-runtime model catalogs; the model prompt only offers the selected runtimes'. */
+  /**
+   * Per-runtime model catalogs; the model prompt only offers the selected
+   * runtimes'. Already filtered to what the detected hardware can hold, so a
+   * wizard never offers a model the host cannot run.
+   */
   runtimeCatalogs: Readonly<Record<LocalRuntime, readonly ModelCatalogEntry[]>>;
+  /** The detected hardware, used to explain why each model is offered. */
+  hardware: HardwareProfile;
   /** Configured model selection, preselected (a blank answer keeps it). */
   currentModels: string[];
   /** Configured local runtimes, preselected (a blank answer keeps them). */
@@ -146,7 +156,8 @@ export function interactiveWizard(): Wizard {
         const models = await promptModels(
           rl,
           modelCatalog,
-          state.currentModels
+          state.currentModels,
+          state.hardware
         );
         const apiKeys = await promptApiKeys(rl, state.promptKeys);
         const omniroutePassword = state.askOmniroutePassword
@@ -251,14 +262,23 @@ async function promptFavoriteHarness(
   }
 }
 
+/** Download size plus where the weights land on this host, e.g. `16.5 GB, fits VRAM`. */
+export function modelHint(
+  model: ModelCatalogEntry,
+  hardware: HardwareProfile
+): string {
+  return `${formatBytes(model.sizeBytes)}, ${describeModelFit(model, hardware)}`;
+}
+
 /** Prompts for which local models to provision, re-asking until the answer is valid. */
 async function promptModels(
   rl: readline.Interface,
   catalog: ModelCatalogEntry[],
-  current: string[]
+  current: string[],
+  hardware: HardwareProfile
 ): Promise<string | string[]> {
   if (typeof process.stdin.setRawMode === 'function') {
-    return selectModels(catalog, current);
+    return selectModels(catalog, current, hardware);
   }
 
   log.info(
@@ -267,7 +287,7 @@ async function promptModels(
   catalog.forEach((model, i) => {
     const marker = current.includes(model.id) ? '*' : ' ';
     log.info(
-      `  [${marker}] ${i + 1}) ${model.id} (${formatBytes(model.sizeBytes)})`
+      `  [${marker}] ${i + 1}) ${model.id} (${modelHint(model, hardware)})`
     );
   });
   for (;;) {
@@ -282,7 +302,8 @@ async function promptModels(
 /** Provides a keyboard-selectable model list when init is attached to a terminal. */
 async function selectModels(
   catalog: ModelCatalogEntry[],
-  current: string[]
+  current: string[],
+  hardware: HardwareProfile
 ): Promise<string[]> {
   const input = process.stdin;
   const output = process.stdout;
@@ -301,7 +322,7 @@ async function selectModels(
       ...catalog.map((model, index) => {
         const marker = selected.has(model.id) ? 'x' : ' ';
         const pointer = index + 1 === cursor ? '>' : ' ';
-        return `${pointer} [${marker}] ${index + 1}) ${model.id} (${formatBytes(model.sizeBytes)})`;
+        return `${pointer} [${marker}] ${index + 1}) ${model.id} (${modelHint(model, hardware)})`;
       }),
       'Use Up/Down to move, Space to select, Enter to continue.',
     ];

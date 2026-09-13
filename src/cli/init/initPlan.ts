@@ -15,7 +15,7 @@ import { parseDotenv } from '../../shared/utils/dotenv.js';
 import { STACK_NETWORK } from '../../shared/constants.js';
 import { SHIPPED_MCP_SERVERS } from '../../core/mcp/index.js';
 import { SHIPPED_SKILLS } from '../../core/skill/index.js';
-import type { HardwareVendor } from '../../ports/hardware/index.js';
+import type { HardwareProfile } from '../../ports/hardware/index.js';
 import type { ModelCatalogEntry } from '../../core/modelStatus.js';
 import type { GitPlatform } from '../../core/store/config.js';
 import {
@@ -100,8 +100,8 @@ export interface InitState {
   currentSiblingArtifacts: string[];
   /** The configured fan-out bound for siblings (ADR-0013), kept as is by a re-init. */
   currentMaxSiblings: number;
-  /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
-  hardware: HardwareVendor;
+  /** Detected hardware profile (resolved by the executor, so planning stays pure). */
+  hardware: HardwareProfile;
   /**
    * `-f/--force`: downgrade every never-clobber rule to an unconditional
    * overwrite, so re-running init replaces hand-edited files instead of
@@ -189,8 +189,8 @@ export interface InitPlan {
   envValues: Record<string, string>;
   /** The seeded OmniRoute stack secret additions (never rotates a set key). */
   secrets: Record<string, string>;
-  /** The detected GPU vendor, echoed back for the executor's log line. */
-  hardware: HardwareVendor;
+  /** The detected hardware profile, echoed back for the executor's log line. */
+  hardware: HardwareProfile;
 }
 
 /**

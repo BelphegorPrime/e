@@ -27,15 +27,35 @@ export const LLAMACPP_CATALOG: readonly ModelCatalogEntry[] = MODEL_CATALOG;
 
 /** Models `e init` offers for Ollama (`model:tag` registry ids). */
 export const OLLAMA_CATALOG: readonly ModelCatalogEntry[] = [
-  { id: 'qwen3:4b', sizeBytes: 2_500_000_000 },
-  { id: 'llama3.2:3b', sizeBytes: 2_000_000_000 },
-  { id: 'gemma3:4b', sizeBytes: 3_300_000_000 },
+  { id: 'qwen3:4b', sizeBytes: 2_500_000_000, paramsB: 4, activeParamsB: 4 },
+  {
+    id: 'llama3.2:3b',
+    sizeBytes: 2_000_000_000,
+    paramsB: 3.2,
+    activeParamsB: 3.2,
+  },
+  {
+    id: 'gemma3:4b',
+    sizeBytes: 3_300_000_000,
+    paramsB: 4.3,
+    activeParamsB: 4.3,
+  },
 ];
 
 /** Models `e init` offers for vLLM (Hugging Face ids, OpenAI-compatible). */
 export const VLLM_CATALOG: readonly ModelCatalogEntry[] = [
-  { id: 'Qwen/Qwen2.5-7B-Instruct', sizeBytes: 15_000_000_000 },
-  { id: 'meta-llama/Llama-3.1-8B-Instruct', sizeBytes: 16_000_000_000 },
+  {
+    id: 'Qwen/Qwen2.5-7B-Instruct',
+    sizeBytes: 15_000_000_000,
+    paramsB: 7.6,
+    activeParamsB: 7.6,
+  },
+  {
+    id: 'meta-llama/Llama-3.1-8B-Instruct',
+    sizeBytes: 16_000_000_000,
+    paramsB: 8,
+    activeParamsB: 8,
+  },
 ];
 
 /** Every runtime's offerable model catalog, keyed by runtime id. */
