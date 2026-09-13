@@ -1,4 +1,4 @@
-// Writes src/version.ts for a packaged build (`prebuild:version`). The version
+// Writes src/shared/version.ts for a packaged build (`prebuild:version`). The version
 // is, in order: an explicit E_VERSION env var (the release workflow sets it
 // from the pushed tag), the exact git tag on HEAD with its `v` prefix
 // stripped, the commit hash, or the 1.0.0 placeholder. restore-version.mjs
@@ -9,6 +9,9 @@ import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+
+/** The module both scripts write; shared so they cannot point at different files. */
+export const VERSION_MODULE = 'src/shared/version.ts';
 
 /** Picks the version string for this build; see the file header for the order. */
 export function resolveVersion({ explicit, tag, hash, fallback = '1.0.0' }) {
@@ -21,7 +24,7 @@ export function resolveVersion({ explicit, tag, hash, fallback = '1.0.0' }) {
   return candidate;
 }
 
-/** The src/shared/version.ts module text for `version`. */
+/** The {@link VERSION_MODULE} text for `version`. */
 export function versionModule(version) {
   return `export const E_VERSION = '${version}';\n`;
 }
@@ -39,7 +42,7 @@ async function main() {
     tag: git(['describe', '--tags', '--exact-match', 'HEAD']),
     hash: git(['rev-parse', 'HEAD']),
   });
-  await fs.writeFile('src/shared/version.ts', versionModule(version));
+  await fs.writeFile(VERSION_MODULE, versionModule(version));
   console.log(version);
 }
 
