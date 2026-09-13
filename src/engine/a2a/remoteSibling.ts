@@ -7,28 +7,24 @@
  * sibling. The result is the answer text in the status (`answer`) and the
  * report; the {@link ChildHandle} shape lets the consumer cancel it like
  * a process.
+ *
+ * The call itself - resolve, send, follow, cancel - is `remoteCall.ts`,
+ * shared with `e spawn <remote>`. What is decided here is only what each
+ * outcome means for a *sibling*, which is where the two genuinely differ: a
+ * sibling has no terminal to print to and no way to answer a question, so
+ * `input-required` is a failure rather than a prompt to the user.
  */
 
 import type {
-  SiblingStatusPatch,
   SpawnRequest,
+  TaskState,
 } from '../../sidecars/broker/contract/types.js';
-import { writeStatus } from '../../sidecars/broker/contract/spool.js';
-import type { ChildHandle } from '../runs/childRun.js';
+import { reportChildRun, type ChildHandle } from '../runs/childRun.js';
 import { log } from '../../shared/utils/log.js';
-import {
-  A2aClient,
-  taskAnswer,
-  wireTaskState,
-  type A2aEndpoint,
-} from './client.js';
-import {
-  resolveRemoteHeaders,
-  type RemoteA2aAgent,
-} from '../../core/agent/remoteAgent.js';
-import { partsText } from './wire.js';
 
-import { errorMessage } from '../../shared/utils/errors.js';
+import type { RemoteA2aAgent } from '../../core/agent/remoteAgent.js';
+import { callRemoteAgent, type RemoteCallClient } from './remoteCall.js';
+
 export interface RemoteSiblingOptions {
   agent: RemoteA2aAgent;
   request: SpawnRequest;
@@ -36,7 +32,7 @@ export interface RemoteSiblingOptions {
   spoolDir: string;
   /** The store env (`.e/.env`) the headers' `${VAR}` references resolve from. */
   storeEnv: Record<string, string | undefined>;
-  client: A2aClient;
+  client: RemoteCallClient;
   /** How often to ask the remote for the task's state. */
   pollMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -56,117 +52,82 @@ export const INPUT_REQUIRED_MESSAGE =
 export function remoteSiblingProcess(
   options: RemoteSiblingOptions
 ): ChildHandle {
-  const { agent, request, spoolDir, client } = options;
-  const now = options.now ?? (() => new Date());
+  const { agent, request, spoolDir } = options;
   const cancel = new AbortController();
-  let remoteTaskId: string | undefined;
-  const report = (patch: Omit<SiblingStatusPatch, 'updatedAt'>): void => {
-    writeStatus(spoolDir, request.id, {
-      ...patch,
-      updatedAt: now().toISOString(),
-    });
-  };
-  // Resolved once: the cancel path reuses the same headers.
-  const endpoint = resolveEndpoint(agent, options.storeEnv);
+  const target = { spoolDir, id: request.id };
+  const report = (patch: Parameters<typeof reportChildRun>[1]): void =>
+    reportChildRun(target, patch, options.now);
 
   const exited = (async (): Promise<number> => {
-    if (endpoint instanceof Error) {
-      report({ status: 'failed', error: endpoint.message });
-      return 1;
-    }
     report({ status: 'running' });
-    try {
-      const sent = await client.sendMessage(endpoint, request.prompt, {
-        source: 'e',
-        requestId: request.id,
-      });
-      if (sent.kind === 'message') {
-        report({
-          status: 'done',
-          exitCode: 0,
-          answer: partsText(sent.message.parts),
-        });
+    const outcome = await callRemoteAgent({
+      agent,
+      prompt: request.prompt,
+      storeEnv: options.storeEnv,
+      client: options.client,
+      requestId: request.id,
+      pollMs: options.pollMs,
+      sleep: options.sleep,
+      signal: cancel.signal,
+    });
+
+    switch (outcome.kind) {
+      case 'answer':
+        report({ status: 'done', exitCode: 0, answer: outcome.answer });
         return 0;
-      }
-      remoteTaskId = sent.task.id;
-      const task = await client.waitForTask(endpoint, sent.task, {
-        pollMs: options.pollMs ?? 2000,
-        sleep: options.sleep,
-        signal: cancel.signal,
-      });
-      const state = wireTaskState(task);
-      const answer = taskAnswer(task);
-      if (cancel.signal.aborted) {
-        report({ status: 'failed', error: 'canceled', answer });
+      case 'canceled':
+        report({ status: 'failed', error: 'canceled', answer: outcome.answer });
         return 1;
-      }
-      switch (state) {
-        case 'completed':
-          report({ status: 'done', exitCode: 0, answer });
-          return 0;
-        case 'input-required':
-          report({ status: 'failed', error: INPUT_REQUIRED_MESSAGE, answer });
-          return 1;
-        case 'canceled':
-          report({
-            status: 'failed',
-            error: 'the remote agent canceled the task',
-            answer,
-          });
-          return 1;
-        case 'rejected':
-          report({
-            status: 'failed',
-            error: `the remote agent rejected the task${answer ? `: ${answer}` : ''}`,
-            answer,
-          });
-          return 1;
-        default:
-          report({
-            status: 'failed',
-            error: `the remote agent failed the task${answer ? `: ${answer}` : ''}`,
-            answer,
-          });
-          return 1;
-      }
-    } catch (err) {
-      const message = errorMessage(err);
-      log.warn(
-        `Sibling ${request.id}: remote agent ${agent.name} (${agent.url}) failed: ${message}`
-      );
-      report({
-        status: 'failed',
-        error: `remote agent ${agent.name}: ${message}`,
-      });
-      return 1;
+      case 'failed':
+        log.warn(
+          `Sibling ${request.id}: remote agent ${agent.name} (${agent.url}) failed: ${outcome.error}`
+        );
+        report({
+          status: 'failed',
+          error: `remote agent ${agent.name}: ${outcome.error}`,
+        });
+        return 1;
+      case 'settled':
+        return settle(report, outcome.state, outcome.answer);
     }
   })();
 
-  return {
-    exited,
-    kill: () => {
-      cancel.abort();
-      if (remoteTaskId !== undefined && !(endpoint instanceof Error)) {
-        void client.cancelTask(endpoint, remoteTaskId).then(outcome => {
-          if (!outcome.ok) {
-            log.debug(
-              `Sibling ${request.id}: remote cancel refused: ${outcome.error}`
-            );
-          }
-        });
-      }
-    },
-  };
+  return { exited, kill: () => cancel.abort() };
 }
 
-/** The agent's endpoint with its headers resolved, or the error naming the unset `${VAR}`. */
-function resolveEndpoint(
-  agent: RemoteA2aAgent,
-  env: Record<string, string | undefined>
-): A2aEndpoint | Error {
-  try {
-    return { url: agent.url, headers: resolveRemoteHeaders(agent, env) };
-  } catch (err) {
-    return err instanceof Error ? err : new Error(String(err));
+/** What a settled remote task means for a sibling, state by state. */
+function settle(
+  report: (patch: Parameters<typeof reportChildRun>[1]) => void,
+  state: TaskState,
+  answer: string
+): number {
+  switch (state) {
+    case 'completed':
+      report({ status: 'done', exitCode: 0, answer });
+      return 0;
+    case 'input-required':
+      report({ status: 'failed', error: INPUT_REQUIRED_MESSAGE, answer });
+      return 1;
+    case 'canceled':
+      report({
+        status: 'failed',
+        error: 'the remote agent canceled the task',
+        answer,
+      });
+      return 1;
+    case 'rejected':
+      report({
+        status: 'failed',
+        error: `the remote agent rejected the task${answer ? `: ${answer}` : ''}`,
+        answer,
+      });
+      return 1;
+    default:
+      report({
+        status: 'failed',
+        error: `the remote agent failed the task${answer ? `: ${answer}` : ''}`,
+        answer,
+      });
+      return 1;
   }
 }

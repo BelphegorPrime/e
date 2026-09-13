@@ -33,42 +33,9 @@ import {
 import { isInitialized } from '../../core/store/config.js';
 import { Env } from '../../shared/utils/env.js';
 import { EGRESS_CONTAINER } from '../../shared/constants.js';
-import { spawnChildProcess, type ChildLauncher } from '../runs/childRun.js';
+import type { ChildLauncher } from '../runs/childRun.js';
+import { productionSiblingLauncher } from '../a2a/siblingLauncher.js';
 import { renderBrokerFiles } from '../../sidecars/broker/render.js';
-import { findAgent, isRemoteAgent } from '../../core/agent/index.js';
-import { remoteSiblingProcess } from '../a2a/remoteSibling.js';
-import { A2aClient } from '../a2a/client.js';
-
-/**
- * The production sibling launcher (ADR-0013, ADR-0015): a request for a
- * harness agent becomes a child `e spawn` process; one for a remote A2A agent
- * (`transport: "a2a"` in its `agent.json`) is answered in-process by the A2A
- * client, its headers' `${VAR}` references resolved from the store env. An
- * unknown agent is left to the child process, whose error lands in the log.
- */
-export function productionSiblingLauncher(
-  root: string | undefined,
-  storeEnv: Record<string, string>
-): ChildLauncher {
-  return launch => {
-    let agent;
-    try {
-      agent = findAgent(launch.request.agent, root);
-    } catch {
-      agent = undefined;
-    }
-    if (agent && isRemoteAgent(agent)) {
-      return remoteSiblingProcess({
-        agent,
-        request: launch.request,
-        spoolDir: launch.spoolDir,
-        storeEnv,
-        client: new A2aClient(),
-      });
-    }
-    return spawnChildProcess(launch);
-  };
-}
 
 /** The effect-performing collaborators the executor drives. */
 export interface ExecuteSpawnDeps {

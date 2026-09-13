@@ -25,7 +25,6 @@ import {
   syncArtifacts,
 } from './runArtifacts.js';
 import { log } from '../../shared/utils/log.js';
-import { writeStatus } from '../../sidecars/broker/contract/spool.js';
 import type { SiblingStatusPatch } from '../../sidecars/broker/contract/types.js';
 import { DEFAULT_MAX_SIBLINGS } from '../../core/store/config.js';
 import {
@@ -33,7 +32,7 @@ import {
   SiblingConsumer,
   type SiblingOutcome,
 } from './runSiblings.js';
-import type { ChildLauncher } from './childRun.js';
+import { reportChildRun, type ChildLauncher } from './childRun.js';
 import {
   brokerSidecarSpec,
   brokerSpoolDirFor,
@@ -265,13 +264,8 @@ export async function runSpawn(
 
   /** A sibling reports into its parent's spool, a watched run into its watcher's; every other run has nowhere to. */
   const reportTo = params.sibling ?? params.report;
-  const report = (patch: Omit<SiblingStatusPatch, 'updatedAt'>): void => {
-    if (!reportTo) return;
-    writeStatus(reportTo.spoolDir, reportTo.id, {
-      ...patch,
-      updatedAt: new Date().toISOString(),
-    });
-  };
+  const report = (patch: Omit<SiblingStatusPatch, 'updatedAt'>): void =>
+    reportChildRun(reportTo, patch);
 
   try {
     const slug = params.name ?? slugify(params.prompt);

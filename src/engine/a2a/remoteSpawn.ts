@@ -8,18 +8,9 @@
  */
 
 import { log } from '../../shared/utils/log.js';
-import {
-  A2aClient,
-  isSettled,
-  taskAnswer,
-  wireTaskState,
-  type A2aEndpoint,
-} from './client.js';
-import {
-  resolveRemoteHeaders,
-  type RemoteA2aAgent,
-} from '../../core/agent/remoteAgent.js';
-import { partsText } from './wire.js';
+import { A2aClient } from './client.js';
+import type { RemoteA2aAgent } from '../../core/agent/remoteAgent.js';
+import { callRemoteAgent } from './remoteCall.js';
 
 export interface RemoteSpawnOptions {
   agent: RemoteA2aAgent;
@@ -49,50 +40,45 @@ export async function runRemoteAgent(
       `Agent "${agent.name}" is a remote A2A agent: it takes a prompt and answers it; there is no interactive session to start.`
     );
   }
-  const client = options.client ?? new A2aClient();
   const print = options.print ?? ((text: string) => console.log(text));
-  const endpoint: A2aEndpoint = {
-    url: agent.url,
-    headers: resolveRemoteHeaders(agent, options.storeEnv),
-  };
   log.info(`Sending the prompt to remote agent ${agent.name} at ${agent.url}`);
-  const sent = await client.sendMessage(endpoint, prompt, { source: 'e' });
-  if (sent.kind === 'message') {
-    print(partsText(sent.message.parts));
-    return 0;
-  }
-  let task = sent.task;
-  const onAbort = (): void => {
-    void client.cancelTask(endpoint, task.id);
-  };
-  options.abort?.addEventListener('abort', onAbort, { once: true });
-  try {
-    task = await client.waitForTask(endpoint, task, {
-      pollMs: options.pollMs ?? 2000,
-      sleep: options.sleep,
-      signal: options.abort,
-    });
-  } finally {
-    options.abort?.removeEventListener('abort', onAbort);
-  }
-  const state = wireTaskState(task);
-  const answer = taskAnswer(task);
-  if (answer !== '') print(answer);
-  if (options.abort?.aborted && !isSettled(state)) {
-    log.warn(`Remote task ${task.id} canceled`);
-    return 1;
-  }
-  switch (state) {
-    case 'completed':
-      log.success(`Remote agent ${agent.name} completed task ${task.id}`);
+
+  const outcome = await callRemoteAgent({
+    agent,
+    prompt,
+    storeEnv: options.storeEnv,
+    client: options.client ?? new A2aClient(),
+    pollMs: options.pollMs,
+    sleep: options.sleep,
+    signal: options.abort,
+  });
+
+  if (outcome.kind !== 'failed' && outcome.answer !== '') print(outcome.answer);
+  switch (outcome.kind) {
+    case 'answer':
       return 0;
-    case 'input-required':
-      log.warn(
-        `Remote agent ${agent.name} asked for more input on task ${task.id}; answer it with a new, fuller prompt.`
-      );
+    case 'failed':
+      log.error(`Remote agent ${agent.name}: ${outcome.error}`);
       return 1;
-    default:
-      log.error(`Remote agent ${agent.name}: task ${task.id} ${state}`);
+    case 'canceled':
+      log.warn(`Remote task ${outcome.taskId} canceled`);
+      return 1;
+    case 'settled':
+      if (outcome.state === 'completed') {
+        log.success(
+          `Remote agent ${agent.name} completed task ${outcome.taskId}`
+        );
+        return 0;
+      }
+      if (outcome.state === 'input-required') {
+        log.warn(
+          `Remote agent ${agent.name} asked for more input on task ${outcome.taskId}; answer it with a new, fuller prompt.`
+        );
+        return 1;
+      }
+      log.error(
+        `Remote agent ${agent.name}: task ${outcome.taskId} ${outcome.state}`
+      );
       return 1;
   }
 }

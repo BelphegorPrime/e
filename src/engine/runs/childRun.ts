@@ -21,7 +21,10 @@ import {
   spoolLogPath,
   writeStatus,
 } from '../../sidecars/broker/contract/spool.js';
-import type { SpawnRequest } from '../../sidecars/broker/contract/types.js';
+import type {
+  SiblingStatusPatch,
+  SpawnRequest,
+} from '../../sidecars/broker/contract/types.js';
 import {
   selfInvocation,
   type SelfInvocation,
@@ -148,6 +151,26 @@ export function startChildRun(start: StartChildRun): ChildHandle {
     env: start.env,
     logFile: childLogFile(start.spoolDir, start.request.id),
     spoolDir: start.spoolDir,
+  });
+}
+
+/**
+ * Records how far a child run got, into the Spool that watches it. `target` is
+ * absent for a run nobody watches - a plain `e spawn` - so callers can report
+ * unconditionally instead of guarding every call.
+ *
+ * Every write is a patch (see `writeStatus`), so a field an earlier report
+ * recorded survives this one.
+ */
+export function reportChildRun(
+  target: { spoolDir: string; id: string } | undefined,
+  patch: Omit<SiblingStatusPatch, 'updatedAt'>,
+  now: () => Date = () => new Date()
+): void {
+  if (!target) return;
+  writeStatus(target.spoolDir, target.id, {
+    ...patch,
+    updatedAt: now().toISOString(),
   });
 }
 
