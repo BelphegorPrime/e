@@ -103,6 +103,20 @@ file is a copy: if it disagrees with its issue, the issue wins.
 | [`68`](68-e2e-manual-child-via-the-bff-post.md)                    | pending (host-side create)                             | **Open**        | E2E: manual child via the BFF POST                                                                           |
 | [`69`](69-spawn-child-action-in-the-web-ui.md)                     | pending (host-side create)                             | **Open**        | Spawn-child action in the web UI                                                                             |
 
+## Security review, 2026-09-13
+
+Files `70`-`73` came out of a security pass over the run container, the
+shared egress namespace, and the `serve` BFF (following up the fixes in
+`28`-`32`). Findings are filed write-up first, mirroring the `01`-`08`
+series; each gains a link when its issue exists.
+
+| File                                                          | GitHub                     | Status   | Description                                                                       |
+| ------------------------------------------------------------- | -------------------------- | -------- | --------------------------------------------------------------------------------- |
+| [`70`](70-serve-authenticate-bff-beyond-loopback.md)          | pending (host-side create) | **Open** | serve: authenticate the BFF beyond loopback (only A2A is bearer-guarded today)    |
+| [`71`](71-egress-mutation-api-auth-and-per-run-scope.md)      | pending (host-side create) | **Open** | egress: mutation API unauthenticated, globally scoped, reachable by every run     |
+| [`72`](72-secrets-files-0600-on-host.md)                      | pending (host-side create) | **Open** | secrets files: `.e/.env` written 0644 (world-readable) on the host                |
+| [`73`](73-broker-authz-and-port-collision-in-shared-netns.md) | pending (host-side create) | **Open** | broker: unauthenticated API reachable from any run in the shared egress namespace |
+
 ## Architecture review, 2026-09-13
 
 Files `50`-`61` came out of one deepening review of the whole tree. Two of its
