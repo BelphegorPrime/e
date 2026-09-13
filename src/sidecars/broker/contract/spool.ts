@@ -32,11 +32,33 @@ import type {
  * Request ids are `<prefix>-NNN`: `sib-` for a sibling the broker accepted,
  * `a2a-` for a task the A2A facade on `e serve` started (ADR-0015). The shape
  * is checked before it becomes a file name.
+ *
+ * The prefixes, the pattern and the error message all derive from
+ * {@link REQUEST_ID_PREFIXES} below, so the only way to add a third kind of
+ * request is to add it there - and the message can never describe a format
+ * the check does not enforce.
  */
-const REQUEST_ID_RE = /^(sib|a2a)-\d{3,}$/;
+const REQUEST_ID_PREFIXES = ['sib', 'a2a'] as const;
+const REQUEST_ID_DIGITS = 3;
+const REQUEST_ID_RE = new RegExp(
+  `^(${REQUEST_ID_PREFIXES.join('|')})-\\d{${REQUEST_ID_DIGITS},}$`
+);
+
+/** The required shape, spelled out for an error message. */
+const REQUEST_ID_SHAPE = `${REQUEST_ID_PREFIXES.map(p => `${p}-`).join(' or ')}followed by at least ${REQUEST_ID_DIGITS} digits, e.g. "${REQUEST_ID_PREFIXES[0]}-001"`;
 
 export function isRequestId(value: string): boolean {
   return REQUEST_ID_RE.test(value);
+}
+
+/**
+ * The error for an id that is not one. The broker generates ids itself, so
+ * only a direct spool writer ever sees this - a scripted child in a test, an
+ * operator poking the spool, a tool calling these helpers - and none of them
+ * can guess the format from the id alone.
+ */
+function invalidRequestId(id: string): Error {
+  return new Error(`Invalid request id "${id}": expected ${REQUEST_ID_SHAPE}.`);
 }
 
 /** Creates the spool layout under `root` (idempotent). */
@@ -52,7 +74,7 @@ export function ensureSpool(root: string): void {
  * file, so the path belongs here with the rest of the spool layout.
  */
 export function spoolLogPath(root: string, id: string): string {
-  if (!isRequestId(id)) throw new Error(`Invalid request id "${id}".`);
+  if (!isRequestId(id)) throw invalidRequestId(id);
   return path.join(root, SPOOL_LOGS_DIR, `${id}.log`);
 }
 
@@ -62,9 +84,30 @@ function writeJsonAtomic(file: string, value: unknown): void {
   fs.renameSync(tmp, file);
 }
 
+/**
+ * Reads one spool file, or `undefined` when there is nothing usable there.
+ *
+ * A corrupt or half-written file reads as **absent**, never as an exception.
+ * The host polls this spool in a loop while a run's agent works, so a single
+ * unreadable file must not take sibling handling down for the whole run - the
+ * next poll retries, and by then the writer has usually finished. Every
+ * production writer goes through {@link writeJsonAtomic} (temp + rename) so
+ * this should not happen; nothing enforces that, which is exactly why the
+ * reader does not depend on it.
+ */
 function readJson<T>(file: string): T | undefined {
-  if (!fs.existsSync(file)) return undefined;
-  return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    // Absent, or vanished between the read and this call.
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 export function writeRunInfo(root: string, info: BrokerRunInfo): void {
@@ -103,7 +146,7 @@ export function nextRequestId(
 /** Spools a request; refuses to overwrite an existing id. */
 export function writeRequest(root: string, request: SpawnRequest): void {
   if (!isRequestId(request.id)) {
-    throw new Error(`Invalid request id "${request.id}".`);
+    throw invalidRequestId(request.id);
   }
   const file = path.join(root, SPOOL_REQUESTS_DIR, `${request.id}.json`);
   if (fs.existsSync(file)) {
@@ -135,7 +178,7 @@ export function writeStatus(
   id: string,
   patch: SiblingStatusPatch
 ): void {
-  if (!isRequestId(id)) throw new Error(`Invalid request id "${id}".`);
+  if (!isRequestId(id)) throw invalidRequestId(id);
   const file = path.join(root, SPOOL_STATUS_DIR, `${id}.json`);
   const previous = readJson<SiblingStatusPatch>(file);
   writeJsonAtomic(file, previous ? { ...previous, ...patch } : patch);
@@ -157,7 +200,7 @@ export function readStatus(
  * or a cancel (ADR-0015). One helper set, two directories.
  */
 function writeSignal(root: string, dir: string, id: string, at: string): void {
-  if (!isRequestId(id)) throw new Error(`Invalid request id "${id}".`);
+  if (!isRequestId(id)) throw invalidRequestId(id);
   fs.mkdirSync(path.join(root, dir), { recursive: true });
   writeJsonAtomic(path.join(root, dir, `${id}.json`), { id, signaledAt: at });
 }

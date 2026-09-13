@@ -302,3 +302,105 @@ test('writeStatus patches: a later write never drops what an earlier one recorde
     });
   });
 });
+
+// --- a malformed file reads as absent, it never throws (#127) ---------------
+
+/** Writes `text` straight to a spool file, skipping the atomic temp + rename. */
+function writeRaw(root: string, dir: string, name: string, text: string): void {
+  fs.mkdirSync(path.join(root, dir), { recursive: true });
+  fs.writeFileSync(path.join(root, dir, name), text);
+}
+
+test('a half-written status file reads as absent rather than throwing', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    writeRequest(root, request('sib-001'));
+    // What a non-atomic writer leaves behind mid-write.
+    writeRaw(root, 'status', 'sib-001.json', '{"status":"run');
+    assert.equal(readStatus(root, 'sib-001'), undefined);
+    // And the record still resolves - from the request alone, as "requested".
+    assert.equal(readRecord(root, 'sib-001')?.status, 'requested');
+  });
+});
+
+test('one corrupt file does not hide the requests around it', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    for (const id of ['sib-001', 'sib-002', 'sib-003']) {
+      writeRequest(root, request(id));
+    }
+    writeStatus(root, 'sib-001', { status: 'running', updatedAt: 't' });
+    writeRaw(root, 'status', 'sib-002.json', 'not json at all');
+    writeStatus(root, 'sib-003', { status: 'done', updatedAt: 't' });
+
+    // The poll loop keeps servicing every other request.
+    assert.deepEqual(
+      listRecords(root).map(r => `${r.id}:${r.status}`),
+      ['sib-001:running', 'sib-002:requested', 'sib-003:done']
+    );
+    assert.equal(countInFlight(root, ['running']), 1);
+  });
+});
+
+test('a corrupt request file drops that request, not the listing', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    writeRequest(root, request('sib-001'));
+    writeRaw(root, 'requests', 'sib-002.json', '{ truncated');
+    // The id is still enumerated (the file exists) but yields no record.
+    assert.deepEqual(listRequestIds(root), ['sib-001', 'sib-002']);
+    assert.deepEqual(
+      listRecords(root).map(r => r.id),
+      ['sib-001']
+    );
+  });
+});
+
+test('a corrupt run.json reads as no run info', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    fs.writeFileSync(path.join(root, 'run.json'), '{"name":');
+    assert.equal(readRunInfo(root), null);
+  });
+});
+
+// --- the id-format error says what the format is (#129) ---------------------
+
+test('an invalid request id is refused with the shape it needed', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    for (const bad of ['gc-001', 'sib-1', 'sib-', '../escape', 'a2a']) {
+      assert.equal(isRequestId(bad), false);
+      assert.throws(
+        () => writeRequest(root, request(bad)),
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : '';
+          // Names the offending id, both prefixes, the digit count and an example.
+          assert.match(
+            message,
+            new RegExp(
+              `Invalid request id "${bad.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`
+            )
+          );
+          assert.match(message, /sib-/);
+          assert.match(message, /a2a-/);
+          assert.match(message, /at least 3 digits/);
+          assert.match(message, /"sib-001"/);
+          return true;
+        }
+      );
+    }
+  });
+});
+
+test('every id the generator produces passes its own check', () => {
+  withSpool(root => {
+    ensureSpool(root);
+    for (const prefix of ['sib', 'a2a'] as const) {
+      const id = nextRequestId(root, prefix);
+      assert.ok(isRequestId(id), `${id} must satisfy isRequestId`);
+      assert.ok(id.startsWith(`${prefix}-`));
+      writeRequest(root, request(id));
+    }
+  });
+});
