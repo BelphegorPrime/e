@@ -6,6 +6,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { BROKER_URL_ENV } from '../contract/constants.js';
 import { formatSseEvent } from '../contract/events.js';
+import {
+  WATCH_TIMEOUT_ENV,
+  WATCH_TIMEOUT_MS,
+  watchTimeoutMs,
+} from '../contract/cliArgs.js';
 import type {
   SiblingRecord,
   SiblingState,
@@ -137,17 +142,15 @@ function statusEvent(...siblings: SiblingRecord[]): string {
 }
 
 /**
- * UNFIXED BUG, pinned here so a fix shows up as a failure. Both `return`s
- * inside `watch`'s `for await (const chunk of response.body)` loop call
- * `controller.abort()` first, which makes the async iterator's cleanup throw
- * `AbortError` out of the `return` statement. The loop's own `catch` treats an
- * aborted controller as expected and swallows it, so control falls through to
- * the give-up tail: the right answer is printed, then `--watch` exits 4 with
- * "gave up after 30 minutes" on stderr. Exit 0 and exit 1 are unreachable from
- * inside the stream, and the documented exit codes lie to the agent.
+ * The exit codes `SPAWN_BROTHER_USAGE` promises the agent, which is the whole
+ * point of this script: an agent branches on them without a terminal to read.
+ * They were unreachable from inside the event stream until the loop stopped
+ * aborting the fetch before returning - see the module doc on `watch`.
  */
-const WATCH_ALWAYS_EXITS_TIMED_OUT = 4;
-const GAVE_UP = /--watch gave up after 30 minutes/;
+const FOUND = 0;
+const REFUSED = 1;
+const TIMED_OUT = 4;
+const GAVE_UP = /--watch gave up after/;
 
 test('spawn-brother: --help prints the usage and exits 0 without a broker', async () => {
   for (const args of [[], ['--help'], ['-h']]) {
@@ -333,24 +336,23 @@ test('spawn-brother: --watch reports what already needs attention on the first s
       broker.requests.map(request => `${request.method} ${request.path}`),
       ['GET /status/events']
     );
-    assert.equal(result.code, WATCH_ALWAYS_EXITS_TIMED_OUT);
+    assert.equal(result.code, FOUND);
   } finally {
     await broker.close();
   }
 });
 
-test('spawn-brother: --watch contradicts itself - it reports the sibling and then claims it timed out', async () => {
+test('spawn-brother: --watch reports the sibling and says nothing else', async () => {
   const broker = await startBroker((_req, res) => {
     openEventStream(res);
     res.write(statusEvent(sibling('sib-001', 'completed')));
   });
   try {
     const result = await runCli(['--watch'], { [BROKER_URL_ENV]: broker.url });
-    // Both halves of the bug in one place: the answer is on stdout, and the
-    // give-up message plus the timeout exit code are on top of it.
     assert.match(result.stdout, /"id":"sib-001"/);
-    assert.match(result.stderr, GAVE_UP);
-    assert.equal(result.code, WATCH_ALWAYS_EXITS_TIMED_OUT);
+    // The regression: it used to print the answer and then contradict it.
+    assert.doesNotMatch(result.stderr, GAVE_UP);
+    assert.equal(result.code, FOUND);
   } finally {
     await broker.close();
   }
@@ -376,7 +378,7 @@ test('spawn-brother: --watch keeps waiting through snapshots where nothing chang
       (JSON.parse(result.stdout) as SiblingRecord[]).map(record => record.id),
       ['sib-002']
     );
-    assert.equal(result.code, WATCH_ALWAYS_EXITS_TIMED_OUT);
+    assert.equal(result.code, FOUND);
   } finally {
     await broker.close();
   }
@@ -411,7 +413,7 @@ test('spawn-brother: --watch <id> follows only that sibling', async () => {
       reported.map(record => [record.id, record.taskState]),
       [['sib-002', 'input-required']]
     );
-    assert.equal(result.code, WATCH_ALWAYS_EXITS_TIMED_OUT);
+    assert.equal(result.code, FOUND);
   } finally {
     await broker.close();
   }
@@ -431,10 +433,9 @@ test('spawn-brother: --watch <id> refuses an id this run never requested', async
       /no sibling "sib-404" was requested from this run\./
     );
     assert.equal(result.stdout, '');
-    // Should be 1 (a refusal); the abort-in-the-loop bug makes it 4 and adds
-    // a second, contradictory line to stderr.
-    assert.equal(result.code, WATCH_ALWAYS_EXITS_TIMED_OUT);
-    assert.match(result.stderr, GAVE_UP);
+    // A refusal, and only that: no second, contradictory line behind it.
+    assert.equal(result.code, REFUSED);
+    assert.doesNotMatch(result.stderr, GAVE_UP);
   } finally {
     await broker.close();
   }
@@ -462,4 +463,37 @@ test('spawn-brother: --watch against a broker that does not answer exits 3', asy
   const result = await runCli(['--watch'], { [BROKER_URL_ENV]: DEAD_BROKER });
   assert.equal(result.code, 3);
   assert.match(result.stderr, /did not answer/);
+});
+
+test('spawn-brother: --watch exits 4 for the reason it documents, and says so once', async () => {
+  // The genuine timeout, reachable now that the wait is configurable: the
+  // broker holds the stream open and never reports anything worth waking for.
+  const broker = await startBroker((_req, res) => {
+    openEventStream(res);
+    res.write(statusEvent(sibling('sib-001', 'working')));
+  });
+  try {
+    const result = await runCli(['--watch'], {
+      [BROKER_URL_ENV]: broker.url,
+      [WATCH_TIMEOUT_ENV]: '300',
+    });
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, GAVE_UP);
+    assert.equal(result.code, TIMED_OUT);
+  } finally {
+    await broker.close();
+  }
+});
+
+test('spawn-brother: a junk watch timeout falls back to the default rather than refusing', () => {
+  // A mistyped override must not stop an agent from watching its siblings.
+  assert.equal(watchTimeoutMs({}), WATCH_TIMEOUT_MS);
+  assert.equal(watchTimeoutMs({ [WATCH_TIMEOUT_ENV]: '' }), WATCH_TIMEOUT_MS);
+  assert.equal(
+    watchTimeoutMs({ [WATCH_TIMEOUT_ENV]: 'soon' }),
+    WATCH_TIMEOUT_MS
+  );
+  assert.equal(watchTimeoutMs({ [WATCH_TIMEOUT_ENV]: '0' }), WATCH_TIMEOUT_MS);
+  assert.equal(watchTimeoutMs({ [WATCH_TIMEOUT_ENV]: '-5' }), WATCH_TIMEOUT_MS);
+  assert.equal(watchTimeoutMs({ [WATCH_TIMEOUT_ENV]: '250' }), 250);
 });

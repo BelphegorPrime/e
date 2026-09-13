@@ -16,6 +16,26 @@ export type SpawnBrotherCommand =
 /** How long `--watch` blocks at most before giving up (exit 4). */
 export const WATCH_TIMEOUT_MS = 30 * 60 * 1000;
 
+/** Env var that overrides the `--watch` timeout, in milliseconds. */
+export const WATCH_TIMEOUT_ENV = 'E_WATCH_TIMEOUT_MS';
+
+/**
+ * How long `--watch` waits. {@link WATCH_TIMEOUT_MS} unless
+ * {@link WATCH_TIMEOUT_ENV} names a positive number of milliseconds.
+ *
+ * The script is configured entirely through its environment - it has no flags
+ * of its own beyond the command - and this is the only seam a test has: the
+ * module runs `main` at import, so it can only be driven as a child process.
+ * A junk value is ignored rather than refused: a mistyped override must not
+ * stop an agent from watching its siblings.
+ */
+export function watchTimeoutMs(
+  env: Record<string, string | undefined>
+): number {
+  const raw = Number(env[WATCH_TIMEOUT_ENV]);
+  return Number.isFinite(raw) && raw > 0 ? raw : WATCH_TIMEOUT_MS;
+}
+
 export const SPAWN_BROTHER_USAGE = [
   'usage: node spawn-brother.mjs <agent> <task description...>',
   '       node spawn-brother.mjs --status [<id>]',

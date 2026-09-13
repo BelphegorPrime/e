@@ -8,9 +8,9 @@
 
 import {
   SPAWN_BROTHER_USAGE,
-  WATCH_TIMEOUT_MS,
   brokerBaseUrl,
   parseSpawnBrotherArgs,
+  watchTimeoutMs,
   type SpawnBrotherCommand,
 } from '../contract/cliArgs.js';
 import { SseParser } from '../contract/events.js';
@@ -56,8 +56,15 @@ async function watch(
   const parser = new SseParser();
   const decoder = new TextDecoder();
   let initial: SiblingRecord[] | undefined;
+  // The answer is recorded and the loop is left with `break`; it is never
+  // returned from inside. Aborting the fetch and *then* returning makes the
+  // async iterator's cleanup - which runs while the return unwinds - throw
+  // `AbortError`, the catch below reads an aborted controller as expected and
+  // swallows it, and control falls through to the give-up tail. That is how
+  // `--watch` came to print the right answer and then exit 4 anyway.
+  let outcome: number | undefined;
   try {
-    for await (const chunk of response.body) {
+    stream: for await (const chunk of response.body) {
       for (const event of parser.push(
         decoder.decode(chunk, { stream: true })
       )) {
@@ -67,28 +74,36 @@ async function watch(
           console.error(
             `spawn-brother: no sibling "${id}" was requested from this run.`
           );
-          controller.abort();
-          clearTimeout(timer);
-          return 1;
+          outcome = 1;
+          break stream;
         }
         const attention = attentionSince(initial, siblings, id);
         if (initial === undefined) initial = siblings;
         if (attention.length > 0) {
           console.log(JSON.stringify(attention));
-          controller.abort();
-          clearTimeout(timer);
-          return 0;
+          outcome = 0;
+          break stream;
         }
       }
     }
   } catch (err) {
     if (!controller.signal.aborted) return unreachable(base, err);
+  } finally {
+    // Safe here: the loop has already unwound, so nothing is pending on it.
+    controller.abort();
+    clearTimeout(timer);
   }
-  clearTimeout(timer);
+  if (outcome !== undefined) return outcome;
   console.error(
-    `spawn-brother: --watch gave up after ${Math.round(timeoutMs / 60000)} minutes without a sibling needing attention; check --status.`
+    `spawn-brother: --watch gave up after ${describeTimeout(timeoutMs)} without a sibling needing attention; check --status.`
   );
   return 4;
+}
+
+/** The timeout as the give-up message should say it - minutes, or seconds when it is short. */
+function describeTimeout(timeoutMs: number): string {
+  if (timeoutMs < 60_000) return `${Math.round(timeoutMs / 1000)} seconds`;
+  return `${Math.round(timeoutMs / 60000)} minutes`;
 }
 
 function requestFor(
@@ -129,7 +144,7 @@ async function main(argv: string[]): Promise<number> {
   }
   const base = brokerBaseUrl(process.env);
   if (command.kind === 'watch') {
-    return watch(base, command.id, WATCH_TIMEOUT_MS);
+    return watch(base, command.id, watchTimeoutMs(process.env));
   }
   let response: Response;
   try {
