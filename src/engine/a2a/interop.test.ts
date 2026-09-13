@@ -43,7 +43,7 @@ import {
   writeRequest,
   writeStatus,
 } from '../../sidecars/broker/contract/spool.js';
-import { createServeApp, startServeServer } from '../../cli/serve/serve.js';
+import { createServeApp, startServeServer } from '../../cli/serve/serveApp.js';
 import { A2aClient, taskAnswer, wireTaskState } from './client.js';
 import type { RemoteA2aAgent } from '../../core/agent/remoteAgent.js';
 import { remoteSiblingProcess } from './remoteSibling.js';
@@ -73,8 +73,6 @@ interface Facade {
 }
 
 async function startFacade(token?: string): Promise<Facade> {
-  const uiDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'e-interop-ui-'));
-  fs.writeFileSync(path.join(uiDirectory, 'index.html'), '<title>e</title>');
   const spool = fs.mkdtempSync(path.join(os.tmpdir(), 'e-interop-spool-'));
   const launches: string[][] = [];
   const tasks = new A2aTasks({
@@ -90,7 +88,7 @@ async function startFacade(token?: string): Promise<Facade> {
   // The URL the card advertises must be the real one: the SDK client calls
   // exactly what the card says.
   let server: Server | undefined = undefined;
-  const app = createServeApp(uiDirectory, {
+  const app = createServeApp({
     a2a: {
       tasks,
       access:
@@ -120,7 +118,6 @@ async function startFacade(token?: string): Promise<Facade> {
       await new Promise<void>((resolve, reject) =>
         server!.close(error => (error ? reject(error) : resolve()))
       );
-      fs.rmSync(uiDirectory, { recursive: true, force: true });
       fs.rmSync(spool, { recursive: true, force: true });
     },
   };

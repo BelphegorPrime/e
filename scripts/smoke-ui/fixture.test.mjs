@@ -108,7 +108,7 @@ test('requireBuild: names the missing build step', t => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.throws(
     () => requireBuild(root),
-    /dist\/ui\/index.html \(npm run build:ui\).*dist\/serve\/serve.js \(npm run build:ts\).*npm run build:dev/
+    /dist\/ui\/index.html \(npm run build:ui\).*dist\/cli\/serve\/serveApp.js \(npm run build:ts\).*npm run build:dev/
   );
   fs.mkdirSync(path.join(root, 'dist', 'ui'), { recursive: true });
   fs.writeFileSync(
@@ -117,7 +117,7 @@ test('requireBuild: names the missing build step', t => {
   );
   assert.throws(
     () => requireBuild(root),
-    /Missing: dist\/serve\/serve.js \(npm run build:ts\)/
+    /Missing: dist\/cli\/serve\/serveApp.js \(npm run build:ts\)/
   );
 });
 
@@ -125,7 +125,7 @@ test('startFixture: serves the built UI with the fakes behind /api (needs npm ru
   try {
     requireBuild(repoRoot);
   } catch {
-    t.skip('dist/ui or dist/serve not built');
+    t.skip('dist/ui or dist/cli/serve not built');
     return;
   }
   const fixture = await startFixture(repoRoot);

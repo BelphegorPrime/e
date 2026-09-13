@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { test } from 'node:test';
 import { WebSocket } from 'ws';
-import { createServeApp, startServeServer } from './serve.js';
+import { createServeApp, startServeServer } from './serveApp.js';
 import { TerminalSessions } from './terminalSessions.js';
 import { fakeEngine, scriptedSpawner } from './terminalSessions.testSupport.js';
 import {
@@ -77,7 +74,6 @@ test(
   'terminal WebSocket relays output, input and resize for one session',
   { timeout: 10_000 },
   async t => {
-    const uiDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'e-ui-'));
     const spawner = scriptedSpawner();
     const engine = fakeEngine({});
     const sessions = new TerminalSessions({
@@ -86,7 +82,7 @@ test(
       pollIntervalMs: 5,
     });
     const server = await startServeServer(
-      createServeApp(uiDirectory, { terminal: sessions, listAgents: () => [] }),
+      createServeApp({ terminal: sessions, listAgents: () => [] }),
       '127.0.0.1',
       0
     );

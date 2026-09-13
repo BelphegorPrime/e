@@ -6,6 +6,7 @@
 // `e serve` instead.
 
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -232,14 +233,45 @@ export function fixtureTerminal() {
   };
 }
 
+/**
+ * The egress API behind the BFF's `/api/egress` proxy: `fixtureFetch`'s routes
+ * on a real loopback listener, because the proxy forwards bytes over HTTP
+ * rather than calling an injected `fetch`.
+ */
+export function startFixtureEgress() {
+  const answer = fixtureFetch();
+  const server = http.createServer((request, response) => {
+    let body = '';
+    request.on('data', chunk => (body += chunk));
+    request.on('end', () => {
+      void answer(`${EGRESS_URL}${request.url}`, {
+        method: request.method,
+        body: body === '' ? undefined : body,
+      }).then(async upstream => {
+        response.writeHead(upstream.status, {
+          'content-type': 'application/json',
+        });
+        response.end(await upstream.text());
+      });
+    });
+  });
+  return new Promise(resolve =>
+    server.listen(0, '127.0.0.1', () =>
+      resolve({
+        url: `http://127.0.0.1:${server.address().port}`,
+        close: () => new Promise(done => server.close(() => done())),
+      })
+    )
+  );
+}
+
 /** The `ServeAppDeps` of the fixture; `worktreesDir` is a fresh temp dir (no sibling spools). */
-export function fixtureDeps() {
+export function fixtureDeps(egressApiUrl = EGRESS_URL) {
   const worktreesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-smoke-ui-'));
   return {
     git: new FixtureGit(),
     listAgents: () => AGENTS,
-    egressApiUrl: EGRESS_URL,
-    fetchImpl: fixtureFetch(),
+    egressApiUrl,
     terminal: fixtureTerminal(),
     omniRouteEmbedPort: null,
     worktreesDir,
@@ -249,7 +281,7 @@ export function fixtureDeps() {
 /** The built files the fixture serves; the error names the build step. */
 export function requireBuild(root) {
   const uiDir = path.join(root, 'dist', 'ui');
-  const serveModule = path.join(root, 'dist', 'serve', 'serve.js');
+  const serveModule = path.join(root, 'dist', 'cli', 'serve', 'serveApp.js');
   const missing = [
     [path.join(uiDir, 'index.html'), 'npm run build:ui'],
     [serveModule, 'npm run build:ts'],
@@ -270,9 +302,10 @@ export async function startFixture(root) {
   const { createServeApp, startServeServer } = await import(
     pathToFileURL(serveModule).href
   );
-  const deps = fixtureDeps();
+  const egress = await startFixtureEgress();
+  const deps = fixtureDeps(egress.url);
   const server = await startServeServer(
-    createServeApp(uiDir, deps),
+    createServeApp({ ...deps, uiDirectory: uiDir }),
     '127.0.0.1',
     0
   );
@@ -281,7 +314,8 @@ export async function startFixture(root) {
     baseUrl: `http://127.0.0.1:${address.port}`,
     close: () =>
       new Promise((resolve, reject) => {
-        server.close(error => {
+        server.close(async error => {
+          await egress.close();
           fs.rmSync(deps.worktreesDir, { recursive: true, force: true });
           if (error) reject(error);
           else resolve();

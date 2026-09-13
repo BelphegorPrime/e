@@ -175,7 +175,7 @@ reporting "already serving".
 - ADR-0006 (per-harness config adapter; `.e/.env` as the secret source)
 - `src/cli/init/renderCompose.ts`, `src/cli/init/renderBootstrap.ts`,
   `src/sidecars/egress/render.ts`, `src/core/harness/renderDockerfile.ts`,
-  `src/core/store/{config,paths,root}.ts`, `src/cli/serve/serve.ts`, `src/sidecars/egress/`
+  `src/core/store/{config,paths,root}.ts`, `src/cli/serve/detachedServe.ts`, `src/sidecars/egress/`
 - Issues: [#24](https://github.com/BelphegorPrime/e/issues/24) (env whitelist),
   [#25](https://github.com/BelphegorPrime/e/issues/25) (OmniRoute bind + secrets, done),
   [#26](https://github.com/BelphegorPrime/e/issues/26) (non-root container),
