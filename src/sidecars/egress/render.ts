@@ -21,7 +21,7 @@
  *  - `dnsmasq.conf`: the base dnsmasq config with independent upstream
  *    resolvers.
  *  - `egress-api.mjs`: the egress HTTP API server (ADR-0012). Not a template:
- *    it is the type-checked `src/sidecars/egress/server/server.ts` and its imports, bundled by
+ *    it is the type-checked `src/sidecars/egress/server/api.ts` and its imports, bundled by
  *    `scripts/build-egress-api.mjs` into one dependency-free ESM script.
  *  - `blacklist.example`: a commented template documenting the format.
  *  - `iptables.example`: a commented template for the direct-IP rules script
@@ -198,48 +198,19 @@ while kill -0 "\${DNSMASQ_PID}" 2>/dev/null; do
 done
 `;
 
-/** Renders the `entrypoint.sh` for the egress container. */
-export function renderEgressEntrypoint(): string {
-  return ENTRYPOINT;
-}
-
 /**
- * The egress API server script (ADR-0012): the bundled, type-checked
- * `src/sidecars/egress/server/server.ts`. Kept as a function so callers stay uniform with the
- * other renderers.
+ * The files `e init` writes into `.e/egress/`, keyed by file name - the whole
+ * surface of this module. Since none of them take a per-installation variable
+ * (see above), each is a constant rather than a renderer of its own: one map
+ * is what every caller - `e init`, the stack build, the tests - actually wants.
  */
-export function renderEgressApiJs(): string {
-  return EGRESS_API_BUNDLE;
-}
-
-/** Renders the base `dnsmasq.conf` for the egress container. */
-export function renderDnsmasqBaseConf(): string {
-  return DNSMASQ_BASE_CONF;
-}
-
-/** Renders the `Dockerfile` for the egress container. */
-export function renderEgressDockerfile(): string {
-  return DOCKERFILE;
-}
-
-/** Renders the user-facing blacklist template seeded as `blacklist.example`. */
-export function renderBlacklistExample(): string {
-  return BLACKLIST_EXAMPLE;
-}
-
-/** Renders the direct-IP rules template seeded as `iptables.example` and `.e/egress-iptables.rules`. */
-export function renderIptablesExample(): string {
-  return IPTABLES_EXAMPLE;
-}
-
-/** The files `e init` writes into `.e/egress/`, keyed by file name. */
 export function renderEgressFiles(): Record<EgressFileName, string> {
   return {
-    [EGRESS_FILES.dockerfile]: renderEgressDockerfile(),
-    [EGRESS_FILES.entrypoint]: renderEgressEntrypoint(),
-    [EGRESS_FILES.dnsmasqConf]: renderDnsmasqBaseConf(),
-    [EGRESS_FILES.apiScript]: renderEgressApiJs(),
-    [EGRESS_FILES.blacklistExample]: renderBlacklistExample(),
-    [EGRESS_FILES.iptablesExample]: renderIptablesExample(),
+    [EGRESS_FILES.dockerfile]: DOCKERFILE,
+    [EGRESS_FILES.entrypoint]: ENTRYPOINT,
+    [EGRESS_FILES.dnsmasqConf]: DNSMASQ_BASE_CONF,
+    [EGRESS_FILES.apiScript]: EGRESS_API_BUNDLE,
+    [EGRESS_FILES.blacklistExample]: BLACKLIST_EXAMPLE,
+    [EGRESS_FILES.iptablesExample]: IPTABLES_EXAMPLE,
   };
 }

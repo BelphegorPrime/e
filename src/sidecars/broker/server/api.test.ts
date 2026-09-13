@@ -7,9 +7,9 @@ import path from 'node:path';
 import { createBrokerApi, parseSpawnBody } from './api.js';
 import { SseParser } from '../contract/events.js';
 import {
-  hasCancelSignal,
-  hasMergeSignal,
   readRequest,
+  takeCancelSignal,
+  takeMergeSignal,
   writeRunInfo,
   writeStatus,
 } from '../contract/spool.js';
@@ -318,7 +318,8 @@ test('broker api: POST /merge/<id> spools the parent signal for a held or confli
       updatedAt: 't',
     });
     assert.equal((await signal('sib-001')).status, 409);
-    assert.equal(hasMergeSignal(broker.spoolDir, 'sib-001'), false);
+    // A refused signal spools nothing: the host has none to take.
+    assert.equal(takeMergeSignal(broker.spoolDir, 'sib-001'), false);
 
     // Held over files in the way, or in progress with conflict markers: the
     // signal is spooled and the caller is pointed back at the status.
@@ -344,8 +345,9 @@ test('broker api: POST /merge/<id> spools the parent signal for a held or confli
       statusPath: '/status/sib-002',
     });
     assert.equal((await signal('sib-003')).status, 202);
-    assert.equal(hasMergeSignal(broker.spoolDir, 'sib-002'), true);
-    assert.equal(hasMergeSignal(broker.spoolDir, 'sib-003'), true);
+    // Both are in the spool for the host's next tick to take.
+    assert.equal(takeMergeSignal(broker.spoolDir, 'sib-002'), true);
+    assert.equal(takeMergeSignal(broker.spoolDir, 'sib-003'), true);
     // The merge state rides the status the agent polls.
     const record = await json<SiblingRecord>(
       await fetch(`${broker.url}/status/sib-003`)
@@ -380,7 +382,7 @@ test('broker api: POST /cancel/<id> spools a cancel for a request the host is no
       status: 'cancel-requested',
       statusPath: '/status/sib-001',
     });
-    assert.equal(hasCancelSignal(broker.spoolDir, 'sib-001'), true);
+    assert.equal(takeCancelSignal(broker.spoolDir, 'sib-001'), true);
 
     // Running: cancelable.
     writeStatus(broker.spoolDir, 'sib-002', {
@@ -400,7 +402,7 @@ test('broker api: POST /cancel/<id> spools a cancel for a request the host is no
         new RegExp(`already ${status}`)
       );
     }
-    assert.equal(hasCancelSignal(broker.spoolDir, 'sib-003'), false);
+    assert.equal(takeCancelSignal(broker.spoolDir, 'sib-003'), false);
   } finally {
     await broker.close();
   }

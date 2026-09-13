@@ -35,6 +35,17 @@ test('renderBrokerFiles: the server bundle is dependency-free and uses the spool
   assert.match(server, new RegExp(String(BROKER_PORT)));
 });
 
+test('renderBrokerFiles: the bundle starts a server when the image runs it as the entry', () => {
+  // `api.ts` is both the handler factory and the bundle entry, so the listen
+  // is guarded: if bundling ever dropped it, `node /broker.mjs` would exit
+  // silently and the sidecar would look up but answer nothing.
+  const server = renderBrokerFiles()[BROKER_FILES.serverScript];
+  assert.match(
+    server,
+    /if \(import\.meta\.main\) \{[\s\S]*createServer\(createBrokerApi\(\{ spoolDir \}\)\)\.listen\(/
+  );
+});
+
 function withTempFile(
   name: string,
   content: string,

@@ -12,7 +12,7 @@
  *    host-owned bind mount, which root does under every engine (rootful
  *    docker, rootless podman, the macOS/Windows VMs) while a fixed non-root
  *    uid only matches hosts whose user happens to be uid 1000.
- *  - `broker.mjs`: not a template - the type-checked `src/sidecars/broker/server/server.ts`
+ *  - `broker.mjs`: not a template - the type-checked `src/sidecars/broker/server/api.ts`
  *    and its imports, bundled by `scripts/build-broker.mjs`.
  */
 
@@ -43,20 +43,14 @@ EXPOSE ${BROKER_PORT}
 CMD ["node", "/broker.mjs"]
 `;
 
-/** Renders the `Dockerfile` for the broker container. */
-export function renderBrokerDockerfile(): string {
-  return DOCKERFILE;
-}
-
-/** The broker server script: the bundled, type-checked `src/sidecars/broker/server/server.ts`. */
-export function renderBrokerServerJs(): string {
-  return BROKER_SERVER_BUNDLE;
-}
-
-/** The files seeded into `.e/broker/`, keyed by file name. */
+/**
+ * The files seeded into `.e/broker/`, keyed by file name - the whole surface
+ * of this module. None of them carry per-installation variables, so each is a
+ * constant above rather than a renderer of its own.
+ */
 export function renderBrokerFiles(): Record<BrokerFileName, string> {
   return {
-    [BROKER_FILES.dockerfile]: renderBrokerDockerfile(),
-    [BROKER_FILES.serverScript]: renderBrokerServerJs(),
+    [BROKER_FILES.dockerfile]: DOCKERFILE,
+    [BROKER_FILES.serverScript]: BROKER_SERVER_BUNDLE,
   };
 }

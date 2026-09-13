@@ -5,12 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   ensureSpool,
-  hasCancelSignal,
-  hasMergeSignal,
   readRecord,
   readStatus,
   signalCancel,
   signalMerge,
+  takeCancelSignal,
+  takeMergeSignal,
   writeRequest,
   writeRunInfo,
   writeStatus,
@@ -654,7 +654,7 @@ test('a conflict is left in progress (never resolved by the host), holds the nex
     // next tick concludes the merge as a commit, then the held one lands too.
     signalMerge(spool, 'sib-001', 't');
     c.tick();
-    assert.equal(hasMergeSignal(spool, 'sib-001'), false);
+    assert.equal(takeMergeSignal(spool, 'sib-001'), false);
     assert.deepEqual(
       git.commits.map(commit => commit.message),
       [
@@ -845,7 +845,7 @@ test('a signal for a sibling with nothing to retry is consumed, not left in the 
 
     signalMerge(spool, 'sib-001', 't');
     c.tick();
-    assert.equal(hasMergeSignal(spool, 'sib-001'), false);
+    assert.equal(takeMergeSignal(spool, 'sib-001'), false);
     assert.equal(git.merges.length, 1);
   });
 });
@@ -947,7 +947,7 @@ test('cancel: a request not yet picked up is canceled on the next tick, never la
     assert.equal(readRecord(spool, 'sib-002')?.taskState, 'canceled');
     assert.match(reportOf(spool, 'sib-002'), /^# Sibling sib-002: skipped$/m);
     assert.match(reportOf(spool, 'sib-002'), /taskState: canceled/);
-    assert.equal(hasCancelSignal(spool, 'sib-002'), false);
+    assert.equal(takeCancelSignal(spool, 'sib-002'), false);
     // The freed slot goes to nobody else here; sib-001 keeps running.
     assert.equal(readStatus(spool, 'sib-001')?.status, 'starting');
   });
@@ -997,7 +997,7 @@ test('cancel: a stale cancel for a settled sibling is consumed and changes nothi
     assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'merged');
     signalCancel(spool, 'sib-001', 't');
     c.tick();
-    assert.equal(hasCancelSignal(spool, 'sib-001'), false);
+    assert.equal(takeCancelSignal(spool, 'sib-001'), false);
     assert.equal(readStatus(spool, 'sib-001')?.status, 'done');
     assert.deepEqual(launcher.killed, []);
   });

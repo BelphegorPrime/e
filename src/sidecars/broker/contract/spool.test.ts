@@ -6,8 +6,6 @@ import path from 'node:path';
 import {
   countInFlight,
   ensureSpool,
-  hasCancelSignal,
-  hasMergeSignal,
   isRequestId,
   listRecords,
   listRequestIds,
@@ -206,11 +204,11 @@ test('countInFlight counts the requests in the given states', () => {
 test('merge signals (ticket 07): written once, seen, taken exactly once; a malformed id is refused', () => {
   withSpool(root => {
     ensureSpool(root);
-    assert.equal(hasMergeSignal(root, 'sib-001'), false);
     assert.equal(takeMergeSignal(root, 'sib-001'), false);
 
     signalMerge(root, 'sib-001', '2026-09-12T10:00:00.000Z');
-    assert.equal(hasMergeSignal(root, 'sib-001'), true);
+    // The file on disk is the signal: the host and the broker only ever see
+    // each other through the spool, so that is what "written" means here.
     assert.deepEqual(
       JSON.parse(
         fs.readFileSync(path.join(root, 'signals', 'sib-001.json'), 'utf8')
@@ -219,31 +217,28 @@ test('merge signals (ticket 07): written once, seen, taken exactly once; a malfo
     );
     // Taking consumes it: the host retries once per signal.
     assert.equal(takeMergeSignal(root, 'sib-001'), true);
-    assert.equal(hasMergeSignal(root, 'sib-001'), false);
     assert.equal(takeMergeSignal(root, 'sib-001'), false);
 
     assert.throws(() => signalMerge(root, '../x', 't'), /Invalid request id/);
-    assert.equal(hasMergeSignal(root, '../x'), false);
+    assert.equal(takeMergeSignal(root, '../x'), false);
   });
 });
 
 test('cancel signals (ADR-0015): their own directory, written once, taken exactly once, apart from merge signals', () => {
   withSpool(root => {
     ensureSpool(root);
-    assert.equal(hasCancelSignal(root, 'sib-001'), false);
     assert.equal(takeCancelSignal(root, 'sib-001'), false);
 
     signalCancel(root, 'sib-001', '2026-09-12T10:00:00.000Z');
-    assert.equal(hasCancelSignal(root, 'sib-001'), true);
-    assert.equal(hasMergeSignal(root, 'sib-001'), false);
     assert.deepEqual(
       JSON.parse(
         fs.readFileSync(path.join(root, 'cancels', 'sib-001.json'), 'utf8')
       ),
       { id: 'sib-001', signaledAt: '2026-09-12T10:00:00.000Z' }
     );
+    // Apart from the merge signals: a cancel never satisfies a merge retry.
+    assert.equal(takeMergeSignal(root, 'sib-001'), false);
     assert.equal(takeCancelSignal(root, 'sib-001'), true);
-    assert.equal(hasCancelSignal(root, 'sib-001'), false);
     assert.equal(takeCancelSignal(root, 'sib-001'), false);
     assert.throws(() => signalCancel(root, '../x', 't'), /Invalid request id/);
   });

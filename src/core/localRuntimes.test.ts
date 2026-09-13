@@ -97,15 +97,6 @@ test('composeModelCatalog: the same runtime selected twice contributes its model
   ]);
 });
 
-test('composeModelCatalog: a runtime the catalogs do not know contributes nothing instead of throwing', () => {
-  const catalogs = {
-    ollama: [{ id: 'qwen3:4b', sizeBytes: 1 }],
-  } as unknown as Catalogs;
-  assert.deepEqual(ids(composeModelCatalog(['llamacpp', 'ollama'], catalogs)), [
-    'qwen3:4b',
-  ]);
-});
-
 test('composeModelCatalog: returns a fresh array, never the shipped catalog itself', () => {
   const merged = composeModelCatalog(['llamacpp']);
   assert.notEqual(merged, LLAMACPP_CATALOG);

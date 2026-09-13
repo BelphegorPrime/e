@@ -5,11 +5,15 @@
  * hand the change to the entrypoint via SIGHUP, which restarts dnsmasq
  * (dnsmasq itself never re-reads `--conf-dir` on SIGHUP).
  *
- * Only Node built-ins are used: the handler is bundled into a single
- * dependency-free `.mjs` that runs inside the `node:24-alpine` egress image.
+ * Only Node built-ins are used: this module is also the entry `esbuild` bundles
+ * into the single dependency-free `egress-api.mjs` that runs inside the
+ * `node:24-alpine` egress image (`scripts/build-egress-api.mjs`), which is why
+ * the server it starts lives at the bottom of this file rather than in a
+ * module of its own.
  */
 
 import fs from 'node:fs';
+import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   appendBlacklistDomain,
@@ -17,6 +21,7 @@ import {
   removeBlacklistDomain,
 } from '../contract/blacklist.js';
 import {
+  EGRESS_API_PORT,
   EGRESS_BLACKLIST_MOUNT,
   EGRESS_DNSMASQ_LOG,
 } from '../contract/constants.js';
@@ -169,4 +174,18 @@ export function createEgressApi(
   };
 
   return withErrorTail(handle);
+}
+
+// The container's entry point (ADR-0012): the egress entrypoint runs this
+// bundle as `node /egress-api.mjs` next to dnsmasq. Guarded on
+// `import.meta.main` because the very same module is imported for its factory
+// - by the tests and by anything on the host that wants the handler without a
+// socket - and an unguarded `listen` would bind a port on every import. In the
+// bundle this file *is* the entry, so the guard is true exactly there.
+if (import.meta.main) {
+  http
+    .createServer(createEgressApi())
+    .listen(EGRESS_API_PORT, '0.0.0.0', () => {
+      console.log(`Egress API listening on port ${EGRESS_API_PORT}`);
+    });
 }

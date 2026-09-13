@@ -52,6 +52,12 @@ export const RUNTIME_CATALOGS: Readonly<
  * in runtime order. The wizard shows exactly this selection when asking which
  * models to keep, so a model prompt answer stays index-aligned with the list
  * the user saw.
+ *
+ * `catalogs` is total over `LocalRuntime` and a selection can only hold real
+ * runtime ids (`isLocalRuntime` filters `config.json` at the store boundary;
+ * `resolveLocalRuntimes` only ever yields ids out of {@link LOCAL_RUNTIMES}),
+ * so a lookup here always hits. Adding a runtime without its catalog entry is
+ * a compile error, which is where that mistake belongs.
  */
 export function composeModelCatalog(
   runtimes: readonly LocalRuntime[],
@@ -62,7 +68,7 @@ export function composeModelCatalog(
   const seen = new Set<string>();
   const merged: ModelCatalogEntry[] = [];
   for (const runtime of runtimes) {
-    for (const entry of catalogs[runtime] ?? []) {
+    for (const entry of catalogs[runtime]) {
       if (!seen.has(entry.id)) {
         seen.add(entry.id);
         merged.push(entry);

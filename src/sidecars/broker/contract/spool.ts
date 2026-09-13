@@ -33,8 +33,6 @@ import type {
  * `a2a-` for a task the A2A facade on `e serve` started (ADR-0015). The shape
  * is checked before it becomes a file name.
  */
-export const REQUEST_ID_PREFIXES = ['sib', 'a2a'] as const;
-export type RequestIdPrefix = (typeof REQUEST_ID_PREFIXES)[number];
 const REQUEST_ID_RE = /^(sib|a2a)-\d{3,}$/;
 
 export function isRequestId(value: string): boolean {
@@ -92,7 +90,7 @@ export function listRequestIds(root: string): string[] {
 /** The next id in the sequence for `prefix`: `sib-001`, `sib-002`, ... (max existing + 1). */
 export function nextRequestId(
   root: string,
-  prefix: RequestIdPrefix = 'sib'
+  prefix: 'sib' | 'a2a' = 'sib'
 ): string {
   let max = 0;
   for (const id of listRequestIds(root)) {
@@ -164,13 +162,11 @@ function writeSignal(root: string, dir: string, id: string, at: string): void {
   writeJsonAtomic(path.join(root, dir, `${id}.json`), { id, signaledAt: at });
 }
 
-function hasSignal(root: string, dir: string, id: string): boolean {
-  return isRequestId(id) && fs.existsSync(path.join(root, dir, `${id}.json`));
-}
-
 function takeSignal(root: string, dir: string, id: string): boolean {
-  if (!hasSignal(root, dir, id)) return false;
-  fs.rmSync(path.join(root, dir, `${id}.json`), { force: true });
+  if (!isRequestId(id)) return false;
+  const file = path.join(root, dir, `${id}.json`);
+  if (!fs.existsSync(file)) return false;
+  fs.rmSync(file, { force: true });
   return true;
 }
 
@@ -181,11 +177,6 @@ function takeSignal(root: string, dir: string, id: string): boolean {
  */
 export function signalMerge(root: string, id: string, at: string): void {
   writeSignal(root, SPOOL_SIGNALS_DIR, id, at);
-}
-
-/** True if a merge signal for `id` is waiting (not yet taken by the host). */
-export function hasMergeSignal(root: string, id: string): boolean {
-  return hasSignal(root, SPOOL_SIGNALS_DIR, id);
 }
 
 /** Consumes the merge signal for `id`: true if there was one (it is removed). */
@@ -200,11 +191,6 @@ export function takeMergeSignal(root: string, id: string): boolean {
  */
 export function signalCancel(root: string, id: string, at: string): void {
   writeSignal(root, SPOOL_CANCELS_DIR, id, at);
-}
-
-/** True if a cancel for `id` is waiting (not yet taken by the host). */
-export function hasCancelSignal(root: string, id: string): boolean {
-  return hasSignal(root, SPOOL_CANCELS_DIR, id);
 }
 
 /** Consumes the cancel for `id`: true if there was one (it is removed). */

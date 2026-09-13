@@ -5,12 +5,18 @@
  * host has written back. Stateless between requests - the spool directory is
  * the single source of truth, so a restarted broker loses nothing.
  *
- * Only Node built-ins are used: the handler is bundled into a single
- * dependency-free `.mjs` that runs inside the `e-broker` image.
+ * Only Node built-ins are used: this module is also the entry `esbuild` bundles
+ * into the single dependency-free `broker.mjs` that runs inside the `e-broker`
+ * image (`scripts/build-broker.mjs`), which is why the server it starts lives
+ * at the bottom of this file rather than in a module of its own.
  */
 
+import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
+  BROKER_PORT,
+  BROKER_SPOOL_ENV,
+  BROKER_SPOOL_MOUNT,
   DEPTH_LIMIT_MESSAGE,
   MERGE_SIGNAL_STATES,
   STATUS_EVENTS_HEARTBEAT_MS,
@@ -261,4 +267,22 @@ export function createBrokerApi(options: BrokerApiOptions): SidecarHandler {
   };
 
   return withErrorTail(handle);
+}
+
+// The container's entry point (ADR-0013): `node /broker.mjs`. Guarded on
+// `import.meta.main` because the very same module is imported for its factory
+// - by the tests and by anything on the host that wants the handler without a
+// socket - and an unguarded `listen` would bind a port on every import. In the
+// bundle this file *is* the entry, so the guard is true exactly there.
+if (import.meta.main) {
+  // The mount is the contract; the env var only exists so the image can be run
+  // against a spool somewhere else (debugging, a future non-bind-mount layout).
+  const spoolDir = process.env[BROKER_SPOOL_ENV] || BROKER_SPOOL_MOUNT;
+  http
+    .createServer(createBrokerApi({ spoolDir }))
+    .listen(BROKER_PORT, '0.0.0.0', () => {
+      console.log(
+        `runtime-broker listening on port ${BROKER_PORT}, spool ${spoolDir}`
+      );
+    });
 }
