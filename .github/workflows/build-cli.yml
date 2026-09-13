@@ -56,6 +56,15 @@ jobs:
       - name: Run build-script tests
         run: npm run test:ui-assets
 
+      # Nothing a test run does may modify tracked source. Two things here
+      # write into the repo: `build:ts` regenerates the sidecar bundles (which
+      # it must do byte-identically, or the committed ones are stale), and a
+      # packaging build stamps `src/shared/version.ts`. Both are silent
+      # failures otherwise - the first ships an image built from code nobody
+      # reviewed, the second commits a version nobody meant.
+      - name: Working tree is clean
+        run: git diff --exit-code
+
   build:
     name: Build & package the `e` CLI
     runs-on: ubuntu-latest
