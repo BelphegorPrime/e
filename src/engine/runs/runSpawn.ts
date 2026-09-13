@@ -17,8 +17,8 @@ import {
 } from '../../core/identity/runName.js';
 
 import { waitForAllReady, type ReadinessPolicy } from './runSidecars.js';
-import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
-import { runRoleInstructions, type RunRole } from './runRole.js';
+import { worktreePathFor } from './worktreesDir.js';
+import { runRoleInstructions, type RunRole } from '../runRole.js';
 import {
   artifactsDirFor,
   removeArtifacts,
@@ -38,8 +38,8 @@ import {
   brokerSpoolDirFor,
   prepareBrokerSpool,
   removeBrokerSpool,
-  type BrokerPlan,
 } from './runBroker.js';
+import type { BrokerPlan, SidecarPlan } from '../sidecarPlan.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';
 export type { ReadinessPolicy } from './runSidecars.js';
@@ -61,20 +61,6 @@ export const RUN_GIT_INSTRUCTIONS =
  */
 export function launchPrompt(prompt: string, role: RunRole = 'parent'): string {
   return `${RUN_GIT_INSTRUCTIONS}\n${runRoleInstructions(role)}\n\n${prompt}`;
-}
-
-/** A sidecar to bring up before the agent runs. */
-export interface SidecarPlan {
-  alias: string;
-  image: string;
-  port: number;
-  healthcheck?: string[];
-  /**
-   * Env-files for the sidecar's own credentials (never the agent's). Wired at
-   * execute time from the plan's `sidecarCredentials`; absent when the sidecar
-   * needs none.
-   */
-  envFile?: string[];
 }
 
 /** What the orchestrator needs to build a run. */
@@ -121,8 +107,13 @@ export interface RunSpawnParams {
   configMounts?: Mount[];
   readiness?: ReadinessPolicy;
   gitPlatform?: GitPlatform;
-  /** Where worktrees are created; default: the platform rule in `worktreesDir.ts`. */
-  worktreesDir?: string;
+  /**
+   * Where worktrees are created. Required: the rule (`E_WORKTREES_DIR` or the
+   * platform default) belongs to `worktreesDir.ts` and is applied once, by the
+   * caller that gathers it - a second `?? defaultWorktreesDir()` here is a
+   * second place for that decision to drift.
+   */
+  worktreesDir: string;
   /** Leave the worktree in place after the run instead of removing a clean one. */
   keepWorktree?: boolean;
   /** The role named in the launch prompt (`parent` by default); the env is the plan's. */
@@ -238,7 +229,7 @@ export async function runSpawn(
   const readinessIntervalMs =
     params.readiness?.intervalMs ?? DEFAULT_READINESS_INTERVAL_MS;
 
-  const worktreesDir = params.worktreesDir ?? defaultWorktreesDir();
+  const { worktreesDir } = params;
 
   // Track what was started so best-effort teardown never touches
   // resources that were never created (e.g. when createNetwork fails).

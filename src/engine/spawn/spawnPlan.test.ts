@@ -12,7 +12,7 @@ import {
 import { HARNESSES } from '../../core/harness/index.js';
 import { GLOBAL_BASE_URL_ENV } from '../../core/harness/renderEnvTemplate.js';
 import type { McpServer } from '../../core/mcp/index.js';
-import { defaultBrokerPlan } from '../runs/runBroker.js';
+import { defaultBrokerPlan } from '../sidecarPlan.js';
 
 function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
   return {
@@ -24,10 +24,13 @@ function facts(overrides: Partial<SpawnFacts>): SpawnFacts {
     perRunSkills: [],
     bakedSkills: [],
     prompt: 'do it',
+    localStackPresent: false,
     rebuild: false,
     env: [],
+    worktreesDir: '/tmp/e-worktrees',
     siblingArtifacts: ['node_modules'],
     maxSiblings: 3,
+    localRuntimes: [],
     ...overrides,
   };
 }

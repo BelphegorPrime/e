@@ -9,12 +9,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  BROKER_ALIAS,
-  BROKER_IMAGE,
-  BROKER_PORT,
-  BROKER_SPOOL_MOUNT,
-} from '../../sidecars/broker/contract/constants.js';
+import { BROKER_SPOOL_MOUNT } from '../../sidecars/broker/contract/constants.js';
+import type { BrokerPlan } from '../sidecarPlan.js';
 import {
   ensureSpool,
   writeRunInfo,
@@ -25,21 +21,6 @@ import {
   type RunName,
 } from '../../core/identity/runName.js';
 import type { SidecarSpec } from '../../ports/runtime/index.js';
-
-/** The broker sidecar a spawn plans (present only when the run wants siblings). */
-export interface BrokerPlan {
-  /** Network alias the agent reaches the broker at (`runtime-broker`). */
-  alias: string;
-  /** The broker image tag (`e-broker`). */
-  image: string;
-  /** The port the broker listens on. */
-  port: number;
-}
-
-/** The one broker there is: the shipped image at its alias and fixed port. */
-export function defaultBrokerPlan(): BrokerPlan {
-  return { alias: BROKER_ALIAS, image: BROKER_IMAGE, port: BROKER_PORT };
-}
 
 /**
  * The spool of run `runName`: under the worktrees dir, because that is the one

@@ -8,11 +8,8 @@ import type {
   Mount,
   RunOptions,
 } from '../../ports/runtime/index.js';
-import {
-  runSpawn,
-  type RunSpawnResult,
-  type SidecarPlan,
-} from '../runs/runSpawn.js';
+import { runSpawn, type RunSpawnResult } from '../runs/runSpawn.js';
+import type { SidecarPlan } from '../sidecarPlan.js';
 import { filterEnvContent } from '../../shared/utils/dotenv.js';
 import {
   decideImageAction,

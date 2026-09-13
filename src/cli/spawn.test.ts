@@ -8,6 +8,7 @@ import {
   gatherSpawnFacts,
   registerSpawnCommand,
   resolveRemoteTarget,
+  spawnReport,
   type SpawnCommandOptions,
 } from './spawn.js';
 import { validateSpawn } from '../engine/spawn/spawnPlan.js';
@@ -16,7 +17,6 @@ import {
   agentDir,
   configFilePath,
   eBaseDir,
-  egressBlacklistPath,
   envFilePath,
   mcpDir,
   skillDir,
@@ -108,10 +108,15 @@ test('a bare spawn runs the favorite harness (pi by default) with an empty promp
     assert.deepEqual(facts.env, []);
     // No `.e/.env` on disk: no base env-file is layered.
     assert.equal(facts.baseEnvFile, undefined);
-    assert.equal(facts.egressBlacklistFile, egressBlacklistPath(root));
-    // The store's sibling settings ride along (defaults without a config.json).
+    // No compose.yaml in the throwaway store: no local stack to bring up.
+    assert.equal(facts.localStackPresent, false);
+    // The store's settings ride along (defaults without a config.json), so
+    // nothing downstream reads config.json a second time.
     assert.deepEqual(facts.siblingArtifacts, ['node_modules']);
     assert.equal(facts.maxSiblings, 3);
+    // Older stores predate runtime selection, so the default is llama.cpp.
+    assert.deepEqual(facts.localRuntimes, ['llamacpp']);
+    assert.equal(facts.gitPlatform, undefined);
     assert.equal(facts.dirOpt, root);
     assert.equal(typeof facts.worktreesDir, 'string');
   });
@@ -452,4 +457,101 @@ test('resolveRemoteTarget: a remote agent target yields the agent, the joined pr
       /remote A2A agent and has no harness/
     );
   });
+});
+
+// What a finished run tells the user. The whole tail of the spawn action used
+// to live in the anonymous action closure this file replaces with a recorder,
+// so none of it was reachable from a test; as data it is asserted directly.
+
+test('spawnReport: an error is the only thing a failed run says', () => {
+  assert.deepEqual(
+    spawnReport({ ran: true, exitCode: 2, error: 'image build failed' }),
+    [{ level: 'error', text: 'image build failed' }]
+  );
+});
+
+test('spawnReport: the run branch is always the last thing a success says', () => {
+  assert.deepEqual(
+    spawnReport({ ran: true, exitCode: 0, branch: 'e/pi/fix-login-1' }),
+    [{ level: 'success', text: '\nRun branch: e/pi/fix-login-1' }]
+  );
+});
+
+test('spawnReport: push, PR and capture lines, in the order they happened', () => {
+  assert.deepEqual(
+    spawnReport({
+      ran: true,
+      exitCode: 0,
+      branch: 'e/pi/fix-login-1',
+      pushed: true,
+      pullRequestUrl: 'https://example.com/pr/1',
+      captured: true,
+    }),
+    [
+      {
+        level: 'success',
+        text: 'Pushed to origin. Open a PR or merge when you like.',
+      },
+      { level: 'success', text: 'Pull request: https://example.com/pr/1' },
+      { level: 'success', text: '\nRun branch: e/pi/fix-login-1' },
+      {
+        level: 'success',
+        text: 'Captured uncommitted changes in a host commit.',
+      },
+    ]
+  );
+});
+
+test('spawnReport: a push or PR warning is a warning, not a failure', () => {
+  const lines = spawnReport({
+    ran: true,
+    exitCode: 0,
+    branch: 'e/pi/fix-login-1',
+    pushWarning: 'no origin',
+    pullRequestWarning: 'gh not installed',
+  });
+  assert.deepEqual(
+    lines.filter(line => line.level === 'warn'),
+    [
+      { level: 'warn', text: 'Warning: no origin' },
+      { level: 'warn', text: 'Warning: gh not installed' },
+    ]
+  );
+});
+
+test('spawnReport: a sibling whose work landed is info, one that did not is a warning', () => {
+  const lines = spawnReport({
+    ran: true,
+    exitCode: 0,
+    branch: 'e/pi/fix-login-1',
+    siblings: [
+      {
+        id: 'sib-001',
+        agent: 'pi',
+        branch: 'e/pi/tests-1',
+        status: 'done',
+        merge: { status: 'merged' },
+      },
+      {
+        id: 'sib-002',
+        agent: 'pi',
+        branch: 'e/pi/docs-1',
+        status: 'done',
+        merge: { status: 'conflict', reason: 'README.md' },
+      },
+    ],
+  });
+  assert.deepEqual(
+    lines.filter(line => line.text.startsWith('Sibling')),
+    [
+      {
+        level: 'info',
+        text: 'Sibling sib-001 (pi, e/pi/tests-1): done, merge-back merged',
+      },
+      {
+        level: 'warn',
+        text: 'Sibling sib-002 (pi, e/pi/docs-1): done, merge-back conflict - README.md',
+      },
+    ]
+  );
 });

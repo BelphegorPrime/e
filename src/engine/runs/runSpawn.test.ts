@@ -13,7 +13,6 @@ import {
   launchPrompt,
   type RunSpawnDeps,
   type RunSpawnParams,
-  type SidecarPlan,
 } from './runSpawn.js';
 import { slugify } from '../../core/identity/slugify.js';
 import {
@@ -23,7 +22,7 @@ import {
   makeSleep,
   seedParentArtifacts,
 } from './runSpawn.testSupport.js';
-import { defaultBrokerPlan } from './runBroker.js';
+import { defaultBrokerPlan, type SidecarPlan } from '../sidecarPlan.js';
 import {
   ensureSpool,
   readRecord,

@@ -33,15 +33,12 @@ import {
 } from '../core/mcp/index.js';
 import { RunScratch } from '../engine/runs/runScratch.js';
 import {
-  LocalApiKeyError,
-  createLocalApiKey,
-  needsLocalApiKey,
-  providerTargetsLocalStack,
-  upsertEnvValue,
-} from '../engine/spawn/localApiKey.js';
+  prepareLocalStack,
+  type ApiKeyRequest,
+} from '../engine/spawn/prepareLocalStack.js';
 import { executeSpawn } from '../engine/spawn/executeSpawn.js';
 import { findRoot } from '../core/store/root.js';
-import { envFilePath, egressBlacklistPath } from '../core/store/paths.js';
+import { envFilePath } from '../core/store/paths.js';
 import { readConfig } from '../core/store/config.js';
 import { localStack } from '../ports/runtime/stack.js';
 
@@ -49,7 +46,10 @@ import { log } from '../shared/utils/log.js';
 import { env } from '../shared/utils/env.js';
 import { siblingSummaryLine } from '../engine/runs/runSiblings.js';
 import { mergeLanded } from '../engine/runs/runMergeBack.js';
-import { CANCELED_EXIT_CODE } from '../engine/runs/runSpawn.js';
+import {
+  CANCELED_EXIT_CODE,
+  type RunSpawnResult,
+} from '../engine/runs/runSpawn.js';
 
 import { errorMessage } from '../shared/utils/errors.js';
 import { SPAWN_COMMAND, SPAWN_FLAGS } from '../shared/spawnArgs.js';
@@ -83,50 +83,14 @@ function loadStoreEnv(baseEnvFile: string | undefined): Record<string, string> {
 }
 
 /**
- * Gets the OmniRoute endpoint API key the agent needs and records it in the
- * store env under the provider's `apiKeyEnv`. First choice is to create one
- * through OmniRoute's own API with the stack password (no interaction); when
- * that login fails, the user is walked through the dashboard instead.
+ * Walks the user through creating an OmniRoute endpoint key by hand, for when
+ * the stack password will not issue one. This is the terminal half of the
+ * handshake, which is why it lives here and not in the engine: `prepareLocalStack`
+ * decides that a key is needed and stores the answer; this only asks for it.
  */
-async function obtainLocalApiKey(
-  envFile: string,
-  initialPassword: string,
-  apiKeyEnv: string,
-  agentName: string
-): Promise<string> {
-  if (initialPassword) {
-    try {
-      const key = await createLocalApiKey({
-        baseUrl: env.omniRoutedUrl,
-        password: initialPassword,
-        name: `e (${agentName})`,
-      });
-      const content = fs.existsSync(envFile)
-        ? fs.readFileSync(envFile, 'utf8')
-        : '';
-      fs.writeFileSync(envFile, upsertEnvValue(content, apiKeyEnv, key));
-      log.success(
-        `Created an OmniRoute API key for this agent and saved it as ${apiKeyEnv} in .e/.env.`
-      );
-      return key;
-    } catch (error) {
-      const reason =
-        error instanceof LocalApiKeyError
-          ? error.message
-          : `OmniRoute is not reachable at ${env.omniRoutedUrl}: ${errorMessage(error)}`;
-      log.warn(
-        `Could not create an OmniRoute API key automatically (${reason}). If the stack was set up with a different OMNIROUTE_INITIAL_PASSWORD, restore it in .e/.env or remove the omniroute-data volume to reset the dashboard login.`
-      );
-    }
-  }
-  return promptForLocalApiKey(envFile, initialPassword, apiKeyEnv);
-}
-
-async function promptForLocalApiKey(
-  envFile: string,
-  initialPassword: string,
-  apiKeyEnv: string
-): Promise<string> {
+async function promptForLocalApiKey({
+  initialPassword,
+}: ApiKeyRequest): Promise<string> {
   log.info(
     '\nOmniRoute needs an endpoint API key before `auto` model discovery can run.'
   );
@@ -147,30 +111,11 @@ async function promptForLocalApiKey(
   try {
     for (;;) {
       const key = (await rl.question('OmniRoute API key: ')).trim();
-      if (key) {
-        // Only the provider's own key variable: another agent's hosted key in
-        // the same .e/.env must survive this handshake untouched.
-        const content = fs.existsSync(envFile)
-          ? fs.readFileSync(envFile, 'utf8')
-          : '';
-        fs.writeFileSync(envFile, upsertEnvValue(content, apiKeyEnv, key));
-        return key;
-      }
+      if (key) return key;
       log.warn('API key cannot be blank.');
     }
   } finally {
     rl.close();
-  }
-}
-
-async function localApiKeyIsAccepted(key: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${env.omniRoutedUrl}/v1/models`, {
-      headers: { Authorization: `Bearer ${key}` },
-    });
-    return response.status !== 401;
-  } catch {
-    return true;
   }
 }
 
@@ -192,12 +137,13 @@ function resolveMcpServer(name: string, root: string | undefined): McpServer {
 
 /**
  * Gathers everything a spawn's decisions need from disk and the CLI args into a
- * pure {@link SpawnFacts} value - the single I/O step before the pure pipeline
- * ({@link validateSpawn} → resolve model → {@link planSpawn} → executeSpawn). It
- * resolves the Agent, the Harness, the store env, and every requested MCP server
- * and skill *now* (existence checked, throwing a clear error), so a bad name
- * fails fast - before the model fetch, any build, or a worktree. The resolved
- * model is *not* gathered here (it needs a network call - see the action).
+ * complete {@link SpawnFacts} value - the one step that reads, before the pure
+ * pipeline ({@link validateSpawn} → {@link planSpawn} → executeSpawn). It
+ * resolves the Agent, the Harness, the store config and env, and every requested
+ * MCP server and skill *now* (existence checked, throwing a clear error), so a
+ * bad name fails fast - before any build or a worktree. `config.json` is read
+ * once here and nothing downstream reads it again.
+ *
  * Exported for its tests; the action is its only production caller.
  */
 export function gatherSpawnFacts(
@@ -207,14 +153,13 @@ export function gatherSpawnFacts(
 ): SpawnFacts {
   const root = findRoot(opts.dir);
   const config = readConfig(root);
-  const defaultHarness = config.defaultHarness;
 
   // The target is an agent/harness name resolved directly (a bare harness →
   // its default agent).
   const resolved = resolveSpawnTarget({
     target,
     prompt,
-    defaultHarness,
+    defaultHarness: config.defaultHarness,
     isKnownTarget: name => isKnownTarget(name, root),
   });
   const agent = findAgent(resolved.agentTarget, root);
@@ -253,6 +198,10 @@ export function gatherSpawnFacts(
     perRunSkills,
     bakedSkills,
     prompt: resolved.prompt.join(' '),
+    // Whether the store has a local OmniRoute stack is a plain file check, so
+    // it is a gathered fact like any other; bringing it *up* is an effect and
+    // happens later, in `prepareLocalStack`.
+    localStackPresent: localStack(root)?.present === true,
     rebuild: Boolean(opts.rebuild),
     name: opts.name,
     env: opts.env ?? [],
@@ -267,10 +216,6 @@ export function gatherSpawnFacts(
       baseEnvPath !== undefined && fs.existsSync(baseEnvPath)
         ? baseEnvPath
         : undefined,
-    // The egress blacklist source is host-editable and lives in the store
-    // (ADR-0011); undefined when there is no store root.
-    egressBlacklistFile:
-      root === undefined ? undefined : egressBlacklistPath(root),
     userEnvFile: opts.envFile,
     dirOpt: opts.dir,
     // Platform default or `E_WORKTREES_DIR`; a path the engine can bind-mount.
@@ -281,9 +226,11 @@ export function gatherSpawnFacts(
     sibling: env.sibling,
     // Set by the A2A facade of `e serve` for a run it watches (ADR-0015).
     report: env.report,
-    // The store's sibling settings, read once with the rest of config.json.
+    // The store's settings, read once with the rest of config.json.
     siblingArtifacts: config.siblingArtifacts,
     maxSiblings: config.maxSiblings,
+    localRuntimes: config.localRuntimes,
+    gitPlatform: config.gitPlatform,
   };
 }
 
@@ -315,6 +262,120 @@ export function resolveRemoteTarget(
     prompt: resolved.prompt.join(' '),
     storeEnv: loadStoreEnv(baseEnvPath),
   };
+}
+
+/** One line of a finished run's closing report: what to say and how to say it. */
+export interface ReportLine {
+  level: 'info' | 'warn' | 'success' | 'error';
+  text: string;
+}
+
+/**
+ * Turns a finished run into the lines to print, in order. Pure, so what a run
+ * tells the user is asserted directly instead of by capturing stdout - the
+ * whole tail of the spawn action used to be unreachable from a test.
+ */
+export function spawnReport(result: RunSpawnResult): ReportLine[] {
+  if (result.error) return [{ level: 'error', text: result.error }];
+  const lines: ReportLine[] = [];
+  if (result.pushWarning) {
+    lines.push({ level: 'warn', text: `Warning: ${result.pushWarning}` });
+  }
+  if (result.pushed) {
+    lines.push({
+      level: 'success',
+      text: 'Pushed to origin. Open a PR or merge when you like.',
+    });
+  }
+  if (result.pullRequestUrl) {
+    lines.push({
+      level: 'success',
+      text: `Pull request: ${result.pullRequestUrl}`,
+    });
+  }
+  // Siblings this run requested and how their work came back (ticket 07).
+  for (const sibling of result.siblings ?? []) {
+    lines.push({
+      level: mergeLanded(sibling.merge) ? 'info' : 'warn',
+      text: siblingSummaryLine(sibling),
+    });
+  }
+  if (result.pullRequestWarning) {
+    lines.push({
+      level: 'warn',
+      text: `Warning: ${result.pullRequestWarning}`,
+    });
+  }
+  lines.push({ level: 'success', text: `\nRun branch: ${result.branch}` });
+  if (result.captured) {
+    lines.push({
+      level: 'success',
+      text: 'Captured uncommitted changes in a host commit.',
+    });
+  }
+  return lines;
+}
+
+/** What a spawn needs from the process it runs in; the action supplies both. */
+export interface SpawnCommandDeps {
+  /** Owns every rendered secret file this run writes; one dispose() cleans up. */
+  scratch: RunScratch;
+  /** A cancel (SIGTERM, or an A2A client's cancelTask), forwarded to the run. */
+  abort?: AbortSignal;
+}
+
+/**
+ * The whole `e spawn`: gather facts (the reads) → validate (pure, fail-fast) →
+ * prepare the local stack (the one effect in the middle) → plan (pure) →
+ * execute. Returns the exit code rather than taking it; `process.exit` and the
+ * signal handling stay in the Commander action, so everything that decides what
+ * a run does - and what it reports - can be called from a test (ADR-0008).
+ */
+export async function runSpawnCommand(
+  target: string | undefined,
+  prompt: string[],
+  opts: SpawnCommandOptions,
+  deps: SpawnCommandDeps
+): Promise<number> {
+  const { scratch, abort } = deps;
+  try {
+    // A remote A2A agent (ADR-0015) is answered over the wire: no image, no
+    // worktree, the answer on stdout.
+    const remote = resolveRemoteTarget(target, prompt, opts);
+    if (remote) return await runRemoteAgent({ ...remote, abort });
+
+    const gathered = gatherSpawnFacts(target, prompt, opts);
+    validateSpawn(gathered);
+    const runtime = resolveRuntime(opts.runtime);
+    const facts = await prepareLocalStack(gathered, {
+      runtime,
+      askForKey: promptForLocalApiKey,
+    });
+
+    const result = await executeSpawn(facts, planSpawn(facts), {
+      git: new HostGit(),
+      runtime,
+      scratch,
+      pullRequest: facts.gitPlatform ? new HostPullRequest() : undefined,
+      gitPlatform: facts.gitPlatform,
+      abort,
+    });
+
+    // Rendered env-files hold resolved secrets; each container already has its
+    // own copy, so drop them before reporting and exiting. This is independent
+    // of --keep-worktree, which only concerns the worktree.
+    scratch.dispose();
+    for (const line of spawnReport(result)) log[line.level](line.text);
+    return result.exitCode;
+  } catch (err) {
+    log.error(errorMessage(err));
+    return 1;
+  } finally {
+    // Idempotent, so the early dispose above still gets the secrets out before
+    // anything is printed; this is the net under every other way out - a throw,
+    // and the remote-agent return that never reaches the line above.
+    scratch.dispose();
+  }
 }
 
 export function registerSpawnCommand(program: Command): void {
@@ -371,10 +432,6 @@ export function registerSpawnCommand(program: Command): void {
         prompt: string[],
         opts: SpawnCommandOptions
       ) => {
-        // The whole spawn: gather facts (I/O) → validate (pure, fail-fast) →
-        // resolve the model (the one remaining I/O) → plan (pure) → execute. One
-        // RunScratch owns every rendered secret file; one dispose() cleans up, and
-        // one try/catch turns any failure into a clean exit (ADR-0008).
         const scratch = new RunScratch();
         // SIGTERM is a cancel (ADR-0015): a sibling its parent canceled or
         // gave up on, an A2A task its client canceled. The run stops its
@@ -389,116 +446,12 @@ export function registerSpawnCommand(program: Command): void {
             process.exit(CANCELED_EXIT_CODE);
           }, CANCEL_GRACE_MS).unref();
         });
-        try {
-          // A remote A2A agent (ADR-0015) is answered over the wire: no
-          // image, no worktree, the answer on stdout.
-          const remote = resolveRemoteTarget(target, prompt, opts);
-          if (remote) {
-            process.exit(
-              await runRemoteAgent({ ...remote, abort: cancel.signal })
-            );
-          }
-          const facts = gatherSpawnFacts(target, prompt, opts);
-          validateSpawn(facts);
-          const runtime = resolveRuntime(opts.runtime);
-          const stack = localStack(facts.root);
-          facts.localStackPresent = Boolean(stack?.present);
-          const localRuntimes = readConfig(facts.root).localRuntimes;
-          if (stack?.present) {
-            // The stack is interpolated from `.e/.env` (no fallback secrets), so
-            // pass it explicitly - compose does not otherwise look inside `.e/`.
-            runtime.composeUp(
-              stack.composeFile,
-              stack.envFile,
-              localRuntimes.length > 0
-            );
-            // Local runtime stacks wait for bootstrap model registration; empty
-            // selections intentionally render no bootstrap service.
-          }
-
-          // A provider that points at the local OmniRoute needs an endpoint
-          // API key; unconfigured means empty or still the generated initial
-          // password. Hosted providers are never asked (see localApiKey.ts).
-          const provider = facts.agent.provider;
-          const configuredApiKey = provider
-            ? (facts.storeEnv[provider.apiKeyEnv] ?? '')
-            : '';
-          const stackPassword = facts.storeEnv.OMNIROUTE_INITIAL_PASSWORD ?? '';
-          const accepted =
-            provider &&
-            facts.localStackPresent &&
-            providerTargetsLocalStack(provider) &&
-            configuredApiKey !== '' &&
-            configuredApiKey !== stackPassword
-              ? await localApiKeyIsAccepted(configuredApiKey)
-              : true;
-          if (
-            provider &&
-            needsLocalApiKey({
-              stackPresent: facts.localStackPresent,
-              provider,
-              configuredKey: configuredApiKey,
-              stackPassword,
-              accepted,
-            })
-          ) {
-            const key = await obtainLocalApiKey(
-              facts.baseEnvFile ?? envFilePath(facts.root),
-              stackPassword,
-              provider.apiKeyEnv,
-              facts.agent.name
-            );
-            facts.storeEnv[provider.apiKeyEnv] = key;
-          }
-
-          const plan = planSpawn(facts);
-          const config = readConfig(facts.root);
-          const result = await executeSpawn(facts, plan, {
-            git: new HostGit(),
-            runtime,
+        process.exit(
+          await runSpawnCommand(target, prompt, opts, {
             scratch,
-            pullRequest: config.gitPlatform ? new HostPullRequest() : undefined,
-            gitPlatform: config.gitPlatform,
             abort: cancel.signal,
-          });
-
-          // Rendered env-files hold resolved secrets; each container already has
-          // its own copy, so drop them before reporting and exiting. This is
-          // independent of --keep-worktree, which only concerns the worktree.
-          scratch.dispose();
-
-          if (result.error) {
-            log.error(result.error);
-            process.exit(result.exitCode);
-          }
-          if (result.pushWarning) {
-            log.warn(`Warning: ${result.pushWarning}`);
-          }
-          if (result.pushed) {
-            log.success('Pushed to origin. Open a PR or merge when you like.');
-          }
-          if (result.pullRequestUrl) {
-            log.success(`Pull request: ${result.pullRequestUrl}`);
-          }
-          // Siblings this run requested and how their work came back (ticket 07).
-          for (const sibling of result.siblings ?? []) {
-            const line = siblingSummaryLine(sibling);
-            if (mergeLanded(sibling.merge)) log.info(line);
-            else log.warn(line);
-          }
-          if (result.pullRequestWarning) {
-            log.warn(`Warning: ${result.pullRequestWarning}`);
-          }
-          log.success(`\nRun branch: ${result.branch}`);
-          if (result.captured) {
-            log.success('Captured uncommitted changes in a host commit.');
-          }
-          process.exit(result.exitCode);
-        } catch (err) {
-          scratch.dispose();
-          log.error(errorMessage(err));
-          process.exit(1);
-        }
+          })
+        );
       }
     );
 }

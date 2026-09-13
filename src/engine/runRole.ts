@@ -13,7 +13,7 @@ import {
   BROKER_PORT,
   BROKER_URL_ENV,
   ROLE_ENV,
-} from '../../sidecars/broker/contract/constants.js';
+} from '../sidecars/broker/contract/constants.js';
 
 // The role *type* travels with this module, because `runSpawn`, `runSiblings`
 // and the spawn plan read the contract here and would otherwise import one
@@ -23,8 +23,8 @@ import {
 // into the engine) are not re-exported: every production caller of those
 // already imports them from their owner, so a forward here would have been a
 // second name for the same thing.
-export type { RunRole } from '../../shared/runRole.js';
-import type { RunRole } from '../../shared/runRole.js';
+export type { RunRole } from '../shared/runRole.js';
+import type { RunRole } from '../shared/runRole.js';
 
 /**
  * Where an agent container reaches its broker. Mirrors the MCP endpoint rule

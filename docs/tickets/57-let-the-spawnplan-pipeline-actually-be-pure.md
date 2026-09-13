@@ -1,6 +1,6 @@
 # 57 - Let the SpawnPlan pipeline actually be pure
 
-**Status:** Open, ready-for-agent.
+**Status:** Done.
 
 **GitHub:** [#122](https://github.com/BelphegorPrime/e/issues/122)
 
@@ -21,10 +21,49 @@ The local-stack and API-key handshake is 50 lines of policy living in an anonymo
 
 **Blocked by:** None.
 
-- [ ] `SpawnFacts` is readonly; nothing mutates it after `gatherSpawnFacts`
-- [ ] `localStackPresent` and the resolved provider key are required fields, produced by the gather step
-- [ ] The local-stack / API-key handshake has tests
-- [ ] `engine/spawn` does not import `engine/runs`
-- [ ] `egressBlacklistFile` and the duplicate `worktreesDir` default are gone
-- [ ] ADR-0008 amended
-- [ ] `rm -rf dist && npm test` green
+- [x] `SpawnFacts` is readonly; nothing mutates it after `gatherSpawnFacts`
+- [x] `localStackPresent` is a required field, produced by the gather step
+- [x] The local-stack / API-key handshake has tests
+- [x] The pure planner does not import `engine/runs`
+- [x] `egressBlacklistFile` and the duplicate `worktreesDir` default are gone
+- [x] ADR-0008 amended
+- [x] `rm -rf dist && npm test` green (1011/1011)
+
+---
+
+## What was built, and three corrections to this ticket
+
+**Three claims above were wrong, and the implementation departed from them.**
+
+1. _"Move the handshake into `gatherSpawnFacts`, which is already the I/O step."_
+   It cannot go there. The handshake needs the local stack **running** before it
+   can ask OmniRoute whether a key is still accepted, so it depends on
+   `resolveRuntime` and `composeUp`; putting it in gather would move every
+   `validateSpawn` error behind a `compose up` and an interactive API-key
+   prompt. A run refused for a reserved `-e` would first start a stack and ask
+   the user for a key. It is its own step, **`prepareLocalStack`**, which runs
+   _after_ validate and returns a new `SpawnFacts` instead of patching one.
+
+2. _"The resolved provider key is a required field."_ It never was a field - it
+   is an entry in `storeEnv`, which the action used to write into in place. With
+   `storeEnv` readonly, `prepareLocalStack` returns `{...facts, storeEnv: {...}}`;
+   no new field was needed, and there is nothing to make required.
+
+3. _"`engine/spawn` does not import `engine/runs`."_ Too strong:
+   `executeSpawn.ts` calls `runSpawn` and must. The real rule, now mechanically
+   visible, is that the **pure planner** (`spawnPlan.ts`) imports nothing from
+   `runs/` - it has zero such imports.
+
+**Also done, beyond the ticket** (approved in review): the 136-line action body
+came out of the anonymous closure. `runSpawnCommand(target, prompt, opts, deps)`
+returns an exit code, and what a finished run _says_ is a pure
+`spawnReport(result): ReportLine[]`; `process.exit` and the SIGTERM handler are
+all that is left in the Commander action. `config.json` is now read once, in
+gather (`localRuntimes` and `gitPlatform` ride along in the facts), instead of
+three times.
+
+**New modules:** `engine/sidecarPlan.ts` (`SidecarPlan`, `BrokerPlan`,
+`defaultBrokerPlan` - the data both halves agree on, below both) and
+`engine/runRole.ts` (moved down out of `runs/`). `engine/spawn/prepareLocalStack.ts`
+owns the handshake; asking a human for a key stays at the CLI edge as the
+caller-supplied `askForKey`.

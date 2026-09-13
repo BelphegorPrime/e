@@ -14,7 +14,7 @@ import { executeSpawn } from './executeSpawn.js';
 import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../../core/harness/index.js';
 import type { HarnessAgent } from '../../core/agent/index.js';
-import { defaultBrokerPlan } from '../runs/runBroker.js';
+import { defaultBrokerPlan } from '../sidecarPlan.js';
 import {
   ensureSpool,
   readStatus,
@@ -41,10 +41,13 @@ function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
     perRunSkills: [],
     bakedSkills: [],
     prompt: 'do it',
+    localStackPresent: false,
     rebuild: false,
     env: [],
+    worktreesDir: '/tmp/e-worktrees',
     siblingArtifacts: ['node_modules'],
     maxSiblings: 3,
+    localRuntimes: [],
     ...overrides,
   };
 }

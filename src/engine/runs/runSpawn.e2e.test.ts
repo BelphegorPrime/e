@@ -16,7 +16,7 @@ import type {
 import { slugify } from '../../core/identity/slugify.js';
 import type { RunOptions } from '../../ports/runtime/index.js';
 import { Env } from '../../shared/utils/env.js';
-import { defaultBrokerPlan } from './runBroker.js';
+import { defaultBrokerPlan } from '../sidecarPlan.js';
 import type { ChildLauncher } from './childRun.js';
 import { runSpawn } from './runSpawn.js';
 import {

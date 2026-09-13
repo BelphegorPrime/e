@@ -24,7 +24,7 @@ export interface DockerfileSkillsBlock {
   /** Absolute in-container skills dir the trees are copied into; outside `/workspace`. */
   skillsDir: string;
   /** Skill names copied from `skills/<name>/` in the build context. */
-  names: string[];
+  names: readonly string[];
 }
 
 /** Inputs for rendering a derived agent Dockerfile - either or both blocks may be present. */
@@ -186,7 +186,7 @@ export interface DerivedImagePlan {
    * into the build context at `skills/<name>/` by the spawn edge (they are file
    * trees, not rendered strings, so they are not in {@link files}).
    */
-  skillNames: string[];
+  skillNames: readonly string[];
 }
 
 /**
@@ -202,7 +202,7 @@ export function planAgentImage(params: {
   baseImage: string;
   agentName: string;
   bakedConfig?: BakedProviderConfig;
-  skills?: { skillsDir: string; names: string[] };
+  skills?: { skillsDir: string; names: readonly string[] };
   runtimeUser?: 'node' | 'root';
 }): DerivedImagePlan | undefined {
   const skillNames = params.skills?.names ?? [];

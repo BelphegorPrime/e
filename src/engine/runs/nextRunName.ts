@@ -6,7 +6,7 @@ import {
   maxRunCounter,
   type RunName,
 } from '../../core/identity/runName.js';
-import { defaultWorktreesDir, worktreePathFor } from './worktreesDir.js';
+import { worktreePathFor } from './worktreesDir.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';
 
@@ -23,7 +23,7 @@ export async function nextRunName(
   agent: Agent,
   slug: string,
   base: string,
-  worktreesDir: string = defaultWorktreesDir(),
+  worktreesDir: string,
   maxAttempts = 50
 ): Promise<RunName> {
   const prefix = branchPrefix(agent.name, slug);

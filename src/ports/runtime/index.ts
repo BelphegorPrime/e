@@ -22,7 +22,7 @@ export interface RunOptions {
    * through the engine API instead. Without `interactive` this has no effect.
    */
   headlessTty?: boolean;
-  port?: string[];
+  port?: readonly string[];
   env?: string[];
   rm?: boolean;
   /** Bind mounts. */

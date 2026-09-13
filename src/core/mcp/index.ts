@@ -223,7 +223,7 @@ export function allocateMcpPorts(
 
 /** Splits selected servers and allocates ports for container MCPs. */
 export function planMcpSelection(
-  servers: McpServer[],
+  servers: readonly McpServer[],
   sharedNetns = false,
   occupiedPorts: Iterable<number> = []
 ): {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   BROKER_ALIAS,
   BROKER_PORT,
-} from '../../sidecars/broker/contract/constants.js';
+} from '../sidecars/broker/contract/constants.js';
 import {
   brokerUrl,
   isRoleContractEntry,
@@ -13,8 +13,8 @@ import {
 import {
   BROKER_URL_ENV,
   ROLE_ENV,
-} from '../../sidecars/broker/contract/constants.js';
-import { parseRunRole } from '../../shared/runRole.js';
+} from '../sidecars/broker/contract/constants.js';
+import { parseRunRole } from '../shared/runRole.js';
 
 // The contract names are what agents read (`$E_ROLE`, `$E_BROKER_URL`) and
 // what AGENTS.md documents, so they are pinned here.

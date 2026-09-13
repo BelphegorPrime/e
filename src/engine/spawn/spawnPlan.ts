@@ -36,15 +36,20 @@ import {
 import { planMcpSelection, type McpServer } from '../../core/mcp/index.js';
 import type { Mount } from '../../core/mount.js';
 import type { SiblingSpawn } from '../../shared/utils/env.js';
-import type { SidecarPlan } from '../runs/runSpawn.js';
-import { defaultBrokerPlan, type BrokerPlan } from '../runs/runBroker.js';
+import type { LocalRuntime } from '../../core/localRuntimes.js';
+import type { GitPlatform } from '../../core/store/config.js';
+import {
+  defaultBrokerPlan,
+  type BrokerPlan,
+  type SidecarPlan,
+} from '../sidecarPlan.js';
 import { SPAWN_BROTHER_SKILL } from '../../sidecars/broker/contract/constants.js';
 import {
   brokerUrl,
   isRoleContractEntry,
   roleEnv,
   type RunRole,
-} from '../runs/runRole.js';
+} from '../runRole.js';
 import { imageTag } from '../../core/identity/imageTag.js';
 import { skillMountSpec } from '../../core/skill/index.js';
 import { skillDir } from '../../core/store/paths.js';
@@ -145,88 +150,103 @@ export function resolveSpawnTarget({
 
 /**
  * Everything a spawn's decisions need, gathered by the edge from disk (and the
- * CLI args) so that {@link validateSpawn} and {@link planSpawn} can be pure. The
- * resolved model is *not* here - it needs a network call, so the edge resolves it
- * between validate and plan and passes it to {@link planSpawn} separately.
+ * CLI args) so that {@link validateSpawn} and {@link planSpawn} can be pure.
+ *
+ * Every field is `readonly`: the value is complete when the edge hands it over,
+ * and the pipeline downstream of it only reads. The one thing that cannot be
+ * known before the container runtime is involved - whether the local OmniRoute
+ * stack accepts the agent's provider key - is resolved by `prepareLocalStack`,
+ * which returns a *new* `SpawnFacts` rather than writing into this one (it used
+ * to patch two fields in place after `validateSpawn` had already passed).
  */
 export interface SpawnFacts {
   /** The store root, or undefined when no `.e` store was found. */
-  root: string | undefined;
+  readonly root: string | undefined;
   /** The resolved Agent to run (a harness agent; a remote A2A agent never enters the pipeline). */
-  agent: HarnessAgent;
+  readonly agent: HarnessAgent;
   /** The Harness the agent runs. */
-  harness: Harness;
+  readonly harness: Harness;
   /** Parsed `.e/.env` (secrets resolved by name from here; never baked). */
-  storeEnv: Record<string, string>;
+  readonly storeEnv: Readonly<Record<string, string>>;
   /** The requested `--mcp` servers, already resolved from disk (existence checked). */
-  mcpServers: McpServer[];
+  readonly mcpServers: readonly McpServer[];
   /** Per-run `--skill` names (existence checked on disk during gather). */
-  perRunSkills: string[];
+  readonly perRunSkills: readonly string[];
   /** The agent's baked default skills (`agent.skills`). */
-  bakedSkills: string[];
+  readonly bakedSkills: readonly string[];
   /** The prompt, joined into a single string. */
-  prompt: string;
-  /** Local OmniRoute stack is running and reachable through e-net. */
-  localStackPresent?: boolean;
+  readonly prompt: string;
+  /**
+   * The store has a local OmniRoute stack (its `compose.yaml` exists). Decides
+   * where sidecars are reached (shared egress namespace vs. private network)
+   * and whether the provider needs an endpoint key.
+   */
+  readonly localStackPresent: boolean;
   /** `--rebuild`. */
-  rebuild: boolean;
+  readonly rebuild: boolean;
   /** `--name` run-name override. */
-  name?: string;
+  readonly name?: string;
   /** `-e` env entries. */
-  env: string[];
+  readonly env: readonly string[];
   /** `-p` port publishes. */
-  port?: string[];
+  readonly port?: readonly string[];
   /**
    * The host process has a terminal on stdin. An interactive run needs one to
    * attach to; without it (and without {@link headlessTty}) {@link validateSpawn}
    * refuses a promptless spawn instead of hanging in a pipe or CI job.
    */
-  stdinIsTty?: boolean;
+  readonly stdinIsTty?: boolean;
   /**
    * `E_TTY_HEADLESS`: this spawn has no host TTY (it was started by the `serve`
    * browser terminal), so an interactive run detaches the container's TTY and
    * the parent attaches through the engine API (see `RunOptions.headlessTty`).
    */
-  headlessTty?: boolean;
+  readonly headlessTty?: boolean;
   /** `--rm`. */
-  rm?: boolean;
+  readonly rm?: boolean;
   /** `--keep-worktree`: leave the run's worktree in place after the container exits. */
-  keepWorktree?: boolean;
+  readonly keepWorktree?: boolean;
   /** The shared `.e/.env` path when it exists on disk, for env-file layering. */
-  baseEnvFile?: string;
-  /** Store blacklist source used to materialize the per-run egress monitor. */
-  egressBlacklistFile?: string;
+  readonly baseEnvFile?: string;
   /** The user's `--env-file` path, layered over the base. */
-  userEnvFile?: string;
+  readonly userEnvFile?: string;
   /** The raw `--dir` value, only for the "run `e init` --dir <x>" hint. */
-  dirOpt?: string;
+  readonly dirOpt?: string;
   /**
-   * Where the run's worktree is created (`runs/worktreesDir.ts`): the platform
-   * default or `E_WORKTREES_DIR`. Absent → `runSpawn` applies the default.
+   * Where the run's worktree is created: `E_WORKTREES_DIR` or the platform rule
+   * in `runs/worktreesDir.ts`. Resolved once, by the edge - `runSpawn` takes it
+   * as given rather than defaulting a second time.
    */
-  worktreesDir?: string;
+  readonly worktreesDir: string;
   /**
    * The role this run's containers receive as `E_ROLE` (ADR-0013): `parent`
    * for a run the user (or `serve`) started, `child` for a sibling requested
-   * through the runtime-broker. Absent → `parent`.
+   * through the runtime-broker. Absent -> `parent`.
    */
-  role?: RunRole;
+  readonly role?: RunRole;
   /**
    * Present when this process was started by a parent run's host for a sibling
    * request (the `E_SPAWN_*` markers): the parent to checkpoint and branch
    * from, the network to join, and where to report status.
    */
-  sibling?: SiblingSpawn;
+  readonly sibling?: SiblingSpawn;
   /**
    * Present when something watches this run through a spool without it being
    * a sibling (the `E_SPAWN_REPORT_*` markers set by the A2A facade of
    * `e serve`, ADR-0015): where to report status, `pushed` and the PR/MR URL.
    */
-  report?: { spoolDir: string; id: string };
+  readonly report?: { spoolDir: string; id: string };
   /** The store's `siblingArtifacts` (`config.json`): what a sibling copies from its parent (ADR-0013). */
-  siblingArtifacts: readonly string[];
+  readonly siblingArtifacts: readonly string[];
   /** The store's `maxSiblings` (`config.json`): siblings a run may have in flight at once (ADR-0013). */
-  maxSiblings: number;
+  readonly maxSiblings: number;
+  /**
+   * The store's `localRuntimes` (`config.json`): a stack with none renders no
+   * model-registration service, so bringing it up waits for nothing.
+   */
+  readonly localRuntimes: readonly LocalRuntime[];
+  /** The store's `gitPlatform` (`config.json`): which PR/MR opener a finished run gets, if any. */
+  readonly gitPlatform?: GitPlatform;
 }
 
 /** True when the positional prompt carries anything but whitespace. */
