@@ -994,6 +994,9 @@ test('an empty allowlist syncs nothing', async () => {
 // up from the broker's spool and launches each as a child `e spawn`; the
 // sibling process reports its own status. Here the launcher is scripted and
 // the fake runtime plays the agent posting a request mid-run.
+// The shared `makeSleep` spy yields on its own now, so these tests need no
+// local workaround; this stays only because they want a real timer tick
+// rather than a microtask boundary between polls.
 const yielding = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, Math.min(ms, 2)));
 

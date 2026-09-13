@@ -332,6 +332,18 @@ test('a launcher that cannot start the process fails the request with the reason
   });
 });
 
+/**
+ * Yields the event loop `turns` times: a bounded window in which something
+ * wrong would show up, without asking how many milliseconds that takes. A
+ * wall-clock wait decides the same question by racing the scheduler, which is
+ * exactly what makes it flake on a loaded machine.
+ */
+async function drain(turns = 25): Promise<void> {
+  for (let turn = 0; turn < turns; turn++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+}
+
 test('start/stop: the loop polls until stopped; stop fails what is still waiting and awaits what is in flight', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
@@ -356,8 +368,9 @@ test('start/stop: the loop polls until stopped; stop fails what is still waiting
     const stopping = c.stop().then(() => {
       stopped = true;
     });
-    await new Promise(resolve => setTimeout(resolve, 5));
-    // In flight: stop waits for it ...
+    // In flight: stop waits for it. Twenty-five turns is far more chances to
+    // resolve early than the sibling's `exited` promise will ever get.
+    await drain();
     assert.equal(stopped, false);
     // ... and the one never picked up is canceled, not left dangling.
     assert.match(
@@ -374,7 +387,7 @@ test('start/stop: the loop polls until stopped; stop fails what is still waiting
     await stopping;
     assert.equal(stopped, true);
     const sleepsAtStop = sleeps;
-    await new Promise(resolve => setTimeout(resolve, 5));
+    await drain();
     assert.equal(sleeps, sleepsAtStop, 'the loop is gone');
   });
 });

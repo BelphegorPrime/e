@@ -145,11 +145,23 @@ export class FakeRuntime implements ContainerRunner {
   }
 }
 
-/** A sleep spy that never actually waits, so readiness polling is instant in tests. */
+/**
+ * A sleep spy that records the requested wait instead of serving it, so
+ * readiness polling is instant in tests.
+ *
+ * It still **yields to the event loop** once per call. Resolving as a bare
+ * microtask - which is what an `async` function with no `await` does - lets a
+ * tight poll loop (tick, sleep, tick, sleep) monopolise the microtask queue,
+ * so timers and socket callbacks in the same test never run and anything
+ * doing real I/O alongside the loop hangs forever. `setImmediate` costs
+ * nothing in wall-clock terms and hands control back between polls.
+ */
 export function makeSleep(runtime: FakeRuntime): (ms: number) => Promise<void> {
-  return async (ms: number) => {
-    runtime.sleeps.push(ms);
-  };
+  return (ms: number) =>
+    new Promise<void>(resolve => {
+      runtime.sleeps.push(ms);
+      setImmediate(resolve);
+    });
 }
 
 /** A minimal one-shot harness: `demo -p <prompt>`, or the `demo` TUI. */

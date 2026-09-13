@@ -465,6 +465,30 @@ test("interop: e's client completes a task against the SDK server and reads its 
   }
 });
 
+/**
+ * Waits for `condition` to hold, or fails saying what it was waiting for.
+ *
+ * These waits are on a real SDK server over a loopback socket, so some clock
+ * is unavoidable - but the deadline must not double as the assertion. The old
+ * shape spun until a 5s deadline and then asserted unconditionally, so a
+ * loaded machine failed with "expected 1, got 0" and hid the fact that it had
+ * simply run out of time. The ceiling is generous because a healthy run leaves
+ * the loop on the first check that passes; only a genuinely stuck one waits.
+ */
+async function waitFor(
+  condition: () => boolean,
+  what: string,
+  timeoutMs = 30_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out after ${timeoutMs}ms waiting for ${what}.`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
+
 test("interop: a Store agent with transport a2a on the SDK server, as a top-level spawn and as a sibling; the sibling's kill cancels the remote task", async () => {
   const agent = await startSdkAgent();
   const spool = fs.mkdtempSync(path.join(os.tmpdir(), 'e-interop-sib-'));
@@ -524,17 +548,17 @@ test("interop: a Store agent with transport a2a on the SDK server, as a top-leve
       client: new A2aClient(),
       pollMs: 5,
     });
-    const untilWorking = Date.now() + 5000;
-    while (agent.executor.prompts.length < 3 && Date.now() < untilWorking) {
-      await new Promise(resolve => setTimeout(resolve, 5));
-    }
+    await waitFor(
+      () => agent.executor.prompts.length >= 3,
+      'the SDK server to receive the sibling prompt'
+    );
     canceled.kill();
     assert.equal(await canceled.exited, 1);
     assert.equal(readStatus(spool, 'sib-002')?.error, 'canceled');
-    const untilCanceled = Date.now() + 5000;
-    while (agent.executor.canceled.length === 0 && Date.now() < untilCanceled) {
-      await new Promise(resolve => setTimeout(resolve, 5));
-    }
+    await waitFor(
+      () => agent.executor.canceled.length > 0,
+      'the SDK server to see the cancel'
+    );
     assert.equal(agent.executor.canceled.length, 1);
   } finally {
     await agent.close();
