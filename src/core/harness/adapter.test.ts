@@ -254,7 +254,11 @@ test('codexAdapter.planConfigOverlay: merges the MCP block onto the baked base c
   assert.equal(overlay.file.fileName, 'config.toml');
   // The adapter owns where the file mounts and how the config dir is relocated.
   assert.equal(overlay.mountTo, '/home/node/.codex/config.toml');
-  assert.deepEqual(overlay.env, ['CODEX_HOME=/home/node/.codex']);
+  // Named variable and value, not a formatted argv entry: the spawn edge
+  // decides how the engine spells an env entry.
+  assert.deepEqual(overlay.env, [
+    { name: 'CODEX_HOME', value: '/home/node/.codex' },
+  ]);
   // The baked provider block is preserved...
   assert.match(overlay.file.content, /^model_provider = "e"$/m);
   assert.match(overlay.file.content, /^base_url = /m);

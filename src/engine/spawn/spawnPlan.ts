@@ -420,6 +420,27 @@ export interface SpawnPlan {
  * thing is testable without a runtime, a container, or the network. Throws on a
  * missing credential (via {@link renderMcpCredentials}/{@link EnvFileRenderer}).
  */
+/**
+ * Formats {@link ContainerEnv} entries as the `-e NAME=value` argv the engine
+ * takes. This is the edge: an adapter says which variable a harness needs set
+ * to what, and the spelling is decided here, once, next to everything else
+ * that goes on the container's command line.
+ *
+ * A `fromEnv` reference has no `-e` form - the host value would have to be
+ * read first - and no adapter produces one for a config overlay, so it is a
+ * programming error rather than a case to render.
+ */
+function containerEnvArgs(entries: readonly ContainerEnv[]): string[] {
+  return entries.map(entry => {
+    if (!('value' in entry)) {
+      throw new Error(
+        `Config-overlay env "${entry.name}" references the host variable "${entry.fromEnv}"; only literal values can go on the command line.`
+      );
+    }
+    return `${entry.name}=${entry.value}`;
+  });
+}
+
 export function planSpawn(facts: SpawnFacts): SpawnPlan {
   const { agent, harness, storeEnv, root } = facts;
   // One renderer, bound to the store's secrets, for every credential env-file this
@@ -553,7 +574,11 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     configOverlay,
     agentImagePlan,
     skillMounts,
-    agentEnv: [...facts.env, ...(configOverlay?.env ?? []), ...roleContract],
+    agentEnv: [
+      ...facts.env,
+      ...containerEnvArgs(configOverlay?.env ?? []),
+      ...roleContract,
+    ],
     runtimeModel: delivery?.runtimeModel,
   };
 }

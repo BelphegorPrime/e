@@ -84,8 +84,13 @@ export interface ConfigOverlayDelivery {
   file: RenderedConfigFile;
   /** Absolute container path to mount {@link file} at, in the harness's config dir; outside `/workspace`. */
   mountTo: string;
-  /** Env (as `NAME=value` argv entries) relocating the harness's config dir to the mount. */
-  env: string[];
+  /**
+   * Env relocating the harness's config dir to the mount. {@link ContainerEnv},
+   * not pre-formatted argv: how a container engine spells an env entry is the
+   * runtime edge's business, and `core` only knows *which* variable this
+   * harness needs set to what.
+   */
+  env: ContainerEnv[];
 }
 
 /**
@@ -329,7 +334,7 @@ export const codexAdapter: FileHarnessAdapter = {
     return {
       file: { fileName: CODEX_CONFIG_FILE, content },
       mountTo: `${CODEX_CONFIG_DIR}/${CODEX_CONFIG_FILE}`,
-      env: [`${CODEX_CONFIG_DIR_ENV}=${CODEX_CONFIG_DIR}`],
+      env: [{ name: CODEX_CONFIG_DIR_ENV, value: CODEX_CONFIG_DIR }],
     };
   },
 };
