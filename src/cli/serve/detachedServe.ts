@@ -24,7 +24,10 @@ import path from 'node:path';
 import { eBaseDir } from '../../core/store/paths.js';
 import { env } from '../../shared/utils/env.js';
 import { log } from '../../shared/utils/log.js';
-import { selfInvocation } from '../../shared/utils/selfInvoke.js';
+import {
+  checkedSelfInvocation,
+  selfInvocation,
+} from '../../shared/utils/selfInvoke.js';
 
 /** Where the background server records itself, next to the rest of the Store's state. */
 const serveStatePath = (): string => path.join(eBaseDir(), 'serve.json');
@@ -192,7 +195,7 @@ export function readServeState(): ServeState | undefined {
 
 /** Re-invokes this very CLI as a detached, output-less `serve` child. */
 function spawnDetachedChild(): DetachedChild {
-  const { command } = selfInvocation();
+  const { command } = checkedSelfInvocation();
   return spawn(command, detachedServeArguments(process.argv), {
     detached: true,
     stdio: 'ignore',

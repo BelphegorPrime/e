@@ -12,7 +12,6 @@ import {
 } from '../../sidecars/broker/contract/spool.js';
 import type { SpawnRequest } from '../../sidecars/broker/contract/types.js';
 import {
-  assertCliEntry,
   childCliArgs,
   childLogFile,
   logTail,
@@ -21,6 +20,7 @@ import {
   type ChildHandle,
   type ChildLaunch,
 } from './childRun.js';
+import { assertCliEntry } from '../../shared/utils/selfInvoke.js';
 
 const request: SpawnRequest = {
   id: 'sib-001',

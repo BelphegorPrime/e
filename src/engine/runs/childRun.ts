@@ -26,9 +26,10 @@ import type {
   SpawnRequest,
 } from '../../sidecars/broker/contract/types.js';
 import {
-  selfInvocation,
+  checkedSelfInvocation,
   type SelfInvocation,
 } from '../../shared/utils/selfInvoke.js';
+import { spawnArgs } from '../../shared/spawnArgs.js';
 
 /** A launched child process, as its caller sees it. */
 export interface ChildHandle {
@@ -61,23 +62,11 @@ export function childCliArgs(
   request: SpawnRequest,
   passthrough: readonly string[] = []
 ): string[] {
-  return ['spawn', request.agent, ...passthrough, '--', request.prompt];
-}
-
-/**
- * `selfInvocation()` checked to really be the e CLI: with a script entry it
- * must be the CLI's `index.js` (a single executable has none). Re-invoking any
- * other entry - a test file, say - would run *that* as every child, which
- * would spawn children of its own: a fork bomb. Better refused than tried.
- */
-export function assertCliEntry(invocation: SelfInvocation): SelfInvocation {
-  const [entry] = invocation.prefix;
-  if (entry !== undefined && !/(^|[\\/])index\.(m?js|cjs)$/.test(entry)) {
-    throw new Error(
-      `Refusing to re-invoke "${entry}" as the e CLI: not its index.js entry`
-    );
-  }
-  return invocation;
+  return spawnArgs({
+    agent: request.agent,
+    prompt: request.prompt,
+    passthrough,
+  });
 }
 
 /**
@@ -89,7 +78,7 @@ export function assertCliEntry(invocation: SelfInvocation): SelfInvocation {
  */
 export function spawnChildProcess(
   launch: ChildLaunch,
-  invocation: SelfInvocation = assertCliEntry(selfInvocation())
+  invocation: SelfInvocation = checkedSelfInvocation()
 ): ChildHandle {
   fs.mkdirSync(path.dirname(launch.logFile), { recursive: true });
   const out = fs.openSync(launch.logFile, 'a');

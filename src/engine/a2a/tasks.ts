@@ -11,6 +11,7 @@
  */
 
 import fs from 'node:fs';
+import { isAgentName } from '../../core/agent/index.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -89,7 +90,6 @@ const DEFAULT_POLL_INTERVAL_MS = 500;
 
 /** Who cancels an A2A task, for `settleChildRun`'s message (`canceled by the A2A client`). */
 const CANCEL_ACTOR = 'the A2A client';
-const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 /** The one artifact a completed task has: the run's branch and PR/MR. */
 export const RUN_ARTIFACT_NAME = 'run';
@@ -148,7 +148,7 @@ export function parseSendParams(
     );
   }
   const agent = requestedAgent(params) ?? defaultAgent;
-  if (!AGENT_NAME.test(agent) || !knownAgent(agent)) {
+  if (!isAgentName(agent) || !knownAgent(agent)) {
     throw new JsonRpcError(
       JSON_RPC_ERROR_CODES.invalidParams,
       `Unknown agent "${agent}"; name a skill of the agent card in metadata.agent.`

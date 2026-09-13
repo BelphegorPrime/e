@@ -40,6 +40,19 @@ export interface HarnessAgent {
 export type Agent = HarnessAgent | RemoteA2aAgent;
 
 /** True for a Store agent hosted elsewhere and reached over A2A. */
+/**
+ * The shape a selectable Agent name may take. An Agent name becomes a branch
+ * segment, a container name and a directory under the Store, so it is checked
+ * before any of those are built from it - and checked the same way by every
+ * surface that accepts one from outside (the web terminal, the A2A facade).
+ */
+const AGENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+/** True when `value` could name an Agent. Says nothing about whether one exists. */
+export function isAgentName(value: string): boolean {
+  return AGENT_NAME_RE.test(value);
+}
+
 export function isRemoteAgent(agent: Agent): agent is RemoteA2aAgent {
   return 'transport' in agent && agent.transport === 'a2a';
 }

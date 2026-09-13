@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process';
+import { isAgentName } from '../../core/agent/index.js';
 import { randomUUID } from 'node:crypto';
 import type { Duplex, Readable } from 'node:stream';
 import type { EngineApi } from './containerApi.js';
 import { namePattern } from '../../core/identity/runName.js';
 import { env } from '../../shared/utils/env.js';
 import { log } from '../../shared/utils/log.js';
-import { selfInvocation } from '../../shared/utils/selfInvoke.js';
+import { checkedSelfInvocation } from '../../shared/utils/selfInvoke.js';
+import { spawnArgs } from '../../shared/spawnArgs.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';
 import { listMcpServerNames, readMcpServer } from '../../core/mcp/index.js';
@@ -92,7 +94,6 @@ export interface TerminalSessionsDeps {
   listMcpServers?: () => McpOption[];
 }
 
-const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const RUN_NAME = /^[a-z0-9][a-z0-9-]*$/;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const DEFAULT_BUFFER_LIMIT = 512 * 1024;
@@ -102,7 +103,7 @@ export class TerminalRequestError extends Error {}
 
 /** Re-invokes this very CLI, the way the detached `serve` child does. */
 function spawnHeadlessCli(args: string[]): SpawnedChild {
-  const { command, prefix } = selfInvocation();
+  const { command, prefix } = checkedSelfInvocation();
   return spawn(command, [...prefix, ...args], {
     cwd: process.cwd(),
     env: env.withHeadlessTty(),
@@ -137,7 +138,7 @@ function validatedNames(
 ): string[] {
   if (selected === undefined) return [];
   for (const name of selected) {
-    if (!AGENT_NAME.test(name)) {
+    if (!isAgentName(name)) {
       throw new TerminalRequestError(`Invalid ${label} name "${name}".`);
     }
     if (!available.includes(name)) {
@@ -314,7 +315,7 @@ export class TerminalSessions {
         'No container engine socket found; the browser terminal needs the Docker socket (or the Podman service socket).'
       );
     }
-    if (typeof request.agent !== 'string' || !AGENT_NAME.test(request.agent)) {
+    if (typeof request.agent !== 'string' || !isAgentName(request.agent)) {
       throw new TerminalRequestError('A valid agent name is required.');
     }
     const slug =
@@ -345,14 +346,10 @@ export class TerminalSessions {
       phase: 'starting',
       createdAt: this.now().toISOString(),
     };
-    const child = this.spawnChild([
-      'spawn',
-      request.agent,
-      '--name',
-      slug,
-      ...skills.flatMap(name => ['--skill', name]),
-      ...mcpServers.flatMap(name => ['--mcp', name]),
-    ]);
+    // No prompt: the browser terminal wants the harness TUI, not a one-shot.
+    const child = this.spawnChild(
+      spawnArgs({ agent: request.agent, name: slug, skills, mcp: mcpServers })
+    );
     this.sessions.set(
       info.id,
       new TerminalSession(info, child, {

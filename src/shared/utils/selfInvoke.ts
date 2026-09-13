@@ -19,6 +19,34 @@ export interface SelfInvocation {
   prefix: string[];
 }
 
+/**
+ * `selfInvocation()` checked to really be the e CLI: with a script entry it
+ * must be the CLI's `index.js` (a single executable has none). Re-invoking any
+ * other entry - a test file, say - would run *that* as every child, which
+ * would spawn children of its own: a fork bomb. Better refused than tried.
+ *
+ * Every re-invocation goes through this, not just the ones that spawn runs:
+ * `serve --detached` and the browser terminal re-invoke the CLI too, and a
+ * wrong entry is no safer there.
+ */
+export function assertCliEntry(invocation: SelfInvocation): SelfInvocation {
+  const [entry] = invocation.prefix;
+  if (entry !== undefined && !/(^|[\\/])index\.(m?js|cjs)$/.test(entry)) {
+    throw new Error(
+      `Refusing to re-invoke "${entry}" as the e CLI: not its index.js entry`
+    );
+  }
+  return invocation;
+}
+
+/** How to run this CLI again, with the entry checked. The form every caller should use. */
+export function checkedSelfInvocation(
+  argv?: string[],
+  sea?: boolean
+): SelfInvocation {
+  return assertCliEntry(selfInvocation(argv, sea));
+}
+
 export function selfInvocation(
   argv: string[] = process.argv,
   sea: boolean = isSea()

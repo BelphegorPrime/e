@@ -23,13 +23,13 @@ import {
   type SiblingConsumerOptions,
 } from './runSiblings.js';
 import {
-  assertCliEntry,
   childCliArgs,
   logTail,
   spawnChildProcess,
   type ChildHandle,
   type ChildLaunch,
 } from './childRun.js';
+import { assertCliEntry } from '../../shared/utils/selfInvoke.js';
 
 // The consumer is driven tick by tick here (no timers): the test plays the
 // broker (spooling requests) and the sibling process (reporting status).

@@ -52,6 +52,7 @@ import { mergeLanded } from '../engine/runs/runMergeBack.js';
 import { CANCELED_EXIT_CODE } from '../engine/runs/runSpawn.js';
 
 import { errorMessage } from '../shared/utils/errors.js';
+import { SPAWN_COMMAND, SPAWN_FLAGS } from '../shared/spawnArgs.js';
 /** How long a canceled `e spawn` may take to stop its container and tear down before it is exited by force. */
 const CANCEL_GRACE_MS = 60_000;
 
@@ -318,7 +319,7 @@ export function resolveRemoteTarget(
 
 export function registerSpawnCommand(program: Command): void {
   program
-    .command('spawn')
+    .command(SPAWN_COMMAND)
     .description('Build and run a coding harness in a container')
     .argument(
       '[target]',
@@ -326,30 +327,36 @@ export function registerSpawnCommand(program: Command): void {
     )
     .argument('[prompt...]', 'instruction passed to the harness')
     .option(
-      '--runtime <runtime>',
+      `${SPAWN_FLAGS.runtime} <runtime>`,
       `container runtime to use: ${RUNTIME_NAMES.join(', ')} (default: $E_RUNTIME, else the first one on PATH)`
     )
+    // The flags anything re-invoking this CLI has to spell are declared from
+    // `SPAWN_FLAGS`, so a rename cannot land here without breaking every
+    // caller that builds an `e spawn` command line (`shared/spawnArgs.ts`).
     .option(
-      '--name <name>',
+      `${SPAWN_FLAGS.name} <name>`,
       'name for the run (overrides the prompt-derived slug)'
     )
-    .option('--env-file <path>', 'load environment variables from a file')
     .option(
-      '--mcp <name...>',
+      `${SPAWN_FLAGS.envFile} <path>`,
+      'load environment variables from a file'
+    )
+    .option(
+      `${SPAWN_FLAGS.mcp} <name...>`,
       'MCP server(s) to wire for this run - container (sidecar) or remote (hosted URL); repeatable'
     )
     .option(
-      '--skill <name...>',
+      `${SPAWN_FLAGS.skill} <name...>`,
       'Skill(s) to add for this run, from .e/skills (comma-separated or repeated)'
     )
-    .option('--rebuild', 'force a rebuild of the harness image', false)
+    .option(SPAWN_FLAGS.rebuild, 'force a rebuild of the harness image', false)
     .option(
-      '--dir <path>',
+      `${SPAWN_FLAGS.dir} <path>`,
       'root directory holding the harness Dockerfiles (default: home directory)'
     )
     .option('--rm', 'automatically remove the container when it exits', true)
     .option('--no-rm', 'keep the container after it exits')
-    .option('--keep-worktree', 'keep the worktree after container exits')
+    .option(SPAWN_FLAGS.keepWorktree, 'keep the worktree after container exits')
     .option(
       '-p, --port <port...>',
       'publish a container port, e.g. 8080:80 (repeatable)'
