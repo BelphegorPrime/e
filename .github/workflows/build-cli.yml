@@ -101,6 +101,20 @@ jobs:
       - name: Build binaries
         run: npm run build
 
+      # `build:bin` stamps the real version into src/shared/version.ts and
+      # restore-version.mjs puts the placeholder back. The two once named
+      # different paths, so every packaging build left tracked source modified
+      # and nobody noticed until it was committed. A build must leave the tree
+      # exactly as it found it.
+      - name: Packaging left the working tree clean
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::A packaging build modified tracked files. \
+          scripts/restore-version.mjs is meant to undo generate-version.mjs; \
+          check that both resolve VERSION_MODULE to the same path."
+            exit 1
+          fi
+
       # Repackage each raw pkg binary into a per-target archive whose inner
       # file is named `e` (or `e.exe`), so extraction yields the `e` command
       # regardless of the download filename.
