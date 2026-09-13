@@ -10,8 +10,14 @@ import { A2aTasks } from '../../engine/a2a/tasks.js';
 import type { RunCommit, RunRef } from '../../ports/git/index.js';
 import { InMemoryGit } from '../../ports/git/memory.js';
 import { SseParser } from '../../sidecars/broker/contract/events.js';
-import { writeStatus } from '../../sidecars/broker/contract/spool.js';
+import {
+  readRequest,
+  writeRunInfo,
+  writeStatus,
+} from '../../sidecars/broker/contract/spool.js';
 import type { StatusResponse } from '../../sidecars/broker/contract/types.js';
+import { brokerSpoolDirFor } from '../../engine/runs/runBroker.js';
+import { fromBranch } from '../../core/identity/runName.js';
 import { E_VERSION } from '../../shared/version.js';
 import {
   createServeApp,
@@ -211,6 +217,96 @@ test('the siblings view answers a snapshot and a server-sent event stream', asyn
       await reader.cancel();
     }
   );
+});
+
+// --- manual child requests (ADR-0013, ticket 09) -----------------------------
+
+// The one sanctioned write path in the otherwise read-only runs namespace
+// (ADR-0010): the host requests a sibling of a live parent run, exactly what
+// `e spawn --parent <branch>` does, so the parent's SiblingConsumer picks it
+// up like a broker sibling. A live parent is a worktree whose broker spool
+// carries run.json naming role `parent`.
+
+test('POST /api/runs/:branch/siblings enqueues a manual child for a live parent run', async () => {
+  const worktreesDir = fsSync.mkdtempSync(
+    path.join(os.tmpdir(), 'e-serve-spawn-')
+  );
+  try {
+    const branch = fromBranch('e/dev/parent-1');
+    assert.ok(branch);
+    fsSync.mkdirSync(path.join(worktreesDir, 'e', 'dev', 'parent-1'), {
+      recursive: true,
+    });
+    const spool = brokerSpoolDirFor(worktreesDir, branch);
+    fsSync.mkdirSync(spool, { recursive: true });
+    writeRunInfo(spool, {
+      name: branch.name,
+      branch: branch.branch,
+      agent: 'dev',
+      role: 'parent' as const,
+      maxSiblings: 3,
+    });
+
+    await withServeApp(
+      { git: new InMemoryGit({ refs: [] }), worktreesDir },
+      async baseUrl => {
+        const accepted = await fetch(
+          `${baseUrl}/api/runs/e/dev/parent-1/siblings`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ agent: 'pi', prompt: 'write docs' }),
+          }
+        );
+        assert.equal(accepted.status, 201);
+        assert.deepEqual(await accepted.json(), {
+          id: 'sib-001',
+          status: 'requested',
+          statusPath: '/status/sib-001',
+        });
+        // The request landed in the parent's spool as any broker sibling would.
+        const saved = readRequest(spool, 'sib-001');
+        assert.ok(saved);
+        assert.equal(saved.agent, 'pi');
+        assert.equal(saved.prompt, 'write docs');
+      }
+    );
+  } finally {
+    fsSync.rmSync(worktreesDir, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/runs/:branch/siblings refuses a malformed body with 400', async () => {
+  const worktreesDir = fsSync.mkdtempSync(
+    path.join(os.tmpdir(), 'e-serve-spawn-')
+  );
+  try {
+    await withServeApp(
+      { git: new InMemoryGit({ refs: [] }), worktreesDir },
+      async baseUrl => {
+        const missingAgent = await fetch(
+          `${baseUrl}/api/runs/e/dev/parent-1/siblings`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ prompt: 'write docs' }),
+          }
+        );
+        assert.equal(missingAgent.status, 400);
+        const nonStringPrompt = await fetch(
+          `${baseUrl}/api/runs/e/dev/parent-1/siblings`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ agent: 'pi', prompt: 42 }),
+          }
+        );
+        assert.equal(nonStringPrompt.status, 400);
+      }
+    );
+  } finally {
+    fsSync.rmSync(worktreesDir, { recursive: true, force: true });
+  }
 });
 
 // --- browser terminal routes (ADR-0014) --------------------------------------

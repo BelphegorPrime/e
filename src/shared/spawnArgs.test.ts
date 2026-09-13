@@ -82,5 +82,6 @@ test('the command and every flag come from the shared constants', () => {
     runtime: '--runtime',
     rebuild: '--rebuild',
     keepWorktree: '--keep-worktree',
+    parent: '--parent',
   });
 });

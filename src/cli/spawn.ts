@@ -3,9 +3,20 @@ import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
 import type { RunOptions } from '../ports/runtime/index.js';
 import { resolveRuntime, RUNTIME_NAMES } from '../ports/runtime/registry.js';
-import { defaultWorktreesDir } from '../engine/runs/worktreesDir.js';
+import {
+  defaultWorktreesDir,
+  worktreePathFor,
+} from '../engine/runs/worktreesDir.js';
 import { HostGit } from '../ports/git/host.js';
 import { HostPullRequest } from '../ports/github/host.js';
+import { fromBranch } from '../core/identity/runName.js';
+import { brokerSpoolDirFor } from '../engine/runs/runBroker.js';
+import {
+  nextRequestId,
+  ensureSpool,
+  readRunInfo,
+  writeRequest,
+} from '../sidecars/broker/contract/spool.js';
 import {
   resolveSpawnTarget,
   validateSpawn,
@@ -69,6 +80,8 @@ export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   skill?: string[];
   /** `--keep-worktree`: leave the run's worktree in place after the container exits. */
   keepWorktree?: boolean;
+  /** `--parent <branch>`: a manual child request - a human-written sibling of the live run `branch` (ADR-0013). */
+  parent?: string;
 }
 
 /**
@@ -264,6 +277,81 @@ export function resolveRemoteTarget(
   };
 }
 
+/**
+ * The manual child request behind `--parent <branch>` (ADR-0013): a human
+ * writes the request into the named run's broker spool exactly as the broker
+ * would (`POST /spawn`), and the run's own `SiblingConsumer` picks it up as
+ * any other sibling - same checkpoint, artifact sync, fan-out cap, merge-back
+ * and report. Nothing here launches a container; the request is the whole
+ * manual surface.
+ *
+ * Depth stays two: a run already wearing the sibling markers (itself a
+ * child) refuses, and the parent's spool must belong to a `parent` role run
+ * (a child has no broker of its own). The parent run must be live: its
+ * broker spool exists only while it runs.
+ */
+export function manualSiblingRequest(
+  target: string | undefined,
+  prompt: string[],
+  opts: SpawnCommandOptions,
+  worktreesDirOverride?: string
+): { id: string; status: 'requested'; statusPath: string } {
+  const parentBranch = opts.parent!.trim();
+  // A sibling is already at depth two; a manual child under it would be the
+  // grandchildren ADR-0013 forbids. Only the host may go deeper than that.
+  if (env.sibling) {
+    throw new Error(
+      `A sibling run cannot start a manual child (--parent ${parentBranch}): depth is capped at two (ADR-0013).`
+    );
+  }
+  const run = fromBranch(parentBranch);
+  if (!run) {
+    throw new Error(
+      `--parent must name a run branch (e/<agent>/<slug>-N), got "${parentBranch}".`
+    );
+  }
+  const worktreesDir = worktreesDirOverride ?? defaultWorktreesDir();
+  const parentWorktree = worktreePathFor(worktreesDir, run);
+  if (!fs.existsSync(parentWorktree)) {
+    throw new Error(
+      `--parent names run ${run.name}, but this host has no live worktree for it (${parentWorktree}).`
+    );
+  }
+  const spool = brokerSpoolDirFor(worktreesDir, run);
+  const info = readRunInfo(spool);
+  if (!info) {
+    throw new Error(
+      `Run ${run.name} has no runtime-broker, so it cannot take children: start it with --skill spawn-brother (ADR-0013).`
+    );
+  }
+  if (info.role === 'child') {
+    throw new Error(
+      `Cannot make ${run.name} a parent: it is itself a child (depth is capped at two, ADR-0013).`
+    );
+  }
+  const root = findRoot(opts.dir);
+  const resolved = resolveSpawnTarget({
+    target,
+    prompt,
+    defaultHarness: readConfig(root).defaultHarness,
+    isKnownTarget: name => isKnownTarget(name, root),
+  });
+  if (resolved.prompt.join(' ').trim() === '') {
+    throw new Error(
+      'A manual child needs a prompt; pass one after the agent name.'
+    );
+  }
+  const id = nextRequestId(spool);
+  ensureSpool(spool);
+  writeRequest(spool, {
+    id,
+    agent: resolved.agentTarget,
+    prompt: resolved.prompt.join(' '),
+    requestedAt: new Date().toISOString(),
+  });
+  return { id, status: 'requested', statusPath: `/status/${id}` };
+}
+
 /** One line of a finished run's closing report: what to say and how to say it. */
 export interface ReportLine {
   level: 'info' | 'warn' | 'success' | 'error';
@@ -419,6 +507,10 @@ export function registerSpawnCommand(program: Command): void {
     .option('--no-rm', 'keep the container after it exits')
     .option(SPAWN_FLAGS.keepWorktree, 'keep the worktree after container exits')
     .option(
+      `${SPAWN_FLAGS.parent} <branch>`,
+      'manual child request: add a sibling to the live run `branch` (ADR-0013), then exit'
+    )
+    .option(
       '-p, --port <port...>',
       'publish a container port, e.g. 8080:80 (repeatable)'
     )
@@ -446,6 +538,19 @@ export function registerSpawnCommand(program: Command): void {
             process.exit(CANCELED_EXIT_CODE);
           }, CANCEL_GRACE_MS).unref();
         });
+        // A manual child request never runs a container: it writes one
+        // sibling request into the parent run's broker spool and exits, the
+        // host equivalent of the broker's `POST /spawn` (ADR-0013).
+        if (opts.parent !== undefined) {
+          try {
+            const accepted = manualSiblingRequest(target, prompt, opts);
+            log.info(JSON.stringify(accepted));
+            process.exit(0);
+          } catch (err) {
+            log.error(errorMessage(err));
+            process.exit(1);
+          }
+        }
         process.exit(
           await runSpawnCommand(target, prompt, opts, {
             scratch,

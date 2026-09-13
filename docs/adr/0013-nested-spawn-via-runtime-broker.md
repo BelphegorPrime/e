@@ -147,6 +147,37 @@ flowchart TB
 - **Host does all git + container lifecycle** - the agent only makes HTTP requests to its broker.
 - **New capability surface**: the agent can fan out across siblings for parallelism (researcher split, role split) and recover a sibling's work into its own tree after merge.
 
+**Amendment (2026-09-12, ticket 09, manual child):** a third request source -
+the host itself. `e spawn --parent <branch> "<prompt>"` writes a sibling
+request straight into the parent run's broker spool (`requests/<id>.json`),
+no container: the user CLI only validates and prints the accepted JSON, then
+exits. The parent's running `SiblingConsumer` picks the request up
+unchanged - a manual child is a sibling run in every way (same
+`SiblingConsumer` path, same spool/status contract, same merge-back and
+report at `e-runs/<id>/report.md`).
+
+- **A live parent is mandatory.** The parent worktree must exist and its
+  spool must carry `run.json` (written when a parent starts with the
+  `spawn-brother` skill and its runtime-broker). An orphan request - no
+  parent, or one that never asked for a broker - is refused up front with
+  `no live worktree` / `no runtime-broker`, so no request is ever spooled
+  against a parent that cannot consume it.
+- **Identity is the run branch.** `<branch>` is a run branch
+  (`e/<agent>/<slug>-N`); its worktree and spool are derived host-side. The
+  spool's `run.json` must name role `parent` (see below).
+- **Depth stays two.** The manual caller is a depth-one user; the child it
+  requests is depth two, no deeper. A caller that already wears child
+  sibling markers, or a parent whose `run.json.role` is `child`, is refused
+  (`depth is capped at two`).
+- **Same fan-out cap.** The shared `maxSiblings` (default 3, host-configured,
+  `E_MAX_SIBLINGS` when set) counts spool-sourced launches regardless of
+  source; manual requests queue like broker ones while the cap is full.
+- **Prompt required.** An empty prompt is refused (`manual child needs a
+prompt`); A2A-style remotes still skip the container entirely.
+- **Not a new role.** The manual child still launches with `E_ROLE=child`
+  and reports to the parent's broker; no `manual` role value exists. Host
+  CLI, serve UI, and in-run exec all funnel into this single request path.
+
 ## Out of scope
 
 - Grandchildren / arbitrary depth - deliberately unsupported.

@@ -201,7 +201,13 @@ runtime-broker sidecar and, when each exits, merges its branch back into your
 worktree (a merge commit; the report at `e-runs/<id>/report.md`, conflicts
 left for you to resolve and signal with `--merge <id>`; `--watch` blocks until
 a sibling's `taskState` needs you, `--cancel <id>` stops one, ADR-0015) - check
-`$E_ROLE` and `$E_BROKER_URL`, see `AGENTS.md`. A Store agent with
+`$E_ROLE` and `$E_BROKER_URL`, see `AGENTS.md`. Siblings are also spawnable
+**from the host**, without any agent in the loop: `e spawn --parent <branch>
+"<prompt>"` writes a sibling request straight into the live parent run's
+broker spool, so the parent's running consumer launches it and merges it back
+exactly like a broker sibling, and reports at `e-runs/<id>/report.md` -
+requires a live parent (one started with `--skill spawn-brother`), a branch,
+not a worktree path, and a depth of at most two. A Store agent with
 `"transport": "a2a"` is a remote Agent2Agent agent: request it the same way,
 and read its answer in the report (no branch to merge). Without it, delegation means requesting a new run at the
 layer that owns the runtime: record the task and its acceptance criteria as a
