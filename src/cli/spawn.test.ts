@@ -6,6 +6,7 @@ import path from 'path';
 import { Command } from 'commander';
 import {
   gatherSpawnFacts,
+  manualSiblingRequest,
   registerSpawnCommand,
   resolveRemoteTarget,
   spawnReport,
@@ -13,6 +14,10 @@ import {
 } from './spawn.js';
 import { validateSpawn } from '../engine/spawn/spawnPlan.js';
 import { Env } from '../shared/utils/env.js';
+import {
+  readRequest,
+  writeRunInfo,
+} from '../sidecars/broker/contract/spool.js';
 import {
   agentDir,
   configFilePath,
@@ -35,6 +40,7 @@ const MARKERS = [
   Env.SPAWN_PARENT_NETWORK_VAR,
   Env.SPAWN_SPOOL_VAR,
   Env.SPAWN_SIBLING_ID_VAR,
+  Env.WORKTREES_DIR_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -366,6 +372,8 @@ test('spawn CLI: every option parses to the field the action reads', async () =>
     '/store',
     '--no-rm',
     '--keep-worktree',
+    '--parent',
+    'e/demo/my-run-1',
     '-p',
     '8080:80',
     '-p',
@@ -386,6 +394,7 @@ test('spawn CLI: every option parses to the field the action reads', async () =>
   assert.equal(opts.dir, '/store');
   assert.equal(opts.rm, false);
   assert.equal(opts.keepWorktree, true);
+  assert.equal(opts.parent, 'e/demo/my-run-1');
   assert.deepEqual(opts.port, ['8080:80', '9000:90']);
   assert.deepEqual(opts.env, ['X=1', 'Y=2']);
 });
@@ -457,6 +466,177 @@ test('resolveRemoteTarget: a remote agent target yields the agent, the joined pr
       /remote A2A agent and has no harness/
     );
   });
+});
+
+// The manual child request (`--parent <branch>`, ADR-0013): a human-written
+// sibling request. The parent run is live when its broker spool exists and
+// names a `parent`-role run; only a live parent can take children, and only
+// a depth-two request may be written at all.
+
+/** A fake live parent run: its worktree plus a broker spool with run.json. */
+function writeLiveParent(
+  worktrees: string,
+  branch: string,
+  agent: string,
+  role: 'parent' | 'child' = 'parent'
+): string {
+  const slug = branch.split('/').join('-');
+  fs.mkdirSync(path.join(worktrees, ...branch.split('/')), { recursive: true });
+  const spool = path.join(worktrees, '.broker', slug);
+  fs.mkdirSync(spool, { recursive: true });
+  writeRunInfo(spool, {
+    name: slug,
+    branch,
+    agent,
+    role,
+    maxSiblings: 3,
+  });
+  return spool;
+}
+
+test('manualSiblingRequest: --parent writes a request into the live parent run broker spool and returns the accepted shape', () => {
+  const worktrees = fs.mkdtempSync(path.join(os.tmpdir(), 'e-wt-'));
+  try {
+    const old = process.env[Env.WORKTREES_DIR_VAR];
+    process.env[Env.WORKTREES_DIR_VAR] = worktrees;
+    try {
+      withStore(root => {
+        const spool = writeLiveParent(worktrees, 'e/dev/parent-1', 'dev');
+        const accepted = manualSiblingRequest('pi', ['write', 'docs'], {
+          dir: root,
+          parent: 'e/dev/parent-1',
+        });
+        assert.equal(accepted.status, 'requested');
+        assert.equal(accepted.id, 'sib-001');
+        assert.equal(accepted.statusPath, '/status/sib-001');
+        const request = readRequest(spool, 'sib-001');
+        assert.ok(request);
+        assert.equal(request.agent, 'pi');
+        assert.equal(request.prompt, 'write docs');
+      });
+    } finally {
+      if (old === undefined) delete process.env[Env.WORKTREES_DIR_VAR];
+      else process.env[Env.WORKTREES_DIR_VAR] = old;
+    }
+  } finally {
+    fs.rmSync(worktrees, { recursive: true, force: true });
+  }
+});
+
+test('manualSiblingRequest: survives the parent worktree missing and a parent with no broker spool', () => {
+  const worktrees = fs.mkdtempSync(path.join(os.tmpdir(), 'e-wt-'));
+  try {
+    const old = process.env[Env.WORKTREES_DIR_VAR];
+    process.env[Env.WORKTREES_DIR_VAR] = worktrees;
+    try {
+      withStore(root => {
+        // A branch with no worktree is not a live run.
+        assert.throws(
+          () =>
+            manualSiblingRequest('pi', ['x'], {
+              dir: root,
+              parent: 'e/dev/ghost-1',
+            }),
+          /no live worktree/
+        );
+        // A worktree whose run has no broker spool cannot take children.
+        const branch = 'e/dev/nobroker-1';
+        fs.mkdirSync(path.join(worktrees, ...branch.split('/')), {
+          recursive: true,
+        });
+        assert.throws(
+          () =>
+            manualSiblingRequest('pi', ['x'], {
+              dir: root,
+              parent: branch,
+            }),
+          /no runtime-broker/
+        );
+      });
+    } finally {
+      if (old === undefined) delete process.env[Env.WORKTREES_DIR_VAR];
+      else process.env[Env.WORKTREES_DIR_VAR] = old;
+    }
+  } finally {
+    fs.rmSync(worktrees, { recursive: true, force: true });
+  }
+});
+
+test('manualSiblingRequest: depth stays two - a child parent and a sibling caller are both refused', () => {
+  const worktrees = fs.mkdtempSync(path.join(os.tmpdir(), 'e-wt-'));
+  try {
+    const old = process.env[Env.WORKTREES_DIR_VAR];
+    process.env[Env.WORKTREES_DIR_VAR] = worktrees;
+    try {
+      withStore(root => {
+        // A spool whose run is itself a child (role=E_ROLE child) cannot
+        // take children: that would be the grandchildren ADR-0013 forbids.
+        const childBranch = 'e/dev/deep-1';
+        writeLiveParent(worktrees, childBranch, 'dev', 'child');
+        assert.throws(
+          () =>
+            manualSiblingRequest('pi', ['x'], {
+              dir: root,
+              parent: childBranch,
+            }),
+          /itself a child/
+        );
+        // A caller that already wears the sibling markers is itself a child:
+        // its manual child would be depth three.
+        writeLiveParent(worktrees, 'e/dev/parent-1', 'dev');
+        process.env[Env.SPAWN_ROLE_VAR] = 'child';
+        process.env[Env.SPAWN_PARENT_WORKTREE_VAR] = '/wt/parent';
+        process.env[Env.SPAWN_PARENT_BRANCH_VAR] = 'e/dev/parent-1';
+        process.env[Env.SPAWN_SPOOL_VAR] = path.join(worktrees, '.broker');
+        process.env[Env.SPAWN_SIBLING_ID_VAR] = 'sib-001';
+        assert.throws(
+          () =>
+            manualSiblingRequest('pi', ['x'], {
+              dir: root,
+              parent: 'e/dev/parent-1',
+            }),
+          /depth is capped at two/
+        );
+      });
+    } finally {
+      if (old === undefined) delete process.env[Env.WORKTREES_DIR_VAR];
+      else process.env[Env.WORKTREES_DIR_VAR] = old;
+    }
+  } finally {
+    fs.rmSync(worktrees, { recursive: true, force: true });
+  }
+});
+
+test('manualSiblingRequest: a prompt is required, and an unknown --parent branch is refused', () => {
+  withStore(root => {
+    assert.throws(
+      () => manualSiblingRequest(undefined, [], { dir: root, parent: 'main' }),
+      /run branch \(e\/<agent>\/<slug>-N\)/
+    );
+  });
+  const worktrees = fs.mkdtempSync(path.join(os.tmpdir(), 'e-wt-'));
+  try {
+    const old = process.env[Env.WORKTREES_DIR_VAR];
+    process.env[Env.WORKTREES_DIR_VAR] = worktrees;
+    try {
+      withStore(root => {
+        writeLiveParent(worktrees, 'e/dev/parent-1', 'dev');
+        assert.throws(
+          () =>
+            manualSiblingRequest(undefined, [], {
+              dir: root,
+              parent: 'e/dev/parent-1',
+            }),
+          /manual child needs a prompt/
+        );
+      });
+    } finally {
+      if (old === undefined) delete process.env[Env.WORKTREES_DIR_VAR];
+      else process.env[Env.WORKTREES_DIR_VAR] = old;
+    }
+  } finally {
+    fs.rmSync(worktrees, { recursive: true, force: true });
+  }
 });
 
 // What a finished run tells the user. The whole tail of the spawn action used

@@ -5,13 +5,17 @@ Work items live as GitHub issues in `BelphegorPrime/e` (see
 directory mirrors them as files so the backlog is readable offline, greppable
 from a checkout, and linkable from ADRs.
 
-Two kinds of file live here:
+Three kinds of file live here:
 
 - **`01`-`08`** are the ADR-0013 planning write-ups. They were written before
   the work had issues and are referenced from the ADR, so they stay as they
   are. **`09`-`11`** are the same series; they now have issues too.
 - **`12`-`61`** are one file per GitHub issue, oldest first, each carrying the
   issue's body verbatim under a status line and a link back.
+- **`62`-`69`** are the Manual child series (ADR-0013 amendment): write-ups
+  for the remaining trigger surfaces and proofs of the feature, created
+  before their issues like `01`-`08` were. Rows sit in the table with the
+  issue column pending; each file gains a link when its issue exists.
 
 When a ticket ships, add a status line at its top rather than deleting it. A
 file is a copy: if it disagrees with its issue, the issue wins.
@@ -90,6 +94,28 @@ file is a copy: if it disagrees with its issue, the issue wins.
 | [`59`](59-unify-the-two-a2a-remote-call-paths-and-break-the.md)    | [#124](https://github.com/BelphegorPrime/e/issues/124) | **Open**        | Unify the two A2A remote-call paths and break the spawn/a2a cycle                                            |
 | [`60`](60-cover-the-modules-that-have-no-tests-at-all.md)          | [#125](https://github.com/BelphegorPrime/e/issues/125) | **Open**        | Cover the modules that have no tests at all                                                                  |
 | [`61`](61-delete-the-dead-exports-in-the-spool-and-the.md)         | [#126](https://github.com/BelphegorPrime/e/issues/126) | **Open**        | Delete the dead exports in the spool and the sidecar renderers                                               |
+| [`62`](62-max-siblings-env-override.md)                            | pending (host-side create)                             | **Open**        | E_MAX_SIBLINGS environment override for the fan-out cap                                                      |
+| [`63`](63-repoint-the-manual-child-references.md)                  | pending (host-side create)                             | **Open**        | Repoint the manual-child references off "ticket 09"                                                          |
+| [`64`](64-refuse-container-only-flags-with-parent.md)              | pending (host-side create)                             | **Open**        | Refuse container-only flags with --parent                                                                    |
+| [`65`](65-broker-liveness-in-the-runs-index.md)                    | pending (host-side create)                             | **Open**        | Broker liveness in the runs index                                                                            |
+| [`66`](66-siblings-view-per-run-in-the-web-ui.md)                  | pending (host-side create)                             | **Open**        | Siblings view per run in the web UI                                                                          |
+| [`67`](67-e2e-manual-child-via-the-cli.md)                         | pending (host-side create)                             | **Open**        | E2E: manual child via the CLI                                                                                |
+| [`68`](68-e2e-manual-child-via-the-bff-post.md)                    | pending (host-side create)                             | **Open**        | E2E: manual child via the BFF POST                                                                           |
+| [`69`](69-spawn-child-action-in-the-web-ui.md)                     | pending (host-side create)                             | **Open**        | Spawn-child action in the web UI                                                                             |
+
+## Security review, 2026-09-13
+
+Files `70`-`73` came out of a security pass over the run container, the
+shared egress namespace, and the `serve` BFF (following up the fixes in
+`28`-`32`). Findings are filed write-up first, mirroring the `01`-`08`
+series; each gains a link when its issue exists.
+
+| File                                                          | GitHub                     | Status   | Description                                                                       |
+| ------------------------------------------------------------- | -------------------------- | -------- | --------------------------------------------------------------------------------- |
+| [`70`](70-serve-authenticate-bff-beyond-loopback.md)          | pending (host-side create) | **Open** | serve: authenticate the BFF beyond loopback (only A2A is bearer-guarded today)    |
+| [`71`](71-egress-mutation-api-auth-and-per-run-scope.md)      | pending (host-side create) | **Open** | egress: mutation API unauthenticated, globally scoped, reachable by every run     |
+| [`72`](72-secrets-files-0600-on-host.md)                      | pending (host-side create) | **Open** | secrets files: `.e/.env` written 0644 (world-readable) on the host                |
+| [`73`](73-broker-authz-and-port-collision-in-shared-netns.md) | pending (host-side create) | **Open** | broker: unauthenticated API reachable from any run in the shared egress namespace |
 
 ## Architecture review, 2026-09-13
 

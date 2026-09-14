@@ -38,6 +38,7 @@ import { E_VERSION } from '../../shared/version.js';
 import { respondJson, respondNotFound } from './apiResponse.js';
 import { egressRoutes } from './reverseProxy.js';
 import { RunsApi, runsRoutes } from './runsApi.js';
+import { spawnRoutes } from './spawnApi.js';
 import { TerminalRequestError, TerminalSessions } from './terminalSessions.js';
 
 /** The JSON-RPC endpoint of the A2A facade (ADR-0015), outside `/api` so the card can name it plainly. */
@@ -288,6 +289,9 @@ export function createServeApp(deps: ServeAppDeps = {}): Express {
   // Branch-backed runs index (ADR-0010): runs _are_ git branches
   // (`e/<agent>/<slug>-N` per ADR-0003), so everything behind these routes
   // reads git and the run's spool - see `runsApi.ts`.
+  // Manual child requests first (ADR-0013, ticket 09), ahead of the read
+  // router so the POST has no GET sibling view to collide with.
+  app.use(spawnRoutes(worktreesDir));
   app.use(runsRoutes(new RunsApi({ git, worktreesDir })));
 
   app.use('/api', (_request, response) => {

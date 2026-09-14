@@ -27,6 +27,7 @@ export const SPAWN_FLAGS = {
   runtime: '--runtime',
   rebuild: '--rebuild',
   keepWorktree: '--keep-worktree',
+  parent: '--parent',
 } as const;
 
 /** The subcommand itself, so a caller never writes `'spawn'` either. */
@@ -43,6 +44,8 @@ export interface SpawnArgs {
   prompt?: string;
   /** `--name`: the run slug, overriding the prompt-derived one. */
   name?: string;
+  /** `--parent <branch>`: spawn as a manual child of the live parent run whose run branch this is (`e/<agent>/<slug>-N`); the request lands in that parent's broker spool (ADR-0013, ticket 09). */
+  parent?: string;
   /** `--skill`, one flag per entry. */
   skills?: readonly string[];
   /** `--mcp`, one flag per entry. */
