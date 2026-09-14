@@ -68,8 +68,9 @@ jobs:
   build:
     name: Build & package the `e` CLI
     runs-on: ubuntu-latest
-    # Packaging six binaries is slow; do it for PRs, tags and manual runs only.
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
+    # Packaging six binaries is slow; do it for PRs, tags, manual runs,
+    # beta builds (master) and alpha builds (dev) only.
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -104,6 +105,22 @@ jobs:
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: echo "E_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Set beta version from master
+        if: github.ref == 'refs/heads/master' && !startsWith(github.ref, 'refs/tags/')
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || echo "v0.0.0")
+          COMMIT_COUNT=$(git rev-list ${LATEST_TAG}..HEAD --count 2>/dev/null || echo "0")
+          BASE_VERSION=${LATEST_TAG#v}
+          echo "E_VERSION=${BASE_VERSION}-beta.${COMMIT_COUNT}" >> "$GITHUB_ENV"
+
+      - name: Set alpha version from dev
+        if: github.ref == 'refs/heads/dev' && !startsWith(github.ref, 'refs/tags/')
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || echo "v0.0.0")
+          COMMIT_COUNT=$(git rev-list ${LATEST_TAG}..HEAD --count 2>/dev/null || echo "0")
+          BASE_VERSION=${LATEST_TAG#v}
+          echo "E_VERSION=${BASE_VERSION}-alpha.${COMMIT_COUNT}" >> "$GITHUB_ENV"
 
       # Compiles TypeScript (build:ts) then cross-compiles standalone binaries
       # for all 6 targets into command/ via @yao-pkg/pkg (build:bin).
@@ -193,3 +210,23 @@ jobs:
         with:
           files: release/*
           fail_on_unmatched_files: true
+
+      - name: Create beta release
+        if: github.ref == 'refs/heads/master' && !startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          fail_on_unmatched_files: true
+          tag_name: beta-${{ github.sha }}
+          name: Beta ${{ github.sha }}
+          prerelease: true
+
+      - name: Create alpha release
+        if: github.ref == 'refs/heads/dev' && !startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          fail_on_unmatched_files: true
+          tag_name: alpha-${{ github.sha }}
+          name: Alpha ${{ github.sha }}
+          prerelease: true
