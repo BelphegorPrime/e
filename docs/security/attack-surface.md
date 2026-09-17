@@ -3,7 +3,8 @@
 Status: review draft, 2026-09-05; egress and BFF sections refreshed 2026-09-11
 after ADR-0011/0012 shipped; findings refresh 2026-09-13 after a pass over
 the shared egress namespace, the runtime-broker, and the `serve` BFF
-(tickets 70-73). Grounded in the current source
+(tickets 70-73); harness-CLI findings added 2026-09-17 from the unattended-flags
+research (#143). Grounded in the current source
 and the ADR set. The goal is a written attack-surface review of the four
 execution zones - container, store, local compose stack, and the `serve` BFF -
 with concrete, time-boxed recommendations. Implementation of the recommended
@@ -101,6 +102,46 @@ requests, and two brokers collide on the fixed port (second bind fails, which
 `runSpawn.ts` already half-anticipates). Fix direction: per-run loopback
 port, per-run broker token, or refuse sibling support in the shared netns.
 
+**Open finding ([#153](https://github.com/BelphegorPrime/e/issues/153)):** the
+harness CLIs execute configuration supplied by the mounted repository. Claude
+Code run without `--bare` runs the hooks in a project's
+`.claude/settings.json` and connects the servers in its `.mcp.json` - per its
+own headless docs, "even in a folder you've never trusted". `e` bind-mounts an
+arbitrary repository at `/workspace` and invokes
+`claude -p <prompt> --dangerously-skip-permissions`, so a hostile repository
+gets code execution inside the run container with no prompt injection and no
+agent decision involved: cloning it is enough. The container boundary still
+holds (non-root, no host socket, egress containment), so the blast radius is
+what Zone 1 already grants an untrusted agent - but it is reached
+automatically rather than by persuading a model, and it chains into the two
+open cross-run findings above (`71`, `73`), where one run's code reaches
+another run's egress policy and broker. The threat model's "supply chain of
+the harness image" non-goal does not cover this: the input is the work
+repository, not the image. This matters more the moment runs start without a
+human looking: a trigger that spawns a run on an incoming pull request would
+execute the fork's hooks. Fix direction: pass `--bare` (or the per-harness
+equivalent) and deliver the MCP servers and hooks `e` intends from the Store
+overlay it already mounts read-only, rather than from `/workspace`.
+
+**Open finding, secrets egress (#153):** opencode's `--share` publishes the
+session transcript publicly at `opncd.ai/s/<id>`, and it can be turned on by
+environment alone via `OPENCODE_AUTO_SHARE`. `e` does not pass `--share`
+(`src/core/harness/index.ts:196`), and the `.e/.env` whitelist
+(`baseEnvWhitelist`, `src/engine/spawn/spawnPlan.ts:587`) means the variable
+only reaches a container if someone declares it - so this is currently
+contained by two accidents rather than by a rule. Worth writing the rule down:
+`OPENCODE_AUTO_SHARE` never joins the whitelist, and `--share` never joins the
+argv. A shared session carries the whole prompt and every file the agent
+quoted.
+
+**Note, availability rather than attack:** Codex (`lib.rs:1908-1912`) and
+opencode (`run.ts:416`) both read stdin to EOF when stdin is not a TTY, even
+when the prompt arrives as an argv argument. `e` is safe only because a
+one-shot run passes neither `-i` nor `-t`; any future change that adds `-i`
+(streaming input, an interactive-ish variant) makes both harnesses hang before
+they ever contact the API. Worth a comment at the spawn site rather than a
+fix.
+
 ## Zone 2: Store and secrets
 
 | Fact                                                                                                                                                                                                                                                                                              | Status                                                                                                     |
@@ -196,6 +237,8 @@ reporting "already serving".
 | 7   | Local ticket [`71`](../tickets/71-egress-mutation-api-auth-and-per-run-scope.md)      | Add mutation auth to the egress API (token the agent never holds) and/or per-run blacklist scope; monitor reads may stay open with a documented trade-off                                     | 1    | Open - a compromised agent can sinkhole the global blacklist and read every run's DNS queries; ship before relying on blacklist enforcement across runs                                                                                                                                       |
 | 8   | Local ticket [`72`](../tickets/72-secrets-files-0600-on-host.md)                      | Write `.e/.env` 0600 via one `writeSecretFile` helper; chmod an existing too-open file on the next write                                                                                      | 2    | Open - cheap, host-local payoff; no new boundaries                                                                                                                                                                                                                                            |
 | 9   | Local ticket [`73`](../tickets/73-broker-authz-and-port-collision-in-shared-netns.md) | Broker isolation in the shared egress namespace: per-run loopback port, per-run token, or refuse sibling support there; resolve the fixed `BROKER_PORT` collision                             | 1    | Open - two spawn-brother runs in one netns collide today; cross-run spool/signal reach is the deeper fix                                                                                                                                                                                      |
+| 10  | [#153](https://github.com/BelphegorPrime/e/issues/153)                                | Stop the harness executing `/workspace`-supplied config: `--bare` (or per-harness equivalent) plus Store-delivered MCP servers and hooks                                                      | 1    | Open - a hostile repository gets container code execution without prompt injection; do before any trigger spawns runs on unreviewed code                                                                                                                                                      |
+| 11  | [#153](https://github.com/BelphegorPrime/e/issues/153)                                | Write down the opencode sharing rule: `OPENCODE_AUTO_SHARE` never joins the env whitelist, `--share` never joins the argv                                                                     | 1    | Open - contained today by two accidents rather than by a rule; a shared session is public at `opncd.ai/s/<id>`                                                                                                                                                                                |
 
 ## References
 
@@ -214,3 +257,7 @@ reporting "already serving".
   loopback), [`71`](../tickets/71-egress-mutation-api-auth-and-per-run-scope.md) (egress mutation API auth),
   [`72`](../tickets/72-secrets-files-0600-on-host.md) (`.e/.env` 0600), [`73`](../tickets/73-broker-authz-and-port-collision-in-shared-netns.md)
   (broker authz + port collision in the shared netns)
+- Harness-CLI findings (2026-09-17): [#153](https://github.com/BelphegorPrime/e/issues/153)
+  (workspace-supplied hooks and MCP config, opencode session sharing); full
+  write-up in `docs/research/harness-unattended-flags.md`. Related correctness
+  bug: [#152](https://github.com/BelphegorPrime/e/issues/152) (`codex exec` read-only sandbox)
