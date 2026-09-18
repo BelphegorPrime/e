@@ -163,6 +163,65 @@ test('buildCommand passes the prompt as one argv element, unquoted (the runtime 
   assert.deepEqual(HARNESSES.pi.buildCommand(prompt).at(-1), prompt);
   assert.deepEqual(HARNESSES.claudeCode.buildCommand(prompt)[2], prompt);
   assert.deepEqual(HARNESSES.codex.buildCommand(prompt).at(-1), prompt);
+  assert.deepEqual(HARNESSES.opencode.buildCommand(prompt).at(-1), prompt);
+});
+
+test('codex buildCommand bypasses the sandbox, so the run can write /workspace', () => {
+  // `codex exec` defaults to a READ-ONLY sandbox: without this flag every write
+  // is denied, the denial is fed back to the model, and the process still exits
+  // 0 - a run that silently commits nothing.
+  assert.deepEqual(HARNESSES.codex.buildCommand('do it'), [
+    'codex',
+    'exec',
+    '--dangerously-bypass-approvals-and-sandbox',
+    'do it',
+  ]);
+  assert.deepEqual(HARNESSES.codex.buildCommand('do it', 'gpt-5-codex'), [
+    'codex',
+    'exec',
+    '--dangerously-bypass-approvals-and-sandbox',
+    '-m',
+    'gpt-5-codex',
+    'do it',
+  ]);
+});
+
+test('opencode buildCommand auto-approves, so nothing is silently auto-rejected', () => {
+  // `opencode run` never prompts: what resolves to `ask` (notably
+  // `external_directory` for any path outside cwd) is auto-REJECTED, exit 0.
+  assert.deepEqual(HARNESSES.opencode.buildCommand('do it'), [
+    'opencode',
+    'run',
+    '--auto',
+    'do it',
+  ]);
+});
+
+test('every harness is invoked unattended: no one-shot run can wait on a human', () => {
+  // The registry-wide contract for `buildCommand`: the container is the
+  // isolation boundary (ADR-0002/0011), so each harness is invoked with its own
+  // approval/sandbox bypass. pi is the one exception - it has no approval
+  // prompts and no sandbox to bypass. The loop walks HARNESSES, so a harness
+  // added without an answer to this question fails here.
+  const bypassFlag: Record<string, string | null> = {
+    pi: null,
+    claudeCode: '--dangerously-skip-permissions',
+    codex: '--dangerously-bypass-approvals-and-sandbox',
+    opencode: '--auto',
+  };
+  const everyBypass = Object.values(bypassFlag).filter(f => f !== null);
+  for (const [name, harness] of Object.entries(HARNESSES)) {
+    assert.ok(name in bypassFlag, `${name} declares no unattended posture`);
+    const argv = harness.buildCommand('do it');
+    const flag = bypassFlag[name];
+    if (flag) {
+      assert.ok(argv.includes(flag), `${name} is missing ${flag}`);
+    } else {
+      for (const other of everyBypass) {
+        assert.ok(!argv.includes(other), `${name} carries a stray ${other}`);
+      }
+    }
+  }
 });
 
 test('interactive commands start each harness without a one-shot prompt', () => {

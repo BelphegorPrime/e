@@ -13,20 +13,26 @@ This file supersedes the "Headless" bullets of
 [`harness-cli-facts.md`](harness-cli-facts.md) (gathered 2026-08-08) where the
 two disagree; it does not restate that file's provider/MCP/skills findings.
 
+> **Status:** the two argv changes this research called for landed in
+> [#152](https://github.com/BelphegorPrime/e/issues/152) - Codex now carries
+> `--dangerously-bypass-approvals-and-sandbox` and opencode `--auto`. The
+> section "What `e` does today" below is therefore a record of the state this
+> research measured, not of the current registry; everything else still holds.
+
 ## Answers at a glance
 
 |                                    | **pi**                                                | **Claude Code**                                                            | **Codex**                                                                 | **opencode**                                              |
 | ---------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------- |
 | Version checked                    | 0.85.1                                                | 2.1.267 (docs to 2.1.274)                                                  | 0.147.0                                                                   | 1.18.31                                                   |
 | Unattended flag needed             | **none**                                              | `--dangerously-skip-permissions` (= `--permission-mode bypassPermissions`) | **`--dangerously-bypass-approvals-and-sandbox`**                          | **`--auto`**                                              |
-| What `e` passes today              | `pi -p <prompt>` — **correct**                        | `claude -p <prompt> --dangerously-skip-permissions` — **correct**          | `codex exec <prompt>` — **broken: read-only sandbox**                     | `opencode run <prompt>` — **silently auto-denies**        |
+| What `e` passes today              | `pi -p <prompt>` - **correct**                        | `claude -p <prompt> --dangerously-skip-permissions` - **correct**          | `codex exec <prompt>` - **broken: read-only sandbox**                     | `opencode run <prompt>` - **silently auto-denies**        |
 | Blocks on a human?                 | never                                                 | never (`-p` denies what it cannot ask)                                     | never (raises → fails, exit 1)                                            | never (auto-**rejects**)                                  |
 | **Refusal exits**                  | **0**                                                 | **0** (_inferred_)                                                         | **0** (confirmed in source)                                               | **0**                                                     |
 | **Blocked tool / guardrail exits** | **0**                                                 | **0** (run continues)                                                      | **0** (denial fed back to model)                                          | **0** (loop halts, stdout empty)                          |
 | Unusable/empty prompt exits        | 1                                                     | 1                                                                          | 1                                                                         | 1                                                         |
 | API / auth error exits             | 1 (text mode only)                                    | 1                                                                          | 1                                                                         | 1                                                         |
-| Other codes                        | 143/129 on SIGTERM/SIGHUP                             | 143 on SIGTERM                                                             | 2 on CLI parse error                                                      | —                                                         |
-| Structured output                  | `--mode json` (JSONL) — **but then exit is always 0** | `--output-format json`, `--json-schema` → `structured_output`              | `--json` (JSONL) + `--output-schema` + `-o <file>`                        | `--format json` (NDJSON), **no result envelope**          |
+| Other codes                        | 143/129 on SIGTERM/SIGHUP                             | 143 on SIGTERM                                                             | 2 on CLI parse error                                                      | -                                                         |
+| Structured output                  | `--mode json` (JSONL) - **but then exit is always 0** | `--output-format json`, `--json-schema` → `structured_output`              | `--json` (JSONL) + `--output-schema` + `-o <file>`                        | `--format json` (NDJSON), **no result envelope**          |
 | Best machine verdict               | final `stopReason` in the stream                      | `is_error` + `stop_reason` + `permission_denials`                          | **`-o <file>` written ⇔ turn completed**, plus a forced `--output-schema` | scan NDJSON for `tool_use` with `state.status == "error"` |
 | TTY required                       | no                                                    | no                                                                         | no                                                                        | no                                                        |
 | Session resume                     | `-c`, `-r`, `--session`, `--fork`                     | `-c`, `-r`, `--session-id`, `--fork-session`                               | `codex exec resume [--last]` (no headless fork)                           | `-c`, `-s`, `--fork`                                      |
@@ -35,7 +41,7 @@ two disagree; it does not restate that file's provider/MCP/skills findings.
 refusal, a hit guardrail and a blocked tool call exit 0.** The exit code is a
 liveness signal ("the process reached the end without crashing"), never a verdict
 on the work. `e`'s current `if (exitCode === 0)` therefore already mis-reads
-refusals as success on every harness — it is only saved today by the fact that a
+refusals as success on every harness - it is only saved today by the fact that a
 refusing agent leaves the worktree clean, so `git.isDirty()` is false and nothing
 gets committed. That accident stops being protective the moment a run is allowed
 to iterate.
@@ -44,8 +50,9 @@ to iterate.
 
 ## What `e` does today (the thing being measured against)
 
-- The container argv per harness is built in
-  [`src/core/harness/index.ts`](../../src/core/harness/index.ts) (lines 105-197):
+- The container argv per harness is built by the `HARNESSES` registry in
+  [`src/core/harness/index.ts`](../../src/core/harness/index.ts), which at the
+  time of writing produced:
   - pi: `pi -p <prompt>` (+ `--provider e --model <id>` when an agent declares a provider)
   - Claude Code: `claude -p <prompt> --dangerously-skip-permissions`
   - Codex: `codex exec [-m <model>] <prompt>`
@@ -75,14 +82,14 @@ Sources: `pi --help` (v0.84.1, `/home/marcel/.local/bin/pi`, observed
 `npm pack @earendil-works/pi-coding-agent@0.85.1`), which bundles both `docs/`
 and unminified `dist/`. File references below are paths inside that tarball.
 
-**1. Unattended flags — nothing is needed, and the old record is still correct.**
+**1. Unattended flags - nothing is needed, and the old record is still correct.**
 
 `pi -p "<prompt>"` is the complete headless invocation. pi has no approval
 prompts and no sandbox to bypass:
 
 > "Pi does not include a built-in sandbox. Built-in tools can read files, write
 > files, edit files, and run shell commands with the permissions of the pi
-> process." — `docs/security.md`, _No Built-in Sandbox_
+> process." - `docs/security.md`, _No Built-in Sandbox_
 
 The only gate is **project trust**, and it is already resolved without a human
 in headless mode:
@@ -91,7 +98,7 @@ in headless mode:
 > trust prompt. Without an applicable saved trust decision,
 > `defaultProjectTrust: "ask"` and `"never"` ignore such resources, while
 > `"always"` trusts them. Use `--approve`/`-a` or `--no-approve`/`-na` to
-> override project trust for one run." — `docs/security.md`, _Project Trust_
+> override project trust for one run." - `docs/security.md`, _Project Trust_
 > (identical wording in `docs/settings.md:16`)
 
 Consequence for `e`: **`pi -p` never blocks**, but under the default
@@ -104,9 +111,10 @@ pi also documents the containerised, unattended pattern as the recommended one:
 
 > "For untrusted repositories, generated code you do not intend to monitor
 > closely, or unattended automation, run pi in a contained environment."
-> — `docs/security.md`, _Running Untrusted or Unmonitored Work_
+>
+> - `docs/security.md`, _Running Untrusted or Unmonitored Work_
 
-**2. Exit codes — a refusal exits 0, and `--mode json` exits 0 for everything.**
+**2. Exit codes - a refusal exits 0, and `--mode json` exits 0 for everything.**
 
 The whole exit-code logic of headless pi is `dist/modes/print-mode.js`
 (`runPrintMode`), whose return value becomes `process.exitCode` in
@@ -144,8 +152,8 @@ The full set of stop reasons is
 | **Last message is a tool call, work unfinished** | `toolUse`  | **0**                          |
 | Provider/API/auth error on the final turn        | `error`    | 1                              |
 | Aborted                                          | `aborted`  | 1                              |
-| Thrown exception (bad flag, unknown provider, …) | —          | 1                              |
-| `SIGTERM` / `SIGHUP`                             | —          | 143 / 129 (`print-mode.js:40`) |
+| Thrown exception (bad flag, unknown provider, …) | -          | 1                              |
+| `SIGTERM` / `SIGHUP`                             | -          | 143 / 129 (`print-mode.js:40`) |
 
 Two sharp edges:
 
@@ -156,7 +164,7 @@ Two sharp edges:
   except a thrown exception. Adopting pi's structured output would mean giving
   up the little exit-code signal pi has.
 
-Observed locally (v0.84.1, stdin `/dev/null`, stdout piped — no TTY anywhere):
+Observed locally (v0.84.1, stdin `/dev/null`, stdout piped - no TTY anywhere):
 
 ```
 $ pi -p --provider __nope__ --model __nope__ "hi" < /dev/null
@@ -172,8 +180,8 @@ header line, then `agent_start` / `turn_start` / `message_start` /
 `tool_execution_end` carrying `isError` (`docs/json.md`). `--mode rpc` is the
 bidirectional process-integration mode (`docs/rpc.md`). There is no
 "write a report file" flag; `--export <file>` only renders an existing session
-to HTML (`pi --help`). A verdict is derivable from the stream — the final
-assistant message's `stopReason` — but only by parsing it host-side.
+to HTML (`pi --help`). A verdict is derivable from the stream - the final
+assistant message's `stopReason` - but only by parsing it host-side.
 
 **4. TTY.** Not required. Print mode never touches the TUI, and the probes above
 ran with stdin at `/dev/null` and stdout piped. `docs/containerization.md`
@@ -196,7 +204,7 @@ Sources: official docs at `https://code.claude.com/docs/en/<page>.md` (pages
 the locally installed **v2.1.267**; and exit codes observed locally with cheap
 no-token invocations (each labelled below). Docs describe up to v2.1.274.
 
-**1. Unattended flags — `e`'s current argv is exactly the documented recipe.**
+**1. Unattended flags - `e`'s current argv is exactly the documented recipe.**
 
 `permission-modes.md`, §"Common setups", has a table row reading:
 
@@ -215,12 +223,12 @@ recording:
 - **Root refusal**: "On Linux and macOS, Claude Code refuses to start in this
   mode when running as root or under `sudo`… The check is skipped automatically
   inside a recognized sandbox." (`permission-modes.md`, repeated in
-  `sandbox-environments.md` and `devcontainer.md`.) `e` is safe here — its
+  `sandbox-environments.md` and `devcontainer.md`.) `e` is safe here - its
   harness images run as the non-root `node` user. This is a constraint to keep,
   not a change to make.
 - **Behaviour change in 2.1.257**: `defaultMode: "bypassPermissions"` in a
   _project's_ `.claude/settings.json` is now ignored. `e` passes the flag, so it
-  is unaffected — but it means a repo cannot opt itself into bypass either.
+  is unaffected - but it means a repo cannot opt itself into bypass either.
 - `-p`'s built-in default permission mode is `default` (Manual)
   (`permission-modes.md`, §"Which permission mode a session starts in"), so the
   flag is load-bearing: without it a `-p` run would deny rather than ask.
@@ -236,7 +244,7 @@ recording:
 - **Nothing auto-approves everything.** `permission-modes.md`, §"Actions no mode
   auto-approves": explicit `ask` rules, `AskUserQuestion`, MCP tools marked
   `requiresUserInteraction`, and `rm`/`rmdir` against critical paths still
-  prompt — and therefore get denied — even under `bypassPermissions`.
+  prompt - and therefore get denied - even under `bypassPermissions`.
 - **`--bare` is worth considering for `e`.** `headless.md`: without it, "a `-p`
   session runs the hooks in a project's `.claude/settings.json` and connects the
   servers in its `.mcp.json`, even in a folder you've never trusted." Since `e`
@@ -245,7 +253,7 @@ recording:
   `ANTHROPIC_API_KEY`, which is what `e` supplies, and the docs say it "will
   become the default for `-p` in a future release".
 
-**2. Exit codes — no documented table; a refusal exits 0; a denied tool exits 0.**
+**2. Exit codes - no documented table; a refusal exits 0; a denied tool exits 0.**
 
 The only normative statement, `headless.md`:
 
@@ -261,9 +269,9 @@ every startup/CLI error enumerated in `errors.md`.
 | Situation                                                                       | Exit     | Source                                                                                                                                                                                                                            |
 | ------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Task completes                                                                  | 0        | `headless.md`                                                                                                                                                                                                                     |
-| **Model refuses / declines**                                                    | **0**    | _inferred_: `agent-loop.md` puts `stop_reason: "refusal"` on the **success** arm, and `python.md` says `is_error` is true on `success` only "when the final model request failed". Not stated literally — see _unverified_ below. |
+| **Model refuses / declines**                                                    | **0**    | _inferred_: `agent-loop.md` puts `stop_reason: "refusal"` on the **success** arm, and `python.md` says `is_error` is true on `success` only "when the final model request failed". Not stated literally - see _unverified_ below. |
 | **A permission/guardrail blocks a tool**                                        | **0**    | `permission-modes.md`: "the action doesn't run and Claude keeps working… **Claude Code doesn't stop the run in either case.**" Denials are listed in `permission_denials`.                                                        |
-| Usage-Policy / cyber-safeguard refusal                                          | non-zero | `errors.md` — surfaces as an API error, so `is_error: true`                                                                                                                                                                       |
+| Usage-Policy / cyber-safeguard refusal                                          | non-zero | `errors.md` - surfaces as an API error, so `is_error: true`                                                                                                                                                                       |
 | Empty / whitespace-only prompt                                                  | 1        | `errors.md`; observed locally: `claude -p --output-format json ""` → exit 1                                                                                                                                                       |
 | Semantically useless but non-empty prompt                                       | 0        | ordinary successful run                                                                                                                                                                                                           |
 | API / auth / connection error                                                   | 1        | observed locally (below)                                                                                                                                                                                                          |
@@ -288,7 +296,7 @@ at all gives `result:"Not logged in · Please run /login"`, exit 1.
 **The trap to record: `subtype` was `"success"` while `is_error` was `true`.**
 Gate on `is_error`, never on `subtype`.
 
-**3. Structured output — the best of the four.** `--output-format json` returns a
+**3. Structured output - the best of the four.** `--output-format json` returns a
 single result object; `--output-format stream-json` (needs `--verbose`) is
 newline-delimited with the `result` message last (`headless.md`). Fields verified
 against `agent-sdk/typescript.md` (`SDKResultMessage`): `type`, `subtype`,
@@ -304,7 +312,7 @@ failure as well." There is **no `--output-file`/`--report` flag** (checked
 against `cli-reference.md` and the full local `--help`); redirection or the
 `Write` tool are the routes to a file.
 
-**4. TTY — not required, and the absence of one has side effects `e` inherits.**
+**4. TTY - not required, and the absence of one has side effects `e` inherits.**
 `claude --help` on `-p`: "The workspace trust dialog is skipped when Claude is run
 in non-interactive mode (via `-p`, or when stdout is not a TTY…). Only use this
 in directories you trust. **Settings files that fail validation are silently
@@ -339,7 +347,7 @@ were observed directly. Drift check: `git diff v1.18.31 HEAD` is empty for
 `packages/opencode/src/cli/cmd/run.ts` and `permissions.mdx`, so the line numbers
 below hold for both the tag and `dev` HEAD.
 
-**1. Unattended flags — `--auto` is still the right spelling, and it is a real
+**1. Unattended flags - `--auto` is still the right spelling, and it is a real
 CLI flag.**
 
 `packages/opencode/src/cli/cmd/run.ts:241-246`:
@@ -362,7 +370,7 @@ enforced." Also listed in `cli.mdx:384`.
 OR-ed with `--auto` at `run.ts:274`; they are undocumented, so `--auto` is the
 spelling to use. Config-only equivalents: `"permission": "allow"` in
 `opencode.json`, or the `OPENCODE_PERMISSION` env var (inline JSON, merged in
-`packages/opencode/src/config/config.ts:559-565` — note malformed JSON there is
+`packages/opencode/src/config/config.ts:559-565` - note malformed JSON there is
 **silently skipped with a log warning**, falling back to the default).
 
 **The 2026-08-08 record's claim that "`opencode run <prompt>` will prompt on
@@ -373,7 +381,7 @@ permissions" is wrong.** Three layers decide:
    `external_directory: "ask"`, `read` of `*.env`: `"ask"`.
 2. `run` injects a session ruleset denying the interactive escapes
    (`question`, `plan_enter`, `plan_exit`) when not in interactive mode
-   (`run.ts:430-447`) — this is what stops the agent hanging on a question tool.
+   (`run.ts:430-447`) - this is what stops the agent hanging on a question tool.
 3. Anything still resolving to `ask` is **auto-rejected, not prompted**
    (`run.ts:801-820`): without `--auto` it replies `"reject"` and prints
    `permission requested: … ; auto-rejecting` to stderr.
@@ -381,9 +389,9 @@ permissions" is wrong.** Three layers decide:
 So `opencode run` **never blocks on a human** even today. `--auto` is still
 needed, because `external_directory: "ask"` fires on any path outside cwd and
 would otherwise be silently rejected. None of this auto-reject behaviour is
-documented in the `.mdx` docs — it is source-only.
+documented in the `.mdx` docs - it is source-only.
 
-**2. Exit codes — a denied permission exits 0 with empty stdout.**
+**2. Exit codes - a denied permission exits 0 with empty stdout.**
 
 No exit-code table exists (`grep -rn -i "exit code\|exit status\|exits with"
 packages/web/src/content/docs/*.mdx` → zero hits). The logic is in `run.ts`:
@@ -423,18 +431,18 @@ The same prompt with `--auto` → exit 0 and `HELLO_FROM_BASH` on stdout.
 work" from "refused" from "was blocked".** "Exit 0 with empty stdout" is the
 denial fingerprint, but only a heuristic. (Note: an _explicit_ `"deny"` rule
 raises `DeniedError`, not `RejectedError`, so it does **not** set `ctx.blocked`
-and the loop continues with the error fed back to the model —
+and the loop continues with the error fed back to the model -
 `permission/index.ts:75-78` vs `processor.ts:200`.)
 
 **3. Structured output.** `--format json` (spelling verified,
 `run.ts:174-179`, `choices: ["default", "json"]`) emits NDJSON on stdout, one
 object per line: `{type, timestamp, sessionID, ...data}` (`run.ts:676-690`).
 `type` ∈ `step_start`, `step_finish`, `tool_use`, `text`, `reasoning`, `error`.
-**There is no final result envelope** — no `is_error`, no `subtype`, no summary
+**There is no final result envelope** - no `is_error`, no `subtype`, no summary
 line. What is checkable:
 
 - a line with `"type":"error"` carrying `{name, data:{message, ref}}`;
-- a `tool_use` line whose `part.state.status === "error"` — this is where a
+- a `tool_use` line whose `part.state.status === "error"` - this is where a
   permission rejection surfaces (`part.state.error === "The user rejected
 permission to use this specific tool call."`), and the _only_ machine-readable
   trace of it, since the exit code is 0;
@@ -448,7 +456,7 @@ No output-file flag; `opencode export [sessionID]` and `opencode session list
 serve` + `opencode run --attach http://localhost:4096` is the documented pattern
 for many runs in one container (`cli.mdx:355-364`, `server.mdx`).
 
-**4. TTY — not required, but there is a stdin trap.** `run.ts` never references
+**4. TTY - not required, but there is a stdin trap.** `run.ts` never references
 the TUI (that is a separate `cmd/tui.ts`); the only TTY guard is for the hidden
 interactive `--mini` mode (`run.ts:319`: `if (interactive && !process.stdout.isTTY)
 die("--mini requires a TTY stdout")`). Observed runs with both stdin and stdout
@@ -463,13 +471,13 @@ const piped = process.stdin.isTTY ? undefined : await Bun.stdin.text();
 With a non-TTY stdin, opencode **reads stdin to EOF and appends it to the
 prompt**. Observed: `(sleep 15; echo) | opencode run "hi"` idled 15 s before
 starting. `e` is safe today because a one-shot run passes neither `-i` nor `-t`,
-so the container's stdin is already closed — but this is a landmine if `e` ever
+so the container's stdin is already closed - but this is a landmine if `e` ever
 adds `-i`.
 
 **5. Session continuation.** `-c/--continue` (most recent _root_ session for the
 directory, `run.ts:489`), `-s/--session <id>`, `--fork` (requires one of the
 previous two), `--share`. Recorded for completeness. One warning: `--share`
-publishes the session publicly at `opncd.ai/s/<id>` (`share.mdx`) — it must never
+publishes the session publicly at `opncd.ai/s/<id>` (`share.mdx`) - it must never
 be switched on by accident in an autonomous run.
 
 _Unverified for opencode_: a prose refusal exiting 0 is read from source
@@ -488,10 +496,10 @@ release notes for that tag; the official non-interactive-mode doc at
 `https://learn.chatgpt.com/docs/non-interactive-mode`; and runs observed with
 `docker run --rm --entrypoint sh e-harness-codex:latest -c '<cmd>'`.
 
-**1. Unattended flags — `e`'s current Codex argv is wrong in a way that fails
+**1. Unattended flags - `e`'s current Codex argv is wrong in a way that fails
 silently.**
 
-`codex exec` with no flags does **not** ask for approvals — the approval policy
+`codex exec` with no flags does **not** ask for approvals - the approval policy
 is hardcoded to `Never` in `codex-rs/exec/src/lib.rs:397-403`:
 
 ```rust
@@ -515,13 +523,13 @@ sandbox:  read-only
 So `['codex', 'exec', prompt]` (`src/core/harness/index.ts:175-178`) gives a
 Codex that **cannot write to the worktree**. Its writes are denied, the denials
 are fed back to the model as tool output, the turn still completes, and the
-process **exits 0** — after which `e` finds a clean worktree, commits nothing,
+process **exits 0** - after which `e` finds a clean worktree, commits nothing,
 pushes nothing, and calls the run a success. This is the single most consequential
 finding in this document.
 
 Corrections to `harness-cli-facts.md:81`:
 
-- "`codex exec <prompt>` defaults to a read-only sandbox with approvals" — the
+- "`codex exec <prompt>` defaults to a read-only sandbox with approvals" - the
   read-only half is right, the approvals half is wrong.
 - **`-a`/`--ask-for-approval` does not exist on `codex exec` in 0.147.0.** It is
   defined only in the TUI crate (`codex-rs/tui/src/cli.rs:65`); the struct shared
@@ -533,7 +541,7 @@ argument '-a' found`, **exit 2**. The old record's suggested pairing would not
 - **`--full-auto` was removed in 0.147.0.** Release notes for `rust-v0.147.0`:
   "Remove the deprecated `codex exec --full-auto` flag; use `--sandbox
 workspace-write` instead. (#36054)". It was deprecated in `rust-v0.128.0`.
-- `--dangerously-bypass-approvals-and-sandbox` — spelling **confirmed** (it was
+- `--dangerously-bypass-approvals-and-sandbox` - spelling **confirmed** (it was
   marked _unverified_ in the old record). Alias `--yolo`
   (`shared_options.rs:52-59`).
 
@@ -546,7 +554,7 @@ strictly better than `-s danger-full-access`, for three reasons, all in
 3. it is passed as `preserve_headless_approval_policy` into `build_exec_config`
    (`lib.rs:437-442`, fn at `571-604`). **Without it**, if any config layer
    resolves `approvals_reviewer = "auto_review"`, exec discards the headless
-   `Never` policy and falls back to `on-request` — which in exec mode is a
+   `Never` policy and falls back to `on-request` - which in exec mode is a
    guaranteed failure (see below). The crate's own test
    `exec_bypass_preserves_never_for_auto_review_config`
    (`codex-rs/exec/tests/suite/approval_policy.rs`) asserts exactly this.
@@ -555,7 +563,7 @@ Do not combine it with `--approve-for-me`, which is declared
 `conflicts_with_all = ["sandbox_mode", "dangerously_bypass_approvals_and_sandbox"]`
 (`shared_options.rs:44-50`).
 
-**2. Exit codes — 0, 1 or 2 only; a refusal exits 0; a sandbox denial exits 0.**
+**2. Exit codes - 0, 1 or 2 only; a refusal exits 0; a sandbox denial exits 0.**
 
 The entire logic is `codex-rs/exec/src/lib.rs:1026-1034`:
 
@@ -576,7 +584,7 @@ non-zero status for automation-friendly signaling"): a non-retryable
 
 | Situation                                                                                                                                          | Exit     |
 | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| Turn completes — **including a model refusal, and including commands the sandbox denied**                                                          | **0**    |
+| Turn completes - **including a model refusal, and including commands the sandbox denied**                                                          | **0**    |
 | Turn `Failed` or `Interrupted`; non-retryable server error; API/auth failure; **any approval request raised**; a `required = true` MCP server down | 1        |
 | Startup failure (bad config, bad `-c`, bad `.rules`, unreadable `--output-schema`, no prompt, not in a git repo without `--skip-git-repo-check`)   | 1        |
 | CLI parse error (unknown flag, bad enum value)                                                                                                     | 2 (clap) |
@@ -603,11 +611,11 @@ exec --skip-git-repo-check "say hi" ; echo "exit=$?"'`): 401 Unauthorized,
   auto-compaction (`core/src/compact_remote.rs` and friends). If `e` wants a cap
   it must impose one itself.
 
-No exit-code table is published anywhere — not in `docs/`, not on
+No exit-code table is published anywhere - not in `docs/`, not on
 learn.chatgpt.com. The non-zero-on-failure contract lives in the code and its
 integration tests.
 
-**3. Structured output — the best completion signal of the four.**
+**3. Structured output - the best completion signal of the four.**
 
 `--json` emits JSONL on stdout, defined in `codex-rs/exec/src/exec_events.rs`
 (`ThreadEvent`, `#[serde(tag = "type")]`): `thread.started` (`thread_id`),
@@ -618,11 +626,11 @@ integration tests.
 `file_change{changes, status}`, `mcp_tool_call`, `collab_tool_call`,
 `web_search`, `todo_list`, `error{message}`.
 
-**`turn.completed` carries no status field — its presence is the verdict.** The
+**`turn.completed` carries no status field - its presence is the verdict.** The
 mapping in `event_processor_with_jsonl_output.rs:513-553`: `Completed` emits
 `turn.completed`, `Failed` emits `turn.failed`, and **`Interrupted` emits
 nothing** (L547-551) while still setting `error_seen`. A JSONL-only consumer can
-therefore see neither event on an interrupt — the exit code must stay primary.
+therefore see neither event on an interrupt - the exit code must stay primary.
 
 `-o/--output-last-message <FILE>` is the cleanest signal available to `e`:
 `print_final_output` writes the file only when `emit_final_message_on_shutdown`
@@ -638,20 +646,20 @@ structured output is requested" (`exec_events.rs:108-110, 135-140`). Forcing a
 schema such as `{"status": "success" | "failure", "reason": "…"}` and reading it
 back from `-o` turns "the turn ran" into "the task was done".
 
-**4. TTY — not required; the hazard is stdin.** All runs above used `docker run`
+**4. TTY - not required; the hazard is stdin.** All runs above used `docker run`
 with neither `-t` nor `-i` and behaved correctly. `isatty` is used only for
 cosmetics and stdin mode. One useful side effect
 (`event_processor_with_human_output.rs:396-397, 509-521`):
 `should_print_final_message_to_stdout = final_message.is_some() &&
-!(stdout_is_terminal && stderr_is_terminal)` — **in a non-TTY container run the
+!(stdout_is_terminal && stderr_is_terminal)` - **in a non-TTY container run the
 final agent message _is_ printed to stdout**, which is exactly what `e` wants.
 
 The hazard: even when a PROMPT argument is given, `resolve_prompt`
 (`lib.rs:1944-1964`) still calls `read_prompt_from_stdin(OptionalAppend)`, which
 returns early only if stdin is a terminal (`lib.rs:1902`); otherwise it prints
 `Reading additional input from stdin...` and blocks on `read_to_end`
-(`lib.rs:1908-1912`). `e` is safe today — a one-shot `docker run` without `-i`
-gives the container a `/dev/null` stdin that EOFs immediately — but the same
+(`lib.rs:1908-1912`). `e` is safe today - a one-shot `docker run` without `-i`
+gives the container a `/dev/null` stdin that EOFs immediately - but the same
 landmine as opencode's is waiting if `-i` is ever added.
 
 **5. Session continuation.** `codex exec resume [SESSION_ID|--last] [PROMPT]`
@@ -677,8 +685,8 @@ that page.
 
 | Harness         | Change                                                                                                                                                                                                                                                                                                                     |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Codex**       | `['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', …, prompt]`. **This is a bug fix, not an enhancement** — today Codex runs in a read-only sandbox, cannot edit the worktree, and exits 0 anyway. Keep the prompt last (`harness.test.ts:165` asserts that, and `codex exec [OPTIONS] [PROMPT]` allows it). |
-| **opencode**    | `['opencode', 'run', '--auto', prompt]`. Without it, anything resolving to `ask` — notably `external_directory` for any path outside cwd, and `.env` reads — is silently auto-rejected, producing exit 0 with empty stdout.                                                                                                |
+| **Codex**       | `['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', …, prompt]`. **This is a bug fix, not an enhancement** - today Codex runs in a read-only sandbox, cannot edit the worktree, and exits 0 anyway. Keep the prompt last (`harness.test.ts:165` asserts that, and `codex exec [OPTIONS] [PROMPT]` allows it). |
+| **opencode**    | `['opencode', 'run', '--auto', prompt]`. Without it, anything resolving to `ask` - notably `external_directory` for any path outside cwd, and `.env` reads - is silently auto-rejected, producing exit 0 with empty stdout.                                                                                                |
 | **Claude Code** | No change required. `--permission-prompts none` is an optional clarity win; `--bare` is worth considering separately (see §4).                                                                                                                                                                                             |
 | **pi**          | No change required. `--approve`/`-a` only if `e` wants the run's own repo to supply `.pi/*` resources and project skills.                                                                                                                                                                                                  |
 
@@ -692,7 +700,7 @@ re-prompts on a _non-zero_ exit will never re-prompt a refusal, and a loop that
 commits on a _zero_ exit will commit a half-finished tree.
 
 This is the strongest argument in this research for the decision the map has
-already taken — **the verify command's exit code is the verdict, not the
+already taken - **the verify command's exit code is the verdict, not the
 harness's**. The harness exit code should be demoted to what it actually is:
 
 - **non-zero ⇒ the run definitely failed** (infrastructure, auth, bad argv,
@@ -708,7 +716,7 @@ If `e` ever wants a second, cheaper signal before running the verify container:
   pass/fail. Requirement: `e` must delete the file before each run, because on
   failure Codex does not touch it and a stale file would read as success.
 - **Claude Code** gives `is_error`, `stop_reason` (`"refusal"`),
-  `permission_denials` and `structured_output` in one JSON object — but gate on
+  `permission_denials` and `structured_output` in one JSON object - but gate on
   `is_error`, never on `subtype`, which can read `"success"` while `is_error` is
   true.
 - **opencode** has no result envelope at all; the only trace of a blocked run is
@@ -726,8 +734,8 @@ is ever wanted, it is per-harness work, not one abstraction.
   without `-i`/`-t`. Nothing to do.
 - **Both Codex and opencode read stdin to EOF when stdin is not a TTY**, even
   when the prompt is an argv argument (`lib.rs:1908-1912`; `run.ts:416`). `e` is
-  safe only because it passes no `-i`. If a future change ever adds `-i` — a
-  streaming-input feature, say — both harnesses will hang before contacting the
+  safe only because it passes no `-i`. If a future change ever adds `-i` - a
+  streaming-input feature, say - both harnesses will hang before contacting the
   API. Worth a comment at the spawn site.
 - **Claude Code runs an untrusted repo's hooks.** Without `--bare`, a `-p`
   session "runs the hooks in a project's `.claude/settings.json` and connects the

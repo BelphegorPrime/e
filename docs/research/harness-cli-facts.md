@@ -9,6 +9,12 @@ docs, the CLI's own source/schema, or the published package). Gathered 2026-08-0
 > inline per claim. Where a fact could not be confirmed from a primary source it
 > is marked _unverified_.
 
+> **Superseded in part (2026-09-17):** the unattended/headless flags and the
+> exit-code semantics were re-gathered against pinned tags in
+> [`harness-unattended-flags.md`](harness-unattended-flags.md). Where the two
+> disagree, that file wins; the corrections it produced are folded into the
+> Codex and opencode "Headless" bullets below.
+
 ## Summary
 
 | Harness         | custom OpenAI **chat** (`/v1/chat/completions`) | custom OpenAI **responses** (`/v1/responses`) | custom **Anthropic** (`/v1/messages`) | MCP client transports                        | MCP via CLI flag / inline?                                         | Skills? |
@@ -48,7 +54,8 @@ Sources: `github.com/openai/codex` Rust source (`codex-rs/model-provider-info/sr
 - **Config:** TOML. `~/.codex/config.toml` (user), `.codex/config.toml` (project, when trusted). Relocated by **`CODEX_HOME`**. `codex exec` accepts `--ignore-user-config`. (`config-reference`)
 - **MCP:** `[mcp_servers.<id>]` in `config.toml` - stdio (`command`/`args`/`env`/`env_vars`) and streamable HTTP (`url`, `bearer_token_env_var`, `http_headers`, `auth`, `oauth`). **No SSE.** CLI `codex mcp add|list|login`. Remote by URL: yes (streamable HTTP). `-c` can technically set `mcp_servers.*` but is **not** the endorsed path - **a file (or `codex mcp add`, which writes the file) is intended.** Codex can also _be_ an MCP server (`codex mcp-server`). (`extend/mcp`, `config.schema.json`)
 - **Skills:** `SKILL.md` Agent Skills. Scanned paths: `$CWD/.agents/skills`, parent dirs, `$REPO_ROOT/.agents/skills`, `$HOME/.agents/skills`, `/etc/codex/skills`. Invocation `/skills` or `$name`. Disable via `[[skills.config]]`. Also `AGENTS.md`, custom prompts under `~/.codex/prompts` (_path unverified this session_). (`build-skills`)
-- **Headless:** `codex exec "<prompt>"` (final message → stdout, progress → stderr; `-` reads stdin). Flags: `--sandbox read-only|workspace-write|danger-full-access`, `-a/--ask-for-approval`, `--full-auto`, `--dangerously-bypass-approvals-and-sandbox` (_exact spelling unverified this session_), `--skip-git-repo-check`, `--json`, `--output-schema`, `--ephemeral`. Auth: `CODEX_API_KEY`. (`non-interactive-mode`, source)
+- **Headless:** `codex exec "<prompt>"` (final message → stdout, progress → stderr; `-` reads stdin). Approvals are already hardcoded to `never` in exec, but **the default sandbox is `read-only`**, so a bare `codex exec` cannot write its workspace and exits 0 regardless. Flags: `--sandbox read-only|workspace-write|danger-full-access`, **`--dangerously-bypass-approvals-and-sandbox`** (spelling **confirmed** at `rust-v0.147.0`, alias `--yolo`; what `e` passes), `--skip-git-repo-check`, `--json`, `--output-schema`, `-o <file>`, `--ephemeral`. Auth: `CODEX_API_KEY`. (`non-interactive-mode`, source)
+  - _Corrected 2026-09-17 against tag `rust-v0.147.0`:_ **`-a`/`--ask-for-approval` does not exist on `codex exec`** - it is TUI-only (`codex-rs/tui/src/cli.rs`), and passing it exits 2 on a clap error. **`--full-auto` was removed** in `rust-v0.147.0` ("use `--sandbox workspace-write` instead", release notes; deprecated since `rust-v0.128.0`). The official `learn.chatgpt.com` CLI reference still documents both and is stale. Details: [`harness-unattended-flags.md`](harness-unattended-flags.md).
 
 ## opencode (`opencode-ai`, `opencode`)
 
@@ -58,7 +65,8 @@ Sources: `github.com/sst/opencode` `dev` branch docs `.mdx` (backing `opencode.a
 - **Config:** JSON/JSONC. `~/.config/opencode/opencode.json` (global; **respects `XDG_CONFIG_HOME`** per `packages/core/src/global.ts`), project `opencode.json(c)`. Relocated by **`OPENCODE_CONFIG`** (file), **`OPENCODE_CONFIG_DIR`** (dir), **`OPENCODE_CONFIG_CONTENT`** (inline config as env var content). "Config options take precedence over environment variables." (`config.mdx`, source)
 - **MCP:** config-file `mcp` block only (no flag). `type:"local"` (stdio: `command[]`, `environment`, `cwd`, `timeout`) or `type:"remote"` (`url`, `headers`, `oauth`, auto DCR/OAuth, tokens in `~/.local/share/opencode/mcp-auth.json`). **Remote by URL: yes.** A full server def can be delivered inline only via `OPENCODE_CONFIG_CONTENT`. CLI `opencode mcp auth|list|logout|debug`. (`mcp-servers.mdx`)
 - **Skills:** `SKILL.md` via a native `skill` tool. Read from `.opencode/skills/`, `~/.config/opencode/skills/`, **`.claude/skills/` and `~/.claude/skills/`**, **`.agents/skills/` and `~/.agents/skills/`**. `permission.skill` map; disable with `tools:{skill:false}`. Also `AGENTS.md`/`CLAUDE.md` rules, custom commands/agents. (`skills.mdx`, `rules.mdx`)
-- **Headless:** `opencode run "<prompt>"` with `-m provider/model`, `--agent`, `--format json`, **`--auto`** (auto-approve - key for unattended), `--continue`/`--session`. Also `opencode serve` (HTTP API). (`cli.mdx`)
+- **Headless:** `opencode run "<prompt>"` with `-m provider/model`, `--agent`, `--format json`, **`--auto`** (auto-approve - what `e` passes), `--continue`/`--session`. Also `opencode serve` (HTTP API). (`cli.mdx`)
+  - _Corrected 2026-09-17 against tag `v1.18.31`:_ `opencode run` **never prompts** on a permission - it **auto-rejects** anything still resolving to `ask` (`run.ts:801-820`) and exits 0 with empty stdout. `--auto` is therefore not about unblocking a hang but about not silently doing less; `external_directory: "ask"` fires on any path outside cwd. Explicit `deny` rules still hold under `--auto`. Details: [`harness-unattended-flags.md`](harness-unattended-flags.md).
 
 ## pi (`@earendil-works/pi-coding-agent`, `pi`)
 
@@ -78,4 +86,4 @@ Sources: published tarball **v0.84.1** (2026-08-07, bundles full `docs/`), npm r
 - **ADR-0006 (delivery):** confirmed heterogeneous - Claude MCP via inline `--mcp-config` flag; Codex & opencode via a rendered config file (opencode also via `OPENCODE_CONFIG_CONTENT`); pi MCP unsupported (capability-gate `--mcp pi`). Provider for Claude is **env**; for Codex/opencode/pi a **config file**. Skills placement path differs per harness (`~/.claude/skills`, `.agents/skills`, `~/.config/opencode/skills`, `~/.pi/agent/skills`) - `.agents/skills` is the widest shared path.
 - **ADR-0005 (sidecar transport):** container-MCP sidecars should expose **streamable HTTP**, not SSE.
 - **Rendered config lives outside `/workspace`** via each harness's config-dir env var - implementable on all four.
-- **Existing `buildCommand`s under-specify unattended runs:** `codex exec <prompt>` defaults to a read-only sandbox with approvals, and `opencode run <prompt>` will prompt on permissions - future agent build commands need the harness's unattended flags (`--dangerously-bypass-approvals-and-sandbox` / appropriate `--sandbox`; `--auto`). Claude already uses `--dangerously-skip-permissions`; pi needs none.
+- **Unattended flags are wired (2026-09-17, issue #152):** `codex exec` defaults to a read-only sandbox (approvals are already `never`) and `opencode run` auto-rejects what resolves to `ask`; neither prompts, both exit 0 either way. `buildCommand` now passes `--dangerously-bypass-approvals-and-sandbox` (Codex) and `--auto` (opencode), the container being the isolation boundary (ADR-0002/0011). Claude already used `--dangerously-skip-permissions`; pi needs none. **And the harness exit code is a liveness signal, never a verdict:** on all four, a refusal, a hit guardrail and a blocked tool call exit 0. See [`harness-unattended-flags.md`](harness-unattended-flags.md).

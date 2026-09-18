@@ -172,10 +172,19 @@ export const HARNESSES: Record<string, Harness> = {
     // block into a derived agent image (ADR-0004/0006). An auto-resolved model
     // arrives at runtime as `-m <id>` (a baked concrete model needs no flag).
     adapter: codexAdapter,
-    buildCommand: (prompt: string, model?: string) =>
-      model
-        ? ['codex', 'exec', '-m', model, prompt]
-        : ['codex', 'exec', prompt],
+    buildCommand: (prompt: string, model?: string) => [
+      'codex',
+      'exec',
+      // `codex exec` defaults to a READ-ONLY sandbox (its approval policy is
+      // already `never`), so without this the run cannot write /workspace and
+      // exits 0 regardless. The container is the isolation boundary
+      // (ADR-0002/0011), the posture this flag assumes; it also implies
+      // `--skip-git-repo-check` and keeps exec's headless `never` policy.
+      // Grounding: `docs/research/harness-unattended-flags.md`.
+      '--dangerously-bypass-approvals-and-sandbox',
+      ...(model ? ['-m', model] : []),
+      prompt,
+    ],
     buildInteractiveCommand: (model?: string) =>
       model ? ['codex', '-m', model] : ['codex'],
     // Codex reads Agent Skills from the shared `~/.agents/skills`.
@@ -193,7 +202,16 @@ export const HARNESSES: Record<string, Harness> = {
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
     // opencode (Vercel AI SDK) speaks all three via its provider plugins.
     protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],
-    buildCommand: (prompt: string) => ['opencode', 'run', prompt],
+    buildCommand: (prompt: string) => [
+      'opencode',
+      'run',
+      // `opencode run` never prompts - it auto-REJECTS what resolves to `ask`
+      // (`external_directory` fires on any path outside cwd) and exits 0 having
+      // done less. `--auto` approves what is not explicitly denied. Grounding:
+      // `docs/research/harness-unattended-flags.md`.
+      '--auto',
+      prompt,
+    ],
     buildInteractiveCommand: () => ['opencode'],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,

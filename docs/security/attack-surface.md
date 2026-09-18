@@ -15,12 +15,14 @@ analysis, not the patch.
 ## Threat model
 
 The attacker we harden against is a **compromised or prompt-injected harness
-agent**: the container runs the harness CLI unsupervised
-(`--dangerously-skip-permissions`, see ADR-0002), so anything the agent can
-reach, it can abuse. The host is assumed hostile-adjacent for the container:
-the container must be treated as untrusted code with full network egress (the
-model API must be reachable), limited only by what is mounted and what
-credentials are present.
+agent**: the container runs the harness CLI unsupervised (each harness with its
+own approval bypass - `--dangerously-skip-permissions` for Claude Code,
+`--dangerously-bypass-approvals-and-sandbox` for Codex, which also drops its
+sandbox, and `--auto` for opencode, which still honours explicit `deny` rules;
+see ADR-0002), so anything the agent can reach, it can abuse. The host is
+assumed hostile-adjacent for the container: the container must be treated as
+untrusted code with full network egress (the model API must be reachable),
+limited only by what is mounted and what credentials are present.
 
 Secondary actors: a **local compromise on the host network** (another process
 or container reaching the host's listening ports), and **misconfiguration**
@@ -259,5 +261,8 @@ reporting "already serving".
   (broker authz + port collision in the shared netns)
 - Harness-CLI findings (2026-09-17): [#153](https://github.com/BelphegorPrime/e/issues/153)
   (workspace-supplied hooks and MCP config, opencode session sharing); full
-  write-up in `docs/research/harness-unattended-flags.md`. Related correctness
-  bug: [#152](https://github.com/BelphegorPrime/e/issues/152) (`codex exec` read-only sandbox)
+  write-up in [`../research/harness-unattended-flags.md`](../research/harness-unattended-flags.md).
+  Related correctness bug: [#152](https://github.com/BelphegorPrime/e/issues/152)
+  (`codex exec` read-only sandbox) - **fixed**; Codex and opencode now carry
+  their bypass flags, which widens Zone 1 to what this threat model already
+  assumed
