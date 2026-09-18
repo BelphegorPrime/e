@@ -447,7 +447,7 @@ export class ContainerRuntime implements ContainerRunner {
   }
 
   /**
-   * The headless-TTY variant of {@link ContainerRuntime.run}: `run -d -it`
+   * The headless-TTY variant of {@link ContainerRuntime}: `run -d -it`
    * prints the container id and returns at once (the CLI refuses `-it` without
    * a host TTY, but not when detaching), then `wait <id>` blocks until the
    * container stops and prints its exit code. A caller with engine-API access
