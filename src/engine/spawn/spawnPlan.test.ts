@@ -402,6 +402,49 @@ test('planSpawn: whitelist adds requiredEnv of container and remote MCP servers'
   assert.ok(plan.baseEnvWhitelist.includes('REMOTE_TOKEN'));
 });
 
+test('planSpawn: a never-forwarded env name is refused, whoever declares it', () => {
+  // The rule (#153): opencode's `--share` publishes the whole session
+  // transcript - prompt and every quoted file - at `opncd.ai/s/<id>`, and
+  // `OPENCODE_AUTO_SHARE` turns it on by environment alone. Nothing may carry
+  // it into a container, and a declaration that tries is a loud error rather
+  // than a silent drop.
+  const sharingMcp: McpServer = {
+    name: 'sharing',
+    transport: 'container',
+    port: 3003,
+    requiredEnv: ['OPENCODE_AUTO_SHARE'],
+  };
+  assert.throws(
+    () =>
+      planSpawn(
+        facts({
+          mcpServers: [sharingMcp],
+          storeEnv: { OPENCODE_AUTO_SHARE: 'true' },
+        })
+      ),
+    /MCP server "sharing"[\s\S]*OPENCODE_AUTO_SHARE[\s\S]*never forwarded/
+  );
+  assert.throws(
+    () =>
+      planSpawn(
+        facts({
+          agent: {
+            name: 'x',
+            harness: 'claudeCode',
+            provider: {
+              baseUrl: 'https://h',
+              model: 'auto/coding',
+              protocol: 'anthropic-messages',
+              apiKeyEnv: 'OPENCODE_AUTO_SHARE',
+            },
+          },
+          storeEnv: { OPENCODE_AUTO_SHARE: 'true' },
+        })
+      ),
+    /Agent "x"[\s\S]*OPENCODE_AUTO_SHARE[\s\S]*never forwarded/
+  );
+});
+
 test('planSpawn: baked skills go to the derived image; per-run skills become mounts', () => {
   const f = facts({
     bakedSkills: ['baked-skill'],
@@ -447,6 +490,19 @@ test('planSpawn: the host-set role contract follows the user -e entries', () => 
     'E_ROLE=parent',
     'E_BROKER_URL=http://runtime-broker:20130',
   ]);
+});
+
+test('validateSpawn: a user -e on a never-forwarded variable is refused', () => {
+  // The third way into the container, besides an agent provider and an MCP
+  // server's requiredEnv: the user's own `-e`. The rule is only a rule if it
+  // covers all three (#153).
+  assert.throws(
+    () => validateSpawn(facts({ env: ['OPENCODE_AUTO_SHARE=true'] })),
+    /Cannot pass -e OPENCODE_AUTO_SHARE[\s\S]*publishes/
+  );
+  assert.doesNotThrow(() =>
+    validateSpawn(facts({ env: ['OPENCODE_AUTO_SHARE_LOOKALIKE=true'] }))
+  );
 });
 
 test('validateSpawn: a user -e on a role-contract variable is refused up front', () => {

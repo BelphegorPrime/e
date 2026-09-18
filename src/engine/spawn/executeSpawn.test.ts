@@ -321,6 +321,38 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
   }
 });
 
+test('refuses a user --env-file that declares a never-forwarded variable', async () => {
+  // The last channel into a container, and the only one copied verbatim (#153).
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-test-'));
+  try {
+    const user = path.join(tmp, 'user.env');
+    fs.writeFileSync(user, 'USER_EXTRA=1\nOPENCODE_AUTO_SHARE=true\n');
+    fs.mkdirSync(path.join(tmp, '.e', 'harnesses', 'demo'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, '.e', 'harnesses', 'demo', 'Dockerfile'),
+      'FROM alpine\n'
+    );
+
+    const runtime = new RecordingRuntime();
+    const scratch = new RunScratch();
+    const result = await executeSpawn(
+      facts({ root: tmp, userEnvFile: user }),
+      emptyPlan,
+      { git: new InMemoryGit(), runtime, scratch }
+    );
+
+    assert.equal(result.ran, false);
+    assert.match(result.error ?? '', /OPENCODE_AUTO_SHARE/);
+    assert.match(result.error ?? '', /never forwarded/);
+    assert.equal(runtime.options, undefined);
+    scratch.dispose();
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('a prompt runs one-shot: the harness gets the prompt, no TTY', async () => {
   await withDemoStore(async root => {
     const runtime = new RecordingRuntime();

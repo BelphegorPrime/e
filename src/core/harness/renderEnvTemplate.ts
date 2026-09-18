@@ -59,6 +59,21 @@ export const GLOBAL_BASE_URL_ENV = [
   'OPENAI_BASE_URL',
 ] as const;
 
+/**
+ * Env names that never reach a run container, whoever declares them (#153).
+ * `OPENCODE_AUTO_SHARE` switches opencode's session sharing on by environment
+ * alone, and a shared session is published at `opncd.ai/s/<id>` carrying the
+ * whole transcript: the prompt and every file the agent quoted. Containment by
+ * rule, not by the accident that nobody happens to name it. Each entry carries
+ * the reason it is refused, which is what the caller reports. The argv half of
+ * the same rule - `--share` is never built into an invocation - lives in the
+ * harness registry.
+ */
+export const NEVER_FORWARDED_ENV: Readonly<Record<string, string>> = {
+  OPENCODE_AUTO_SHARE:
+    "it switches on opencode's session sharing, which publishes the run's whole transcript - the prompt and every file the agent quoted - at opncd.ai/s/<id>",
+};
+
 /** Renders the shared `.env` template from {@link TEMPLATE}. */
 export function renderEnvTemplate(p: EnvTemplateParams): string {
   const harnesses = p.harnesses.map(h => ({

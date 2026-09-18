@@ -145,6 +145,7 @@ test('planMcpDelivery reports no delivery for a harness without MCP wiring (open
 test('pi buildCommand selects the e provider and resolved model when one is delivered', () => {
   assert.deepEqual(HARNESSES.pi.buildCommand('do it', 'claude-opus-5'), [
     'pi',
+    '--no-approve',
     '-p',
     'do it',
     '--provider',
@@ -155,7 +156,12 @@ test('pi buildCommand selects the e provider and resolved model when one is deli
 });
 
 test('pi buildCommand is plain when no provider/model is configured (default agent)', () => {
-  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), ['pi', '-p', 'do it']);
+  assert.deepEqual(HARNESSES.pi.buildCommand('do it'), [
+    'pi',
+    '--no-approve',
+    '-p',
+    'do it',
+  ]);
 });
 
 test('buildCommand passes the prompt as one argv element, unquoted (the runtime uses no shell)', () => {
@@ -174,16 +180,26 @@ test('codex buildCommand bypasses the sandbox, so the run can write /workspace',
     'codex',
     'exec',
     '--dangerously-bypass-approvals-and-sandbox',
+    '--ignore-rules',
     'do it',
   ]);
   assert.deepEqual(HARNESSES.codex.buildCommand('do it', 'gpt-5-codex'), [
     'codex',
     'exec',
     '--dangerously-bypass-approvals-and-sandbox',
+    '--ignore-rules',
     '-m',
     'gpt-5-codex',
     'do it',
   ]);
+});
+
+test('opencode is never invoked with --share (that publishes the session)', () => {
+  // `--share` publishes the transcript at `opncd.ai/s/<id>` - the whole prompt
+  // and every file the agent quoted. Neither invocation may ever carry it
+  // (#153); the env half of the same rule is enforced in the spawn plan.
+  assert.ok(!HARNESSES.opencode.buildCommand('do it').includes('--share'));
+  assert.ok(!HARNESSES.opencode.buildInteractiveCommand().includes('--share'));
 });
 
 test('opencode buildCommand auto-approves, so nothing is silently auto-rejected', () => {
@@ -197,29 +213,89 @@ test('opencode buildCommand auto-approves, so nothing is silently auto-rejected'
   ]);
 });
 
-test('every harness is invoked unattended: no one-shot run can wait on a human', () => {
-  // The registry-wide contract for `buildCommand`: the container is the
-  // isolation boundary (ADR-0002/0011), so each harness is invoked with its own
-  // approval/sandbox bypass. pi is the one exception - it has no approval
-  // prompts and no sandbox to bypass. The loop walks HARNESSES, so a harness
-  // added without an answer to this question fails here.
-  const bypassFlag: Record<string, string | null> = {
-    pi: null,
-    claudeCode: '--dangerously-skip-permissions',
-    codex: '--dangerously-bypass-approvals-and-sandbox',
-    opencode: '--auto',
-  };
-  const everyBypass = Object.values(bypassFlag).filter(f => f !== null);
+test('claude runs none of the config /workspace supplies (hooks, .mcp.json)', () => {
+  // A `-p` session without `--bare` runs the hooks in the project's
+  // `.claude/settings.json` and connects the servers in its `.mcp.json` - "even
+  // in a folder you've never trusted" (headless docs). `e` mounts an arbitrary
+  // repository at /workspace, so cloning one was enough to get code execution
+  // in the run container (#153). `--strict-mcp-config` keeps the MCP servers to
+  // the ones `e` itself passes with `--mcp-config`.
+  assert.deepEqual(HARNESSES.claudeCode.buildCommand('do it'), [
+    'claude',
+    '-p',
+    'do it',
+    '--dangerously-skip-permissions',
+    '--strict-mcp-config',
+    '--settings',
+    '{"disableAllHooks":true}',
+  ]);
+});
+
+// One table, one question per harness, asked of the registry itself: does its
+// invocation bypass the approvals the container makes pointless, and does it
+// keep out the trust flags that would let `/workspace` supply config? A harness
+// added without an answer fails here rather than shipping an opinion nobody
+// wrote down.
+const POSTURE: Record<
+  string,
+  {
+    bypass: string | null;
+    isolatesWorkspace: readonly string[];
+    neverTrustsWorkspace: readonly string[];
+  }
+> = {
+  // pi has no approval prompts and no sandbox to bypass, and in non-interactive
+  // mode it already ignores `/workspace/.pi/*` and project skills - which is
+  // exactly what `--approve`/`-a` would undo.
+  pi: {
+    bypass: null,
+    isolatesWorkspace: ['--no-approve'],
+    neverTrustsWorkspace: ['--approve', '-a'],
+  },
+  // Claude needs no trust flag kept out: `--settings disableAllHooks` and
+  // `--strict-mcp-config` already deny the project's hooks and MCP servers.
+  claudeCode: {
+    bypass: '--dangerously-skip-permissions',
+    isolatesWorkspace: ['--strict-mcp-config', '--settings'],
+    neverTrustsWorkspace: [],
+  },
+  // Codex discovers project-layer hooks but runs an untrusted one only under
+  // `--dangerously-bypass-hook-trust`.
+  codex: {
+    bypass: '--dangerously-bypass-approvals-and-sandbox',
+    isolatesWorkspace: ['--ignore-rules'],
+    neverTrustsWorkspace: ['--dangerously-bypass-hook-trust'],
+  },
+  // opencode has no lever of either kind at v1.18.31 - see
+  // docs/security/attack-surface.md.
+  opencode: {
+    bypass: '--auto',
+    isolatesWorkspace: [],
+    neverTrustsWorkspace: [],
+  },
+};
+
+test('every harness declares its posture: unattended, and never trusting /workspace', () => {
+  const everyBypass = Object.values(POSTURE)
+    .map(p => p.bypass)
+    .filter(flag => flag !== null);
   for (const [name, harness] of Object.entries(HARNESSES)) {
-    assert.ok(name in bypassFlag, `${name} declares no unattended posture`);
-    const argv = harness.buildCommand('do it');
-    const flag = bypassFlag[name];
-    if (flag) {
-      assert.ok(argv.includes(flag), `${name} is missing ${flag}`);
+    assert.ok(name in POSTURE, `${name} declares no posture`);
+    const { bypass, isolatesWorkspace, neverTrustsWorkspace } = POSTURE[name];
+    const oneShot = harness.buildCommand('do it', 'some-model');
+    if (bypass) {
+      assert.ok(oneShot.includes(bypass), `${name} is missing ${bypass}`);
     } else {
       for (const other of everyBypass) {
-        assert.ok(!argv.includes(other), `${name} carries a stray ${other}`);
+        assert.ok(!oneShot.includes(other), `${name} carries a stray ${other}`);
       }
+    }
+    for (const flag of isolatesWorkspace) {
+      assert.ok(oneShot.includes(flag), `${name} is missing ${flag}`);
+    }
+    const argv = [...oneShot, ...harness.buildInteractiveCommand('some-model')];
+    for (const flag of neverTrustsWorkspace) {
+      assert.ok(!argv.includes(flag), `${name} must never carry ${flag}`);
     }
   }
 });
@@ -229,6 +305,9 @@ test('interactive commands start each harness without a one-shot prompt', () => 
   assert.deepEqual(HARNESSES.claudeCode.buildInteractiveCommand(), [
     'claude',
     '--dangerously-skip-permissions',
+    '--strict-mcp-config',
+    '--settings',
+    '{"disableAllHooks":true}',
   ]);
   assert.deepEqual(HARNESSES.codex.buildInteractiveCommand(), ['codex']);
   assert.deepEqual(HARNESSES.opencode.buildInteractiveCommand(), ['opencode']);

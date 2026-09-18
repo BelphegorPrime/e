@@ -10,7 +10,8 @@ import type {
 } from '../../ports/runtime/index.js';
 import { runSpawn, type RunSpawnResult } from '../runs/runSpawn.js';
 import type { SidecarPlan } from '../sidecarPlan.js';
-import { filterEnvContent } from '../../shared/utils/dotenv.js';
+import { filterEnvContent, parseDotenv } from '../../shared/utils/dotenv.js';
+import { NEVER_FORWARDED_ENV } from '../../core/harness/renderEnvTemplate.js';
 import {
   decideImageAction,
   isInteractiveRun,
@@ -164,6 +165,23 @@ export async function executeSpawn(
   // them - but never reach a container. Then the user's --env-file, then
   // remote-MCP and provider credentials layered last (each container gets its
   // own copy at run time).
+  // A user's `--env-file` is copied into the container verbatim, so it is the
+  // one channel the plan's own refusal cannot see. The rule holds here too
+  // (#153): the file is read and the run refused, never quietly stripped.
+  if (facts.userEnvFile !== undefined) {
+    const declared = Object.keys(
+      parseDotenv(fs.readFileSync(facts.userEnvFile, 'utf8'))
+    );
+    const refused = declared.find(key => NEVER_FORWARDED_ENV[key]);
+    if (refused) {
+      return {
+        ran: false,
+        exitCode: 1,
+        error: `--env-file ${facts.userEnvFile} declares ${refused}, which is never forwarded to a run container: ${NEVER_FORWARDED_ENV[refused]}.`,
+      };
+    }
+  }
+
   const baseEnvPath =
     facts.baseEnvFile === undefined
       ? undefined

@@ -26,7 +26,10 @@ import type {
   ConfigOverlayDelivery,
   ContainerEnv,
 } from '../../core/harness/adapter.js';
-import { GLOBAL_BASE_URL_ENV } from '../../core/harness/renderEnvTemplate.js';
+import {
+  GLOBAL_BASE_URL_ENV,
+  NEVER_FORWARDED_ENV,
+} from '../../core/harness/renderEnvTemplate.js';
 import {
   planProviderDelivery,
   planAgentImage,
@@ -329,6 +332,19 @@ export function validateSpawn(facts: SpawnFacts): void {
     );
   }
 
+  // The same rule against the third way into a container (#153): an agent
+  // provider and an MCP server's requiredEnv are checked when the plan is
+  // composed, a user `-e` here.
+  for (const entry of facts.env) {
+    const key = entry.split('=', 1)[0];
+    const reason = NEVER_FORWARDED_ENV[key];
+    if (reason) {
+      throw new Error(
+        `Cannot pass -e ${key}: it is never forwarded to a run container, because ${reason}.`
+      );
+    }
+  }
+
   validateProviderProtocol(agent.provider, harness);
 
   if (agent.provider && caps.provider === 'none') {
@@ -485,10 +501,20 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
   // unrelated secret stays in the file (the user's own shell reads it) but never
   // enters the untrusted harness container.
   const allowedEnvKeys = new Set<string>(GLOBAL_BASE_URL_ENV);
+  const allowEnvOrRefuse = (key: string, declaredBy: string) => {
+    const reason = NEVER_FORWARDED_ENV[key];
+    if (reason) {
+      throw new Error(
+        `${declaredBy} declares "${key}", which is never forwarded to a run container: ${reason}. Use a different variable.`
+      );
+    }
+    allowedEnvKeys.add(key);
+  };
   if (agent.provider) {
-    allowedEnvKeys.add(agent.provider.apiKeyEnv);
+    const declaredBy = `Agent "${agent.name}"`;
+    allowEnvOrRefuse(agent.provider.apiKeyEnv, declaredBy);
     if (agent.provider.baseUrlEnv)
-      allowedEnvKeys.add(agent.provider.baseUrlEnv);
+      allowEnvOrRefuse(agent.provider.baseUrlEnv, declaredBy);
   }
 
   // MCP: split by transport, render credentials, decide the delivery form.
@@ -511,7 +537,9 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
       ...selection.containerServers,
       ...selection.remoteServers,
     ]) {
-      for (const key of server.requiredEnv) allowedEnvKeys.add(key);
+      for (const key of server.requiredEnv) {
+        allowEnvOrRefuse(key, `MCP server "${server.name}"`);
+      }
     }
     for (const server of selection.containerServers) {
       sidecars.push({

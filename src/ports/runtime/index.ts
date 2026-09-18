@@ -381,6 +381,11 @@ export class ContainerRuntime implements ContainerRunner {
   ): string[] {
     const args = ['run'];
 
+    // `-i` and `-t` travel as a pair on purpose: Codex (`exec`) and opencode
+    // (`run`) both read stdin to EOF when stdin is not a TTY, even when the
+    // prompt arrives on argv, so a bare `-i` would hang the harness before it
+    // ever reached the model API. A one-shot run passes neither and its stdin
+    // is closed, which is what keeps it safe today (#153).
     if (opts.interactive) {
       if (opts.headlessTty) {
         args.push('-d');

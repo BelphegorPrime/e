@@ -75,6 +75,29 @@ export interface Harness {
  */
 const AGENTS_SKILLS_DIR = `${NODE_HOME}/.agents/skills`;
 
+/**
+ * What keeps Claude Code from executing the configuration `/workspace` supplies
+ * (#153). A `-p` session otherwise runs the hooks in the project's
+ * `.claude/settings.json` and connects the servers in its `.mcp.json`, "even in
+ * a folder you've never trusted" (its own headless docs) - and `e` mounts an
+ * arbitrary repository there, so cloning one was enough for code execution
+ * inside the run container, with no prompt injection and no agent decision.
+ *
+ * Measured on 2.1.267 against a stub endpoint, with a `SessionStart` hook in the
+ * work directory's `.claude/settings.json`: the hook runs on a plain invocation
+ * and on one carrying an unrelated `--settings` key, and does not run with
+ * `disableAllHooks`. `--bare` also stops it, but it is not the flag to use here:
+ * it cuts the tool set from 24 to `Bash, Edit, Read` - no `Write`, no `Skill`,
+ * no web tools - which `--tools` does not lift, so it would take `e`'s own
+ * Store-delivered skills (the ADR-0013 `spawn-brother` among them) away from
+ * every Claude run.
+ */
+const CLAUDE_WORKSPACE_ISOLATION = [
+  '--strict-mcp-config',
+  '--settings',
+  JSON.stringify({ disableAllHooks: true }),
+] as const;
+
 /** Available coding harnesses, keyed by name. */
 export const HARNESSES: Record<string, Harness> = {
   pi: {
@@ -102,10 +125,25 @@ export const HARNESSES: Record<string, Harness> = {
     // pi selects a configured provider explicitly; the resolved model is passed
     // for selection when an agent declares a provider (a default agent runs
     // `pi -p <prompt>` and uses pi's own built-in default).
+    // `--no-approve` is pi's half of the /workspace rule (#153): it ignores
+    // project-local files for the run, so `/workspace/.pi/*`, project extensions
+    // and project skills stay out. Nothing `e` delivers comes from there - its
+    // skills are mounted under the runtime user's home - and the default
+    // `defaultProjectTrust: "ask"` already behaves this way in non-interactive
+    // mode, which makes this the rule for what was the default's doing.
     buildCommand: (prompt: string, model?: string) =>
       model
-        ? ['pi', '-p', prompt, '--provider', PI_PROVIDER_ID, '--model', model]
-        : ['pi', '-p', prompt],
+        ? [
+            'pi',
+            '--no-approve',
+            '-p',
+            prompt,
+            '--provider',
+            PI_PROVIDER_ID,
+            '--model',
+            model,
+          ]
+        : ['pi', '--no-approve', '-p', prompt],
     buildInteractiveCommand: (model?: string) =>
       model ? ['pi', '--provider', PI_PROVIDER_ID, '--model', model] : ['pi'],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
@@ -132,8 +170,15 @@ export const HARNESSES: Record<string, Harness> = {
       '-p',
       prompt,
       '--dangerously-skip-permissions',
+      ...CLAUDE_WORKSPACE_ISOLATION,
     ],
-    buildInteractiveCommand: () => ['claude', '--dangerously-skip-permissions'],
+    buildInteractiveCommand: () => [
+      'claude',
+      '--dangerously-skip-permissions',
+      // The same posture attended: a project's hooks run at session start,
+      // before anyone could look at what they did.
+      ...CLAUDE_WORKSPACE_ISOLATION,
+    ],
     // Claude takes MCP config inline: `--mcp-config '<json>'` with a streamable
     // HTTP server def per server (type "http"). No file, no restart. A remote
     // server may carry auth headers whose `${VAR}` values Claude expands from the
@@ -182,6 +227,16 @@ export const HARNESSES: Record<string, Harness> = {
       // `--skip-git-repo-check` and keeps exec's headless `never` policy.
       // Grounding: `docs/research/harness-unattended-flags.md`.
       '--dangerously-bypass-approvals-and-sandbox',
+      // `.rules` (execpolicy) files are read from `/workspace` as well as from
+      // CODEX_HOME. A project's can only restrict what the run may do, so the
+      // exposure is sabotage rather than execution; `e` ships none of its own,
+      // so ignoring both layers costs nothing today - the day `e` delivers a
+      // `.rules` file through the Store overlay, this flag has to go (#153). What this cannot reach is the project's
+      // `.codex/config.toml`, which is loaded with no trust gate and can start
+      // MCP servers - no flag suppresses it at 0.147.0. Its hooks are gated,
+      // and stay gated: `--dangerously-bypass-hook-trust` is never passed.
+      // See `docs/security/attack-surface.md`.
+      '--ignore-rules',
       ...(model ? ['-m', model] : []),
       prompt,
     ],
