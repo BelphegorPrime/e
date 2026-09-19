@@ -104,6 +104,25 @@ export class FakeRuntime implements ContainerRunner {
       : this.exitCode;
   }
 
+  /**
+   * Output the captured run hands back, consumed one per call (last repeats);
+   * empty by default.
+   */
+  outputs: string[] = [];
+
+  async runCaptured(
+    image: string,
+    options: RunOptions,
+    command: string[]
+  ): Promise<{ exitCode: number; output: string }> {
+    const exitCode = await this.run(image, options, command);
+    const output =
+      this.outputs.length > 1
+        ? (this.outputs.shift() as string)
+        : (this.outputs[0] ?? '');
+    return { exitCode, output };
+  }
+
   createNetwork(name: string): void {
     this.calls.push('createNetwork');
     if (this.throwOn?.op === 'createNetwork')

@@ -1402,7 +1402,11 @@ test('runSpawn: a green verdict opens the PR and the run exits 0', async () => {
     deps,
     makeParams({ gitPlatform: 'github', verify: { command: 'npm test' } })
   );
-  assert.deepEqual(result.verify, { verdict: 'green', exitCode: 0 });
+  assert.deepEqual(result.verify, {
+    verdict: 'green',
+    exitCode: 0,
+    output: '',
+  });
   assert.equal(result.exitCode, 0);
   assert.equal(result.pushed, true);
   assert.equal(pullRequest.specs.length, 1);
@@ -1416,12 +1420,19 @@ test('runSpawn: a red verdict pushes the attempt, opens no PR, and exits non-zer
   runtime.exitCodes = [0, 1];
   const result = await runSpawn(
     deps,
-    makeParams({ gitPlatform: 'github', verify: { command: 'npm test' } })
+    // One attempt, so this pins the verdict's own consequences rather than
+    // the loop's - the loop has its own tests below.
+    makeParams({
+      gitPlatform: 'github',
+      verify: { command: 'npm test' },
+      maxIterations: 1,
+    })
   );
   assert.deepEqual(result.verify, {
     verdict: 'red',
     exitCode: 1,
     reason: 'exit',
+    output: '',
   });
   assert.notEqual(result.exitCode, 0);
   assert.equal(result.captured, true, 'the attempt is committed');
@@ -1484,4 +1495,125 @@ test('runSpawn: a sibling is not gated - it opens no PR, and the parent gate cov
     );
     assert.equal(runtime.runs.length, 1);
   });
+});
+
+/*
+ * The loop (ADR-0016). `exitCodes` scripts the containers in order - agent,
+ * check, agent, check - and `onRun` plays the agent dirtying the worktree, so
+ * each attempt has something to commit.
+ */
+function gatedRun(runtime: FakeRuntime, git: InMemoryGit) {
+  git.setDirty(true);
+  runtime.onRun = options => {
+    if (options.name?.endsWith('-verify')) return;
+    git.setDirty(true, options.volumes![0].host);
+  };
+}
+
+test('runSpawn: a red verdict starts another container carrying the check output as feedback', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 1, 0, 0];
+  runtime.outputs = ['FAIL src/auth.test.ts', ''];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.equal(runtime.runs.length, 4, 'agent, check, agent, check');
+  const secondPrompt = runtime.runs[2].command.join(' ');
+  assert.match(
+    secondPrompt,
+    /Fix the flaky test/,
+    'the task is restated whole'
+  );
+  assert.match(secondPrompt, /attempt 1/);
+  assert.match(secondPrompt, /FAIL src\/auth\.test\.ts/);
+  assert.equal(result.verify?.verdict, 'green');
+  assert.equal(result.exitCode, 0);
+});
+
+test('runSpawn: every attempt leaves a commit, so exhaustion never loses the last one', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 1, 0, 1, 0, 1];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' }, maxIterations: 3 })
+  );
+  assert.equal(runtime.runs.length, 6, 'three attempts, each with its check');
+  assert.equal(git.commits.length, 3);
+  assert.equal(result.outcome, 'exhausted');
+  assert.equal(result.pushed, true, 'the attempts survive for a human to read');
+  assert.notEqual(result.exitCode, 0);
+});
+
+test('runSpawn: the loop reports one entry per attempt', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 1, 0, 0];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.equal(result.iterations?.length, 2);
+  assert.equal(result.iterations?.[0].attempt, 1);
+  assert.equal(result.iterations?.[0].verdict, 'red');
+  assert.equal(result.iterations?.[1].verdict, 'green');
+  assert.ok(result.iterations?.[0].commit, 'each attempt names its commit');
+  assert.equal(result.outcome, 'verified');
+});
+
+test('runSpawn: a harness that dies mid-loop aborts, and that attempt commits nothing', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 1, 137];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.equal(runtime.runs.length, 3, 'no check runs for a dead container');
+  assert.equal(git.commits.length, 1, 'only the attempt that finished');
+  assert.equal(result.outcome, 'aborted');
+  assert.notEqual(result.exitCode, 0);
+});
+
+test('runSpawn: a broken check aborts the loop instead of spending the budget on it', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 127, 0, 0];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.equal(runtime.runs.length, 2);
+  assert.equal(result.outcome, 'aborted');
+});
+
+test('runSpawn: a run with no gate reports no iterations at all', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(result.iterations, undefined);
+  assert.equal(result.outcome, undefined);
+  assert.equal(runtime.runs.length, 1);
+});
+
+test('runSpawn: the launch prompt names the check and warns it runs elsewhere', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  const prompt = (
+    await (async () => {
+      await runSpawn(deps, makeParams({ verify: { command: 'npm test' } }));
+      return runtime.runs[0].command.join(' ');
+    })()
+  ).toString();
+  assert.match(
+    prompt,
+    /npm test/,
+    'the acceptance criterion is stated up front'
+  );
+  assert.match(prompt, /separate container/i);
+  // Telling an agent nobody is watching reads as "be careful" to one and as
+  // "nobody is checking" to another, and the exit code cannot tell us which.
+  assert.doesNotMatch(prompt, /no human|nobody is watching|unattended/i);
 });

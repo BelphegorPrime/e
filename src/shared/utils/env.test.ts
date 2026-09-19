@@ -195,3 +195,31 @@ test('a2aToken is the trimmed E_A2A_TOKEN, undefined when unset or blank', () =>
   process.env[Env.A2A_TOKEN_VAR] = ' secret ';
   assert.equal(env.a2aToken, 'secret');
 });
+
+test('maxIterations: E_MAX_ITERATIONS overrides the default, nonsense falls back', () => {
+  const before = process.env[Env.MAX_ITERATIONS_VAR];
+  try {
+    delete process.env[Env.MAX_ITERATIONS_VAR];
+    assert.equal(
+      new Env().maxIterations,
+      undefined,
+      'unset defers to the default'
+    );
+    for (const [value, expected] of [
+      ['8', 8],
+      ['1', 1],
+      [' 5 ', 5],
+      ['0', undefined],
+      ['-2', undefined],
+      ['2.5', undefined],
+      ['many', undefined],
+      ['', undefined],
+    ] as const) {
+      process.env[Env.MAX_ITERATIONS_VAR] = value;
+      assert.equal(new Env().maxIterations, expected, `"${value}"`);
+    }
+  } finally {
+    if (before === undefined) delete process.env[Env.MAX_ITERATIONS_VAR];
+    else process.env[Env.MAX_ITERATIONS_VAR] = before;
+  }
+});

@@ -71,6 +71,15 @@ export class Env {
    */
   static readonly WORKTREES_DIR_VAR = 'E_WORKTREES_DIR';
 
+  /**
+   * Attempts a gated run may take before it is exhausted (ADR-0016); unset
+   * means the built-in default of 3. Host-side only - it never reaches a
+   * container, and no agent can read or raise its own budget. Scaffolding:
+   * the caps ticket moves this into the Store's `loop` block, where the
+   * trigger policy can override it per trigger.
+   */
+  static readonly MAX_ITERATIONS_VAR = 'E_MAX_ITERATIONS';
+
   /** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
   get localLlamaUrl(): string {
     return process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
@@ -90,6 +99,18 @@ export class Env {
   get runtime(): string | undefined {
     const value = process.env[Env.RUNTIME_VAR]?.trim();
     return value ? value : undefined;
+  }
+
+  /**
+   * The `E_MAX_ITERATIONS` override as a positive integer, or undefined when
+   * unset, blank or unusable - a nonsense value falls back to the default
+   * rather than stopping a run, the per-key habit of `resolveConfig`.
+   */
+  get maxIterations(): number | undefined {
+    const raw = process.env[Env.MAX_ITERATIONS_VAR]?.trim();
+    if (!raw) return undefined;
+    const value = Number(raw);
+    return Number.isInteger(value) && value >= 1 ? value : undefined;
   }
 
   /** The `E_WORKTREES_DIR` override, or undefined when unset or blank. */

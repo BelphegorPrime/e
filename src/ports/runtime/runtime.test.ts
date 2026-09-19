@@ -559,6 +559,7 @@ import type { spawn as spawnType } from 'node:child_process';
 
 interface ScriptedChild {
   stdout?: string;
+  stderr?: string;
   code?: number;
   signal?: string;
 }
@@ -573,11 +574,15 @@ function fakeSpawner(scripts: ScriptedChild[]): {
     calls.push({ args, stdio: (options as { stdio: unknown }).stdio });
     const child = new EventEmitter() as EventEmitter & {
       stdout: PassThrough;
+      stderr: PassThrough;
     };
     child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
     setImmediate(() => {
       if (script.stdout !== undefined) child.stdout.write(script.stdout);
+      if (script.stderr !== undefined) child.stderr.write(script.stderr);
       child.stdout.end();
+      child.stderr.end();
       child.emit('exit', script.code ?? 0, script.signal ?? null);
     });
     return child;
@@ -722,4 +727,52 @@ test('a failing probe is a negative answer, not an error', () => {
   assert.equal(runtime.imageExists('img'), false);
   assert.equal(runtime.volumeExists('v'), false);
   assert.equal(runtime.isAvailable(), false);
+});
+
+// --- runCaptured(): the gate's output has to come back, not just scroll past --
+
+test('runCaptured: resolves the exit code with the combined output, in arrival order', async () => {
+  const { spawn, calls } = fakeSpawner([
+    { stdout: 'running tests\n', stderr: 'FAIL auth\n', code: 1 },
+  ]);
+  const rt = new ContainerRuntime('docker', spawn);
+  const result = await rt.runCaptured('img', { rm: true }, [
+    'sh',
+    '-c',
+    'npm test',
+  ]);
+  assert.equal(result.exitCode, 1);
+  assert.match(result.output, /running tests/);
+  assert.match(result.output, /FAIL auth/);
+  assert.deepEqual(calls[0].args, [
+    'run',
+    '--rm',
+    'img',
+    'sh',
+    '-c',
+    'npm test',
+  ]);
+  assert.deepEqual(
+    calls[0].stdio,
+    ['ignore', 'pipe', 'pipe'],
+    'both streams are read, so neither is lost to the terminal'
+  );
+});
+
+test('runCaptured: the human still sees the check while it runs', async () => {
+  const { spawn } = fakeSpawner([{ stdout: 'tick\n', stderr: 'tock\n' }]);
+  const rt = new ContainerRuntime('docker', spawn);
+  const seen: string[] = [];
+  const out = process.stdout.write.bind(process.stdout);
+  const err = process.stderr.write.bind(process.stderr);
+  process.stdout.write = ((c: string) => (seen.push(String(c)), true)) as never;
+  process.stderr.write = ((c: string) => (seen.push(String(c)), true)) as never;
+  try {
+    await rt.runCaptured('img', {}, ['sh', '-c', 'true']);
+  } finally {
+    process.stdout.write = out;
+    process.stderr.write = err;
+  }
+  assert.ok(seen.join('').includes('tick'), 'stdout is passed through');
+  assert.ok(seen.join('').includes('tock'), 'stderr is passed through');
 });

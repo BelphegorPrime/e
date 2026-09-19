@@ -38,6 +38,14 @@ export class RecordingRunner implements ContainerRunner {
     this.calls.push('run');
     return 0;
   }
+  async runCaptured(
+    _image: string,
+    _opts: RunOptions,
+    _commandArgs: string[]
+  ): Promise<{ exitCode: number; output: string }> {
+    this.calls.push('runCaptured');
+    return { exitCode: 0, output: '' };
+  }
   createNetwork(_name: string): void {
     this.calls.push('createNetwork');
   }

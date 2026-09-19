@@ -48,10 +48,14 @@ export interface VerifyParams {
  * The verdict, divided on **whose fault it could be**: a failing check is the
  * agent's to fix (red), a check that never ran is not (broken).
  */
-export type VerifyOutcome =
+export type VerifyOutcome = {
+  /** The check's combined, interleaved output - what the next attempt is told. */
+  output: string;
+} & (
   | { verdict: 'green'; exitCode: number }
   | { verdict: 'red'; exitCode: number; reason: 'exit' | 'timeout' }
-  | { verdict: 'broken'; exitCode: number; reason: string };
+  | { verdict: 'broken'; exitCode: number; reason: string }
+);
 
 /**
  * Exit codes that mean the check never ran, so the failure cannot be the
@@ -120,31 +124,41 @@ export async function runVerify(
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let exitCode: number;
+  let output: string;
   try {
-    const running = deps.runtime.run(
+    const running = deps.runtime.runCaptured(
       params.verify.image ?? params.harnessImage,
       options,
       ['sh', '-c', params.verify.command]
     );
-    exitCode =
+    const result =
       timeoutMs === undefined
         ? await running
-        : await new Promise<number>((resolve, reject) => {
-            timer = setTimeout(() => {
-              timedOut = true;
-              // The container is all that still holds the check; removing it
-              // is what makes `running` settle in production.
-              deps.runtime.removeContainer(params.containerName);
-              resolve(VERIFY_TIMEOUT_EXIT_CODE);
-            }, timeoutMs);
-            // Attaching handlers here also means a rejection arriving after
-            // the timeout is handled rather than unhandled.
-            running.then(resolve, reject);
-          });
+        : await new Promise<{ exitCode: number; output: string }>(
+            (resolve, reject) => {
+              timer = setTimeout(() => {
+                timedOut = true;
+                // The container is all that still holds the check; removing it
+                // is what makes `running` settle in production.
+                deps.runtime.removeContainer(params.containerName);
+                resolve({ exitCode: VERIFY_TIMEOUT_EXIT_CODE, output: '' });
+              }, timeoutMs);
+              // Attaching handlers here also means a rejection arriving after
+              // the timeout is handled rather than unhandled.
+              running.then(resolve, reject);
+            }
+          );
+    exitCode = result.exitCode;
+    output = result.output;
   } catch (err) {
     // The port rejects only when the engine itself will not start, which is
     // as far from the agent's fault as a failure gets.
-    return { verdict: 'broken', exitCode: 1, reason: errorMessage(err) };
+    return {
+      verdict: 'broken',
+      exitCode: 1,
+      reason: errorMessage(err),
+      output: '',
+    };
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -153,10 +167,11 @@ export async function runVerify(
       verdict: 'red',
       exitCode: VERIFY_TIMEOUT_EXIT_CODE,
       reason: 'timeout',
+      output,
     };
   }
-  if (exitCode === 0) return { verdict: 'green', exitCode };
+  if (exitCode === 0) return { verdict: 'green', exitCode, output };
   const broken = BROKEN_EXIT_CODES[exitCode];
-  if (broken) return { verdict: 'broken', exitCode, reason: broken };
-  return { verdict: 'red', exitCode, reason: 'exit' };
+  if (broken) return { verdict: 'broken', exitCode, reason: broken, output };
+  return { verdict: 'red', exitCode, reason: 'exit', output };
 }

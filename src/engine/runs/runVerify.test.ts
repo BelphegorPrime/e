@@ -26,7 +26,12 @@ test('runVerify: a check that exits 0 is green', async () => {
 test('runVerify: a check that exits non-zero is red, carrying its exit code', async () => {
   const runtime = new FakeRuntime(1);
   const outcome = await runVerify({ runtime }, params);
-  assert.deepEqual(outcome, { verdict: 'red', exitCode: 1, reason: 'exit' });
+  assert.deepEqual(outcome, {
+    verdict: 'red',
+    exitCode: 1,
+    reason: 'exit',
+    output: '',
+  });
 });
 
 test('runVerify: the check runs in the harness image, against the worktree, through sh -c', async () => {
@@ -115,6 +120,7 @@ test(
       verdict: 'red',
       exitCode: 124,
       reason: 'timeout',
+      output: '',
     });
     assert.deepEqual(runtime.removedContainers, ['e-agent-slug-1-verify']);
   }
@@ -175,4 +181,17 @@ test('runVerify: cache without a volume name mounts nothing', async () => {
   );
   assert.deepEqual(runtime.createdVolumes, []);
   assert.equal(runtime.options?.volumes?.length, 1);
+});
+
+test('runVerify: the verdict carries the output, because the next iteration is told it', async () => {
+  const runtime = new FakeRuntime(1);
+  runtime.outputs = ['FAIL src/auth.test.ts\n  expected 200, got 401'];
+  const outcome = await runVerify({ runtime }, params);
+  assert.match(outcome.output, /expected 200, got 401/);
+});
+
+test('runVerify: a green check carries its output too - nothing reads it, but nothing has to guess', async () => {
+  const runtime = new FakeRuntime(0);
+  runtime.outputs = ['12 passing'];
+  assert.equal((await runVerify({ runtime }, params)).output, '12 passing');
 });

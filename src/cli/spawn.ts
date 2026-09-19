@@ -59,6 +59,7 @@ import { siblingSummaryLine } from '../engine/runs/runSiblings.js';
 import { mergeLanded } from '../engine/runs/runMergeBack.js';
 import {
   CANCELED_EXIT_CODE,
+  type IterationOutcome,
   type RunSpawnResult,
 } from '../engine/runs/runSpawn.js';
 
@@ -249,6 +250,7 @@ export function gatherSpawnFacts(
     // check is the only thing that ever mounts it.
     verify: config.verify,
     cacheVolume: verifyCacheVolume(root),
+    maxIterations: env.maxIterations,
   };
 }
 
@@ -368,6 +370,20 @@ export interface ReportLine {
  * tells the user is asserted directly instead of by capturing stdout - the
  * whole tail of the spawn action used to be unreachable from a test.
  */
+/** One attempt of a gated run, as the human reads it. */
+function iterationSummaryLine(iteration: IterationOutcome): string {
+  const head = `Attempt ${iteration.attempt}: `;
+  if (iteration.verdict === undefined) {
+    // No verdict means the attempt never reached the check.
+    return `${head}the harness exited ${iteration.harnessExitCode}, nothing committed.`;
+  }
+  if (iteration.verdict === 'green') return `${head}verify green.`;
+  if (iteration.verdict === 'broken') {
+    return `${head}the check could not run (exited ${iteration.verifyExitCode}).`;
+  }
+  return `${head}verify red (exited ${iteration.verifyExitCode}).`;
+}
+
 export function spawnReport(result: RunSpawnResult): ReportLine[] {
   if (result.error) return [{ level: 'error', text: result.error }];
   const lines: ReportLine[] = [];
@@ -385,6 +401,33 @@ export function spawnReport(result: RunSpawnResult): ReportLine[] {
       level: 'success',
       text: `Pull request: ${result.pullRequestUrl}`,
     });
+  }
+  // The loop, one line per attempt, then how it ended - stated, never derived
+  // from the last entry (ADR-0016). Bounded by the iteration cap, so it cannot
+  // run away.
+  for (const iteration of result.iterations ?? []) {
+    lines.push({
+      level: iteration.verdict === 'green' ? 'success' : 'info',
+      text: iterationSummaryLine(iteration),
+    });
+  }
+  if (result.outcome) {
+    const attempts = result.iterations?.length ?? 0;
+    const plural = attempts === 1 ? 'attempt' : 'attempts';
+    lines.push(
+      result.outcome === 'verified'
+        ? {
+            level: 'success',
+            text: `Verified after ${attempts} ${plural}.`,
+          }
+        : {
+            level: 'warn',
+            text:
+              result.outcome === 'exhausted'
+                ? `Exhausted after ${attempts} ${plural}: the check is still red.`
+                : `Aborted after ${attempts} ${plural}.`,
+          }
+    );
   }
   // Siblings this run requested and how their work came back (ticket 07).
   for (const sibling of result.siblings ?? []) {

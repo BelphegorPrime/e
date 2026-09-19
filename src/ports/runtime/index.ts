@@ -122,6 +122,20 @@ export interface ContainerRunner {
   /** Runs the primary agent container in the foreground; resolves with its exit code. */
   run(image: string, opts: RunOptions, commandArgs: string[]): Promise<number>;
 
+  /**
+   * As {@link ContainerRunner.run}, but the container's combined stdout and
+   * stderr come back as well as scrolling past. The verify gate needs them:
+   * its output is what the next iteration is told (ADR-0016), and a stream
+   * that only reached the terminal is gone by then. Separate from `run`
+   * rather than an option on it, because every other caller wants the engine
+   * to own the terminal and nobody else wants the buffer.
+   */
+  runCaptured(
+    image: string,
+    opts: RunOptions,
+    commandArgs: string[]
+  ): Promise<{ exitCode: number; output: string }>;
+
   /** Create a private container network. Throws on failure. */
   createNetwork(name: string): void;
   /**
@@ -442,6 +456,48 @@ export class ContainerRuntime implements ContainerRunner {
 
       child.on('exit', (code, signal) => {
         resolve(signal ? 1 : (code ?? 0));
+      });
+    });
+  }
+
+  /**
+   * {@link ContainerRunner.runCaptured}: pipe both streams, tee each chunk to
+   * this process's own stdio so a human still watches the check live, and keep
+   * one combined buffer in arrival order - splitting the streams would lose
+   * the interleaving that makes a failure readable.
+   */
+  runCaptured(
+    image: string,
+    opts: RunOptions,
+    commandArgs: string[]
+  ): Promise<{ exitCode: number; output: string }> {
+    const runArgs = this.buildRunArgs(image, opts, commandArgs);
+    log.command(`> ${this.engine} ${runArgs.join(' ')}`);
+
+    return new Promise((resolve, reject) => {
+      const child = this.spawnImpl(this.engine, runArgs, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      });
+      let output = '';
+      const tee = (
+        stream: NodeJS.ReadableStream | null,
+        sink: NodeJS.WriteStream
+      ): void => {
+        stream?.on('data', (chunk: Buffer | string) => {
+          const text = chunk.toString();
+          output += text;
+          sink.write(text);
+        });
+      };
+      tee(child.stdout, process.stdout);
+      tee(child.stderr, process.stderr);
+
+      child.on('error', err => {
+        reject(new Error(`Failed to start ${this.engine}: ${err.message}`));
+      });
+      child.on('exit', (code, signal) => {
+        resolve({ exitCode: signal ? 1 : (code ?? 0), output });
       });
     });
   }

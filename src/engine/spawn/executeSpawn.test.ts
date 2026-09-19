@@ -99,6 +99,14 @@ class RecordingRuntime implements ContainerRunner {
     return 0;
   }
 
+  async runCaptured(
+    image: string,
+    opts: RunOptions,
+    command: string[]
+  ): Promise<{ exitCode: number; output: string }> {
+    return { exitCode: await this.run(image, opts, command), output: '' };
+  }
+
   createNetwork(): void {}
   removeNetwork(): void {}
 

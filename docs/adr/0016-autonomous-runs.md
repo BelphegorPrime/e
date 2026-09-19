@@ -220,6 +220,12 @@ task parameter section 3 ruled out, and whoever typed `e spawn` has Ctrl-C), no
 env var (env here is host plumbing, not a tunable, and an invisible channel is
 the wrong shape for a safety limit). `resources` has no override layer at all.
 
+_Scaffolding, until the `loop` block exists:_ the loop ships ahead of the caps,
+so `E_MAX_ITERATIONS` carries the iteration budget in the meantime, defaulting
+to 3. It is host-side only and reaches no container, so no agent can raise its
+own budget - but it is the env var this section rules out, and the caps work
+replaces it with `loop.maxIterations` rather than keeping both.
+
 **The Store number is a default, not a ceiling.** A ceiling protects against
 nobody: the same human writes both files. The threat model is the agent raising
 its own budget, and **the agent reaches neither file** - `.e` is gitignored, so it
@@ -906,6 +912,11 @@ unchanged, and siblings work in both deployment shapes.
   nested resolvers plus the two new failure cases "block absent" and "block is not
   an object".
 - **`serve`'s port block grows from 2 to 3.**
+- **The `ContainerRunner` port gains `runCaptured`.** The gate's output is what
+  the next attempt is told, and a stream that only reached the terminal is gone
+  by then. It is a second method rather than an option on `run`, because every
+  other caller wants the engine to own the terminal and nobody else wants the
+  buffer; it tees each chunk onward, so a human still watches the check live.
 - **The `Git` port gains a numstat method.** It has no diff surface at all today
   (`runLog` only); the addition is host-side, under ADR-0002.
 - **Two new dependencies**, both cleared against `pkg --sea`: `ulid` (monotonic

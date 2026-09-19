@@ -252,6 +252,12 @@ export interface SpawnFacts {
   /** The store's package-cache volume, used only when `verify.cache` opts in. */
   readonly cacheVolume?: string;
   /**
+   * Attempts a gated run may take (`E_MAX_ITERATIONS`); undefined means the
+   * built-in default. Scaffolding until the caps ticket moves it into the
+   * Store's `loop` block.
+   */
+  readonly maxIterations?: number;
+  /**
    * The store's `localRuntimes` (`config.json`): a stack with none renders no
    * model-registration service, so bringing it up waits for nothing.
    */

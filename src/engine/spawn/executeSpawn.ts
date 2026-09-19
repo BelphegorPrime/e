@@ -267,6 +267,7 @@ export async function executeSpawn(
       maxSiblings: facts.maxSiblings,
       verify: facts.verify,
       cacheVolume: facts.cacheVolume,
+      maxIterations: facts.maxIterations,
       parent: sibling
         ? {
             worktreePath: sibling.parent.worktreePath,

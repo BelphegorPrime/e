@@ -735,3 +735,64 @@ test('spawnReport: a sibling whose work landed is info, one that did not is a wa
     ]
   );
 });
+
+test('spawnReport: a gated run prints one line per attempt, then how the loop ended', () => {
+  const lines = spawnReport({
+    ran: true,
+    exitCode: 0,
+    branch: 'e/demo/fix-1',
+    iterations: [
+      {
+        attempt: 1,
+        harnessExitCode: 0,
+        commit: 'aaa',
+        verdict: 'red',
+        verifyExitCode: 1,
+      },
+      {
+        attempt: 2,
+        harnessExitCode: 0,
+        commit: 'bbb',
+        verdict: 'green',
+        verifyExitCode: 0,
+      },
+    ],
+    outcome: 'verified',
+  }).map(l => l.text);
+  assert.ok(lines.some(t => /Attempt 1: verify red \(exited 1\)/.test(t)));
+  assert.ok(lines.some(t => /Attempt 2: verify green/.test(t)));
+  assert.ok(lines.some(t => /Verified after 2 attempts/.test(t)));
+});
+
+test('spawnReport: an exhausted run says so, and a dead harness is named as aborted', () => {
+  const exhausted = spawnReport({
+    ran: true,
+    exitCode: 1,
+    branch: 'e/demo/fix-1',
+    iterations: [
+      { attempt: 1, harnessExitCode: 0, verdict: 'red', verifyExitCode: 1 },
+    ],
+    outcome: 'exhausted',
+  }).map(l => l.text);
+  assert.ok(exhausted.some(t => /Exhausted after 1 attempt/.test(t)));
+
+  const aborted = spawnReport({
+    ran: true,
+    exitCode: 1,
+    branch: 'e/demo/fix-1',
+    iterations: [{ attempt: 2, harnessExitCode: 137 }],
+    outcome: 'aborted',
+  }).map(l => l.text);
+  assert.ok(aborted.some(t => /Attempt 2: the harness exited 137/.test(t)));
+  assert.ok(aborted.some(t => /Aborted/.test(t)));
+});
+
+test('spawnReport: a run with no gate says nothing about attempts', () => {
+  const lines = spawnReport({
+    ran: true,
+    exitCode: 0,
+    branch: 'e/demo/fix-1',
+    pushed: true,
+  }).map(l => l.text);
+  assert.ok(!lines.some(t => /Attempt|Verified|Exhausted/.test(t)));
+});

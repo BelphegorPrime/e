@@ -17,6 +17,7 @@ import {
   type RunName,
 } from '../../core/identity/runName.js';
 import { runVerify, type VerifyOutcome } from './runVerify.js';
+import { verifyFeedback } from './verifyFeedback.js';
 
 import { waitForAllReady, type ReadinessPolicy } from './runSidecars.js';
 import { worktreePathFor } from './worktreesDir.js';
@@ -50,6 +51,13 @@ export type { ReadinessPolicy } from './runSidecars.js';
 export const CANCELED_EXIT_CODE = 143;
 
 /**
+ * Attempts a gated run takes before it is exhausted, when nothing says
+ * otherwise (ADR-0016). Three, because an agent that has failed the same check
+ * three times is usually stuck, and each attempt is a full harness run.
+ */
+export const DEFAULT_MAX_ITERATIONS = 3;
+
+/**
  * The exit code of a run whose gate did not come back green (ADR-0016): red or
  * broken alike, for now. The caps ticket splits it into `1` aborted and `2`
  * exhausted, which is the distinction a caller branches on.
@@ -68,8 +76,20 @@ export const RUN_GIT_INSTRUCTIONS =
  * The one-shot launch prompt: e's worktree rules, the role contract (ADR-0013:
  * check `$E_ROLE` / `$E_BROKER_URL`, no marker files), then the task itself.
  */
-export function launchPrompt(prompt: string, role: RunRole = 'parent'): string {
-  return `${RUN_GIT_INSTRUCTIONS}\n${runRoleInstructions(role)}\n\n${prompt}`;
+export function launchPrompt(
+  prompt: string,
+  role: RunRole = 'parent',
+  verify?: VerifyConfig
+): string {
+  // Iteration 1 states the acceptance criterion up front, or the first attempt
+  // flies blind against a bar that was knowable in advance - with the caveat
+  // that the check runs in a container this one cannot reproduce (the harness
+  // images are alpine/musl and the check installs its own dependencies), so
+  // failing to run it locally says nothing about the work.
+  const gate = verify
+    ? `\n\nWhen your run ends, e runs \`${verify.command}\` in a separate container against this worktree; its exit code decides whether the work is accepted. That container is not this one - do not assume you can run the command here.`
+    : '';
+  return `${RUN_GIT_INSTRUCTIONS}\n${runRoleInstructions(role)}${gate}\n\n${prompt}`;
 }
 
 /** What the orchestrator needs to build a run. */
@@ -167,6 +187,13 @@ export interface RunSpawnParams {
   /** The Store's package-cache volume, when the verify declaration opts in. */
   cacheVolume?: string;
   /**
+   * Attempts a gated run may take before it is exhausted; default
+   * {@link DEFAULT_MAX_ITERATIONS}. Three means three harness runs in total,
+   * not one plus three retries. Scaffolding: the caps ticket replaces this
+   * with the Store's `loop` block and the trigger's override.
+   */
+  maxIterations?: number;
+  /**
    * How this run hosts siblings (with a broker): the poll/readiness pacing,
    * what every sibling `e spawn` inherits from this invocation, and the
    * launcher. Required whenever `broker` is set - there is no default
@@ -179,6 +206,23 @@ export interface RunSpawnParams {
     passthroughEnv?: Record<string, string>;
     launch: ChildLauncher;
   };
+}
+
+/** How a gated run's loop ended (ADR-0016). */
+export type LoopOutcome = 'verified' | 'exhausted' | 'aborted';
+
+/** What one attempt of the loop did. */
+export interface IterationOutcome {
+  /** 1-based; the same ordinal the agent is told. */
+  attempt: number;
+  /** What the harness container exited with - liveness, never a verdict. */
+  harnessExitCode: number;
+  /** The commit this attempt left, absent when the container died. */
+  commit?: string;
+  /** The check's verdict, absent when the attempt never reached it. */
+  verdict?: VerifyOutcome['verdict'];
+  /** What the check exited with. */
+  verifyExitCode?: number;
 }
 
 /** Orchestrated run output. */
@@ -200,6 +244,18 @@ export interface RunSpawnResult {
   siblings?: SiblingOutcome[];
   /** The gate's verdict, for a run that declared one (ADR-0016). */
   verify?: VerifyOutcome;
+  /**
+   * One entry per attempt, for a gated run (ADR-0016); undefined without a
+   * gate, so a run that declared none produces exactly the result it always
+   * did, with no new field for a caller to read.
+   */
+  iterations?: IterationOutcome[];
+  /**
+   * How the loop ended, stated rather than derived from the last entry -
+   * the report leads with it, and reconstructing it is the kind of inference
+   * that goes wrong.
+   */
+  outcome?: LoopOutcome;
   error?: string;
 }
 
@@ -460,14 +516,6 @@ export async function runSpawn(
       consumer.start();
     }
 
-    // Build command.
-    const command = params.interactive
-      ? params.harness.buildInteractiveCommand(params.model)
-      : params.harness.buildCommand(
-          launchPrompt(params.prompt, role),
-          params.model
-        );
-
     // A cancel that arrived before the container exists ends the run here:
     // nothing ran, nothing to commit (ADR-0015).
     if (params.abort?.aborted) {
@@ -488,23 +536,114 @@ export async function runSpawn(
     // A sibling is now identifiable: report it running under its branch.
     report({ status: 'running', branch });
 
-    // Execute the agent container in the foreground. A cancel while it runs
-    // removes the container, so `run` returns (non-zero) and teardown follows.
     const onAbort = (): void => {
       log.warn(`Run ${run.name} canceled: stopping its container`);
       deps.runtime.removeContainer(run.name);
     };
-    params.abort?.addEventListener('abort', onAbort, { once: true });
-    let exitCode: number;
-    try {
-      exitCode = await deps.runtime.run(params.imageTag, runOptions, [
-        ...command,
-        ...(params.mcpArgs ?? []),
-      ]);
-    } finally {
-      params.abort?.removeEventListener('abort', onAbort);
+
+    // The loop (ADR-0016): one attempt is launch -> harness run -> commit ->
+    // verify -> feedback, in a fresh container each time, with the worktree
+    // carrying the context. A run with no gate is a loop of length one, which
+    // is exactly what a run has always been - so nothing below changes for it.
+    const gated = !!params.verify && !params.sibling && !params.interactive;
+    const maxIterations = gated
+      ? (params.maxIterations ?? DEFAULT_MAX_ITERATIONS)
+      : 1;
+
+    let exitCode = 0;
+    let captured = false;
+    let verifyOutcome: VerifyOutcome | undefined;
+    let feedback = '';
+    const iterations: IterationOutcome[] = [];
+    let outcome: LoopOutcome = 'exhausted';
+
+    for (let attempt = 1; attempt <= maxIterations; attempt++) {
+      const command = params.interactive
+        ? params.harness.buildInteractiveCommand(params.model)
+        : params.harness.buildCommand(
+            // The task is restated in full every time: a fresh container has
+            // no conversational memory, and the feedback is a suffix so the
+            // composition above it stays intact.
+            launchPrompt(params.prompt, role, params.verify) + feedback,
+            params.model
+          );
+
+      // Execute the agent container in the foreground. A cancel while it runs
+      // removes the container, so `run` returns (non-zero) and teardown follows.
+      params.abort?.addEventListener('abort', onAbort, { once: true });
+      try {
+        exitCode = await deps.runtime.run(params.imageTag, runOptions, [
+          ...command,
+          ...(params.mcpArgs ?? []),
+        ]);
+      } finally {
+        params.abort?.removeEventListener('abort', onAbort);
+      }
+      if (params.abort?.aborted && exitCode === 0)
+        exitCode = CANCELED_EXIT_CODE;
+
+      // Liveness, never a verdict: the container died, so nothing of this
+      // attempt is committed and the loop does not retry - that would start a
+      // fresh container on top of a half-finished edit nobody reconciled.
+      if (exitCode !== 0) {
+        if (gated) {
+          iterations.push({ attempt, harnessExitCode: exitCode });
+          outcome = 'aborted';
+        }
+        break;
+      }
+
+      if (deps.git.isDirty(worktreePath)) {
+        // With a merge-back conflict still in progress this commit concludes
+        // it as the merge commit - with whatever the agent left in the files.
+        deps.git.commitAll(worktreePath, `e: run output for ${branch}`);
+        captured = true;
+      }
+
+      if (!gated) break;
+
+      // The gate, after the commit: the check installs its own dependencies
+      // into the worktree, so checking afterwards is what keeps them out of
+      // the run's history.
+      gateRan = true;
+      verifyOutcome = await runVerify(
+        { runtime: deps.runtime },
+        {
+          verify: params.verify!,
+          worktreePath,
+          harnessImage: params.imageTag,
+          containerName: verifyContainerFor(run),
+          netns: runOptions.netns,
+          networks: runOptions.networks,
+          cacheVolume: params.cacheVolume,
+        }
+      );
+      iterations.push({
+        attempt,
+        harnessExitCode: exitCode,
+        commit: deps.git.headSha(worktreePath),
+        verdict: verifyOutcome.verdict,
+        verifyExitCode: verifyOutcome.exitCode,
+      });
+
+      if (verifyOutcome.verdict === 'green') {
+        outcome = 'verified';
+        break;
+      }
+      if (verifyOutcome.verdict === 'broken') {
+        // Iterating against a check that never ran burns the budget to learn
+        // nothing, and reports a red the agent cannot act on.
+        outcome = 'aborted';
+        break;
+      }
+      feedback = verifyFeedback({
+        attempt,
+        command: params.verify!.command,
+        exitCode: verifyOutcome.exitCode,
+        output: verifyOutcome.output,
+        timedOut: verifyOutcome.reason === 'timeout',
+      });
     }
-    if (params.abort?.aborted && exitCode === 0) exitCode = CANCELED_EXIT_CODE;
 
     // The agent is done: stop taking sibling requests and wait for the
     // siblings in flight (each is merged back as it exits), so nothing of
@@ -514,19 +653,11 @@ export async function runSpawn(
       consumerStopped = true;
     }
 
-    // Commit when the run exited 0 and produced changes; push only a run of
-    // the user's own - a sibling's work reaches the parent by merge-back.
-    let captured = false;
+    // Push a run of the user's own - a sibling's work reaches the parent by
+    // merge-back.
     let pushed = false;
     let pushWarning: string | undefined;
-    let verifyOutcome: VerifyOutcome | undefined;
     if (exitCode === 0) {
-      if (deps.git.isDirty(worktreePath)) {
-        // With a merge-back conflict still in progress this commit concludes
-        // it as the merge commit - with whatever the agent left in the files.
-        deps.git.commitAll(worktreePath, `e: run output for ${branch}`);
-        captured = true;
-      }
       // The tree is quiet and committed: the last retry of every merge-back
       // held over files in flight (ticket 07), before the branch is pushed so
       // the merge commits travel with it. Each retry rewrites its report in
@@ -540,25 +671,6 @@ export async function runSpawn(
           );
           captured = true;
         }
-      }
-      // The gate (ADR-0016), between the last commit and the push: the check
-      // installs its own dependencies into the worktree, so running it after
-      // the commits is what keeps them out of the run's history. A sibling
-      // opens no PR and an interactive run has its human, so neither is gated.
-      if (params.verify && !params.sibling && !params.interactive) {
-        gateRan = true;
-        verifyOutcome = await runVerify(
-          { runtime: deps.runtime },
-          {
-            verify: params.verify,
-            worktreePath,
-            harnessImage: params.imageTag,
-            containerName: verifyContainerFor(run),
-            netns: runOptions.netns,
-            networks: runOptions.networks,
-            cacheVolume: params.cacheVolume,
-          }
-        );
       }
       if (
         !params.sibling &&
@@ -624,6 +736,7 @@ export async function runSpawn(
       pullRequestWarning,
       ...(consumer ? { siblings: consumer.outcomes } : {}),
       ...(verifyOutcome ? { verify: verifyOutcome } : {}),
+      ...(gated ? { iterations, outcome } : {}),
     };
   } catch (err) {
     report({ status: 'failed', branch, error: errorMessage(err) });
