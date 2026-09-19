@@ -232,6 +232,17 @@ export async function executeSpawn(
   // One-shot or TUI follows the prompt (see isInteractiveRun).
   const interactive = isInteractiveRun(facts);
   const runOptions: RunOptions = {
+    // Container limits apply to every run, interactive included: a manual
+    // spawn can take the host down exactly as easily as a triggered one.
+    ...(facts.resources?.memory !== undefined
+      ? { memory: facts.resources.memory }
+      : {}),
+    ...(facts.resources?.cpus !== undefined
+      ? { cpus: facts.resources.cpus }
+      : {}),
+    ...(facts.resources?.pidsLimit !== undefined
+      ? { pidsLimit: facts.resources.pidsLimit }
+      : {}),
     interactive,
     headlessTty: facts.headlessTty,
     rm: facts.rm,
@@ -267,7 +278,7 @@ export async function executeSpawn(
       maxSiblings: facts.maxSiblings,
       verify: facts.verify,
       cacheVolume: facts.cacheVolume,
-      maxIterations: facts.maxIterations,
+      loop: facts.loop,
       parent: sibling
         ? {
             worktreePath: sibling.parent.worktreePath,

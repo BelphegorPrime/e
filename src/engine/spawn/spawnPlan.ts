@@ -40,7 +40,12 @@ import { planMcpSelection, type McpServer } from '../../core/mcp/index.js';
 import type { Mount } from '../../core/mount.js';
 import type { SiblingSpawn } from '../../shared/utils/env.js';
 import type { LocalRuntime } from '../../core/localRuntimes.js';
-import type { GitPlatform, VerifyConfig } from '../../core/store/config.js';
+import type {
+  GitPlatform,
+  LoopCaps,
+  ResourceCaps,
+  VerifyConfig,
+} from '../../core/store/config.js';
 import {
   defaultBrokerPlan,
   type BrokerPlan,
@@ -251,12 +256,10 @@ export interface SpawnFacts {
   readonly verify?: VerifyConfig;
   /** The store's package-cache volume, used only when `verify.cache` opts in. */
   readonly cacheVolume?: string;
-  /**
-   * Attempts a gated run may take (`E_MAX_ITERATIONS`); undefined means the
-   * built-in default. Scaffolding until the caps ticket moves it into the
-   * Store's `loop` block.
-   */
-  readonly maxIterations?: number;
+  /** The store's `loop` block (`config.json`): the attempt budget and the wall clocks (ADR-0016). */
+  readonly loop?: LoopCaps;
+  /** The store's `resources` block: container limits for every run (ADR-0016). */
+  readonly resources?: ResourceCaps;
   /**
    * The store's `localRuntimes` (`config.json`): a stack with none renders no
    * model-registration service, so bringing it up waits for nothing.

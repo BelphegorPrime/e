@@ -42,6 +42,12 @@ export interface VerifyParams {
    * concurrent runs share it, which npm tolerates and pip may not.
    */
   cacheVolume?: string;
+  /**
+   * The Store's container limits (ADR-0016). The check runs a foreign
+   * repository's test suite, so it is the larger OOM risk of the two
+   * containers and is capped like the agent.
+   */
+  resources?: { memory?: string; cpus?: number; pidsLimit?: number };
 }
 
 /**
@@ -115,6 +121,15 @@ export async function runVerify(
         : []),
     ],
     ...(cached ? { env: cacheEnv() } : {}),
+    ...(params.resources?.memory !== undefined
+      ? { memory: params.resources.memory }
+      : {}),
+    ...(params.resources?.cpus !== undefined
+      ? { cpus: params.resources.cpus }
+      : {}),
+    ...(params.resources?.pidsLimit !== undefined
+      ? { pidsLimit: params.resources.pidsLimit }
+      : {}),
     ...(networked && params.netns ? { netns: params.netns } : {}),
     ...(networked && params.networks?.length
       ? { networks: [...params.networks] }

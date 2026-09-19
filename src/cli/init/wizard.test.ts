@@ -1,3 +1,7 @@
+import {
+  DEFAULT_LOOP_CAPS,
+  DEFAULT_RESOURCE_CAPS,
+} from '../../core/store/config.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HARNESSES } from '../../core/harness/index.js';
@@ -27,6 +31,8 @@ function state(): InitState {
     currentModels: WIZARD_STATE.currentModels,
     currentLocalRuntimes: WIZARD_STATE.currentLocalRuntimes,
     currentSiblingArtifacts: ['node_modules'],
+    currentResources: DEFAULT_RESOURCE_CAPS,
+    currentLoop: DEFAULT_LOOP_CAPS,
     currentMaxSiblings: 3,
     existingEnvContent: undefined,
     runtimeCatalogs: WIZARD_STATE.runtimeCatalogs,

@@ -17,7 +17,12 @@ import { SHIPPED_MCP_SERVERS } from '../../core/mcp/index.js';
 import { SHIPPED_SKILLS } from '../../core/skill/index.js';
 import type { HardwareVendor } from '../../ports/hardware/index.js';
 import type { ModelCatalogEntry } from '../../core/modelStatus.js';
-import type { GitPlatform } from '../../core/store/config.js';
+import type {
+  GitPlatform,
+  VerifyConfig,
+  ResourceCaps,
+  LoopCaps,
+} from '../../core/store/config.js';
 import {
   LOCAL_RUNTIMES,
   composeModelCatalog,
@@ -100,6 +105,14 @@ export interface InitState {
   currentSiblingArtifacts: string[];
   /** The configured fan-out bound for siblings (ADR-0013), kept as is by a re-init. */
   currentMaxSiblings: number;
+  /**
+   * The configured gate and caps (ADR-0016), kept as is by a re-init. The
+   * wizard never asks about them and `writeConfig` replaces the whole file, so
+   * anything not carried here is lost on the next `e init`.
+   */
+  currentVerify?: VerifyConfig;
+  currentResources: ResourceCaps;
+  currentLoop: LoopCaps;
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
   /**
@@ -178,6 +191,9 @@ export interface InitPlan {
     gitPlatform?: GitPlatform;
     siblingArtifacts: string[];
     maxSiblings: number;
+    verify?: VerifyConfig;
+    resources: ResourceCaps;
+    loop: LoopCaps;
   };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
@@ -406,6 +422,9 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       // must carry it over rather than reset it.
       siblingArtifacts: state.currentSiblingArtifacts,
       maxSiblings: state.currentMaxSiblings,
+      ...(state.currentVerify ? { verify: state.currentVerify } : {}),
+      resources: state.currentResources,
+      loop: state.currentLoop,
     },
     defaultHarness,
     models,

@@ -776,3 +776,47 @@ test('runCaptured: the human still sees the check while it runs', async () => {
   assert.ok(seen.join('').includes('tick'), 'stdout is passed through');
   assert.ok(seen.join('').includes('tock'), 'stderr is passed through');
 });
+
+// --- resource caps (ADR-0016) ------------------------------------------------
+
+test('buildRunArgs: memory pins --memory-swap to the same value', () => {
+  // Without the pin Docker allows as much again in swap, so `memory` would not
+  // mean what it says.
+  assert.deepEqual(argsFor({ memory: '4g' }), [
+    'run',
+    '--memory',
+    '4g',
+    '--memory-swap',
+    '4g',
+    'img',
+  ]);
+});
+
+test('buildRunArgs: cpus and pidsLimit reach the engine', () => {
+  assert.deepEqual(argsFor({ cpus: 2, pidsLimit: 2048 }), [
+    'run',
+    '--cpus',
+    '2',
+    '--pids-limit',
+    '2048',
+    'img',
+  ]);
+});
+
+test('buildRunArgs: an unset cap emits no flag at all', () => {
+  assert.deepEqual(argsFor({}), ['run', 'img']);
+});
+
+test('startSidecar: e own infrastructure is never capped', () => {
+  const { runtime: rt, calls } = recording();
+  rt.startSidecar({
+    name: 'run-mcp-x',
+    image: 'img',
+    alias: 'x',
+    network: 'net',
+    port: 3000,
+  });
+  const args = calls[0].join(' ');
+  assert.ok(!args.includes('--memory'), 'a limit here breaks e, not the run');
+  assert.ok(!args.includes('--pids-limit'));
+});

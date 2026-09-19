@@ -16,6 +16,9 @@ import {
   isEgressInitialized,
   configFilePath,
   verifyCacheVolume,
+  DEFAULT_LOOP_CAPS,
+  DEFAULT_RESOURCE_CAPS,
+  DEFAULT_VERIFY_TIMEOUT_MS,
   modelsFilePath,
   DEFAULT_HARNESS,
 } from './index.js';
@@ -93,6 +96,8 @@ test('resolveConfig: a missing config yields the built-in defaults', () => {
     siblingArtifacts: ['node_modules'],
     maxSiblings: 3,
     gitPlatform: undefined,
+    resources: DEFAULT_RESOURCE_CAPS,
+    loop: DEFAULT_LOOP_CAPS,
   });
 });
 
@@ -104,6 +109,8 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
     siblingArtifacts: ['node_modules'],
     maxSiblings: 3,
     gitPlatform: undefined,
+    resources: DEFAULT_RESOURCE_CAPS,
+    loop: DEFAULT_LOOP_CAPS,
   });
 });
 
@@ -163,6 +170,8 @@ test('config round-trip: writeConfig then readConfig returns the written value',
         gitPlatform: 'gitlab',
         siblingArtifacts: ['node_modules', 'dist'],
         maxSiblings: 2,
+        resources: DEFAULT_RESOURCE_CAPS,
+        loop: DEFAULT_LOOP_CAPS,
       },
       root
     );
@@ -174,6 +183,8 @@ test('config round-trip: writeConfig then readConfig returns the written value',
       gitPlatform: 'gitlab',
       siblingArtifacts: ['node_modules', 'dist'],
       maxSiblings: 2,
+      resources: DEFAULT_RESOURCE_CAPS,
+      loop: DEFAULT_LOOP_CAPS,
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -190,6 +201,8 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
       siblingArtifacts: ['node_modules'],
       maxSiblings: 3,
       gitPlatform: undefined,
+      resources: DEFAULT_RESOURCE_CAPS,
+      loop: DEFAULT_LOOP_CAPS,
     });
     assert.ok(!fs.existsSync(configFilePath(root)));
   } finally {
@@ -313,6 +326,8 @@ test('resolveConfig: the verify shorthand is a command with no other fields; abs
   assert.equal(resolveConfig(undefined).verify, undefined);
   assert.deepEqual(resolveConfig({ verify: 'npm test' }).verify, {
     command: 'npm test',
+    // The caps own the default, so it is filled here rather than in runVerify.
+    timeoutMs: DEFAULT_VERIFY_TIMEOUT_MS,
   });
 });
 
@@ -358,7 +373,7 @@ test('resolveConfig: a malformed verify field is dropped, the command survives',
         cache: 1,
       },
     }).verify,
-    { command: 'npm test' }
+    { command: 'npm test', timeoutMs: DEFAULT_VERIFY_TIMEOUT_MS }
   );
 });
 
@@ -371,4 +386,82 @@ test('verifyCacheVolume: one stable, engine-legal name per Store', () => {
     'two checkouts named `e` do not share a cache'
   );
   assert.match(a, /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/, 'a legal volume name');
+});
+
+test('resolveConfig: the cap blocks default to the documented set, memory and cpus unset', () => {
+  const config = resolveConfig(undefined);
+  assert.deepEqual(config.loop, {
+    maxIterations: 3,
+    iterationTimeoutMs: 1_800_000,
+    totalTimeoutMs: 10_800_000,
+    softTotalTimeoutMs: 7_200_000,
+  });
+  // Any concrete memory or cpu number is a guess about someone else's
+  // hardware, and `resources` applies to every run - so unset is the default
+  // and a passing build never starts dying on 137. `pidsLimit` is the
+  // exception: a fork bomb takes the box, not just the run.
+  assert.deepEqual(config.resources, { pidsLimit: 2048 });
+});
+
+test('resolveConfig: a cap block that is absent or not an object falls back whole', () => {
+  for (const bad of [undefined, null, 42, 'lots', []]) {
+    assert.deepEqual(
+      resolveConfig({ loop: bad }).loop,
+      DEFAULT_LOOP_CAPS,
+      String(bad)
+    );
+    assert.deepEqual(
+      resolveConfig({ resources: bad }).resources,
+      DEFAULT_RESOURCE_CAPS,
+      String(bad)
+    );
+  }
+});
+
+test('resolveConfig: one malformed cap never costs the rest of its block', () => {
+  assert.deepEqual(
+    resolveConfig({ loop: { maxIterations: 8, iterationTimeoutMs: 'soon' } })
+      .loop,
+    { ...DEFAULT_LOOP_CAPS, maxIterations: 8 }
+  );
+  assert.deepEqual(
+    resolveConfig({ resources: { memory: '4g', cpus: -1, pidsLimit: 0 } })
+      .resources,
+    { memory: '4g', pidsLimit: 2048 }
+  );
+});
+
+test('resolveConfig: a soft mark that could never warn is dropped, not kept', () => {
+  // At or past the hard timeout it never fires, and a setting that silently
+  // does nothing is worse than an absent one.
+  assert.equal(
+    resolveConfig({
+      loop: { totalTimeoutMs: 1000, softTotalTimeoutMs: 1000 },
+    }).loop.softTotalTimeoutMs,
+    undefined
+  );
+  assert.equal(
+    resolveConfig({
+      loop: { totalTimeoutMs: 1000, softTotalTimeoutMs: 2000 },
+    }).loop.softTotalTimeoutMs,
+    undefined
+  );
+  assert.equal(
+    resolveConfig({
+      loop: { totalTimeoutMs: 1000, softTotalTimeoutMs: 900 },
+    }).loop.softTotalTimeoutMs,
+    900
+  );
+});
+
+test('resolveConfig: a declared verify timeout wins over the caps default', () => {
+  assert.equal(
+    resolveConfig({ verify: { command: 'npm test', timeoutMs: 60_000 } }).verify
+      ?.timeoutMs,
+    60_000
+  );
+  assert.equal(
+    resolveConfig({ verify: { command: 'npm test' } }).verify?.timeoutMs,
+    DEFAULT_VERIFY_TIMEOUT_MS
+  );
 });

@@ -796,3 +796,25 @@ test('spawnReport: a run with no gate says nothing about attempts', () => {
   }).map(l => l.text);
   assert.ok(!lines.some(t => /Attempt|Verified|Exhausted/.test(t)));
 });
+
+test('spawnReport: a bad end names the budget that ran out, not just the fact', () => {
+  const lines = spawnReport({
+    ran: true,
+    exitCode: 2,
+    branch: 'e/demo/fix-1',
+    iterations: [{ attempt: 1, harnessExitCode: 137 }],
+    outcome: 'exhausted',
+    reason: 'exhausted:iteration-timeout',
+  }).map(l => l.text);
+  assert.ok(lines.some(t => t.includes('exhausted:iteration-timeout')));
+});
+
+test('spawnReport: the soft time limit is a warning for the human', () => {
+  const lines = spawnReport({
+    ran: true,
+    exitCode: 0,
+    branch: 'e/demo/fix-1',
+    softTimeoutWarning: 'Past the soft time limit (120 min) at attempt 3.',
+  }).map(l => l.text);
+  assert.ok(lines.some(t => /soft time limit/.test(t)));
+});

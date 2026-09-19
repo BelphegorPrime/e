@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  DEFAULT_LOOP_CAPS,
+  DEFAULT_RESOURCE_CAPS,
+} from '../../core/store/config.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +34,8 @@ function state(overrides: Partial<InitState> = {}): InitState {
     currentLocalRuntimes: ['llamacpp'],
     currentSiblingArtifacts: ['node_modules'],
     currentMaxSiblings: 3,
+    currentResources: DEFAULT_RESOURCE_CAPS,
+    currentLoop: DEFAULT_LOOP_CAPS,
     existingEnvContent: undefined,
     runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
@@ -52,6 +58,8 @@ test('planInit: blank or unanswered answers keep the configured current', () => 
     gitPlatform: undefined,
     siblingArtifacts: ['node_modules'],
     maxSiblings: 3,
+    resources: DEFAULT_RESOURCE_CAPS,
+    loop: DEFAULT_LOOP_CAPS,
   });
 });
 
@@ -125,6 +133,8 @@ test('planInit: a named git platform is recorded in the config', () => {
     gitPlatform: 'gitlab',
     siblingArtifacts: ['node_modules'],
     maxSiblings: 3,
+    resources: DEFAULT_RESOURCE_CAPS,
+    loop: DEFAULT_LOOP_CAPS,
   });
 });
 
@@ -454,4 +464,23 @@ test('planInit: --force on an already-canonical .env is a no-op write', () => {
   assert.equal(replay.env.created, false);
   assert.equal(replay.env.changed, false);
   assert.equal(replay.env.content, first.env.content);
+});
+
+test('planInit: a re-init carries the gate and the caps over instead of wiping them', () => {
+  // The wizard never asks about these; they are hand-edited in config.json,
+  // and `writeConfig` replaces the whole file - so anything the plan does not
+  // carry is silently lost on the next `e init`.
+  const current = {
+    currentVerify: { command: 'npm test' },
+    currentResources: { memory: '4g', pidsLimit: 2048 },
+    currentLoop: {
+      maxIterations: 8,
+      iterationTimeoutMs: 1_800_000,
+      totalTimeoutMs: 14_400_000,
+    },
+  };
+  const config = planInit(state(current), {}).config;
+  assert.deepEqual(config.verify, current.currentVerify);
+  assert.deepEqual(config.resources, current.currentResources);
+  assert.deepEqual(config.loop, current.currentLoop);
 });

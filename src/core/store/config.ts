@@ -64,6 +64,60 @@ export type VerifyConfig = {
   cache?: boolean;
 };
 
+/**
+ * Container limits that apply to **every** run, interactive included, and to
+ * the verify container (ADR-0016). Not to sidecars: those are `e`'s own
+ * infrastructure, small and known, and limiting them breaks `e` in a way the
+ * user cannot diagnose.
+ */
+export type ResourceCaps = {
+  /** `--memory`, e.g. `4g`. Unset by default. */
+  memory?: string;
+  /** `--cpus`. Unset by default. */
+  cpus?: number;
+  /** `--pids-limit`; a floor against a fork bomb, not a tuning knob. */
+  pidsLimit: number;
+};
+
+/**
+ * Bounds on the loop (ADR-0016). They shadow one another, so the defaults are
+ * chosen as a set: a run's worst case is
+ * `maxIterations x (iterationTimeoutMs + verify timeout)`, and a
+ * `totalTimeoutMs` below that would make the iteration count a lie.
+ */
+export type LoopCaps = {
+  /** Attempts before the run is exhausted. Three harness runs in total. */
+  maxIterations: number;
+  /** Wall clock per attempt; applies to every non-interactive run. */
+  iterationTimeoutMs: number;
+  /** Wall clock for the whole run; kills mid-attempt. */
+  totalTimeoutMs: number;
+  /**
+   * A mark that only warns, at the attempt boundary, to the human - never
+   * into the prompt. Dropped when it is not below {@link totalTimeoutMs},
+   * where it could never fire.
+   */
+  softTotalTimeoutMs?: number;
+};
+
+/**
+ * The check's wall clock when the declaration names none (ADR-0016). A suite
+ * over 15 minutes is unusual, and a verify timeout is red-and-iterate rather
+ * than an abort, so the default can be tight.
+ */
+export const DEFAULT_VERIFY_TIMEOUT_MS = 15 * 60 * 1000;
+
+/** `resources` when `config.json` sets none: a fork-bomb floor and nothing else. */
+export const DEFAULT_RESOURCE_CAPS: ResourceCaps = { pidsLimit: 2048 };
+
+/** `loop` when `config.json` sets none (ADR-0016). */
+export const DEFAULT_LOOP_CAPS: LoopCaps = {
+  maxIterations: 3,
+  iterationTimeoutMs: 30 * 60 * 1000,
+  totalTimeoutMs: 3 * 60 * 60 * 1000,
+  softTotalTimeoutMs: 2 * 60 * 60 * 1000,
+};
+
 /** Host-only orchestration settings, persisted in `config.json`. */
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
@@ -85,6 +139,10 @@ export type StoreConfig = {
   maxSiblings: number;
   /** The repository's verify command (ADR-0016); absent means no gate and no loop. */
   verify?: VerifyConfig;
+  /** Container limits for every run and for the check (ADR-0016). */
+  resources: ResourceCaps;
+  /** Bounds on the loop (ADR-0016). */
+  loop: LoopCaps;
 };
 
 export type ModelDataEntry = {
@@ -95,6 +153,67 @@ export type ModelDataEntry = {
 };
 
 /**
+ * A positive-integer field, or undefined when absent or unusable - the
+ * per-key habit of {@link resolveConfig}: one bad field never costs the block.
+ */
+function positiveInt(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
+/** A block that is absent, or not an object, resolves to no overrides at all. */
+function asBlock(raw: unknown): Record<string, unknown> {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {};
+}
+
+/** Resolves the `resources` block over {@link DEFAULT_RESOURCE_CAPS}. */
+function resolveResources(raw: unknown): ResourceCaps {
+  const block = asBlock(raw);
+  const memory =
+    typeof block.memory === 'string' && block.memory.length > 0
+      ? block.memory
+      : undefined;
+  const cpus =
+    typeof block.cpus === 'number' && block.cpus > 0 ? block.cpus : undefined;
+  return {
+    ...(memory !== undefined ? { memory } : {}),
+    ...(cpus !== undefined ? { cpus } : {}),
+    pidsLimit: positiveInt(block.pidsLimit) ?? DEFAULT_RESOURCE_CAPS.pidsLimit,
+  };
+}
+
+/** Resolves the `loop` block over {@link DEFAULT_LOOP_CAPS}. */
+function resolveLoop(raw: unknown): LoopCaps {
+  const block = asBlock(raw);
+  const totalTimeoutMs =
+    positiveInt(block.totalTimeoutMs) ?? DEFAULT_LOOP_CAPS.totalTimeoutMs;
+  const soft =
+    positiveInt(block.softTotalTimeoutMs) ??
+    DEFAULT_LOOP_CAPS.softTotalTimeoutMs;
+  // A soft mark at or past the hard one can never fire, so it is dropped
+  // rather than kept as a setting that silently does nothing.
+  const softTotalTimeoutMs =
+    soft !== undefined && soft < totalTimeoutMs ? soft : undefined;
+  if (soft !== undefined && softTotalTimeoutMs === undefined) {
+    log.warn(
+      `Ignoring loop.softTotalTimeoutMs (${soft}ms): it is not below totalTimeoutMs (${totalTimeoutMs}ms), so it could never warn`
+    );
+  }
+  return {
+    maxIterations:
+      positiveInt(block.maxIterations) ?? DEFAULT_LOOP_CAPS.maxIterations,
+    iterationTimeoutMs:
+      positiveInt(block.iterationTimeoutMs) ??
+      DEFAULT_LOOP_CAPS.iterationTimeoutMs,
+    totalTimeoutMs,
+    ...(softTotalTimeoutMs !== undefined ? { softTotalTimeoutMs } : {}),
+  };
+}
+
+/**
  * Resolves the `verify` block: the string shorthand is the command and nothing
  * else, the object form is per-key like the rest of {@link resolveConfig}, so
  * one malformed field never costs the gate. Absent, or without a usable
@@ -103,7 +222,8 @@ export type ModelDataEntry = {
 function resolveVerify(raw: unknown): VerifyConfig | undefined {
   if (raw === undefined) return undefined;
   if (typeof raw === 'string') {
-    if (raw.length > 0) return { command: raw };
+    if (raw.length > 0)
+      return { command: raw, timeoutMs: DEFAULT_VERIFY_TIMEOUT_MS };
     log.warn('Ignoring verify: the command is empty');
     return undefined;
   }
@@ -132,9 +252,11 @@ function resolveVerify(raw: unknown): VerifyConfig | undefined {
   return {
     command: parsed.command,
     // Spread each optional key so a resolved block deep-equals what was
-    // declared: an absent field is an absent key, never `undefined`.
+    // declared: an absent field is an absent key, never `undefined`. The
+    // timeout is the exception - the caps own its default, so it is always
+    // present once resolved and `runVerify` needs no second source for it.
     ...(image !== undefined ? { image } : {}),
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    timeoutMs: timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS,
     ...(network !== undefined ? { network } : {}),
     ...(cache !== undefined ? { cache } : {}),
   };
@@ -189,6 +311,8 @@ export function resolveConfig(raw: unknown): StoreConfig {
     // Spread, not `verify,`: a Store with no gate must resolve to exactly the
     // object it did before this key existed - `{ verify: undefined }` is a key.
     ...(verify ? { verify } : {}),
+    resources: resolveResources(parsed.resources),
+    loop: resolveLoop(parsed.loop),
   };
 }
 

@@ -1,6 +1,11 @@
 import type { Git } from '../../ports/git/index.js';
 import type { PullRequest } from '../../ports/github/index.js';
-import type { GitPlatform, VerifyConfig } from '../../core/store/config.js';
+import type {
+  GitPlatform,
+  LoopCaps,
+  VerifyConfig,
+} from '../../core/store/config.js';
+import { DEFAULT_LOOP_CAPS } from '../../core/store/config.js';
 import type {
   ContainerRunner,
   RunOptions,
@@ -51,18 +56,19 @@ export type { ReadinessPolicy } from './runSidecars.js';
 export const CANCELED_EXIT_CODE = 143;
 
 /**
- * Attempts a gated run takes before it is exhausted, when nothing says
- * otherwise (ADR-0016). Three, because an agent that has failed the same check
- * three times is usually stuck, and each attempt is a full harness run.
+ * A run that ended on something other than its own verdict (ADR-0016): the
+ * harness died, it was OOM-killed, or the check could not run. Generic on
+ * purpose - it is the code `e` already uses for a failure.
  */
-export const DEFAULT_MAX_ITERATIONS = 3;
+export const ABORTED_EXIT_CODE = 1;
 
 /**
- * The exit code of a run whose gate did not come back green (ADR-0016): red or
- * broken alike, for now. The caps ticket splits it into `1` aborted and `2`
- * exhausted, which is the distinction a caller branches on.
+ * A run that spent its budget with the check still red. Distinct from
+ * {@link ABORTED_EXIT_CODE} because it is the one outcome a caller plausibly
+ * branches on: "out of budget, maybe re-queue with more" is a different
+ * reaction from "it broke".
  */
-export const GATE_FAILED_EXIT_CODE = 1;
+export const EXHAUSTED_EXIT_CODE = 2;
 
 /** Readiness polling defaults: up to 30 tries, 1s apart (~30s), overridable per run. */
 const DEFAULT_READINESS_ATTEMPTS = 30;
@@ -187,12 +193,11 @@ export interface RunSpawnParams {
   /** The Store's package-cache volume, when the verify declaration opts in. */
   cacheVolume?: string;
   /**
-   * Attempts a gated run may take before it is exhausted; default
-   * {@link DEFAULT_MAX_ITERATIONS}. Three means three harness runs in total,
-   * not one plus three retries. Scaffolding: the caps ticket replaces this
-   * with the Store's `loop` block and the trigger's override.
+   * The Store's `loop` block (ADR-0016): the attempt budget and the wall
+   * clocks. `iterationTimeoutMs` applies to every non-interactive run, the
+   * rest only where a gate is declared. Absent, the built-in defaults apply.
    */
-  maxIterations?: number;
+  loop?: LoopCaps;
   /**
    * How this run hosts siblings (with a broker): the poll/readiness pacing,
    * what every sibling `e spawn` inherits from this invocation, and the
@@ -210,6 +215,19 @@ export interface RunSpawnParams {
 
 /** How a gated run's loop ended (ADR-0016). */
 export type LoopOutcome = 'verified' | 'exhausted' | 'aborted';
+
+/**
+ * Why it ended that way. Spelled out because the two kills that matter are
+ * indistinguishable from outside: an OOM and our own wall-clock SIGKILL both
+ * end the container on 137, and only the host knows whether a timer fired.
+ */
+export type LoopReason =
+  | 'exhausted:iterations'
+  | 'exhausted:iteration-timeout'
+  | 'exhausted:total-timeout'
+  | 'aborted:oom'
+  | 'aborted:harness-exit'
+  | 'aborted:verify-broken';
 
 /** What one attempt of the loop did. */
 export interface IterationOutcome {
@@ -256,6 +274,13 @@ export interface RunSpawnResult {
    * that goes wrong.
    */
   outcome?: LoopOutcome;
+  /** Why the loop ended that way (ADR-0016). */
+  reason?: LoopReason;
+  /**
+   * The soft total-timeout mark, passed at an attempt boundary. A warning for
+   * the human only: it stops nothing, and it never reaches the prompt.
+   */
+  softTimeoutWarning?: string;
   error?: string;
 }
 
@@ -323,6 +348,9 @@ export async function runSpawn(
   // The gate writes its own dependencies into the worktree, so once it has
   // run, what is left uncommitted there is the check's and not the run's.
   let gateRan = false;
+  // The run's total wall clock (ADR-0016). Hoisted so teardown can drop it on
+  // every path out, including a throw: a live timer outlives the run.
+  let loopTimer: ReturnType<typeof setTimeout> | undefined;
   let brokerSpool: string | undefined;
   const role = params.role ?? 'parent';
   const maxSiblings = params.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
@@ -546,9 +574,8 @@ export async function runSpawn(
     // carrying the context. A run with no gate is a loop of length one, which
     // is exactly what a run has always been - so nothing below changes for it.
     const gated = !!params.verify && !params.sibling && !params.interactive;
-    const maxIterations = gated
-      ? (params.maxIterations ?? DEFAULT_MAX_ITERATIONS)
-      : 1;
+    const caps = params.loop ?? DEFAULT_LOOP_CAPS;
+    const maxIterations = gated ? caps.maxIterations : 1;
 
     let exitCode = 0;
     let captured = false;
@@ -556,8 +583,39 @@ export async function runSpawn(
     let feedback = '';
     const iterations: IterationOutcome[] = [];
     let outcome: LoopOutcome = 'exhausted';
+    let reason: LoopReason = 'exhausted:iterations';
+    let softTimeoutWarning: string | undefined;
+
+    // Which wall clock we pulled the plug on, if either. An OOM and our own
+    // SIGKILL both end the container on 137, so this flag is the only thing
+    // that tells them apart - and `removeContainer` is best-effort, so two
+    // timers expiring at once cost nothing: whoever fires first wins.
+    let killedBy: 'iteration' | 'total' | undefined;
+    const killNow = (which: 'iteration' | 'total') => (): void => {
+      killedBy ??= which;
+      log.warn(`Run ${run.name} hit its ${which} time limit: stopping it`);
+      deps.runtime.removeContainer(run.name);
+    };
+    // The hard total kills mid-attempt on purpose. Checking only at the
+    // boundary cannot keep its promise: with 2h total and 30min per attempt,
+    // one starting at 1h59 still sees budget and runs to 2h29.
+    const totalTimer = params.interactive
+      ? undefined
+      : setTimeout(killNow('total'), caps.totalTimeoutMs);
+    loopTimer = totalTimer;
+    const startedAt = Date.now();
 
     for (let attempt = 1; attempt <= maxIterations; attempt++) {
+      // The soft mark only warns, and only to the human - never into the
+      // prompt, for the same reason the agent is not told its budget.
+      if (
+        caps.softTotalTimeoutMs !== undefined &&
+        attempt > 1 &&
+        Date.now() - startedAt >= caps.softTotalTimeoutMs
+      ) {
+        softTimeoutWarning = `Past the soft time limit (${Math.round(caps.softTotalTimeoutMs / 60000)} min) at attempt ${attempt}; the hard limit is ${Math.round(caps.totalTimeoutMs / 60000)} min.`;
+        log.warn(softTimeoutWarning);
+      }
       const command = params.interactive
         ? params.harness.buildInteractiveCommand(params.model)
         : params.harness.buildCommand(
@@ -571,25 +629,61 @@ export async function runSpawn(
       // Execute the agent container in the foreground. A cancel while it runs
       // removes the container, so `run` returns (non-zero) and teardown follows.
       params.abort?.addEventListener('abort', onAbort, { once: true });
+      // A hung container is the same problem gated or not, so this covers
+      // every non-interactive run; killing a human's live session at half an
+      // hour would be hostile.
+      const iterationTimer = params.interactive
+        ? undefined
+        : setTimeout(killNow('iteration'), caps.iterationTimeoutMs);
       try {
         exitCode = await deps.runtime.run(params.imageTag, runOptions, [
           ...command,
           ...(params.mcpArgs ?? []),
         ]);
       } finally {
+        if (iterationTimer) clearTimeout(iterationTimer);
         params.abort?.removeEventListener('abort', onAbort);
       }
       if (params.abort?.aborted && exitCode === 0)
         exitCode = CANCELED_EXIT_CODE;
 
+      // A kill of ours is a third case, not a crash: the host knows it caused
+      // this one, at a moment of its own choosing, so the worktree holds what
+      // the agent had at minute 30 rather than what survived an unknown fault.
+      // Nothing is fed forward - the run ends - so keeping it is not the same
+      // act as using a half-state as input.
+      if (killedBy) {
+        if (deps.git.isDirty(worktreePath)) {
+          deps.git.commitAll(
+            worktreePath,
+            `e: timed-out attempt ${attempt} for ${branch}`
+          );
+          captured = true;
+        }
+        outcome = 'exhausted';
+        reason =
+          killedBy === 'total'
+            ? 'exhausted:total-timeout'
+            : 'exhausted:iteration-timeout';
+        if (gated) {
+          iterations.push({
+            attempt,
+            harnessExitCode: exitCode,
+            ...(captured ? { commit: deps.git.headSha(worktreePath) } : {}),
+          });
+        }
+        break;
+      }
+
       // Liveness, never a verdict: the container died, so nothing of this
       // attempt is committed and the loop does not retry - that would start a
       // fresh container on top of a half-finished edit nobody reconciled.
       if (exitCode !== 0) {
-        if (gated) {
-          iterations.push({ attempt, harnessExitCode: exitCode });
-          outcome = 'aborted';
-        }
+        outcome = 'aborted';
+        // 137 with no timer of ours fired is the kernel's doing, and too
+        // little memory is not something an attempt can fix.
+        reason = exitCode === 137 ? 'aborted:oom' : 'aborted:harness-exit';
+        if (gated) iterations.push({ attempt, harnessExitCode: exitCode });
         break;
       }
 
@@ -616,6 +710,13 @@ export async function runSpawn(
           netns: runOptions.netns,
           networks: runOptions.networks,
           cacheVolume: params.cacheVolume,
+          // The check runs a foreign repository's test suite, which is the
+          // larger OOM risk of the two containers.
+          resources: {
+            memory: runOptions.memory,
+            cpus: runOptions.cpus,
+            pidsLimit: runOptions.pidsLimit,
+          },
         }
       );
       iterations.push({
@@ -634,6 +735,7 @@ export async function runSpawn(
         // Iterating against a check that never ran burns the budget to learn
         // nothing, and reports a red the agent cannot act on.
         outcome = 'aborted';
+        reason = 'aborted:verify-broken';
         break;
       }
       feedback = verifyFeedback({
@@ -653,10 +755,16 @@ export async function runSpawn(
       consumerStopped = true;
     }
 
+    // The loop is over: drop the total timer, or it outlives the run and keeps
+    // the process alive for its full duration.
+    if (totalTimer) clearTimeout(totalTimer);
+
     // Push a run of the user's own - a sibling's work reaches the parent by
     // merge-back.
     let pushed = false;
     let pushWarning: string | undefined;
+    const canceled =
+      exitCode === CANCELED_EXIT_CODE || params.abort?.aborted === true;
     if (exitCode === 0) {
       // The tree is quiet and committed: the last retry of every merge-back
       // held over files in flight (ticket 07), before the branch is pushed so
@@ -672,26 +780,30 @@ export async function runSpawn(
           captured = true;
         }
       }
-      if (
-        !params.sibling &&
-        (captured || deps.git.hasCommitsBeyondBase(branch, base))
-      ) {
-        try {
-          deps.git.push(branch);
-          pushed = true;
-        } catch (err) {
-          pushWarning = `could not push ${branch}: ${errorMessage(err)}`;
-        }
+    }
+    // The push no longer hangs on the harness's exit code (ADR-0016): an
+    // exhausted run exits non-zero and its attempts are exactly what a human
+    // needs to read, so anything that produced commits travels. A cancel does
+    // not (ADR-0015), and a sibling's work reaches its parent by merge-back.
+    if (
+      !params.sibling &&
+      !canceled &&
+      (captured || deps.git.hasCommitsBeyondBase(branch, base))
+    ) {
+      try {
+        deps.git.push(branch);
+        pushed = true;
+      } catch (err) {
+        pushWarning = `could not push ${branch}: ${errorMessage(err)}`;
       }
     }
 
     // Open a PR/MR when a platform is configured and the branch was pushed.
     let pullRequestUrl: string | undefined;
     let pullRequestWarning: string | undefined;
-    // A verdict that is not green has nothing to propose: the branch is
-    // pushed so the attempt survives, and no PR claims it was accepted.
-    const gateFailed =
-      verifyOutcome !== undefined && verifyOutcome.verdict !== 'green';
+    // A run that did not end verified has nothing to propose: the branch is
+    // pushed so the attempts survive, and no PR claims they were accepted.
+    const gateFailed = gated && outcome !== 'verified';
     if (params.gitPlatform && pushed && deps.pullRequest && !gateFailed) {
       const log = deps.git.runLog(branch);
       const title =
@@ -711,10 +823,13 @@ export async function runSpawn(
       }
     }
 
-    // Since the gate exists, `exitCode` is the *run's* verdict rather than the
-    // harness's, which says only that the process finished (ADR-0016). The
-    // taxonomy of failure codes arrives with the caps ticket.
-    if (gateFailed) exitCode = GATE_FAILED_EXIT_CODE;
+    // For a gated run `exitCode` is the *run's* verdict rather than the
+    // harness's, which says only that the process finished (ADR-0016).
+    // Outside a loop it stays what it always was.
+    if (gated && outcome !== 'verified') {
+      exitCode =
+        outcome === 'exhausted' ? EXHAUSTED_EXIT_CODE : ABORTED_EXIT_CODE;
+    }
 
     report({
       status: 'done',
@@ -736,12 +851,14 @@ export async function runSpawn(
       pullRequestWarning,
       ...(consumer ? { siblings: consumer.outcomes } : {}),
       ...(verifyOutcome ? { verify: verifyOutcome } : {}),
-      ...(gated ? { iterations, outcome } : {}),
+      ...(gated ? { iterations, outcome, reason } : {}),
+      ...(softTimeoutWarning ? { softTimeoutWarning } : {}),
     };
   } catch (err) {
     report({ status: 'failed', branch, error: errorMessage(err) });
     throw err;
   } finally {
+    if (loopTimer) clearTimeout(loopTimer);
     // Best-effort teardown: never mask a result or an aborting error.
     try {
       if (consumer && !consumerStopped) await consumer.stop();

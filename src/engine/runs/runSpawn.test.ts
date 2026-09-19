@@ -33,6 +33,7 @@ import {
 } from '../../sidecars/broker/contract/spool.js';
 import type { ChildLaunch, ChildLauncher } from './childRun.js';
 import { Env } from '../../shared/utils/env.js';
+import { DEFAULT_LOOP_CAPS } from '../../core/store/config.js';
 
 /** A `PullRequest` fake that records what the orchestrator asked it to open. */
 class FakePullRequest implements PullRequest {
@@ -293,8 +294,22 @@ test('pushes the branch to origin when the run exits 0 with commits', async () =
   assert.equal(result.pushed, true);
 });
 
-test('does not push when the run exits non-zero', async () => {
-  const { deps, git } = makeDeps({ runtime: new FakeRuntime(1) });
+test('a run that exited non-zero still pushes what it committed (ADR-0016)', async () => {
+  // The push used to hang on the harness's exit code. It now hangs on whether
+  // there is anything to push: an exhausted or crashed run's attempts are
+  // exactly what a human needs to read, and uncommitted work never travels.
+  const { deps, git, runtime } = makeDeps({ runtime: new FakeRuntime(1) });
+  const result = await runSpawn(deps, makeParams());
+  assert.equal(result.pushed, true);
+  assert.deepEqual(git.pushed, [result.branch]);
+  assert.equal(runtime.runs.length, 1);
+});
+
+test('a run that exited non-zero and committed nothing pushes nothing', async () => {
+  const { deps, git } = makeDeps({
+    runtime: new FakeRuntime(1),
+    git: new InMemoryGit({ hasCommitsBeyondBase: false }),
+  });
   const result = await runSpawn(deps, makeParams());
   assert.equal(git.pushed.length, 0);
   assert.ok(!git.calls.includes('push'));
@@ -1425,7 +1440,7 @@ test('runSpawn: a red verdict pushes the attempt, opens no PR, and exits non-zer
     makeParams({
       gitPlatform: 'github',
       verify: { command: 'npm test' },
-      maxIterations: 1,
+      loop: { ...DEFAULT_LOOP_CAPS, maxIterations: 1 },
     })
   );
   assert.deepEqual(result.verify, {
@@ -1465,7 +1480,10 @@ test('runSpawn: a harness that died is never gated - there is nothing committed 
   );
   assert.equal(runtime.runs.length, 1);
   assert.equal(result.verify, undefined);
-  assert.equal(result.exitCode, 137, 'the harness code survives untouched');
+  // For a gated run the exit code is the run's verdict; the harness's own
+  // code survives in the iteration entry.
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.iterations?.[0].harnessExitCode, 137);
 });
 
 test('runSpawn: an interactive run is not gated - its human is the gate', async () => {
@@ -1538,7 +1556,10 @@ test('runSpawn: every attempt leaves a commit, so exhaustion never loses the las
   runtime.exitCodes = [0, 1, 0, 1, 0, 1];
   const result = await runSpawn(
     deps,
-    makeParams({ verify: { command: 'npm test' }, maxIterations: 3 })
+    makeParams({
+      verify: { command: 'npm test' },
+      loop: { ...DEFAULT_LOOP_CAPS, maxIterations: 3 },
+    })
   );
   assert.equal(runtime.runs.length, 6, 'three attempts, each with its check');
   assert.equal(git.commits.length, 3);
@@ -1616,4 +1637,223 @@ test('runSpawn: the launch prompt names the check and warns it runs elsewhere', 
   // Telling an agent nobody is watching reads as "be careful" to one and as
   // "nobody is checking" to another, and the exit code cannot tell us which.
   assert.doesNotMatch(prompt, /no human|nobody is watching|unattended/i);
+});
+
+test('runSpawn: the container limits reach the agent and the check alike', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  await runSpawn(
+    deps,
+    makeParams({
+      verify: { command: 'npm test' },
+      runOptions: { rm: true, memory: '4g', cpus: 2, pidsLimit: 2048 },
+    })
+  );
+  for (const [which, r] of [
+    ['agent', runtime.runs[0]],
+    ['check', runtime.runs[1]],
+  ] as const) {
+    assert.equal(r.options.memory, '4g', which);
+    assert.equal(r.options.cpus, 2, which);
+    assert.equal(r.options.pidsLimit, 2048, which);
+  }
+});
+
+test('runSpawn: exhaustion exits 2 and says which budget ran out', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 1, 0, 1];
+  const result = await runSpawn(
+    deps,
+    makeParams({
+      verify: { command: 'npm test' },
+      loop: { ...DEFAULT_LOOP_CAPS, maxIterations: 2 },
+    })
+  );
+  assert.equal(result.outcome, 'exhausted');
+  assert.equal(result.reason, 'exhausted:iterations');
+  // A caller plausibly branches on this: "out of budget, maybe re-queue with
+  // more" is a different reaction from "it broke".
+  assert.equal(result.exitCode, 2);
+});
+
+test('runSpawn: a broken check is aborted and exits 1', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 127];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.equal(result.reason, 'aborted:verify-broken');
+  assert.equal(result.exitCode, 1);
+});
+
+test('runSpawn: a 137 nobody asked for is an OOM, not a timeout', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [137];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  // Our own kill and an OOM both end the container on 137; they are separable
+  // only host-side, by whether a timer of ours fired.
+  assert.equal(result.reason, 'aborted:oom');
+  assert.equal(result.exitCode, 1);
+});
+
+test('runSpawn: any other harness death is named as such', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  runtime.exitCodes = [1];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.equal(result.reason, 'aborted:harness-exit');
+});
+
+/*
+ * A container that hangs until the host pulls the plug - which is what a kill
+ * does in production, and the only way a wall clock is observable in a fake.
+ */
+function hangingAgent(runtime: FakeRuntime, git: InMemoryGit) {
+  let release: (() => void) | undefined;
+  runtime.onRun = options => {
+    if (options.name?.endsWith('-verify')) return;
+    git.setDirty(true, options.volumes![0].host);
+    return new Promise<void>(resolve => {
+      release = resolve;
+    });
+  };
+  const remove = runtime.removeContainer.bind(runtime);
+  runtime.removeContainer = (name: string) => {
+    remove(name);
+    release?.();
+  };
+}
+
+test(
+  'runSpawn: an attempt past its wall clock is killed, and its partial work is kept',
+  { timeout: 5000 },
+  async () => {
+    const { deps, git, runtime } = makeDeps({ runtime: new FakeRuntime(137) });
+    hangingAgent(runtime, git);
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        verify: { command: 'npm test' },
+        loop: { ...DEFAULT_LOOP_CAPS, iterationTimeoutMs: 20 },
+      })
+    );
+    assert.deepEqual(runtime.removedContainers, ['e-demo-fix-flaky-test-1']);
+    assert.equal(result.outcome, 'exhausted');
+    assert.equal(result.reason, 'exhausted:iteration-timeout');
+    assert.equal(result.exitCode, 2);
+    // The host chose the moment, so the worktree holds what the agent had at
+    // the limit - not what survived an unknown fault. Losing it would repeat
+    // the mistake the commit-every-attempt rule exists to avoid.
+    assert.deepEqual(
+      git.commits.map(c => c.message),
+      [`e: timed-out attempt 1 for ${result.branch}`]
+    );
+    assert.equal(result.pushed, true);
+  }
+);
+
+test(
+  'runSpawn: the total wall clock fires mid-attempt, not at the boundary',
+  { timeout: 5000 },
+  async () => {
+    const { deps, git, runtime } = makeDeps({ runtime: new FakeRuntime(137) });
+    hangingAgent(runtime, git);
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        verify: { command: 'npm test' },
+        // A boundary-only check would let an attempt that started in budget run
+        // its full length past the total, so the configured number would be a
+        // lower bound with an unknown surcharge.
+        loop: {
+          ...DEFAULT_LOOP_CAPS,
+          totalTimeoutMs: 20,
+          iterationTimeoutMs: 600_000,
+        },
+      })
+    );
+    assert.equal(result.reason, 'exhausted:total-timeout');
+    assert.equal(result.exitCode, 2);
+  }
+);
+
+test(
+  'runSpawn: an ungated run is bounded too - a hung container is the same problem',
+  { timeout: 5000 },
+  async () => {
+    const { deps, git, runtime } = makeDeps({ runtime: new FakeRuntime(137) });
+    hangingAgent(runtime, git);
+    const result = await runSpawn(
+      deps,
+      makeParams({ loop: { ...DEFAULT_LOOP_CAPS, iterationTimeoutMs: 20 } })
+    );
+    assert.equal(runtime.removedContainers.length, 1);
+    assert.equal(git.commits.length, 1, 'its partial work is kept as well');
+    // Outside a loop the exit code stays the harness's: nothing about this run
+    // is a verdict.
+    assert.equal(result.exitCode, 137);
+    assert.equal(result.outcome, undefined);
+  }
+);
+
+test(
+  'runSpawn: an interactive session is never killed at the wall clock',
+  { timeout: 5000 },
+  async () => {
+    const { deps, runtime } = makeDeps();
+    let release: (() => void) | undefined;
+    runtime.onRun = () =>
+      new Promise<void>(resolve => {
+        release = resolve;
+      });
+    const pending = runSpawn(
+      deps,
+      makeParams({
+        interactive: true,
+        loop: { ...DEFAULT_LOOP_CAPS, iterationTimeoutMs: 20 },
+      })
+    );
+    await new Promise(r => setTimeout(r, 120));
+    assert.deepEqual(
+      runtime.removedContainers,
+      [],
+      'killing a human mid-session would be hostile'
+    );
+    release?.();
+    await pending;
+  }
+);
+
+test('runSpawn: the soft mark warns the human and never the agent', async () => {
+  const { deps, git, runtime } = makeDeps();
+  gatedRun(runtime, git);
+  const dirty = runtime.onRun!;
+  // The first attempt has to take measurable time, or "past the soft mark"
+  // depends on whether a millisecond happened to tick.
+  runtime.onRun = async options => {
+    await dirty(options);
+    await new Promise(r => setTimeout(r, 10));
+  };
+  runtime.exitCodes = [0, 1, 0, 0];
+  const result = await runSpawn(
+    deps,
+    makeParams({
+      verify: { command: 'npm test' },
+      loop: { ...DEFAULT_LOOP_CAPS, softTotalTimeoutMs: 1 },
+    })
+  );
+  assert.match(result.softTimeoutWarning ?? '', /soft time limit/i);
+  // Same reason the countdown is withheld: a deadline in the prompt buys
+  // `.skip` and `|| true`.
+  assert.doesNotMatch(runtime.runs[2].command.join(' '), /time limit/i);
 });

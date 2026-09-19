@@ -250,7 +250,8 @@ export function gatherSpawnFacts(
     // check is the only thing that ever mounts it.
     verify: config.verify,
     cacheVolume: verifyCacheVolume(root),
-    maxIterations: env.maxIterations,
+    loop: config.loop,
+    resources: config.resources,
   };
 }
 
@@ -411,9 +412,15 @@ export function spawnReport(result: RunSpawnResult): ReportLine[] {
       text: iterationSummaryLine(iteration),
     });
   }
+  if (result.softTimeoutWarning) {
+    lines.push({ level: 'warn', text: result.softTimeoutWarning });
+  }
   if (result.outcome) {
     const attempts = result.iterations?.length ?? 0;
     const plural = attempts === 1 ? 'attempt' : 'attempts';
+    // The reason is carried rather than inferred: an OOM and our own kill both
+    // end the container on 137, so "exhausted" alone would not say which.
+    const why = result.reason ? ` (${result.reason})` : '';
     lines.push(
       result.outcome === 'verified'
         ? {
@@ -424,8 +431,8 @@ export function spawnReport(result: RunSpawnResult): ReportLine[] {
             level: 'warn',
             text:
               result.outcome === 'exhausted'
-                ? `Exhausted after ${attempts} ${plural}: the check is still red.`
-                : `Aborted after ${attempts} ${plural}.`,
+                ? `Exhausted after ${attempts} ${plural}${why}.`
+                : `Aborted after ${attempts} ${plural}${why}.`,
           }
     );
   }

@@ -45,6 +45,17 @@ export interface RunOptions {
   netns?: string;
   /** Hostname mappings added to the container (`--add-host`). */
   extraHosts?: string[];
+  /**
+   * `--memory` (ADR-0016). `--memory-swap` is pinned to the same value, or the
+   * engine allows as much again in swap and the limit does not mean what it
+   * says. Unset by default: any number here is a guess about someone else's
+   * hardware, and this applies to every run.
+   */
+  memory?: string;
+  /** `--cpus`. Unset by default. */
+  cpus?: number;
+  /** `--pids-limit`: a floor against a fork bomb, which takes the box. */
+  pidsLimit?: number;
 }
 
 /**
@@ -409,6 +420,16 @@ export class ContainerRuntime implements ContainerRunner {
     if (opts.rm) args.push('--rm');
     if (opts.name) args.push('--name', opts.name);
     if (opts.workdir) args.push('-w', opts.workdir);
+    // Container limits (ADR-0016), on the agent and the check but never on a
+    // sidecar: those are e's own infrastructure, and capping them breaks e in
+    // a way the user cannot diagnose.
+    if (opts.memory) {
+      args.push('--memory', opts.memory, '--memory-swap', opts.memory);
+    }
+    if (opts.cpus !== undefined) args.push('--cpus', String(opts.cpus));
+    if (opts.pidsLimit !== undefined) {
+      args.push('--pids-limit', String(opts.pidsLimit));
+    }
     // netns and networks are mutually exclusive: taking a shared netns replaces
     // the agent's own network joins entirely (ADR-0011), so `netns` wins.
     if (!opts.netns) {
