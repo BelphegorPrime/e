@@ -177,6 +177,39 @@ The `.e` directory holding e's on-disk state - **also called "eBaseDir" because 
 - Located by walking up from the working directory (or `--dir`), falling back to home
 - Avoid: calling it "workspace" in the Store context (the container's mounted checkout is the run's worktree)
 
+The next terms are the vocabulary of ADR-0016 (proposed; the autonomy contract - none of it is built yet):
+
+**Verify**:
+The command that decides whether a Run's work is accepted (ADR-0016), declared per Store in `config.json` as a string or as `{ command, image?, timeoutMs?, network?, cache?, guards? }`. It is the repository's check, not the Agent's, and runs as a **second container** against the Run's worktree after the commit - defaulting to the Run's harness image, installing its own dependencies (the harness images are alpine/musl), and never receiving provider credentials. Its exit code is the Verdict: non-zero or a timeout is **red** and the Loop iterates; a broken check (image missing, container will not start, command not found) aborts the Run. A Store with no Verify has no Loop: one Iteration, as today.
+_Avoid_: test command (it is whatever the repo declares), judge (a planned v2 agent, not this)
+
+**Loop**:
+The iterate-until-green cycle a Run performs when a Verify is declared (ADR-0016), owned by `runSpawn` and therefore present in both Deployment shapes. One **Iteration** is launch -> harness run -> commit -> verify -> feedback, in a fresh container each time, with context carried by the worktree rather than a session. Every Iteration commits, red or green. The Agent is told its attempt ordinal and never its remaining budget.
+_Avoid_: retry (a retry repeats an Iteration; the Loop starts a new one on new feedback)
+
+**Verdict**:
+How a Run ended, and since ADR-0016 the meaning of its exit code - the _Run's_, no longer the harness's, which is only a liveness signal (zero means the process finished, nothing more): `verified` (`0`), `aborted` (`1`), `exhausted` (`2`), `canceled` (`143`, ADR-0015). A bad end carries a reason - `exhausted:iterations` / `exhausted:iteration-timeout` / `exhausted:total-timeout`, `aborted:oom` / `aborted:harness-exit` / `aborted:verify-broken` - because an OOM kill and a timeout kill both end the container on 137 and are separable only host-side. Rendered into the PR body, qualified by **gate removals** (`{ files, lines }` of Verify-guarded paths deleted over the branch): a smell, never a gate.
+_Avoid_: status (the run state), result (the whole `RunSpawnResult`)
+
+**Cap**:
+A host-side safety limit, in two classes with different reach (ADR-0016): `resources` (`memory`, `cpus`, `pidsLimit`) applies to **every** Run and to the Verify container, `loop` (`maxIterations`, `iterationTimeoutMs`, `totalTimeoutMs`, `softTotalTimeoutMs`) only where a Verify is declared. The Store value is a **default, not a ceiling** - a Trigger may raise or lower `loop`, field-wise, and nothing else may override anything; what makes a Cap a safety limit is that `.e` is gitignored and unmounted, so no Agent can reach either file. A hard timeout SIGKILLs mid-Iteration and the partial work is still committed; `softTotalTimeoutMs` only warns, to the human, never into the prompt.
+_Avoid_: quota, budget (a token/cost budget is out of scope; `e` never sees usage)
+
+**Trigger**:
+A named Store entity at `triggers/<name>/trigger.json` (ADR-0016) binding exactly one event source to exactly one Agent and one prompt template - the only thing that may start a Run without a human. The directory name is its id and its dedup-key prefix. Carries `agent` (required), optional `base` (default: the repository's default branch, never the host's HEAD), `prompt`, `dedup`, `overlap`, a `loop` override, and `on`: `{ type: "webhook", source, event, action?, match? }` or `{ type: "cron", expr, tz? }`. Event names are the provider's own - `e` ships no event catalogue - `match` is exact-match dotted paths only, and only pattern-validated identifiers interpolate into the prompt; prose (`title`, `body`, `comment.body`) never does, and the full payload is mounted read-only at `/run/e/event.json`, outside the worktree.
+_Avoid_: hook, job, schedule (a cron Trigger is one kind of Trigger)
+
+**Request**:
+What a Trigger fires and a Run may become: `trg-<ulid>`, with no branch and no identity yet (ADR-0016, extending ADR-0003's vocabulary the way `sib-NNN` does). It lives as one file in one of three spools under the serving Store - `.e/runs/queue/` (pending), `.e/runs/live/` (the **ledger**: runs from claim to terminal, retained about an hour), `.e/runs/dead/` (a **dead request**: one that died before any run branch existed - TTL expiry, overflow, an unresolvable `base`, a launch failure). The claim is one atomic `rename(queue/<key>, live/<key>)`, the dedup key `<trigger id>:<event dedup value>` **is** the filename, and the payload is inline in the record. Not a queue library and not a DLQ: nothing consumes `dead/`, there is no receive count, and a redrive is a human act and a fresh acceptance against the current declaration.
+_Avoid_: job, message, task (Task state is the A2A lifecycle, above)
+
+**Slot**:
+One of the concurrent Runs `e serve` may start from the queue (default 2), counted in exactly one place - the 30 s `serve` tick - and freed at terminal, **after** teardown, because a Run that is still pushing still holds disk and network (ADR-0016). A manual `e spawn` writes a ledger entry and consumes **no** Slot: Slots gate what autonomy may start, not what exists.
+
+**Deployment shape**:
+Where the autonomy machinery runs (ADR-0016). **hosted** is a long-lived `e serve` owning the scheduler, the webhook listener (its own port at BFF+2, HMAC-only), the queue and the ledger. **one-shot** is a single `e spawn --trigger <name> [--event <path>]` driven by an outer scheduler - a CI job, a systemd timer, a k8s CronJob - which owns scheduling, dedup and concurrency instead; the Loop, Verify and the Caps are identical because they live in `runSpawn`. Both read the same Trigger declaration, which in one-shot is read from `base` rather than the working tree.
+_Avoid_: ephemeral (the worktree is ephemeral in both), CI mode (any scheduler drives one-shot)
+
 ## Additional Implementation Concepts
 
 **Mount**:
