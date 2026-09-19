@@ -164,3 +164,34 @@ test('importConfiguration: existing volume restores with wipe but no create', as
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('importConfiguration: the triggers directory is restored, files and all', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-import-'));
+  const zipPath = path.join(root, 'import.zip');
+  fs.mkdirSync(path.join(root, '.e'), { recursive: true });
+  const staged = path.join(root, 'staged', 'nightly');
+  fs.mkdirSync(staged, { recursive: true });
+  fs.writeFileSync(path.join(staged, 'trigger.json'), '{"agent":"a"}\n');
+  fs.writeFileSync(path.join(staged, 'prompt.md'), 'Run it.\n');
+  const zip = new AdmZip();
+  zip.addLocalFolder(path.join(root, 'staged'), 'triggers');
+  zip.writeZip(zipPath);
+  try {
+    await importConfiguration({
+      file: zipPath,
+      root,
+      runner: new RecordingRunner(),
+    });
+    const restored = path.join(root, '.e', 'triggers', 'nightly');
+    assert.equal(
+      fs.readFileSync(path.join(restored, 'trigger.json'), 'utf8'),
+      '{"agent":"a"}\n'
+    );
+    assert.equal(
+      fs.readFileSync(path.join(restored, 'prompt.md'), 'utf8'),
+      'Run it.\n'
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

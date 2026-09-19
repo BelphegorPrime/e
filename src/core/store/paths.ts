@@ -36,6 +36,29 @@ export function mcpBaseDir(root?: string): string {
   return path.join(eBaseDir(root), 'mcp');
 }
 
+/** Base directory that holds the Trigger definitions (ADR-0016), under `root`. */
+export function triggersBaseDir(root?: string): string {
+  return path.join(eBaseDir(root), 'triggers');
+}
+
+/** Directory of a single Trigger; its name is the trigger's id. */
+export function triggerDir(name: string, root?: string): string {
+  return path.join(triggersBaseDir(root), name);
+}
+
+/** Absolute path to a Trigger's `trigger.json`. */
+export function triggerConfigPath(name: string, root?: string): string {
+  return path.join(triggerDir(name, root), 'trigger.json');
+}
+
+/**
+ * Absolute path to a Trigger's optional `prompt.md` - the reason a trigger is
+ * a directory rather than a row in one `triggers.json`.
+ */
+export function triggerPromptPath(name: string, root?: string): string {
+  return path.join(triggerDir(name, root), 'prompt.md');
+}
+
 /** Base directory that holds the Skill definitions, under `root`. */
 export function skillsBaseDir(root?: string): string {
   return path.join(eBaseDir(root), 'skills');

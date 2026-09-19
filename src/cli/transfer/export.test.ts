@@ -92,3 +92,54 @@ test(
     }
   }
 );
+
+test(
+  'export carries the triggers directory, so a trigger travels with the store',
+  { skip: process.platform === 'win32' && 'sh shim on PATH' },
+  () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-export-'));
+    const store = path.join(root, '.e');
+    const binDir = path.join(root, 'bin');
+    const output = path.join(root, 'export.zip');
+    try {
+      fs.mkdirSync(path.join(store, 'triggers', 'nightly'), {
+        recursive: true,
+      });
+      fs.mkdirSync(binDir);
+      fs.writeFileSync(path.join(store, 'config.json'), '{}\n');
+      fs.writeFileSync(
+        path.join(store, 'triggers', 'nightly', 'trigger.json'),
+        '{"agent":"a"}\n'
+      );
+      fs.writeFileSync(
+        path.join(store, 'triggers', 'nightly', 'prompt.md'),
+        'Run it.\n'
+      );
+      fs.writeFileSync(path.join(binDir, 'docker'), '#!/bin/sh\nexit 0\n', {
+        mode: 0o755,
+      });
+
+      const cli = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../../index.js'
+      );
+      execFileSync(process.execPath, [cli, 'export', '--output', output], {
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+        },
+        stdio: 'pipe',
+      });
+
+      const zip = new AdmZip(output);
+      assert.equal(
+        zip.readAsText('triggers/nightly/trigger.json'),
+        '{"agent":"a"}\n'
+      );
+      assert.equal(zip.readAsText('triggers/nightly/prompt.md'), 'Run it.\n');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+);

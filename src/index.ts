@@ -11,6 +11,7 @@ import {
 } from './cli/transfer/index.js';
 import { registerCompletion } from './cli/completion/index.js';
 import { registerLintCommand } from './cli/lint/index.js';
+import { registerTriggerCommands } from './cli/trigger/index.js';
 import { E_VERSION } from './shared/version.js';
 
 const program = new Command();
@@ -33,6 +34,7 @@ registerRuntimeCommands(program);
 registerExportCommand(program);
 registerImportCommand(program);
 registerLintCommand(program);
+registerTriggerCommands(program);
 
 // {@link registerCompletion} has to be the last thing to register before parse
 registerCompletion(program);

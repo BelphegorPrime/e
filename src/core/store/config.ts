@@ -368,6 +368,39 @@ export function readConfig(root?: string): StoreConfig {
   return resolveConfig(JSON.parse(fs.readFileSync(file, 'utf8')));
 }
 
+/**
+ * Reads the config for a run whose repository may not be the Store that
+ * started it (ADR-0016). One `e serve` can hold a trigger that names another
+ * checkout, and the gate and the limits are not the serving machine's to
+ * decide: **the check belongs to the repository**.
+ *
+ * So `verify`, `loop` and `resources` come from the target repository's own
+ * Store when it has one, and from the serving Store otherwise; every other
+ * setting stays the serving Store's, because it describes this machine. The
+ * chain is per file rather than per key: a repository that keeps a
+ * `config.json` and declares no gate has no gate, and inheriting one from
+ * whoever happened to serve it would be a stranger's check on your code.
+ */
+export function readConfigChain(roots: {
+  serving?: string;
+  target?: string;
+}): StoreConfig {
+  const serving = readConfig(roots.serving);
+  if (!roots.target || !fs.existsSync(configFilePath(roots.target))) {
+    return serving;
+  }
+  const target = readConfig(roots.target);
+  const machine = { ...serving };
+  // The target's config is authoritative for the gate, its absence included.
+  delete machine.verify;
+  return {
+    ...machine,
+    ...(target.verify ? { verify: target.verify } : {}),
+    loop: target.loop,
+    resources: target.resources,
+  };
+}
+
 /** Writes the host-only `config.json`, creating the `.e` directory if needed. */
 export function writeConfig(config: StoreConfig, root?: string): void {
   const file = configFilePath(root);

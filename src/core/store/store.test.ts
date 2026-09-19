@@ -9,6 +9,7 @@ import {
   resolveModels,
   serializeConfig,
   readConfig,
+  readConfigChain,
   writeConfig,
   readModelsJson,
   writeModelsJson,
@@ -464,4 +465,62 @@ test('resolveConfig: a declared verify timeout wins over the caps default', () =
     resolveConfig({ verify: { command: 'npm test' } }).verify?.timeoutMs,
     DEFAULT_VERIFY_TIMEOUT_MS
   );
+});
+
+test('readConfigChain: the gate and the caps come from the repository being worked on', () => {
+  const serving = fs.mkdtempSync(path.join(os.tmpdir(), 'e-serving-'));
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'e-target-'));
+  try {
+    writeConfig(
+      {
+        ...resolveConfig({ defaultHarness: 'codex', verify: 'serving test' }),
+      },
+      serving
+    );
+    writeConfig(
+      {
+        ...resolveConfig({ verify: 'target test', loop: { maxIterations: 9 } }),
+      },
+      target
+    );
+
+    // The check belongs to the repository, not to whoever triggered the run.
+    const chained = readConfigChain({ serving, target });
+    assert.equal(chained.verify?.command, 'target test');
+    assert.equal(chained.loop.maxIterations, 9);
+    // Everything else is the serving Store's: it is the machine's setting.
+    assert.equal(chained.defaultHarness, 'codex');
+
+    // A target with no Store of its own inherits the serving one's.
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'e-bare-'));
+    try {
+      assert.equal(
+        readConfigChain({ serving, target: bare }).verify?.command,
+        'serving test'
+      );
+    } finally {
+      fs.rmSync(bare, { recursive: true, force: true });
+    }
+
+    // No target at all is the ordinary case: one Store, read as always.
+    assert.equal(readConfigChain({ serving }).verify?.command, 'serving test');
+  } finally {
+    fs.rmSync(serving, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('readConfigChain: a repository that keeps a config and declares no gate has no gate', () => {
+  const serving = fs.mkdtempSync(path.join(os.tmpdir(), 'e-serving-'));
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'e-target-'));
+  try {
+    writeConfig(resolveConfig({ verify: 'serving test' }), serving);
+    writeConfig(resolveConfig({ defaultHarness: 'pi' }), target);
+    // Inheriting a check from whoever happened to serve the run would be a
+    // stranger's gate on your code.
+    assert.equal(readConfigChain({ serving, target }).verify, undefined);
+  } finally {
+    fs.rmSync(serving, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
 });

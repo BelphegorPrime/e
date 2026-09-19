@@ -7,6 +7,7 @@ import {
   configFilePath,
   dockerComposePath,
   bootstrapScriptPath,
+  triggersBaseDir,
 } from '../../core/store/paths.js';
 import { log } from '../../shared/utils/log.js';
 import type { ContainerRunner } from '../../ports/runtime/index.js';
@@ -97,6 +98,15 @@ export async function importConfiguration(
       } else {
         log.warn(`Missing in archive: ${file.arcPath}`);
       }
+    }
+
+    // Triggers travel as a directory, not as a named file (ADR-0016): a
+    // trigger is a directory of its own, and how many there are is not known
+    // until the archive is open.
+    const triggersInArchive = path.join(tempDir, 'triggers');
+    if (fs.existsSync(triggersInArchive)) {
+      log.info('Restoring triggers...');
+      fs.cpSync(triggersInArchive, triggersBaseDir(root), { recursive: true });
     }
 
     // Restore volume data

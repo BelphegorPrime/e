@@ -7,6 +7,7 @@ import {
   configFilePath,
   dockerComposePath,
   bootstrapScriptPath,
+  triggersBaseDir,
 } from '../../core/store/paths.js';
 import { findRoot } from '../../core/store/root.js';
 import { log } from '../../shared/utils/log.js';
@@ -95,6 +96,15 @@ export async function exportConfiguration(
         } else {
           log.warn(`Skipping missing file: ${file.arcPath}`);
         }
+      }
+
+      // Triggers travel with the store (ADR-0016): a trigger is a declaration
+      // a human edits, not machine state, and a store without them cannot
+      // fire. Note the wider gap this does not close - `agents/`, `mcp/` and
+      // `skills/` are still absent from the archive.
+      const triggers = triggersBaseDir(root);
+      if (fs.existsSync(triggers)) {
+        archive.directory(triggers, 'triggers');
       }
 
       // Add volume data

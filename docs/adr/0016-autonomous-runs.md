@@ -930,7 +930,11 @@ unchanged, and siblings work in both deployment shapes.
   silently lost on the next `e init`.
 - **A new Store surface**: `.e/triggers/<name>/`, `.e/runs/{queue,live,dead}/`, and
   the `verify` / `resources` / `loop` / `dead` blocks in `config.json`. Triggers
-  travel with `e export` / `e import`; `.e/runs/` does not.
+  travel with `e export` / `e import`; `.e/runs/` does not. That transfer is not
+  free, as this decision first assumed: the archive is an explicit allowlist
+  (`.env`, `config.json`, `compose.yaml`, `bootstrap.sh`, the OmniRoute volume),
+  so `triggers/` had to be added to it - and `agents/`, `mcp/` and `skills/`
+  remain absent, a pre-existing gap this work does not close.
 - **New CLI and API surface**: `e trigger list`, `e trigger dead`,
   `e trigger redrive <id>`, `e spawn --trigger <name> [--event <path>]`,
   `GET /api/triggers`, and the `queued` / `dead` states in `GET /api/runs`.
