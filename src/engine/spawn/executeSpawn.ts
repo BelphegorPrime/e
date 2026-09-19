@@ -265,6 +265,8 @@ export async function executeSpawn(
       role: facts.role,
       broker: plan.broker,
       maxSiblings: facts.maxSiblings,
+      verify: facts.verify,
+      cacheVolume: facts.cacheVolume,
       parent: sibling
         ? {
             worktreePath: sibling.parent.worktreePath,

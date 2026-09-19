@@ -36,6 +36,19 @@ export class FakeRuntime implements ContainerRunner {
   removedNetworks: string[] = [];
   startedSidecars: SidecarSpec[] = [];
   removedContainers: string[] = [];
+  /** Named volumes handed to `createVolume`, in order. */
+  createdVolumes: string[] = [];
+  /**
+   * Every container run, in order - a run with a verify gate starts two (the
+   * agent, then the check). The singular `image`/`options`/`command` above
+   * stay the most recent one.
+   */
+  runs: { image: string; options: RunOptions; command: string[] }[] = [];
+  /**
+   * Exit codes consumed one per `run`, for a test that needs the agent and the
+   * check to end differently; exhausted, it falls back to the constructor's.
+   */
+  exitCodes: number[] = [];
   sleeps: number[] = [];
 
   /**
@@ -84,8 +97,11 @@ export class FakeRuntime implements ContainerRunner {
     this.image = image;
     this.options = options;
     this.command = command;
+    this.runs.push({ image, options, command });
     if (this.onRun) await this.onRun(options);
-    return this.exitCode;
+    return this.exitCodes.length > 0
+      ? (this.exitCodes.shift() as number)
+      : this.exitCode;
   }
 
   createNetwork(name: string): void {
@@ -130,8 +146,9 @@ export class FakeRuntime implements ContainerRunner {
     this.calls.push('volumeExists');
     return true;
   }
-  createVolume(_volumeName: string): void {
+  createVolume(volumeName: string): void {
     this.calls.push('createVolume');
+    this.createdVolumes.push(volumeName);
   }
   copyVolumeToDir(_volumeName: string, _hostDir: string): void {
     this.calls.push('copyVolumeToDir');

@@ -1350,3 +1350,138 @@ test('the report markers (an A2A task): status goes into the spool with the bran
     fs.rmSync(spool, { recursive: true, force: true });
   }
 });
+
+test('runSpawn: the verify check runs in a second container, against work the run has already committed', async () => {
+  const { deps, git, runtime } = makeDeps();
+  git.setDirty(true);
+  // The worktree is mounted first in both containers, so this reads the same
+  // tree the check sees.
+  const dirtyWhenEachContainerRan: boolean[] = [];
+  runtime.onRun = options => {
+    dirtyWhenEachContainerRan.push(git.isDirty(options.volumes![0].host));
+  };
+  await runSpawn(deps, makeParams({ verify: { command: 'npm test' } }));
+  assert.equal(runtime.runs.length, 2, 'the agent, then the check');
+  assert.deepEqual(dirtyWhenEachContainerRan, [true, false]);
+  assert.deepEqual(runtime.runs[1].command, ['sh', '-c', 'npm test']);
+});
+
+test('runSpawn: a Store with no verify declaration starts no second container', async () => {
+  const { deps, git, runtime } = makeDeps();
+  git.setDirty(true);
+  await runSpawn(deps, makeParams());
+  assert.equal(runtime.runs.length, 1);
+});
+
+test('runSpawn: the check installing its dependencies does not strand the worktree', async () => {
+  const { deps, git, runtime } = makeDeps();
+  git.setDirty(true);
+  let worktree = '';
+  runtime.onRun = options => {
+    worktree = options.volumes![0].host;
+    // Both containers dirty the tree: the agent with its work, the check with
+    // the `node_modules` it installs for itself.
+    git.setDirty(true, worktree);
+  };
+  await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm ci && npm test' } })
+  );
+  assert.deepEqual(
+    git.removedWorktrees,
+    [worktree],
+    'what the check left behind is the checks own, not uncommitted run work'
+  );
+});
+
+test('runSpawn: a green verdict opens the PR and the run exits 0', async () => {
+  const pullRequest = new FakePullRequest();
+  const { deps, git, runtime } = makeDeps({ pullRequest });
+  git.setDirty(true);
+  const result = await runSpawn(
+    deps,
+    makeParams({ gitPlatform: 'github', verify: { command: 'npm test' } })
+  );
+  assert.deepEqual(result.verify, { verdict: 'green', exitCode: 0 });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.pushed, true);
+  assert.equal(pullRequest.specs.length, 1);
+  assert.equal(runtime.runs.length, 2);
+});
+
+test('runSpawn: a red verdict pushes the attempt, opens no PR, and exits non-zero', async () => {
+  const pullRequest = new FakePullRequest();
+  const { deps, git, runtime } = makeDeps({ pullRequest });
+  git.setDirty(true);
+  runtime.exitCodes = [0, 1];
+  const result = await runSpawn(
+    deps,
+    makeParams({ gitPlatform: 'github', verify: { command: 'npm test' } })
+  );
+  assert.deepEqual(result.verify, {
+    verdict: 'red',
+    exitCode: 1,
+    reason: 'exit',
+  });
+  assert.notEqual(result.exitCode, 0);
+  assert.equal(result.captured, true, 'the attempt is committed');
+  assert.equal(result.pushed, true, 'and pushed, so a human can read it');
+  assert.deepEqual(pullRequest.specs, [], 'nothing claims it was accepted');
+});
+
+test('runSpawn: a broken check aborts the same way - pushed, no PR, non-zero', async () => {
+  const pullRequest = new FakePullRequest();
+  const { deps, git, runtime } = makeDeps({ pullRequest });
+  git.setDirty(true);
+  runtime.exitCodes = [0, 127];
+  const result = await runSpawn(
+    deps,
+    makeParams({ gitPlatform: 'github', verify: { command: 'npm test' } })
+  );
+  assert.equal(result.verify?.verdict, 'broken');
+  assert.notEqual(result.exitCode, 0);
+  assert.equal(result.pushed, true);
+  assert.deepEqual(pullRequest.specs, []);
+});
+
+test('runSpawn: a harness that died is never gated - there is nothing committed to check', async () => {
+  const { deps, git, runtime } = makeDeps();
+  git.setDirty(true);
+  runtime.exitCodes = [137];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.equal(runtime.runs.length, 1);
+  assert.equal(result.verify, undefined);
+  assert.equal(result.exitCode, 137, 'the harness code survives untouched');
+});
+
+test('runSpawn: an interactive run is not gated - its human is the gate', async () => {
+  const { deps, git, runtime } = makeDeps();
+  git.setDirty(true);
+  await runSpawn(
+    deps,
+    makeParams({ interactive: true, verify: { command: 'npm test' } })
+  );
+  assert.equal(runtime.runs.length, 1);
+});
+
+test('runSpawn: a sibling is not gated - it opens no PR, and the parent gate covers the merged whole', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, 'spool');
+    ensureSpool(spool);
+    const { deps, git, runtime } = makeDeps();
+    git.setDirty(true);
+    await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        role: 'child',
+        verify: { command: 'npm test' },
+        sibling: { spoolDir: spool, id: 'sib-001' },
+      })
+    );
+    assert.equal(runtime.runs.length, 1);
+  });
+});

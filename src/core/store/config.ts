@@ -41,6 +41,29 @@ export const DEFAULT_SIBLING_ARTIFACTS: readonly string[] = ['node_modules'];
 /** The fan-out bound when `config.json` sets none: siblings in flight per run (ADR-0013). */
 export const DEFAULT_MAX_SIBLINGS = 3;
 
+/**
+ * The **verify** command that decides whether a run's work is accepted
+ * (ADR-0016): the repository's own check, run as a second container against
+ * the run's worktree after the commit. Its exit code is the run's verdict.
+ * A Store that declares none has no gate.
+ */
+export type VerifyConfig = {
+  /** The command, run through `sh -c` inside the verify container. */
+  command: string;
+  /**
+   * The image the check runs in; defaults to the run's harness image. All four
+   * harness images are `node:lts-alpine` plus git plus the harness CLI, so the
+   * default covers Node repos and nothing else.
+   */
+  image?: string;
+  /** Wall clock for the check; a timeout is a red verdict, not a broken check. */
+  timeoutMs?: number;
+  /** Give the check a network - it installs its own dependencies. */
+  network?: boolean;
+  /** Mount a per-Store package cache outside the worktree. Off by default. */
+  cache?: boolean;
+};
+
 /** Host-only orchestration settings, persisted in `config.json`. */
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
@@ -60,6 +83,8 @@ export type StoreConfig = {
   siblingArtifacts: string[];
   /** Siblings a run may have in flight at once (ADR-0013); a positive integer, default 3. */
   maxSiblings: number;
+  /** The repository's verify command (ADR-0016); absent means no gate and no loop. */
+  verify?: VerifyConfig;
 };
 
 export type ModelDataEntry = {
@@ -68,6 +93,52 @@ export type ModelDataEntry = {
   created: number;
   owned_by: string;
 };
+
+/**
+ * Resolves the `verify` block: the string shorthand is the command and nothing
+ * else, the object form is per-key like the rest of {@link resolveConfig}, so
+ * one malformed field never costs the gate. Absent, or without a usable
+ * command, yields `undefined` - a Store with no gate.
+ */
+function resolveVerify(raw: unknown): VerifyConfig | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw === 'string') {
+    if (raw.length > 0) return { command: raw };
+    log.warn('Ignoring verify: the command is empty');
+    return undefined;
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    log.warn('Ignoring verify: expected a command string or an object');
+    return undefined;
+  }
+  const parsed = raw as Partial<VerifyConfig>;
+  if (typeof parsed.command !== 'string' || parsed.command.length === 0) {
+    log.warn('Ignoring verify: no usable command');
+    return undefined;
+  }
+  const image =
+    typeof parsed.image === 'string' && parsed.image.length > 0
+      ? parsed.image
+      : undefined;
+  const timeoutMs =
+    typeof parsed.timeoutMs === 'number' &&
+    Number.isInteger(parsed.timeoutMs) &&
+    parsed.timeoutMs > 0
+      ? parsed.timeoutMs
+      : undefined;
+  const network =
+    typeof parsed.network === 'boolean' ? parsed.network : undefined;
+  const cache = typeof parsed.cache === 'boolean' ? parsed.cache : undefined;
+  return {
+    command: parsed.command,
+    // Spread each optional key so a resolved block deep-equals what was
+    // declared: an absent field is an absent key, never `undefined`.
+    ...(image !== undefined ? { image } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(network !== undefined ? { network } : {}),
+    ...(cache !== undefined ? { cache } : {}),
+  };
+}
 
 /**
  * Resolves a parsed `config.json` body to a complete {@link StoreConfig},
@@ -107,6 +178,7 @@ export function resolveConfig(raw: unknown): StoreConfig {
     parsed.maxSiblings >= 1
       ? parsed.maxSiblings
       : DEFAULT_MAX_SIBLINGS;
+  const verify = resolveVerify(parsed.verify);
   return {
     defaultHarness,
     models,
@@ -114,6 +186,9 @@ export function resolveConfig(raw: unknown): StoreConfig {
     gitPlatform,
     siblingArtifacts,
     maxSiblings,
+    // Spread, not `verify,`: a Store with no gate must resolve to exactly the
+    // object it did before this key existed - `{ verify: undefined }` is a key.
+    ...(verify ? { verify } : {}),
   };
 }
 

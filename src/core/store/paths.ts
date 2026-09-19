@@ -1,4 +1,5 @@
 import path from 'path';
+import { createHash } from 'node:crypto';
 
 /**
  * The Store's **layout**: the `.e` directory holding e's on-disk state - the
@@ -130,4 +131,18 @@ export function egressBlacklistPath(root?: string): string {
 /** Absolute path to the store's egress iptables rules script (host-editable, never clobbered). */
 export function egressIptablesPath(root?: string): string {
   return path.join(eBaseDir(root), 'egress-iptables.rules');
+}
+
+/**
+ * The engine-side name of a Store's package-cache volume, mounted into the
+ * verify container when `verify.cache` opts in (ADR-0016). Derived from the
+ * Store root and hashed, so two checkouts with the same directory name never
+ * share a cache and no path character has to survive as a volume name.
+ */
+export function verifyCacheVolume(root: string = process.cwd()): string {
+  const digest = createHash('sha256')
+    .update(path.resolve(root))
+    .digest('hex')
+    .slice(0, 12);
+  return `e-verify-cache-${digest}`;
 }

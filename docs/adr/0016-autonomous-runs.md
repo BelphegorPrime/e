@@ -76,6 +76,12 @@ package cache outside the worktree (`~/.npm`, `~/.cache/pip`) as an opt-in named
 volume, shared per Store; two concurrent runs share it, which npm tolerates and
 pip may not.
 
+**Which runs are gated.** Every non-interactive run of the user's own. Not an
+interactive run, which has its human in front of it, and **not a sibling**: a
+sibling opens no PR and its work reaches the parent by merge-back, so the
+parent's own gate covers the merged whole and a per-sibling check would pay for
+the same verdict twice.
+
 **No provider credentials reach the verify container.** Verify is not an agent,
 and a tampered check that can call the model can buy its way to green. Network is
 available, through the same egress containment as the run itself (ADR-0011),
@@ -92,7 +98,17 @@ because installing dependencies is now verify's own job.
 Iterating against a broken check burns the whole budget to learn nothing and
 reports a red the agent cannot act on. Accepted caveat: a test runner that
 legitimately exits 127 is misread as a broken check. Loudly wrong beats silently
-looping.
+looping. A timed-out check reports `124`, the `timeout(1)` convention, because
+the container was killed before it said anything - the number is `e`'s statement
+and not the check's, and the recorded reason is what separates it from a check
+that genuinely exited 124.
+
+**The gate's own writes are not the run's.** A run's worktree is torn down only
+when it is clean, so that uncommitted work is never silently discarded. Once the
+check has run, what is left there is its `node_modules`, `.venv` or `target/` -
+the run's own work was committed immediately before the check started, by
+construction - so after a gated run the worktree is removed regardless. Without
+that, every gated run would strand its worktree on disk.
 
 ### 3. The loop
 

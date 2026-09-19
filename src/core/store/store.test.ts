@@ -15,6 +15,7 @@ import {
   isInitialized,
   isEgressInitialized,
   configFilePath,
+  verifyCacheVolume,
   modelsFilePath,
   DEFAULT_HARNESS,
 } from './index.js';
@@ -306,4 +307,68 @@ test('resolveConfig: maxSiblings is a positive integer, default 3, malformed fal
       String(bad)
     );
   }
+});
+
+test('resolveConfig: the verify shorthand is a command with no other fields; absent means no gate', () => {
+  assert.equal(resolveConfig(undefined).verify, undefined);
+  assert.deepEqual(resolveConfig({ verify: 'npm test' }).verify, {
+    command: 'npm test',
+  });
+});
+
+test('resolveConfig: the verify object keeps every field it declares', () => {
+  assert.deepEqual(
+    resolveConfig({
+      verify: {
+        command: 'npm ci && npm test',
+        image: 'golang:1.23',
+        timeoutMs: 600000,
+        network: true,
+        cache: true,
+      },
+    }).verify,
+    {
+      command: 'npm ci && npm test',
+      image: 'golang:1.23',
+      timeoutMs: 600000,
+      network: true,
+      cache: true,
+    }
+  );
+});
+
+test('resolveConfig: a verify block without a usable command is no gate at all', () => {
+  for (const bad of [42, null, [], {}, '', { command: '' }, { command: 42 }]) {
+    assert.equal(
+      resolveConfig({ verify: bad }).verify,
+      undefined,
+      JSON.stringify(bad)
+    );
+  }
+});
+
+test('resolveConfig: a malformed verify field is dropped, the command survives', () => {
+  assert.deepEqual(
+    resolveConfig({
+      verify: {
+        command: 'npm test',
+        image: 42,
+        timeoutMs: '600000',
+        network: 'yes',
+        cache: 1,
+      },
+    }).verify,
+    { command: 'npm test' }
+  );
+});
+
+test('verifyCacheVolume: one stable, engine-legal name per Store', () => {
+  const a = verifyCacheVolume('/home/user/projects/e');
+  assert.equal(a, verifyCacheVolume('/home/user/projects/e'), 'stable');
+  assert.notEqual(
+    a,
+    verifyCacheVolume('/home/user/work/e'),
+    'two checkouts named `e` do not share a cache'
+  );
+  assert.match(a, /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/, 'a legal volume name');
 });

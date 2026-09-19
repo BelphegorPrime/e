@@ -127,6 +127,14 @@ export function brokerContainerFor(run: RunName): string {
 }
 
 /**
+ * The per-run container name of the verify check: `<name>-verify` (ADR-0016).
+ * One per Run, like the broker, so it needs no alias segment.
+ */
+export function verifyContainerFor(run: RunName): string {
+  return `${run.name}-verify`;
+}
+
+/**
  * An engine-side regex matching the primary container of *any* Run of
  * `agent`/`slug`, whatever its counter - the one place that needs a run name
  * without knowing which Run it is (the browser terminal finds its container by

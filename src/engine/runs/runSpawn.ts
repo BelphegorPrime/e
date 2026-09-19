@@ -1,6 +1,6 @@
 import type { Git } from '../../ports/git/index.js';
 import type { PullRequest } from '../../ports/github/index.js';
-import type { GitPlatform } from '../../core/store/config.js';
+import type { GitPlatform, VerifyConfig } from '../../core/store/config.js';
 import type {
   ContainerRunner,
   RunOptions,
@@ -13,8 +13,10 @@ import { slugify } from '../../core/identity/slugify.js';
 import { nextRunName } from './nextRunName.js';
 import {
   sidecarContainerFor,
+  verifyContainerFor,
   type RunName,
 } from '../../core/identity/runName.js';
+import { runVerify, type VerifyOutcome } from './runVerify.js';
 
 import { waitForAllReady, type ReadinessPolicy } from './runSidecars.js';
 import { worktreePathFor } from './worktreesDir.js';
@@ -46,6 +48,13 @@ export type { ReadinessPolicy } from './runSidecars.js';
 
 /** The exit code of a canceled run (SIGTERM's 128 + 15), so no commit path takes it for a success. */
 export const CANCELED_EXIT_CODE = 143;
+
+/**
+ * The exit code of a run whose gate did not come back green (ADR-0016): red or
+ * broken alike, for now. The caps ticket splits it into `1` aborted and `2`
+ * exhausted, which is the distinction a caller branches on.
+ */
+export const GATE_FAILED_EXIT_CODE = 1;
 
 /** Readiness polling defaults: up to 30 tries, 1s apart (~30s), overridable per run. */
 const DEFAULT_READINESS_ATTEMPTS = 30;
@@ -149,6 +158,15 @@ export interface RunSpawnParams {
   /** Fan-out bound for a run with a broker (`config.json` `maxSiblings`; default 3). */
   maxSiblings?: number;
   /**
+   * The repository's verify command (ADR-0016). Declared, it gates the run:
+   * the check runs in a second container once the work is committed, and its
+   * verdict - not the harness's exit code - decides whether a PR is opened.
+   * Absent, the run ends exactly as it did before the gate existed.
+   */
+  verify?: VerifyConfig;
+  /** The Store's package-cache volume, when the verify declaration opts in. */
+  cacheVolume?: string;
+  /**
    * How this run hosts siblings (with a broker): the poll/readiness pacing,
    * what every sibling `e spawn` inherits from this invocation, and the
    * launcher. Required whenever `broker` is set - there is no default
@@ -180,6 +198,8 @@ export interface RunSpawnResult {
    * reached this run's worktree (the merge-back of ticket 07).
    */
   siblings?: SiblingOutcome[];
+  /** The gate's verdict, for a run that declared one (ADR-0016). */
+  verify?: VerifyOutcome;
   error?: string;
 }
 
@@ -244,6 +264,9 @@ export async function runSpawn(
   // The consumer of sibling requests and its spool, for a run that has a broker.
   let consumer: SiblingConsumer | undefined;
   let consumerStopped = false;
+  // The gate writes its own dependencies into the worktree, so once it has
+  // run, what is left uncommitted there is the check's and not the run's.
+  let gateRan = false;
   let brokerSpool: string | undefined;
   const role = params.role ?? 'parent';
   const maxSiblings = params.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
@@ -496,6 +519,7 @@ export async function runSpawn(
     let captured = false;
     let pushed = false;
     let pushWarning: string | undefined;
+    let verifyOutcome: VerifyOutcome | undefined;
     if (exitCode === 0) {
       if (deps.git.isDirty(worktreePath)) {
         // With a merge-back conflict still in progress this commit concludes
@@ -517,6 +541,25 @@ export async function runSpawn(
           captured = true;
         }
       }
+      // The gate (ADR-0016), between the last commit and the push: the check
+      // installs its own dependencies into the worktree, so running it after
+      // the commits is what keeps them out of the run's history. A sibling
+      // opens no PR and an interactive run has its human, so neither is gated.
+      if (params.verify && !params.sibling && !params.interactive) {
+        gateRan = true;
+        verifyOutcome = await runVerify(
+          { runtime: deps.runtime },
+          {
+            verify: params.verify,
+            worktreePath,
+            harnessImage: params.imageTag,
+            containerName: verifyContainerFor(run),
+            netns: runOptions.netns,
+            networks: runOptions.networks,
+            cacheVolume: params.cacheVolume,
+          }
+        );
+      }
       if (
         !params.sibling &&
         (captured || deps.git.hasCommitsBeyondBase(branch, base))
@@ -533,7 +576,11 @@ export async function runSpawn(
     // Open a PR/MR when a platform is configured and the branch was pushed.
     let pullRequestUrl: string | undefined;
     let pullRequestWarning: string | undefined;
-    if (params.gitPlatform && pushed && deps.pullRequest) {
+    // A verdict that is not green has nothing to propose: the branch is
+    // pushed so the attempt survives, and no PR claims it was accepted.
+    const gateFailed =
+      verifyOutcome !== undefined && verifyOutcome.verdict !== 'green';
+    if (params.gitPlatform && pushed && deps.pullRequest && !gateFailed) {
       const log = deps.git.runLog(branch);
       const title =
         log.length > 0 ? log[0].subject : `e: run output for ${branch}`;
@@ -551,6 +598,11 @@ export async function runSpawn(
         pullRequestWarning = `could not open a ${params.gitPlatform} merge request for ${branch}: ${errorMessage(error)}`;
       }
     }
+
+    // Since the gate exists, `exitCode` is the *run's* verdict rather than the
+    // harness's, which says only that the process finished (ADR-0016). The
+    // taxonomy of failure codes arrives with the caps ticket.
+    if (gateFailed) exitCode = GATE_FAILED_EXIT_CODE;
 
     report({
       status: 'done',
@@ -571,6 +623,7 @@ export async function runSpawn(
       pullRequestUrl,
       pullRequestWarning,
       ...(consumer ? { siblings: consumer.outcomes } : {}),
+      ...(verifyOutcome ? { verify: verifyOutcome } : {}),
     };
   } catch (err) {
     report({ status: 'failed', branch, error: errorMessage(err) });
@@ -584,10 +637,14 @@ export async function runSpawn(
       if (!params.keepWorktree) {
         for (const dispose of scratch) dispose();
       }
+      // A dirty worktree is normally uncommitted run work and must not be
+      // discarded. Once the gate has run, it is the check's own install
+      // (`node_modules`, `.venv`, `target/`) instead: the run's work was
+      // committed immediately before the check started, by construction.
       if (
         worktreePath &&
         !params.keepWorktree &&
-        !deps.git.isDirty(worktreePath)
+        (gateRan || !deps.git.isDirty(worktreePath))
       ) {
         deps.git.removeWorktree(worktreePath);
       }

@@ -40,7 +40,7 @@ import { planMcpSelection, type McpServer } from '../../core/mcp/index.js';
 import type { Mount } from '../../core/mount.js';
 import type { SiblingSpawn } from '../../shared/utils/env.js';
 import type { LocalRuntime } from '../../core/localRuntimes.js';
-import type { GitPlatform } from '../../core/store/config.js';
+import type { GitPlatform, VerifyConfig } from '../../core/store/config.js';
 import {
   defaultBrokerPlan,
   type BrokerPlan,
@@ -243,6 +243,14 @@ export interface SpawnFacts {
   readonly siblingArtifacts: readonly string[];
   /** The store's `maxSiblings` (`config.json`): siblings a run may have in flight at once (ADR-0013). */
   readonly maxSiblings: number;
+  /**
+   * The store's `verify` (`config.json`): the repository's own check, which
+   * gates the run (ADR-0016). Absent means no gate - the run ends on the
+   * harness's exit code exactly as it did before.
+   */
+  readonly verify?: VerifyConfig;
+  /** The store's package-cache volume, used only when `verify.cache` opts in. */
+  readonly cacheVolume?: string;
   /**
    * The store's `localRuntimes` (`config.json`): a stack with none renders no
    * model-registration service, so bringing it up waits for nothing.

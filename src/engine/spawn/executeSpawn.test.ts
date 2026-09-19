@@ -73,6 +73,8 @@ class RecordingRuntime implements ContainerRunner {
   options?: RunOptions;
   /** The argv handed to the container (the harness command with its prompt). */
   ranCommand?: string[];
+  /** Every container this run started, in order - a gated run starts two. */
+  ranCommands: string[][] = [];
   built: string[] = [];
   sidecars: SidecarSpec[] = [];
 
@@ -93,6 +95,7 @@ class RecordingRuntime implements ContainerRunner {
   ): Promise<number> {
     this.options = opts;
     this.ranCommand = command;
+    this.ranCommands.push(command);
     return 0;
   }
 
@@ -507,5 +510,34 @@ test('a sibling spawn joins the parent network, syncs the configured artifacts, 
     const status = readStatus(spool, 'sib-001');
     assert.equal(status?.status, 'done');
     assert.equal(status?.branch, 'e/demo/sib-run-1');
+  });
+});
+
+test("the store's verify declaration reaches the orchestrator: the check runs as a second container", async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    await executeSpawn(
+      facts({ root, verify: { command: 'npm test' } }),
+      emptyPlan,
+      {
+        git: new InMemoryGit({ dirty: true }),
+        runtime,
+        scratch: new RunScratch(),
+      }
+    );
+    assert.deepEqual(runtime.ranCommands.at(-1), ['sh', '-c', 'npm test']);
+    assert.equal(runtime.ranCommands.length, 2);
+  });
+});
+
+test('a store with no verify declaration starts exactly one container', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    await executeSpawn(facts({ root }), emptyPlan, {
+      git: new InMemoryGit({ dirty: true }),
+      runtime,
+      scratch: new RunScratch(),
+    });
+    assert.equal(runtime.ranCommands.length, 1);
   });
 });

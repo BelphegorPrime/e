@@ -49,7 +49,7 @@ import {
 } from '../engine/spawn/prepareLocalStack.js';
 import { executeSpawn } from '../engine/spawn/executeSpawn.js';
 import { findRoot } from '../core/store/root.js';
-import { envFilePath } from '../core/store/paths.js';
+import { envFilePath, verifyCacheVolume } from '../core/store/paths.js';
 import { readConfig } from '../core/store/config.js';
 import { localStack } from '../ports/runtime/stack.js';
 
@@ -244,6 +244,11 @@ export function gatherSpawnFacts(
     maxSiblings: config.maxSiblings,
     localRuntimes: config.localRuntimes,
     gitPlatform: config.gitPlatform,
+    // The repository's gate (ADR-0016); the cache volume is named whether or
+    // not the declaration opts in, because naming it costs nothing and the
+    // check is the only thing that ever mounts it.
+    verify: config.verify,
+    cacheVolume: verifyCacheVolume(root),
   };
 }
 
