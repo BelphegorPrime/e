@@ -220,12 +220,6 @@ task parameter section 3 ruled out, and whoever typed `e spawn` has Ctrl-C), no
 env var (env here is host plumbing, not a tunable, and an invisible channel is
 the wrong shape for a safety limit). `resources` has no override layer at all.
 
-_Scaffolding, until the `loop` block exists:_ the loop ships ahead of the caps,
-so `E_MAX_ITERATIONS` carries the iteration budget in the meantime, defaulting
-to 3. It is host-side only and reaches no container, so no agent can raise its
-own budget - but it is the env var this section rules out, and the caps work
-replaces it with `loop.maxIterations` rather than keeping both.
-
 **The Store number is a default, not a ceiling.** A ceiling protects against
 nobody: the same human writes both files. The threat model is the agent raising
 its own budget, and **the agent reaches neither file** - `.e` is gitignored, so it
@@ -263,6 +257,13 @@ line, following the per-key fallback pattern already there.
 | `aborted` (harness died, OOM, broken verify)   | `1`                         |
 | `exhausted` (caps spent, verify still red)     | `2`                         |
 | `canceled`                                     | `143` (ADR-0015, unchanged) |
+
+**This taxonomy is the gated run's.** Outside a loop `exitCode` stays what it
+always was, the harness's - nothing about an ungated run is a verdict, so
+rewriting its exit code would claim a judgement nobody made. What does reach an
+ungated run is the per-attempt wall clock and, with it, the partial-work
+commit: a hung container is the same problem whether or not a check was
+declared.
 
 `exhausted` is separate because it is the one outcome a caller plausibly branches
 on: "out of budget, maybe re-queue with more" is a different reaction from "it
@@ -922,6 +923,11 @@ unchanged, and siblings work in both deployment shapes.
 - **Two new dependencies**, both cleared against `pkg --sea`: `ulid` (monotonic
   request ids; `crypto.randomUUID({version:7})` silently ignores the option on
   Node 24.15 and returns v4) and `croner@10` (next-run calculation only).
+- **`e init` must carry the new keys over.** It rewrites `config.json` whole and
+  restores only the keys it knows, so `verify`, `resources` and `loop` join
+  `siblingArtifacts` and `maxSiblings` as values a re-init reads first and
+  writes back. Anything added to that file later and not carried here is
+  silently lost on the next `e init`.
 - **A new Store surface**: `.e/triggers/<name>/`, `.e/runs/{queue,live,dead}/`, and
   the `verify` / `resources` / `loop` / `dead` blocks in `config.json`. Triggers
   travel with `e export` / `e import`; `.e/runs/` does not.
