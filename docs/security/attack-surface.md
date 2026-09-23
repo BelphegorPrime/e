@@ -4,7 +4,8 @@ Status: review draft, 2026-09-05; egress and BFF sections refreshed 2026-09-11
 after ADR-0011/0012 shipped; findings refresh 2026-09-13 after a pass over
 the shared egress namespace, the runtime-broker, and the `serve` BFF
 (tickets 70-73); harness-CLI findings added 2026-09-17 from the unattended-flags
-research (#143). Grounded in the current source
+research (#143); judge data flow added 2026-09-23 for ADR-0018 (proposed, not
+yet implemented). Grounded in the current source
 and the ADR set. The goal is a written attack-surface review of the four
 execution zones - container, store, local compose stack, and the `serve` BFF -
 with concrete, time-boxed recommendations. Implementation of the recommended
@@ -216,6 +217,29 @@ user's own shell remains able to read them) but never reach a container.
 Harness-specific env templates (pi, Codex-specific sections) are unaffected -
 they are a separate, per-harness channel managed by the config adapter. (`#24`.)
 
+### The judge: code leaving the host (ADR-0018, proposed)
+
+ADR-0018 proposes a shadow-mode judge: after a run, the **host** process sends
+the task prompt and the run's diff (`git diff <base> <tip>`) to TypeSafe's
+System One API (`POST https://api.typesafe.ai/v1/systemone`) and records the
+typed answers. Not implemented yet; these are the properties the
+implementation must keep.
+
+| Fact                                                                                                                                                                                        | Status                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| A new outbound data flow: the repository's diff and the prompt go to a third party on every judged run                                                                                      | **By design** - opt-in per repository (`judge` in `.e/config.json`)                  |
+| The opt-in follows the target repository's Store (`readConfigChain`), like `verify`: a serving machine cannot send a stranger's code out                                                    | Required                                                                             |
+| The API key is named by `judge.apiKeyEnv` and lives in `.e/.env`; it is read by the host and never joins `baseEnvWhitelist`, so it never reaches a container                                | Required                                                                             |
+| The diff can carry secrets the agent wrote into the worktree (a committed `.env`, a token in a fixture). They leave the host with it                                                        | **Accepted** - same exposure as the pushed branch and the PR; noted, not solved      |
+| The prompt can come from a webhook (ADR-0016 triggers), i.e. attacker-controlled text, and so can the diff. Both are data to the judge; its answers are typed and cannot carry instructions | Good - no answer text reaches an agent or a shell                                    |
+| Answers are human-facing only: never in the iteration feedback, the sibling report or the A2A task (ADR-0016 section 11)                                                                    | Required                                                                             |
+| `.e/judge.jsonl` holds branch names, shas, verdicts and scores - no prompt, no diff - and is written 0600                                                                                   | Required - same helper as ticket [`72`](../tickets/72-secrets-files-0600-on-host.md) |
+| A failing, slow or hostile judge endpoint cannot fail a run or change its outcome in shadow mode; the call is bounded by `judge.timeoutMs` and aborted on cancel                            | Required                                                                             |
+
+When the judge gains authority (a later ADR), revisit this table: a verdict that
+gates a PR makes the endpoint part of the trust boundary, and a compromised or
+misconfigured `judge.baseUrl` could then approve or block work.
+
 ## Zone 3: local compose stack (OmniRoute + llama.cpp + Redis)
 
 | Fact                                                                                                                                                                                                                    | Status                                                                                                                                                                   |
@@ -299,6 +323,7 @@ reporting "already serving".
 - ADR-0002 (host orchestrates git; accepted egress + whole-file env injection)
 - ADR-0005 (container groups, sidecars, private networks)
 - ADR-0006 (per-harness config adapter; `.e/.env` as the secret source)
+- ADR-0018 (proposed: shadow-mode judge; diff and prompt sent to TypeSafe)
 - `src/cli/init/renderCompose.ts`, `src/cli/init/renderBootstrap.ts`,
   `src/sidecars/egress/render.ts`, `src/core/harness/renderDockerfile.ts`,
   `src/core/store/{config,paths,root}.ts`, `src/cli/serve/detachedServe.ts`, `src/sidecars/egress/`
