@@ -35,20 +35,20 @@ echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 
 ## What each Harness speaks and how it is configured
 
-| Harness      | Protocols                                               | Provider delivery                                                                          | MCP |
-| ------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ | --- |
-| `pi`         | `openai-chat`, `openai-responses`, `anthropic-messages` | `models.json` baked into the derived image; the key **value** is baked too (pi needs it)   | yes |
-| `claudeCode` | `anthropic-messages`                                    | env vars at runtime; the key is injected by name, never baked                              | yes |
-| `codex`      | `openai-responses`                                      | `config.toml` baked into the derived image; the key is referenced by env name, never baked | yes |
-| `opencode`   | `openai-chat`, `openai-responses`, `anthropic-messages` | none: no Provider delivery yet, the image runs against the ambient env only                | no  |
+| Harness      | Protocols                                               | Provider delivery                                                                                | MCP |
+| ------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | --- |
+| `pi`         | `openai-chat`, `openai-responses`, `anthropic-messages` | `models.json` baked into the derived image; the key **value** is baked too (pi needs it)         | yes |
+| `claudeCode` | `anthropic-messages`                                    | env vars at runtime; the key is injected by name, never baked                                    | yes |
+| `codex`      | `openai-responses`                                      | `config.toml` baked into the derived image; the key is referenced by env name, never baked       | yes |
+| `opencode`   | `openai-chat`, `openai-responses`, `anthropic-messages` | `opencode.json` baked into the derived image; the key is referenced by `{env:NAME}`, never baked | no  |
 
 Two consequences:
 
-- Editing a pi or Codex Agent's Provider changes a **baked** file, so the next
-  spawn needs `--rebuild`. A Claude Code Agent picks the change up on the next
-  run without a rebuild.
-- An `agent.json` for `opencode` with a `provider` block is rejected
-  ("has no config adapter"). Run opencode as the bare harness name.
+- Editing a pi, Codex or opencode Agent's Provider changes a **baked** file,
+  so the next spawn needs `--rebuild`. A Claude Code Agent picks the change up
+  on the next run without a rebuild.
+- opencode has no MCP delivery yet, so `--mcp` on an opencode Agent is
+  rejected.
 
 ## Three Agents, one gateway
 

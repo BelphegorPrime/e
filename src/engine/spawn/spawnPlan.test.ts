@@ -208,7 +208,7 @@ test('validateSpawn: rejects a provider protocol the harness does not speak', ()
 
 test('validateSpawn: rejects a provider on a harness with no config adapter', () => {
   const f = facts({
-    harness: HARNESSES.opencode,
+    harness: { ...HARNESSES.opencode, adapter: undefined },
     agent: {
       name: 'x',
       harness: 'opencode',
@@ -221,6 +221,23 @@ test('validateSpawn: rejects a provider on a harness with no config adapter', ()
     },
   });
   assert.throws(() => validateSpawn(f), /no config adapter/);
+});
+
+test('validateSpawn: accepts a provider on opencode (its file adapter delivers it)', () => {
+  const f = facts({
+    harness: HARNESSES.opencode,
+    agent: {
+      name: 'opencode',
+      harness: 'opencode',
+      provider: {
+        baseUrl: 'https://h',
+        model: 'auto/coding',
+        protocol: 'openai-chat',
+        apiKeyEnv: 'K',
+      },
+    },
+  });
+  assert.doesNotThrow(() => validateSpawn(f));
 });
 
 test('validateSpawn: rejects --mcp against a harness with no MCP wiring (opencode)', () => {

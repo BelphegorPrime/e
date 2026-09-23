@@ -9,6 +9,7 @@ import type { McpEndpoint } from '../mcp/index.js';
 import {
   claudeCodeAdapter,
   codexAdapter,
+  opencodeAdapter,
   piAdapter,
   PI_PROVIDER_ID,
 } from './adapter.js';
@@ -257,7 +258,10 @@ export const HARNESSES: Record<string, Harness> = {
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
     // opencode (Vercel AI SDK) speaks all three via its provider plugins.
     protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],
-    buildCommand: (prompt: string) => [
+    // opencode is file-configured (`opencode.json` under OPENCODE_CONFIG_DIR);
+    // the model arrives at runtime as `-m e/<model>`.
+    adapter: opencodeAdapter,
+    buildCommand: (prompt: string, model?: string) => [
       'opencode',
       'run',
       // `opencode run` never prompts - it auto-REJECTS what resolves to `ask`
@@ -265,9 +269,11 @@ export const HARNESSES: Record<string, Harness> = {
       // done less. `--auto` approves what is not explicitly denied. Grounding:
       // `docs/research/harness-unattended-flags.md`.
       '--auto',
+      ...(model ? ['-m', model] : []),
       prompt,
     ],
-    buildInteractiveCommand: () => ['opencode'],
+    buildInteractiveCommand: (model?: string) =>
+      model ? ['opencode', '-m', model] : ['opencode'],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
   },
@@ -325,8 +331,8 @@ function mcpWiring(harness: Harness): McpWiring {
   if (harness.renderMcpArgs) {
     return { form: 'flag', renderArgs: harness.renderMcpArgs.bind(harness) };
   }
-  // A file adapter delivers MCP only if it plans an overlay; opencode has no
-  // adapter at all, so it stays `none`.
+  // A file adapter delivers MCP only if it plans an overlay; opencode's plans
+  // none yet, so it stays `none`.
   const adapter = harness.adapter;
   if (adapter?.kind === 'file' && adapter.planConfigOverlay) {
     return {

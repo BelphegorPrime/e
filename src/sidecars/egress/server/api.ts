@@ -79,8 +79,9 @@ function readFileOrEmpty(file: string): string {
 function signalEntrypoint(): void {
   try {
     process.kill(1, 'SIGHUP');
-  } catch {
+  } catch(err) {
     // Not running under the entrypoint (tests, local debugging): nothing to reload.
+    console.error(err)
   }
 }
 

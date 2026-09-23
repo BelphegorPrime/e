@@ -476,6 +476,102 @@ export const piAdapter: FileHarnessAdapter = {
   },
 };
 
+/**
+ * The fixed provider id `e` writes into opencode's `opencode.json`. `e` owns the
+ * whole file, so there is only ever one custom provider. Shared with opencode's
+ * `buildCommand`, which selects `<id>/<model>` via `-m`.
+ */
+export const OPENCODE_PROVIDER_ID = 'e';
+
+/**
+ * Maps e's wire {@link Protocol} to the AI SDK package opencode loads for a
+ * custom provider. All three are bundled with opencode, so nothing is installed
+ * at runtime. Grounding: opencode `packages/opencode/src/provider/provider.ts`
+ * (`BUNDLED_PROVIDERS`), `docs/research/harness-cli-facts.md`.
+ */
+export function opencodeNpm(protocol: Protocol): string {
+  switch (protocol) {
+    case 'openai-chat':
+      return '@ai-sdk/openai-compatible';
+    case 'openai-responses':
+      return '@ai-sdk/openai';
+    case 'anthropic-messages':
+      return '@ai-sdk/anthropic';
+  }
+}
+
+/**
+ * Renders a {@link Provider} into an opencode `opencode.json` body: one custom
+ * provider (id `e`) with the protocol's AI SDK package, the endpoint, and the one
+ * model, selected as the top-level `model` (and `small_model`, so titles and
+ * summaries never reach for a provider the run has no key for). The key is
+ * referenced by name through opencode's `{env:VAR}` substitution, so no secret is
+ * baked. A `baseUrlEnv` is resolved from the store at bake time, like pi's; the
+ * literal `baseUrl` is the fallback. Grounding: opencode
+ * `packages/opencode/src/config/variable.ts`, `config.mdx`.
+ */
+export function renderOpencodeConfig(
+  provider: Provider,
+  storeEnv: Record<string, string>
+): string {
+  const baseURL =
+    (provider.baseUrlEnv && storeEnv[provider.baseUrlEnv]) || provider.baseUrl;
+  const model = `${OPENCODE_PROVIDER_ID}/${provider.model}`;
+  const config = {
+    $schema: 'https://opencode.ai/config.json',
+    model,
+    small_model: model,
+    provider: {
+      [OPENCODE_PROVIDER_ID]: {
+        npm: opencodeNpm(provider.protocol),
+        name: OPENCODE_PROVIDER_ID,
+        options: { baseURL, apiKey: `{env:${provider.apiKeyEnv}}` },
+        models: { [provider.model]: { name: provider.model } },
+      },
+    },
+  };
+  return JSON.stringify(config, null, 2) + '\n';
+}
+
+/**
+ * Where opencode reads its config in the image: `opencode.json` under the dir
+ * `OPENCODE_CONFIG_DIR` names, outside `/workspace`. That dir is merged after the
+ * project's `opencode.json`, so a workspace file cannot re-point the provider.
+ * opencode writes into it at runtime (a `.gitignore`, a plugin install), which
+ * the derived image's chown allows.
+ */
+const OPENCODE_CONFIG_DIR_ENV = 'OPENCODE_CONFIG_DIR';
+const OPENCODE_CONFIG_DIR = `${NODE_HOME}/.config/opencode`;
+const OPENCODE_CONFIG_FILE = 'opencode.json';
+
+/**
+ * opencode's adapter. opencode is configured through `opencode.json`, so the
+ * provider is rendered into a file baked into the derived agent image; only the
+ * API key is delivered at runtime, by name. The model is always named on the run
+ * command (`-m e/<model>`) as well, so the pick never depends on config merge
+ * order. No MCP overlay yet: `--mcp` stays gated off.
+ */
+export const opencodeAdapter: FileHarnessAdapter = {
+  kind: 'file',
+  planProviderDelivery(
+    provider: Provider,
+    storeEnv: Record<string, string>
+  ): FileProviderDelivery {
+    return {
+      bakedConfig: {
+        file: {
+          fileName: OPENCODE_CONFIG_FILE,
+          content: renderOpencodeConfig(provider, storeEnv),
+        },
+        configDir: OPENCODE_CONFIG_DIR,
+        configDirEnv: OPENCODE_CONFIG_DIR_ENV,
+      },
+      runtimeEnv: [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }],
+      runtimeModel: `${OPENCODE_PROVIDER_ID}/${provider.model}`,
+    };
+  },
+};
+
 /** A harness's identity and the protocol set it speaks, for protocol validation. */
 interface HarnessProtocols {
   name: string;

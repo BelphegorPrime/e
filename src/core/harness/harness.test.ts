@@ -84,13 +84,18 @@ test('harnessCapabilities.mcp declares each harness form: flag (Claude), file (C
   assert.equal(harnessCapabilities(HARNESSES.opencode).mcp, 'none');
 });
 
-test('harnessCapabilities.provider reflects the adapter kind (env Claude, file Codex/pi, none opencode)', () => {
+test('harnessCapabilities.provider reflects the adapter kind (env Claude, file Codex/pi/opencode)', () => {
   assert.equal(harnessCapabilities(HARNESSES.claudeCode).provider, 'env');
   assert.equal(harnessCapabilities(HARNESSES.codex).provider, 'file');
   // pi delivers its provider via a baked models.json, so it is a file harness too.
   assert.equal(harnessCapabilities(HARNESSES.pi).provider, 'file');
-  // opencode ships no config adapter yet.
-  assert.equal(harnessCapabilities(HARNESSES.opencode).provider, 'none');
+  // opencode delivers its provider via a baked opencode.json.
+  assert.equal(harnessCapabilities(HARNESSES.opencode).provider, 'file');
+  // A harness without an adapter cannot take a provider at all.
+  assert.equal(
+    harnessCapabilities({ ...HARNESSES.opencode, adapter: undefined }).provider,
+    'none'
+  );
 });
 
 test('planMcpDelivery wires Claude inline as a flag (--mcp-config args)', () => {
@@ -211,6 +216,14 @@ test('opencode buildCommand auto-approves, so nothing is silently auto-rejected'
     '--auto',
     'do it',
   ]);
+  assert.deepEqual(HARNESSES.opencode.buildCommand('do it', 'e/auto/coding'), [
+    'opencode',
+    'run',
+    '--auto',
+    '-m',
+    'e/auto/coding',
+    'do it',
+  ]);
 });
 
 test('claude runs none of the config /workspace supplies (hooks, .mcp.json)', () => {
@@ -311,6 +324,10 @@ test('interactive commands start each harness without a one-shot prompt', () => 
   ]);
   assert.deepEqual(HARNESSES.codex.buildInteractiveCommand(), ['codex']);
   assert.deepEqual(HARNESSES.opencode.buildInteractiveCommand(), ['opencode']);
+  assert.deepEqual(
+    HARNESSES.opencode.buildInteractiveCommand('e/auto/coding'),
+    ['opencode', '-m', 'e/auto/coding']
+  );
 });
 
 test('each harness places skills at a path outside /workspace; Claude differs from the shared dir', () => {

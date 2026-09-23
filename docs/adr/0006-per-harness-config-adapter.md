@@ -109,9 +109,8 @@ flowchart LR
 - Config and skills must render outside the worktree, or they pollute the run
   branch's diff. Every harness supports this via a config-dir env var
   (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR`,
-  `PI_CODING_AGENT_DIR`). Only Claude Code, Codex, and pi have an adapter wired
-  today; opencode declares its protocol set but has no adapter yet, so a
-  provider on opencode is rejected until one is added.
+  `PI_CODING_AGENT_DIR`). All four have an adapter wired; opencode's bakes
+  `opencode.json` under `OPENCODE_CONFIG_DIR` but plans no MCP overlay yet.
 - Not every capability is universal: pi ships no MCP client, so `e`
   capability-gates `--mcp` per harness; MCP delivery form also differs (Claude
   takes it inline via a flag; Codex and opencode need a rendered file). See

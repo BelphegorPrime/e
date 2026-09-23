@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import {
   claudeCodeAdapter,
   codexAdapter,
+  opencodeAdapter,
+  opencodeNpm,
+  OPENCODE_PROVIDER_ID,
   piAdapter,
   renderCodexConfig,
   renderCodexMcpServers,
+  renderOpencodeConfig,
   renderPiMcpServers,
   renderPiModelsJson,
   piApi,
@@ -401,6 +405,84 @@ test('piAdapter: ships MCP delivery via the pi-mcp-adapter (mcp.json overlay)', 
   // pi's overlay is self-contained: the baked models.json stays as it is and the
   // overlay mounts a sibling mcp.json, so nothing is merged into the provider file.
   assert.equal(typeof piAdapter.planConfigOverlay, 'function');
+});
+
+const opencodeProvider: Provider = {
+  baseUrl: 'http://localhost:20128/v1',
+  baseUrlEnv: 'OPENAI_BASE_URL',
+  model: 'auto/coding',
+  protocol: 'openai-chat',
+  apiKeyEnv: 'OPENAI_API_KEY',
+};
+
+test('opencodeNpm: maps each e wire protocol to a bundled AI SDK package', () => {
+  assert.equal(opencodeNpm('openai-chat'), '@ai-sdk/openai-compatible');
+  assert.equal(opencodeNpm('openai-responses'), '@ai-sdk/openai');
+  assert.equal(opencodeNpm('anthropic-messages'), '@ai-sdk/anthropic');
+});
+
+test('renderOpencodeConfig: one custom provider, selected as model and small_model', () => {
+  const cfg = JSON.parse(renderOpencodeConfig(opencodeProvider, {}));
+  assert.equal(cfg.model, 'e/auto/coding');
+  assert.equal(cfg.small_model, 'e/auto/coding');
+  assert.deepEqual(Object.keys(cfg.provider), [OPENCODE_PROVIDER_ID]);
+  const p = cfg.provider[OPENCODE_PROVIDER_ID];
+  assert.equal(p.npm, '@ai-sdk/openai-compatible');
+  // opencode selects only models its provider declares.
+  assert.deepEqual(p.models, { 'auto/coding': { name: 'auto/coding' } });
+});
+
+test('renderOpencodeConfig: references the API key by name via {env:VAR}, never a value', () => {
+  const content = renderOpencodeConfig(opencodeProvider, {
+    OPENAI_API_KEY: 'sk-secret',
+  });
+  assert.equal(
+    JSON.parse(content).provider.e.options.apiKey,
+    '{env:OPENAI_API_KEY}'
+  );
+  assert.ok(!content.includes('sk-secret'));
+});
+
+test('renderOpencodeConfig: bakes the store base URL when baseUrlEnv is set, else the literal', () => {
+  const fromStore = JSON.parse(
+    renderOpencodeConfig(opencodeProvider, {
+      OPENAI_BASE_URL: 'http://host.docker.internal:20128/v1',
+    })
+  );
+  assert.equal(
+    fromStore.provider.e.options.baseURL,
+    'http://host.docker.internal:20128/v1'
+  );
+  const literal = JSON.parse(renderOpencodeConfig(opencodeProvider, {}));
+  assert.equal(literal.provider.e.options.baseURL, 'http://localhost:20128/v1');
+});
+
+test('opencodeAdapter: one call plans the whole delivery - a baked opencode.json, the key by name', () => {
+  assert.equal(opencodeAdapter.kind, 'file');
+  const delivery = opencodeAdapter.planProviderDelivery(opencodeProvider, {});
+  assert.equal(delivery.bakedConfig.file.fileName, 'opencode.json');
+  assert.equal(
+    delivery.bakedConfig.file.content,
+    renderOpencodeConfig(opencodeProvider, {})
+  );
+  assert.deepEqual(delivery.runtimeEnv, [
+    { name: 'OPENAI_API_KEY', fromEnv: 'OPENAI_API_KEY' },
+  ]);
+  // The model is always named on the command line, provider-qualified.
+  assert.equal(delivery.runtimeModel, 'e/auto/coding');
+});
+
+test('opencodeAdapter: bakes config under OPENCODE_CONFIG_DIR outside /workspace', () => {
+  const { bakedConfig } = opencodeAdapter.planProviderDelivery(
+    opencodeProvider,
+    {}
+  );
+  assert.equal(bakedConfig.configDirEnv, 'OPENCODE_CONFIG_DIR');
+  assert.equal(bakedConfig.configDir, '/home/node/.config/opencode');
+});
+
+test('opencodeAdapter: plans no MCP overlay yet, so --mcp stays gated', () => {
+  assert.equal(opencodeAdapter.planConfigOverlay, undefined);
 });
 
 test('a file harness is one object: `kind` plus one delivery method', () => {
