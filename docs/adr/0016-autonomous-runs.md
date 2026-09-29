@@ -897,10 +897,14 @@ declaration used is the one committed there - which must declare the same
 `base`, or the two files would name different bases and the refusal says so.
 Without a `base` the anchor is the base. The default branch is `origin/HEAD`,
 or what `git ls-remote --symref origin HEAD` reports when it is unset, because
-`actions/checkout` never sets it; it too must resolve locally. A short `base`
-is tried as `refs/heads/`, `refs/remotes/origin/`, then `refs/tags/`, and only
-those three prefixes count as the target repository: another remote is a
-fork's as far as the rule knows, and a raw sha is not a ref.
+`actions/checkout` never sets it; it too must resolve locally. That fallback
+is the only network call, so an offline host sets `origin/HEAD` once with
+`git remote set-head origin <branch>`, and the error says so. A short `base`
+is tried as `refs/remotes/origin/`, then `refs/tags/`, and only those two
+prefixes count as the target repository. A **local branch does not**: it is
+this machine's state, and `gh pr checkout` makes one out of a fork's head, so
+`refs/heads/*` is refused with a pointer to `origin/<branch>`. Another remote
+is a fork's as far as the rule knows, and a raw sha is not a ref.
 
 **The payload's event name** is `--event-name`, defaulting to
 `$GITHUB_EVENT_NAME`: a payload file does not carry its own `X-GitHub-Event`,

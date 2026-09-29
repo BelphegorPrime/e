@@ -351,6 +351,32 @@ test('resolveOneShot: a base from the payload resolves like any other, or is ref
   });
 });
 
+test('resolveOneShot: a local branch is never the base, even when it resolves', () => {
+  // `gh pr checkout` makes a local branch out of a fork's head; only
+  // origin's branches and the tags are the target repository.
+  withRoot(root => {
+    for (const base of ['patch-1', 'refs/heads/patch-1']) {
+      const git = gitWith(
+        root,
+        { [MAIN]: { ...labeled, base } },
+        { refCommits: { [MAIN]: 'main-sha', 'refs/heads/patch-1': 'fork-sha' } }
+      );
+      assert.throws(
+        () =>
+          resolveOneShot(
+            git,
+            input(root, {
+              eventPath: writeEvent(root, payload),
+              eventName: 'issues',
+            })
+          ),
+        /^Error: Base error: /,
+        base
+      );
+    }
+  });
+});
+
 test('resolveOneShot: a resolved pull request ref is refused', () => {
   withRoot(root => {
     const git = gitWith(root, {
@@ -379,7 +405,7 @@ test('resolveOneShot: no default branch, or one not fetched, is a base error', (
           gitWith(root, {}, { defaultBranchRef: undefined }),
           input(root)
         ),
-      /Base error: .*default branch/
+      /Base error: .*default branch.*git remote set-head origin/
     );
     assert.throws(
       () => resolveOneShot(gitWith(root, {}), input(root)),

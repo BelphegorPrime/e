@@ -3,14 +3,17 @@ import path from 'path';
 import type { Git } from '../../ports/git/index.js';
 import type { Trigger, TriggerContext } from '../../core/trigger/index.js';
 import { parseTriggerFiles } from '../../core/trigger/load.js';
-import { matchesEvent } from '../../core/trigger/match.js';
-import { renderTriggerPrompt } from '../../core/trigger/prompt.js';
 import {
+  baseError,
   baseRefCandidates,
   branchOfRef,
   EVENT_PAYLOAD_MAX_BYTES,
   isPullRef,
-  requirePayloadFree,
+  oneShotEvent,
+  oneShotRefusal,
+  renderBaseName,
+  renderOneShotPrompt,
+  requireSameBase,
   tickStamp,
 } from '../../core/trigger/oneShot.js';
 import {
@@ -32,6 +35,9 @@ import type { RunBase } from '../runs/runSpawn.js';
  * branch is the anchor: its declaration says what `base` is, the run cuts
  * from that base, and the declaration used is the one committed there - which
  * must agree on `base`, or the two would name different bases.
+ *
+ * This module only reads - the refs, the declarations, the payload - and
+ * hands each result to the pure decisions in `core/trigger/oneShot.ts`.
  */
 
 export interface OneShotInput {
@@ -63,11 +69,6 @@ export type OneShotResolution =
       warnings: string[];
     }
   | { kind: 'skip'; reason: string };
-
-/** A base the rule refused, or that does not exist: the run never starts. */
-function baseError(why: string): Error {
-  return new Error(`Base error: ${why}`);
-}
 
 /** Reads and parses one declaration as committed at `ref`. */
 function declarationAt(
@@ -133,30 +134,6 @@ function readPayload(file: string): unknown {
   }
 }
 
-/** Why this trigger starts no run for this payload, or undefined when it does. */
-function refusal(
-  trigger: Trigger,
-  payload: unknown,
-  eventName: string | undefined
-): string | undefined {
-  if (!trigger.enabled) {
-    return `Trigger "${trigger.name}" is disabled; no run started.`;
-  }
-  // Without a payload the pipeline's own filter is all there is, and the
-  // declaration was checked to need nothing from one.
-  if (payload === undefined || trigger.on.type !== 'webhook') return undefined;
-  if (eventName === undefined) {
-    throw new Error(
-      `Trigger "${trigger.name}" filters on the event, and --event was given without its name: pass --event-name <name>, or run where GITHUB_EVENT_NAME is set`
-    );
-  }
-  if (!matchesEvent(trigger.on, { name: eventName, payload })) {
-    const action = trigger.on.action ? `.${trigger.on.action}` : '';
-    return `Trigger "${trigger.name}" listens to ${trigger.on.event}${action}; this ${eventName} event does not match its on/match, so no run started.`;
-  }
-  return undefined;
-}
-
 /**
  * Turns `--trigger <name> [--event <path>]` into one run, or into the reason
  * there is none. Throws on everything that is an error rather than a
@@ -179,83 +156,44 @@ export function resolveOneShot(
     );
   }
   const rooted = { ...input, root };
-  const warnings: string[] = [];
 
   const defaultRef = git.defaultBranchRef();
   if (defaultRef === undefined) {
     throw baseError(
-      "cannot determine the repository's default branch: origin/HEAD is unset and origin did not name one"
+      "cannot determine the repository's default branch: origin/HEAD is unset and origin did not name one; set it once with `git remote set-head origin <branch>`, which needs no network"
     );
   }
   const defaultBase = resolveBase(git, defaultRef);
   const anchor = declarationAt(git, defaultBase.ref, rooted);
 
-  let payload: unknown;
-  if (input.eventPath !== undefined) {
-    const read = readPayload(input.eventPath);
-    if (anchor.on.type === 'cron') {
-      warnings.push(
-        `Trigger "${anchor.name}" is a cron trigger, which has no event: --event is ignored and nothing is mounted.`
-      );
-    } else {
-      payload = read;
-    }
-  }
-  if (anchor.on.type === 'cron') {
-    warnings.push(
-      `Trigger "${anchor.name}" is a cron trigger: one-shot runs it now, and its expr and tz are ignored.`
-    );
-  }
-  // Asked of the anchor and again of the declaration at base, when that is
-  // another commit: a skip is decided before a missing payload is an error,
-  // so a disabled trigger stays quiet however it is declared.
-  const refusalOf = (declaration: Trigger): string | undefined => {
-    const reason = refusal(declaration, payload, input.eventName);
-    if (reason === undefined && payload === undefined) {
-      requirePayloadFree(declaration);
-    }
-    return reason;
-  };
-  const anchorRefusal = refusalOf(anchor);
+  const { event, warnings } = oneShotEvent(
+    anchor,
+    input.eventPath !== undefined ? readPayload(input.eventPath) : undefined,
+    input.eventName
+  );
+  const anchorRefusal = oneShotRefusal(anchor, event);
   if (anchorRefusal) return { kind: 'skip', reason: anchorRefusal };
 
   const tick = tickStamp(input.now);
   let base = defaultBase;
   let trigger = anchor;
-  if (anchor.base !== undefined) {
-    const rendered = renderTriggerPrompt(anchor.base, {
-      payload,
-      trigger: anchor.name,
-      tick,
-    });
-    if (!rendered.ok) throw baseError(`"base": ${rendered.reason}`);
-    base = resolveBase(git, rendered.text);
+  const baseName = renderBaseName(anchor, event, tick);
+  if (baseName !== undefined) {
+    base = resolveBase(git, baseName);
     if (base.ref !== defaultBase.ref) {
       trigger = declarationAt(git, base.ref, rooted);
-      if (trigger.base !== anchor.base) {
-        throw baseError(
-          `the declaration at ${base.ref} declares base ${JSON.stringify(trigger.base ?? null)}, and the one at ${defaultBase.ref} declares ${JSON.stringify(anchor.base)}; they must agree`
-        );
-      }
-      const baseRefusal = refusalOf(trigger);
+      requireSameBase(trigger, anchor, base.ref, defaultBase.ref);
+      const baseRefusal = oneShotRefusal(trigger, event);
       if (baseRefusal) return { kind: 'skip', reason: baseRefusal };
     }
   }
 
-  const prompt = renderTriggerPrompt(trigger.prompt, {
-    payload,
-    trigger: trigger.name,
-    tick,
-  });
-  if (!prompt.ok) {
-    throw new Error(`Trigger "${trigger.name}": "prompt": ${prompt.reason}`);
-  }
   return {
     kind: 'run',
     trigger,
-    prompt: prompt.text,
+    prompt: renderOneShotPrompt(trigger, event, tick),
     base,
-    ...(payload !== undefined ? { eventFile: input.eventPath } : {}),
+    ...(event.payload !== undefined ? { eventFile: input.eventPath } : {}),
     warnings,
   };
 }

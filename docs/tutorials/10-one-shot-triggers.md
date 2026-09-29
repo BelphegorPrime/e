@@ -163,11 +163,15 @@ _outside_ `e`, where no rule of ours reaches.
 Without `base` the run cuts from the repository's default branch (`origin/HEAD`,
 or what origin reports when the checkout never set it) - not from `HEAD`,
 which in a job is whatever the pipeline checked out, a fork's head included.
+Asking origin is the one network call; on a host that runs offline, set
+`origin/HEAD` once with `git remote set-head origin main`.
 
 A declared `base` must be a branch or tag of the target repository itself:
-`main`, `origin/main`, `refs/heads/main` or a tag. `refs/pull/*` is refused
-by name, and a fork's branch does not exist in your repository, so it drops
-out by construction:
+`main` or `origin/main` (both origin's branch), `refs/remotes/origin/main`, or
+a tag. A local branch (`refs/heads/*`) is refused, because it is this
+machine's state and `gh pr checkout` makes one out of a fork's head.
+`refs/pull/*` is refused by name, and a fork's branch does not exist in your
+repository, so it drops out by construction:
 
 ```jsonc
 "base": "{{pull_request.head.ref}}"
