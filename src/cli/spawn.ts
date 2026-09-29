@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
 import type { RunOptions } from '../ports/runtime/index.js';
@@ -8,6 +9,7 @@ import {
   worktreePathFor,
 } from '../engine/runs/worktreesDir.js';
 import { HostGit } from '../ports/git/host.js';
+import type { Git } from '../ports/git/index.js';
 import { HostPullRequest } from '../ports/github/host.js';
 import { fromBranch } from '../core/identity/runName.js';
 import { brokerSpoolDirFor } from '../engine/runs/runBroker.js';
@@ -50,7 +52,10 @@ import {
 import { executeSpawn } from '../engine/spawn/executeSpawn.js';
 import { findRoot } from '../core/store/root.js';
 import { envFilePath, verifyCacheVolume } from '../core/store/paths.js';
-import { readConfig } from '../core/store/config.js';
+import { readConfig, type LoopCaps } from '../core/store/config.js';
+import { resolveOneShot } from '../engine/spawn/oneShot.js';
+import { NO_LEDGER } from '../engine/queue/ledger.js';
+import { storeTriggerContext } from '../core/trigger/context.js';
 import { localStack } from '../ports/runtime/stack.js';
 
 import { log } from '../shared/utils/log.js';
@@ -61,6 +66,7 @@ import { mergeLanded } from '../engine/runs/runMergeBack.js';
 import {
   CANCELED_EXIT_CODE,
   type IterationOutcome,
+  type RunBase,
   type RunSpawnResult,
 } from '../engine/runs/runSpawn.js';
 
@@ -84,6 +90,27 @@ export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   keepWorktree?: boolean;
   /** `--parent <branch>`: a manual child request - a human-written sibling of the live run `branch` (ADR-0013). */
   parent?: string;
+  /** `--trigger <name>`: the one-shot shape - agent, prompt and base come from the trigger (ADR-0016 section 13). */
+  trigger?: string;
+  /** `--event <path>`: the payload file a `--trigger` run filters on and interpolates from. */
+  event?: string;
+  /** `--event-name <name>`: the provider's name for that payload; `$GITHUB_EVENT_NAME` when absent. */
+  eventName?: string;
+}
+
+/**
+ * What `--trigger` hands the ordinary spawn pipeline: the declaration's agent
+ * and rendered prompt, plus what a typed `e spawn` never has - a declared
+ * base, a payload to mount and the trigger's `loop` override.
+ */
+export interface TriggeredSpawn {
+  agent: string;
+  prompt: string;
+  /** The run slug: `--name`, else the trigger's id. */
+  name: string;
+  base: RunBase;
+  eventFile?: string;
+  loop?: Partial<LoopCaps>;
 }
 
 /**
@@ -164,7 +191,8 @@ function resolveMcpServer(name: string, root: string | undefined): McpServer {
 export function gatherSpawnFacts(
   target: string | undefined,
   prompt: string[],
-  opts: SpawnCommandOptions
+  opts: SpawnCommandOptions,
+  triggered?: TriggeredSpawn
 ): SpawnFacts {
   const root = findRoot(opts.dir);
   const config = readConfig(root);
@@ -251,8 +279,58 @@ export function gatherSpawnFacts(
     // check is the only thing that ever mounts it.
     verify: config.verify,
     cacheVolume: verifyCacheVolume(root),
-    loop: config.loop,
+    // A trigger may move `loop` field-wise, and nothing else (ADR-0016).
+    loop: triggered?.loop ? { ...config.loop, ...triggered.loop } : config.loop,
     resources: config.resources,
+    base: triggered?.base,
+    eventFile: triggered?.eventFile,
+  };
+}
+
+/**
+ * `--trigger <name> [--event <path>]` (ADR-0016 section 13): the declaration,
+ * read from base, turned into the arguments of an ordinary spawn - or into
+ * the reason no run starts, which is not an error. Refuses what the
+ * declaration already decides: an agent or a prompt on the command line.
+ * Exported for its tests.
+ */
+export function resolveTriggerSpawn(
+  target: string | undefined,
+  prompt: string[],
+  opts: SpawnCommandOptions,
+  git: Git,
+  now: Date = new Date()
+): TriggeredSpawn | { skip: string } {
+  const name = opts.trigger!;
+  if (target !== undefined || prompt.length > 0) {
+    throw new Error(
+      `--trigger ${name} takes its agent and prompt from the declaration; drop the positional arguments`
+    );
+  }
+  if (opts.parent !== undefined) {
+    throw new Error('--trigger and --parent cannot be combined');
+  }
+  const root = findRoot(opts.dir);
+  const context = storeTriggerContext(root);
+  const resolved = resolveOneShot(git, {
+    name,
+    root,
+    context,
+    eventPath: opts.event !== undefined ? path.resolve(opts.event) : undefined,
+    eventName: opts.eventName ?? env.githubEventName,
+    now,
+  });
+  if (resolved.kind === 'skip') return { skip: resolved.reason };
+  for (const warning of resolved.warnings) log.warn(warning);
+  return {
+    agent: resolved.trigger.agent,
+    prompt: resolved.prompt,
+    name: opts.name ?? resolved.trigger.name,
+    base: resolved.base,
+    ...(resolved.eventFile !== undefined
+      ? { eventFile: resolved.eventFile }
+      : {}),
+    ...(resolved.trigger.loop ? { loop: resolved.trigger.loop } : {}),
   };
 }
 
@@ -489,6 +567,8 @@ export interface SpawnCommandDeps {
   scratch: RunScratch;
   /** A cancel (SIGTERM, or an A2A client's cancelTask), forwarded to the run. */
   abort?: AbortSignal;
+  /** The host's git; a test passes a fake. */
+  git?: Git;
 }
 
 /**
@@ -505,13 +585,42 @@ export async function runSpawnCommand(
   deps: SpawnCommandDeps
 ): Promise<number> {
   const { scratch, abort } = deps;
+  const git = deps.git ?? new HostGit();
   try {
+    if (opts.event !== undefined && opts.trigger === undefined) {
+      throw new Error(
+        '--event needs --trigger: a payload is only read for a trigger'
+      );
+    }
+    // The one-shot shape (ADR-0016 section 13): the declaration supplies the
+    // agent and the prompt. A non-match is no run, so it exits 0 - the exit
+    // codes describe a run's verdict, and here no run existed.
+    let triggered: TriggeredSpawn | undefined;
+    if (opts.trigger !== undefined) {
+      const out = resolveTriggerSpawn(target, prompt, opts, git);
+      if ('skip' in out) {
+        log.info(out.skip);
+        return 0;
+      }
+      triggered = out;
+      target = out.agent;
+      prompt = [out.prompt];
+      opts = { ...opts, name: out.name };
+    }
+
     // A remote A2A agent (ADR-0015) is answered over the wire: no image, no
     // worktree, the answer on stdout.
     const remote = resolveRemoteTarget(target, prompt, opts);
+    if (remote && triggered) {
+      // A remote agent has no worktree to cut from base and nowhere to mount
+      // the payload; running it anyway would drop both without a word.
+      throw new Error(
+        `--trigger ${opts.trigger} names "${remote.agent.name}", a remote A2A agent: one-shot needs a harness agent, which has a base and a payload mount`
+      );
+    }
     if (remote) return await runRemoteAgent({ ...remote, abort });
 
-    const gathered = gatherSpawnFacts(target, prompt, opts);
+    const gathered = gatherSpawnFacts(target, prompt, opts, triggered);
     validateSpawn(gathered);
     const runtime = resolveRuntime(opts.runtime);
     const facts = await prepareLocalStack(gathered, {
@@ -520,12 +629,15 @@ export async function runSpawnCommand(
     });
 
     const result = await executeSpawn(facts, planSpawn(facts), {
-      git: new HostGit(),
+      git,
       runtime,
       scratch,
       pullRequest: facts.gitPlatform ? new HostPullRequest() : undefined,
       gitPlatform: facts.gitPlatform,
       abort,
+      // The ledger is `serve`'s; in one-shot the outer scheduler owns what it
+      // describes (ADR-0016 section 13).
+      ...(triggered ? { ledger: NO_LEDGER } : {}),
     });
 
     // Rendered env-files hold resolved secrets; each container already has its
@@ -588,6 +700,18 @@ export function registerSpawnCommand(program: Command): void {
     .option(
       `${SPAWN_FLAGS.parent} <branch>`,
       'manual child request: add a sibling to the live run `branch` (ADR-0013), then exit'
+    )
+    .option(
+      '--trigger <name>',
+      'one-shot: run the trigger .e/triggers/<name>, read from its base (agent and prompt come from it)'
+    )
+    .option(
+      '--event <path>',
+      'with --trigger: the event payload to filter on and interpolate from, e.g. "$GITHUB_EVENT_PATH"'
+    )
+    .option(
+      '--event-name <name>',
+      "with --event: the provider's event name (default: $GITHUB_EVENT_NAME)"
     )
     .option(
       '-p, --port <port...>',

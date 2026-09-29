@@ -890,6 +890,25 @@ comes from the head - `trigger.json` included. So the trigger is read from `base
 Documenting "do not run one-shot triggers on untrusted PRs" was rejected as a
 footnote the first fork PR would disprove.
 
+**Where "base" comes from before the declaration is read.** `base` is itself a
+field of the declaration, so the **default branch is the anchor**: its
+`trigger.json` says what `base` is, the run cuts from that base, and the
+declaration used is the one committed there - which must declare the same
+`base`, or the two files would name different bases and the refusal says so.
+Without a `base` the anchor is the base. The default branch is `origin/HEAD`,
+or what `git ls-remote --symref origin HEAD` reports when it is unset, because
+`actions/checkout` never sets it; it too must resolve locally. A short `base`
+is tried as `refs/heads/`, `refs/remotes/origin/`, then `refs/tags/`, and only
+those three prefixes count as the target repository: another remote is a
+fork's as far as the rule knows, and a raw sha is not a ref.
+
+**The payload's event name** is `--event-name`, defaulting to
+`$GITHUB_EVENT_NAME`: a payload file does not carry its own `X-GitHub-Event`,
+and matching `on.event` without it would be the "two meanings" rejected
+above. A `pull_request_target` workflow passes `--event-name pull_request`,
+the name the trigger declares. The run's slug is the trigger's id unless
+`--name` says otherwise.
+
 **Void in one-shot**: the queue and slot accounting, dedup, the `live/` ledger,
 `nextFireAt`/`lastFiredAt`, `GET /api/runs`, A2A cancel. Siblings and the
 runtime-broker still work, being per-run rather than per-`serve` (ADR-0013).

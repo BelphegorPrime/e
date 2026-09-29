@@ -835,6 +835,7 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | `e spawn … --keep-worktree`                    | Leave the run's worktree in place for inspection                                                                                 |
 | `e spawn … --skill spawn-brother`              | Let the agent request sibling runs; the host merges each back into its worktree (ADR-0013)                                       |
 | `e spawn <remote-agent> "<prompt>"`            | Ask a Store agent with `"transport": "a2a"` over the Agent2Agent protocol; the answer on stdout, no run (ADR-0015)               |
+| `e spawn --trigger <name> [--event <path>]`    | One-shot: run a Trigger from CI or a timer, its declaration read from base; a non-matching event exits 0 (Tutorial 10)           |
 | `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, and the A2A endpoint (`/.well-known/agent-card.json`, `POST /a2a`); stop the background server         |
 | `e export` / `e import <file>`                 | Move the store and gateway configuration between machines as a zip                                                               |
 
@@ -843,14 +844,15 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 Host-side knobs the `e` process reads (`src/shared/utils/env.ts`); none of them is
 injected into a container.
 
-| Variable                         | Effect                                                                                                            |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `E_RUNTIME`                      | Container engine to use when `--runtime` is not passed: `docker`, `podman`, `nerdctl`, or `finch`                 |
-| `E_WORKTREES_DIR`                | Where run worktrees are created; must be a path the engine can bind-mount (see [Platform notes](#platform-notes)) |
-| `DOCKER_HOST` / `CONTAINER_HOST` | Engine socket for the browser terminal (`unix://` or `npipe://`); also honoured by the engine CLIs themselves     |
-| `E_A2A_TOKEN`                    | Bearer token `e serve` requires on its A2A endpoint; required to expose it beyond loopback (ADR-0015)             |
-| `OMNIROUTE_URL`                  | Where `e` reaches the local OmniRoute gateway (default `http://127.0.0.1:20128`)                                  |
-| `EGRESS_API_URL`                 | Where `e` reaches the egress blacklist API (default `http://127.0.0.1:20129`)                                     |
-| `LOCAL_LLAMA_URL`                | Where `e llamacpp download` reaches llama.cpp (default `http://127.0.0.1:9931`)                                   |
-| `VERBOSE=true`                   | Debug logging (same as `-v`)                                                                                      |
-| `SHOULD_WRITE_LOG_FILE=true`     | Mirror every log line to `log.txt` in the working directory                                                       |
+| Variable                         | Effect                                                                                                             |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `E_RUNTIME`                      | Container engine to use when `--runtime` is not passed: `docker`, `podman`, `nerdctl`, or `finch`                  |
+| `E_WORKTREES_DIR`                | Where run worktrees are created; must be a path the engine can bind-mount (see [Platform notes](#platform-notes))  |
+| `DOCKER_HOST` / `CONTAINER_HOST` | Engine socket for the browser terminal (`unix://` or `npipe://`); also honoured by the engine CLIs themselves      |
+| `GITHUB_EVENT_NAME`              | The event name `e spawn --trigger --event` matches `on` against when `--event-name` is not passed (set by Actions) |
+| `E_A2A_TOKEN`                    | Bearer token `e serve` requires on its A2A endpoint; required to expose it beyond loopback (ADR-0015)              |
+| `OMNIROUTE_URL`                  | Where `e` reaches the local OmniRoute gateway (default `http://127.0.0.1:20128`)                                   |
+| `EGRESS_API_URL`                 | Where `e` reaches the egress blacklist API (default `http://127.0.0.1:20129`)                                      |
+| `LOCAL_LLAMA_URL`                | Where `e llamacpp download` reaches llama.cpp (default `http://127.0.0.1:9931`)                                    |
+| `VERBOSE=true`                   | Debug logging (same as `-v`)                                                                                       |
+| `SHOULD_WRITE_LOG_FILE=true`     | Mirror every log line to `log.txt` in the working directory                                                        |

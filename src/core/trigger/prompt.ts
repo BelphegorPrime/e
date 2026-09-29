@@ -44,6 +44,13 @@ const HOST_VALUES = ['trigger', 'tick'] as const;
 /** `{{ path }}`, with whatever spacing the author used. */
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g;
 
+/** The payload paths a template interpolates, host values left out. */
+export function payloadReferences(template: string): string[] {
+  return [...template.matchAll(PLACEHOLDER)]
+    .map(match => match[1])
+    .filter(path => !(HOST_VALUES as readonly string[]).includes(path));
+}
+
 /** What the caller needs to render one trigger's prompt. */
 export interface PromptContext {
   /** The delivery body, when there is one; a cron tick has none. */

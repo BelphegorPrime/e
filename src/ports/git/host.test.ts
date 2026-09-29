@@ -792,3 +792,81 @@ test('parseNumstatZ: plain entries, renames, binary counts as null, odd names ve
   );
   assert.deepEqual(parseNumstatZ(''), []);
 });
+
+/** Runs `fn` inside `repo`, restoring the cwd and removing the repos after. */
+function inRepo(repo: string, fn: () => void, ...cleanup: string[]): void {
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    fn();
+  } finally {
+    process.chdir(originalCwd);
+    for (const dir of [repo, ...cleanup]) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
+test('HostGit.resolveCommit: a ref resolves to its commit, anything else to undefined', () => {
+  const repo = initRepo('e-host-git-resolve-');
+  git(repo, 'tag', 'v1');
+  const head = git(repo, 'rev-parse', 'HEAD');
+  inRepo(repo, () => {
+    const host = new HostGit();
+    assert.equal(host.resolveCommit('refs/heads/main'), head);
+    // An annotated or lightweight tag peels to the commit it names.
+    assert.equal(host.resolveCommit('refs/tags/v1'), head);
+    assert.equal(host.resolveCommit('refs/heads/absent'), undefined);
+  });
+});
+
+test('HostGit.readFileAt: reads a file as committed at a ref, not as on disk', () => {
+  const repo = initRepo('e-host-git-show-');
+  const file = path.join(repo, '.e', 'triggers', 'nightly', 'trigger.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{"committed":true}');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'trigger');
+  // The working tree now says something else, as a PR head would.
+  fs.writeFileSync(file, '{"committed":false}');
+  inRepo(repo, () => {
+    const host = new HostGit();
+    assert.equal(
+      host.readFileAt('refs/heads/main', file),
+      '{"committed":true}'
+    );
+    // From a subdirectory the path still means the same file.
+    fs.mkdirSync(path.join(repo, 'src'));
+    process.chdir(path.join(repo, 'src'));
+    assert.equal(
+      host.readFileAt('refs/heads/main', file),
+      '{"committed":true}'
+    );
+    assert.equal(
+      host.readFileAt('refs/heads/main', path.join(repo, 'absent.json')),
+      undefined
+    );
+  });
+});
+
+test('HostGit.defaultBranchRef: origin/HEAD, else the remote asked, else undefined', () => {
+  const upstream = initRepo('e-host-git-upstream-');
+  git(upstream, 'checkout', '-q', '-b', 'trunk');
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-git-clone-'));
+  git(clone, 'clone', '-q', upstream, '.');
+  inRepo(
+    clone,
+    () => {
+      const host = new HostGit();
+      // A clone sets origin/HEAD to what the remote had checked out.
+      assert.equal(host.defaultBranchRef(), 'refs/remotes/origin/trunk');
+      // actions/checkout does not set it; the remote is asked instead.
+      git(clone, 'remote', 'set-head', 'origin', '--delete');
+      assert.equal(host.defaultBranchRef(), 'refs/remotes/origin/trunk');
+      // No remote at all: no default branch to name.
+      git(clone, 'remote', 'remove', 'origin');
+      assert.equal(host.defaultBranchRef(), undefined);
+    },
+    upstream
+  );
+});

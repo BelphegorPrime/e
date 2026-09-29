@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadTriggers, type LoadedTrigger } from './load.js';
+import { loadTriggers, parseTriggerFiles, type LoadedTrigger } from './load.js';
 
 /*
  * Loading (ADR-0016). One bad trigger must not take the Store down: a typo
@@ -128,5 +128,25 @@ test('loadTriggers: a disabled trigger loads - it is off, not broken', () => {
       assert.equal(loaded.error, undefined);
       assert.equal(loaded.trigger?.enabled, false);
     }
+  );
+});
+
+test('parseTriggerFiles: parses from text, wherever it was read - a commit included', () => {
+  const loaded = parseTriggerFiles(
+    'nightly',
+    'refs/heads/main:.e/triggers/nightly/trigger.json',
+    JSON.stringify({ ...JSON.parse(valid), prompt: undefined }),
+    'From prompt.md'
+  );
+  assert.equal(loaded.trigger?.prompt, 'From prompt.md');
+  // Two sources for one value are refused here exactly as on disk.
+  assert.match(
+    parseTriggerFiles('nightly', 'x', valid, 'Also a prompt').error ?? '',
+    /in trigger.json and in prompt.md/
+  );
+  // Broken text is a reason, never a throw.
+  assert.match(
+    parseTriggerFiles('nightly', 'x', '{', undefined).error ?? '',
+    /JSON/
   );
 });

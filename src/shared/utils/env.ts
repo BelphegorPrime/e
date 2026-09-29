@@ -78,6 +78,13 @@ export class Env {
    */
   static readonly WORKTREES_DIR_VAR = 'E_WORKTREES_DIR';
 
+  /**
+   * Set by GitHub Actions to the name of the event that started the workflow
+   * - the name `e spawn --trigger --event "$GITHUB_EVENT_PATH"` matches `on`
+   * against when `--event-name` is not given (ADR-0016 section 13).
+   */
+  static readonly GITHUB_EVENT_NAME_VAR = 'GITHUB_EVENT_NAME';
+
   /** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
   get localLlamaUrl(): string {
     return process.env.LOCAL_LLAMA_URL ?? 'http://127.0.0.1:9931';
@@ -235,6 +242,11 @@ export class Env {
     copy[Env.SPAWN_REPORT_SPOOL_VAR] = report.spoolDir;
     copy[Env.SPAWN_REPORT_ID_VAR] = report.id;
     return copy;
+  }
+
+  /** The Actions event name (see {@link Env.GITHUB_EVENT_NAME_VAR}), or undefined when unset or blank. */
+  get githubEventName(): string | undefined {
+    return process.env[Env.GITHUB_EVENT_NAME_VAR]?.trim() || undefined;
   }
 
   /** The claimed ledger entry this `e spawn` reports into (see {@link Env.LEDGER_FILE_VAR}), or undefined. */

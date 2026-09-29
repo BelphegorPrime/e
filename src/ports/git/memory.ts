@@ -80,6 +80,12 @@ export interface InMemoryGitOptions {
   merge?: Record<string, ScriptedMerge | ScriptedMerge[]>;
   /** What `numstat` answers, whatever it is asked: the diff of the run branch. */
   numstat?: NumstatEntry[];
+  /** Full ref names to the commit each resolves to, for `resolveCommit`. */
+  refCommits?: Record<string, string>;
+  /** Files as committed, by ref and then by host path, for `readFileAt`. */
+  files?: Record<string, Record<string, string>>;
+  /** What `defaultBranchRef` answers; undefined models a repo with no origin. */
+  defaultBranchRef?: string;
   /** Messages that make a call throw instead of doing its work. */
   fail?: Partial<
     Record<
@@ -182,6 +188,21 @@ export class InMemoryGit implements Git {
   currentBranch(): string {
     this.calls.push('currentBranch');
     return this.opts.currentBranch ?? 'main';
+  }
+
+  resolveCommit(ref: string): string | undefined {
+    this.calls.push('resolveCommit');
+    return this.opts.refCommits?.[ref];
+  }
+
+  readFileAt(ref: string, filePath: string): string | undefined {
+    this.calls.push('readFileAt');
+    return this.opts.files?.[ref]?.[filePath];
+  }
+
+  defaultBranchRef(): string | undefined {
+    this.calls.push('defaultBranchRef');
+    return this.opts.defaultBranchRef;
   }
 
   listRunBranches(prefix: string): string[] {

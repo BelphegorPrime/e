@@ -1,0 +1,199 @@
+# Tutorial 10: a trigger in CI, one-shot
+
+Goal: run a Trigger from a CI job with `e spawn --trigger <name>`, so an
+issue labelled `agent` becomes a run branch and a PR without an `e serve`
+anywhere.
+
+Prerequisite: one working Agent ([Tutorial 1](./01-first-run.md)) and a
+repository on GitHub. The reasoning is in
+[ADR-0016](../adr/0016-autonomous-runs.md), section 13.
+
+## Two shapes, one declaration
+
+A Trigger runs in one of two shapes. **hosted** is a long-lived `e serve`
+that owns the scheduler, the webhook listener, the queue and the ledger.
+**one-shot** is a single `e spawn --trigger <name> [--event <path>]`, started
+by whatever surrounds it - a CI job, a systemd timer, a k8s CronJob - which
+then owns scheduling, dedup and concurrency instead. The loop, the verify gate
+and the caps are identical in both, because they live in the run itself.
+
+```mermaid
+flowchart LR
+    job["CI job<br/><i>the job is the slot</i>"]
+    decl["trigger.json<br/><b>read from base</b>"]
+    match{"on / match"}
+    run["one ordinary run<br/><i>loop, verify, caps</i>"]
+    none["no run<br/>exit 0"]
+
+    job -->|"--trigger fix-issue<br/>--event $GITHUB_EVENT_PATH"| decl --> match
+    match -->|matches| run
+    match -->|does not| none
+```
+
+What `serve` owns is **void** in one-shot: the queue, slots, dedup, the
+ledger, `nextFireAt`/`lastFiredAt`, `GET /api/runs` and A2A cancel. Siblings
+and the runtime-broker still work, being per-run.
+
+## Step 1: commit the Store
+
+In a runner the home directory is empty, so the repository carries the Store.
+Commit `.e/` - the trigger, the agent, the verify command and the caps are
+then reviewed through PRs like any other code. `e`'s own repository
+gitignores `.e/`, so adopting one-shot is a deliberate act: take `.e` out of
+your `.gitignore`, and keep `.e/.env` in it.
+
+```bash
+e init --dir .
+printf '.e/.env\n' >> .gitignore
+```
+
+## Step 2: declare the trigger
+
+```jsonc
+// .e/triggers/fix-issue/trigger.json
+{
+  "agent": "claudeCode",
+  "prompt": "Fix issue #{{issue.number}} in {{repository.full_name}}. Read the issue with the gh CLI; the full event is at /run/e/event.json.",
+  "on": {
+    "type": "webhook",
+    "source": "github",
+    "event": "issues",
+    "action": "labeled",
+    "match": { "label.name": "agent" },
+  },
+}
+```
+
+Only validated identifiers interpolate (`issue.number`, `repository.full_name`,
+`label.name` and a few more); the issue's title and body never reach the
+prompt. The agent fetches the text itself, or reads the whole payload, which
+is mounted read-only at `/run/e/event.json`, outside the worktree, so it can
+never ride along in a commit.
+
+Check it loads:
+
+```bash
+e trigger list
+```
+
+Commit the trigger to your default branch. **The declaration is read from
+`base`, never from the working tree**: in a `pull_request` job every file but
+the workflow comes from the PR's head, so a `trigger.json` on disk is
+whatever the PR's author wrote. `e` reads it with `git show <base>:...`, and a
+trigger that is not committed there is refused.
+
+## Step 3: the workflow
+
+```yaml
+# .github/workflows/e-fix-issue.yml
+name: e fix-issue
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  # The outer scheduler owns dedup: one run per issue at a time.
+  group: e-fix-issue-${{ github.event.issue.number }}
+
+jobs:
+  run:
+    if: github.event.label.name == 'agent'
+    runs-on: ubuntu-latest
+    # Keep loop.totalTimeoutMs (3 h by default) under this.
+    timeout-minutes: 240
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base must resolve locally; a shallow clone often lacks it.
+          fetch-depth: 0
+
+      - name: Install e
+        run: |
+          gh release download --repo BelphegorPrime/e --pattern 'e-linux-x64.tar.gz'
+          tar -xzf e-linux-x64.tar.gz && sudo install -m 0755 e /usr/local/bin/e
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Secrets, outside the checkout
+        run: |
+          umask 077
+          printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" > "$RUNNER_TEMP/e.env"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Run the trigger
+        run: >
+          e spawn --trigger fix-issue
+          --event "$GITHUB_EVENT_PATH"
+          --env-file "$RUNNER_TEMP/e.env"
+        env:
+          GH_TOKEN: ${{ github.token }}
+```
+
+What each piece is for:
+
+- **`--event "$GITHUB_EVENT_PATH"`** is exactly the payload a webhook
+  listener would have received, so the filtering and the interpolation
+  whitelist apply unchanged. The event name comes from `$GITHUB_EVENT_NAME`;
+  pass `--event-name <name>` elsewhere, and for a `pull_request_target`
+  workflow pass `--event-name pull_request`, the name the trigger declares.
+- **`on`/`match` are still evaluated**, although the `if:` already filtered:
+  one trigger file must not mean two different things depending on who read
+  it. A payload that does not match starts no run and **exits 0**; the job is
+  green, because no run existed to fail.
+- **`fetch-depth: 0`**: `actions/checkout` fetches one commit by default, and
+  the base ref is then absent. A base that does not resolve is a base error,
+  never a confusing checkout failure.
+- **`--env-file` from `$RUNNER_TEMP`**: the key never lands in the workspace.
+  Not `-e KEY=value`, which shows in the process list and the logs.
+- **`timeout-minutes`** above `loop.totalTimeoutMs`: the exit code becomes
+  the job's status, so an exhausted run is already a red job, and the job
+  timeout should never cut a run short first.
+
+Never write the prompt into the workflow (`e spawn claudeCode "Fix
+${{ github.event.issue.body }}"`): that interpolates a stranger's text
+_outside_ `e`, where no rule of ours reaches.
+
+## Step 4: where the run cuts from
+
+Without `base` the run cuts from the repository's default branch (`origin/HEAD`,
+or what origin reports when the checkout never set it) - not from `HEAD`,
+which in a job is whatever the pipeline checked out, a fork's head included.
+
+A declared `base` must be a branch or tag of the target repository itself:
+`main`, `origin/main`, `refs/heads/main` or a tag. `refs/pull/*` is refused
+by name, and a fork's branch does not exist in your repository, so it drops
+out by construction:
+
+```jsonc
+"base": "{{pull_request.head.ref}}"
+```
+
+When a `base` is declared, the default branch's declaration says what it is,
+and the declaration used is the one committed at that base, which must
+declare the same `base`.
+
+## Without a payload
+
+`--event` is optional: GitLab CI, Jenkins and the rest expose variables, not
+a payload file. Without one only `{{trigger}}` and `{{tick}}` (the current
+time, `20260918T0300Z`) interpolate, and a trigger whose `prompt` or `base`
+references a payload path fails at load, naming the field, rather than
+rendering an empty issue number.
+
+A cron trigger runs one-shot as well - from a systemd timer, say - with its
+`expr` and `tz` ignored and a warning:
+
+```bash
+e spawn --trigger nightly --env-file ~/.config/e/nightly.env
+```
+
+## What you have
+
+A trigger that runs the same way under `e serve` and in a CI job, read from
+reviewed code, filtered on the real event, and ending as an ordinary run
+branch and PR.

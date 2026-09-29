@@ -18,6 +18,30 @@ export interface Git {
   currentBranch(): string;
 
   /**
+   * The commit a full ref name (`refs/heads/main`) points at, peeled through
+   * tags; undefined when it does not resolve. Asks about refs only: whether a
+   * name is one the caller may use is the caller's rule, not git's.
+   */
+  resolveCommit(ref: string): string | undefined;
+
+  /**
+   * The text of the host file at `filePath` as committed at `ref`
+   * (`git show <ref>:<path>`), never as the working tree has it; undefined
+   * when the file is not in that commit. `filePath` is a host path inside
+   * this repository.
+   */
+  readFileAt(ref: string, filePath: string): string | undefined;
+
+  /**
+   * The repository's default branch as a full remote-tracking ref
+   * (`refs/remotes/origin/main`): `origin/HEAD` when it is set, else what
+   * origin itself reports - `actions/checkout` never sets `origin/HEAD`, and
+   * that fallback asks origin over the network (`ls-remote`). Undefined
+   * without an origin to ask, or when it does not answer.
+   */
+  defaultBranchRef(): string | undefined;
+
+  /**
    * Shortnames of existing run branches matching `<prefix>-*`, across both
    * local heads and remote-tracking refs, so the run counter never reuses a
    * number already taken locally or on origin.

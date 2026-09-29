@@ -16,6 +16,7 @@ const VARS = [
   Env.SPAWN_REPORT_SPOOL_VAR,
   Env.SPAWN_REPORT_ID_VAR,
   Env.A2A_TOKEN_VAR,
+  Env.GITHUB_EVENT_NAME_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -235,4 +236,13 @@ test('withLedger sets E_LEDGER_FILE and drops every other role marker; siblings 
       env.withReport({ spoolDir: '/spool', id: 'a2a-001' }, queued),
     false
   );
+});
+
+test('githubEventName is the trimmed GITHUB_EVENT_NAME, undefined when unset or blank', () => {
+  delete process.env[Env.GITHUB_EVENT_NAME_VAR];
+  assert.equal(env.githubEventName, undefined);
+  process.env[Env.GITHUB_EVENT_NAME_VAR] = ' ';
+  assert.equal(env.githubEventName, undefined);
+  process.env[Env.GITHUB_EVENT_NAME_VAR] = 'issues\n';
+  assert.equal(env.githubEventName, 'issues');
 });

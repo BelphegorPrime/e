@@ -131,6 +131,16 @@ export interface ParentRun {
   artifacts: readonly string[];
 }
 
+/** What a run cuts from: a ref of the target repository, pinned to its commit. */
+export interface RunBase {
+  /** The full ref, e.g. `refs/remotes/origin/main`. */
+  ref: string;
+  /** The commit it pointed at when resolved; the run branches from this. */
+  sha: string;
+  /** Its short name: the branch a pull request targets. */
+  branch: string;
+}
+
 /** Full parameters for a runSpawn call. */
 export interface RunSpawnParams {
   name?: string;
@@ -164,6 +174,13 @@ export interface RunSpawnParams {
    * whose branch tip the sibling branches from, instead of the host's HEAD.
    */
   parent?: ParentRun;
+  /**
+   * The declared base of a triggered run (ADR-0016): the commit to branch
+   * from and the branch a PR targets, instead of the host's HEAD - which in
+   * a CI job is whatever the pipeline checked out, a fork's head included.
+   * Never together with `parent`, whose tip is a sibling's base.
+   */
+  base?: RunBase;
   /**
    * Present for a sibling run: where it reports its status (`running` with
    * its branch, then `done` or `failed`) - the parent's spool and its request
@@ -411,12 +428,14 @@ export async function runSpawn(
 
   try {
     const slug = params.name ?? slugify(params.prompt);
-    // Pin the base before creating the worktree: the host's HEAD - or, for a
-    // sibling, the parent worktree's tip once its WIP is checkpointed there.
+    // Pin the base before creating the worktree: the host's HEAD, a
+    // trigger's declared base - or, for a sibling, the parent worktree's tip
+    // once its WIP is checkpointed there.
     const base = params.parent
       ? checkpointParent(deps.git, params.parent, slug)
-      : deps.git.headSha();
-    const baseBranch = deps.git.currentBranch() || 'main';
+      : (params.base?.sha ?? deps.git.headSha());
+    const baseBranch =
+      params.base?.branch ?? (deps.git.currentBranch() || 'main');
 
     // Cut the branch and create the worktree atomically (collision-retry inside
     // `nextRunName`); every other name this run uses is derived from its identity.

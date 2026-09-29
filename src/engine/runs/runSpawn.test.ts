@@ -340,6 +340,30 @@ test('a push failure is non-fatal: branch kept, warning surfaced, exit code unch
   assert.deepEqual(git.removedWorktrees, [git.worktrees[0].path]);
 });
 
+test('a declared base is what the branch is cut from and the PR targets, not the host HEAD', async () => {
+  // In a CI job HEAD is whatever the pipeline checked out - a fork's head
+  // included - so a trigger's declared base wins (ADR-0016 section 13).
+  const pr = new FakePullRequest();
+  const { deps, git } = makeDeps({
+    git: new InMemoryGit({ headSha: 'pr-head-sha', currentBranch: '' }),
+    pullRequest: pr,
+  });
+  const result = await runSpawn(
+    deps,
+    makeParams({
+      gitPlatform: 'github',
+      base: {
+        ref: 'refs/remotes/origin/main',
+        sha: 'main-sha',
+        branch: 'main',
+      },
+    })
+  );
+  assert.equal(git.worktrees[0].base, 'main-sha');
+  assert.equal(result.base, 'main-sha');
+  assert.equal(pr.specs[0].base, 'main');
+});
+
 // --- PR/MR creation after a successful push -----------------------------------
 
 test('opens a PR/MR into the spawn-time branch when a platform is configured', async () => {

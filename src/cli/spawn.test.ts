@@ -9,10 +9,14 @@ import {
   manualSiblingRequest,
   registerSpawnCommand,
   resolveRemoteTarget,
+  resolveTriggerSpawn,
+  runSpawnCommand,
   spawnReport,
   type SpawnCommandOptions,
 } from './spawn.js';
 import { validateSpawn } from '../engine/spawn/spawnPlan.js';
+import { InMemoryGit } from '../ports/git/memory.js';
+import { RunScratch } from '../engine/runs/runScratch.js';
 import { Env } from '../shared/utils/env.js';
 import {
   readRequest,
@@ -25,6 +29,7 @@ import {
   envFilePath,
   mcpDir,
   skillDir,
+  triggerConfigPath,
 } from '../core/store/paths.js';
 
 // `gatherSpawnFacts` is the spawn command's one I/O step: it reads the store
@@ -41,6 +46,7 @@ const MARKERS = [
   Env.SPAWN_SPOOL_VAR,
   Env.SPAWN_SIBLING_ID_VAR,
   Env.WORKTREES_DIR_VAR,
+  Env.GITHUB_EVENT_NAME_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -895,4 +901,196 @@ test('spawnReport: the soft time limit is a warning for the human', () => {
     softTimeoutWarning: 'Past the soft time limit (120 min) at attempt 3.',
   }).map(l => l.text);
   assert.ok(lines.some(t => /soft time limit/.test(t)));
+});
+
+// --- --trigger: the one-shot shape (ADR-0016 section 13) --------------------
+
+const ORIGIN_MAIN = 'refs/remotes/origin/main';
+
+/** {@link withStore} for an async body: the store outlives the promise. */
+async function withStoreAsync(fn: (root: string) => Promise<void>) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-cmd-'));
+  try {
+    fs.mkdirSync(eBaseDir(root), { recursive: true });
+    await fn(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const labeledTrigger = {
+  agent: 'claudeCode',
+  prompt: 'Fix issue #{{issue.number}}.',
+  loop: { maxIterations: 2 },
+  on: {
+    type: 'webhook',
+    source: 'github',
+    event: 'issues',
+    action: 'labeled',
+    match: { 'label.name': 'agent' },
+  },
+};
+
+/** A git whose default branch carries `declaration` as the trigger `fix`. */
+function triggerGit(root: string, declaration: unknown): InMemoryGit {
+  return new InMemoryGit({
+    defaultBranchRef: ORIGIN_MAIN,
+    refCommits: { [ORIGIN_MAIN]: 'main-sha' },
+    files: {
+      [ORIGIN_MAIN]: {
+        [triggerConfigPath('fix', root)]: JSON.stringify(declaration),
+      },
+    },
+  });
+}
+
+function writePayload(root: string, label: string): string {
+  const file = path.join(root, 'event.json');
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      action: 'labeled',
+      label: { name: label },
+      issue: { number: 42 },
+    })
+  );
+  return file;
+}
+
+test('--trigger: the declaration supplies agent, prompt, name, base, payload and loop', () => {
+  withStore(root => {
+    const event = writePayload(root, 'agent');
+    process.env[Env.GITHUB_EVENT_NAME_VAR] = 'issues';
+    const out = resolveTriggerSpawn(
+      undefined,
+      [],
+      { dir: root, trigger: 'fix', event },
+      triggerGit(root, labeledTrigger)
+    );
+    assert.ok(!('skip' in out));
+    if ('skip' in out) return;
+    assert.deepEqual(out, {
+      agent: 'claudeCode',
+      prompt: 'Fix issue #42.',
+      name: 'fix',
+      base: { ref: ORIGIN_MAIN, sha: 'main-sha', branch: 'main' },
+      eventFile: event,
+      loop: { maxIterations: 2 },
+    });
+    // The spawn facts carry them on, the loop field-wise over the Store's.
+    const facts = gatherSpawnFacts(
+      out.agent,
+      [out.prompt],
+      { dir: root, name: out.name },
+      out
+    );
+    assert.equal(facts.agent.name, 'claudeCode');
+    assert.equal(facts.prompt, 'Fix issue #42.');
+    assert.equal(facts.name, 'fix');
+    assert.deepEqual(facts.base, out.base);
+    assert.equal(facts.eventFile, event);
+    assert.equal(facts.loop?.maxIterations, 2);
+    assert.ok((facts.loop?.totalTimeoutMs ?? 0) > 0);
+  });
+});
+
+test('--trigger: --event-name wins over $GITHUB_EVENT_NAME', () => {
+  withStore(root => {
+    process.env[Env.GITHUB_EVENT_NAME_VAR] = 'issues';
+    const out = resolveTriggerSpawn(
+      undefined,
+      [],
+      {
+        dir: root,
+        trigger: 'fix',
+        event: writePayload(root, 'agent'),
+        eventName: 'pull_request',
+      },
+      triggerGit(root, labeledTrigger)
+    );
+    assert.ok('skip' in out);
+  });
+});
+
+test('--trigger: positional arguments are refused, the declaration decides', () => {
+  withStore(root => {
+    assert.throws(
+      () =>
+        resolveTriggerSpawn(
+          'claudeCode',
+          ['do', 'it'],
+          { dir: root, trigger: 'fix' },
+          triggerGit(root, labeledTrigger)
+        ),
+      /takes its agent and prompt from the declaration/
+    );
+  });
+});
+
+test('--trigger: a payload that does not match starts no run and exits 0', async () => {
+  await withStoreAsync(async root => {
+    const git = triggerGit(root, labeledTrigger);
+    const code = await runSpawnCommand(
+      undefined,
+      [],
+      {
+        dir: root,
+        trigger: 'fix',
+        event: writePayload(root, 'wontfix'),
+        eventName: 'issues',
+      },
+      { scratch: new RunScratch(), git }
+    );
+    assert.equal(code, 0);
+    assert.equal(git.worktrees.length, 0);
+  });
+});
+
+test('--trigger: a trigger that cannot load is an error, exit 1', async () => {
+  await withStoreAsync(async root => {
+    // Payload paths and no --event: refused at load, not rendered empty.
+    const code = await runSpawnCommand(
+      undefined,
+      [],
+      { dir: root, trigger: 'fix' },
+      { scratch: new RunScratch(), git: triggerGit(root, labeledTrigger) }
+    );
+    assert.equal(code, 1);
+  });
+});
+
+test('--event without --trigger is refused', async () => {
+  await withStoreAsync(async root => {
+    const code = await runSpawnCommand(
+      'claudeCode',
+      ['hi'],
+      { dir: root, event: writePayload(root, 'agent') },
+      { scratch: new RunScratch(), git: new InMemoryGit() }
+    );
+    assert.equal(code, 1);
+  });
+});
+
+test('--trigger: a remote A2A agent is refused, it has no base or payload mount', async () => {
+  await withStoreAsync(async root => {
+    writeAgent(root, {
+      name: 'faraway',
+      transport: 'a2a',
+      url: 'https://agents.example.com/a2a',
+    });
+    const code = await runSpawnCommand(
+      undefined,
+      [],
+      { dir: root, trigger: 'fix' },
+      {
+        scratch: new RunScratch(),
+        git: triggerGit(root, {
+          agent: 'faraway',
+          prompt: 'Nightly {{tick}}.',
+          on: { type: 'cron', expr: '0 3 * * *' },
+        }),
+      }
+    );
+    assert.equal(code, 1);
+  });
 });

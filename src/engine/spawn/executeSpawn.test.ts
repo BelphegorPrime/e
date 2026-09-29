@@ -24,7 +24,7 @@ import {
   writeLedgerEntry,
 } from '../queue/runsSpool.js';
 import { executeSpawn } from './executeSpawn.js';
-import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
+import { planSpawn, type SpawnFacts, type SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../../core/harness/index.js';
 import type { HarnessAgent } from '../../core/agent/index.js';
 import { defaultBrokerPlan } from '../sidecarPlan.js';
@@ -398,6 +398,42 @@ test('worktreesDir reaches the orchestrator: the run worktree is cut under it', 
     assert.equal(
       git.worktrees[0].path,
       path.join(worktreesDir, 'e', 'demo', 'custom-run-1')
+    );
+  });
+});
+
+test('one-shot: the declared base and the payload mount reach the run, outside the worktree', async () => {
+  await withDemoStore(async root => {
+    const git = new InMemoryGit({ headSha: 'pr-head-sha' });
+    const runtime = new RecordingRuntime();
+    const eventFile = path.join(root, 'event.json');
+    fs.writeFileSync(eventFile, '{}');
+    const f = facts({
+      root,
+      eventFile,
+      base: {
+        ref: 'refs/remotes/origin/main',
+        sha: 'main-sha',
+        branch: 'main',
+      },
+    });
+    await executeSpawn(f, planSpawn(f), {
+      git,
+      runtime,
+      scratch: new RunScratch(),
+    });
+    assert.equal(git.worktrees[0].base, 'main-sha');
+    const volumes = runtime.options?.volumes ?? [];
+    assert.deepEqual(
+      volumes.find(volume => volume.container === '/run/e/event.json'),
+      { host: eventFile, container: '/run/e/event.json', ro: true }
+    );
+    // Nothing of it is under the worktree, so no commit can pick it up.
+    const worktree = git.worktrees[0].path;
+    assert.ok(
+      volumes
+        .filter(volume => volume.container !== '/workspace')
+        .every(volume => !volume.host.startsWith(worktree))
     );
   });
 });

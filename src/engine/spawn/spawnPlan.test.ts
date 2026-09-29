@@ -483,6 +483,35 @@ test('planSpawn: a never-forwarded env name is refused, whoever declares it', ()
   );
 });
 
+test('validateSpawn: a sibling cannot also declare a base', () => {
+  assert.throws(
+    () =>
+      validateSpawn(
+        facts({
+          role: 'child',
+          sibling: {
+            id: 'sib-001',
+            spoolDir: '/tmp/spool',
+            parent: { worktreePath: '/tmp/p', branch: 'e/demo/p-1' },
+          },
+          base: { ref: 'refs/heads/main', sha: 'main-sha', branch: 'main' },
+        })
+      ),
+    /cannot also declare a base/
+  );
+});
+
+test('planSpawn: a one-shot payload is mounted read-only at /run/e/event.json', () => {
+  // Outside /workspace, so it can never ride along in a commitAll (ADR-0016).
+  const plan = planSpawn(facts({ eventFile: '/runner/temp/event.json' }));
+  assert.deepEqual(plan.eventMount, {
+    host: '/runner/temp/event.json',
+    container: '/run/e/event.json',
+    ro: true,
+  });
+  assert.equal(planSpawn(facts({})).eventMount, undefined);
+});
+
 test('planSpawn: baked skills go to the derived image; per-run skills become mounts', () => {
   const f = facts({
     bakedSkills: ['baked-skill'],

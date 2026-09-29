@@ -296,8 +296,8 @@ async function executeSpawnWith(
       : sc;
   });
 
-  // The Codex config overlay and the per-run skill mounts are both read-only
-  // mounts outside /workspace, delivered together.
+  // The Codex config overlay, the per-run skill mounts and a one-shot
+  // payload are all read-only mounts outside /workspace, delivered together.
   const configMounts: Mount[] = [];
   if (plan.configOverlay) {
     const hostFile = scratch.file(
@@ -311,6 +311,7 @@ async function executeSpawnWith(
     });
   }
   configMounts.push(...plan.skillMounts);
+  if (plan.eventMount) configMounts.push(plan.eventMount);
 
   // A sibling (ADR-0013) joins its parent's private run network so the
   // `runtime-broker` alias resolves for it too; in the shared egress
@@ -360,6 +361,7 @@ async function executeSpawnWith(
       configMounts,
       keepWorktree: facts.keepWorktree,
       worktreesDir: facts.worktreesDir,
+      base: facts.base,
       ledger,
       role: facts.role,
       broker: plan.broker,

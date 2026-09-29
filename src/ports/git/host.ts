@@ -1,4 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
+import path from 'path';
 import type {
   Git,
   MergeOutcome,
@@ -63,6 +64,50 @@ export class HostGit implements Git {
     if (result.status !== 0) return '';
     const name = (result.stdout ?? '').trim();
     return name === 'HEAD' ? '' : name;
+  }
+
+  resolveCommit(ref: string): string | undefined {
+    const result = this.spawnGit([
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      '--end-of-options',
+      `${ref}^{commit}`,
+    ]);
+    if (result.status !== 0) return undefined;
+    const sha = result.stdout.trim();
+    return sha === '' ? undefined : sha;
+  }
+
+  readFileAt(ref: string, filePath: string): string | undefined {
+    // `<rev>:./<path>` is relative to the cwd, which is where every other
+    // call here runs too; a bare `<rev>:<path>` would be the repo root's.
+    const relative = path.relative(process.cwd(), filePath);
+    const spec = relative.startsWith('..') ? relative : `./${relative}`;
+    const result = this.spawnGit(['show', `${ref}:${spec}`]);
+    if (result.status !== 0) {
+      log.debug(
+        `No ${relative} at ${ref}: ${result.stderr?.trim() ?? 'git show failed'}`
+      );
+      return undefined;
+    }
+    return result.stdout;
+  }
+
+  defaultBranchRef(): string | undefined {
+    const local = this.spawnGit([
+      'symbolic-ref',
+      '--quiet',
+      'refs/remotes/origin/HEAD',
+    ]);
+    if (local.status === 0 && local.stdout.trim() !== '') {
+      return local.stdout.trim();
+    }
+    // `ref: refs/heads/main\tHEAD` is the line naming the remote's HEAD.
+    const remote = this.spawnGit(['ls-remote', '--symref', 'origin', 'HEAD']);
+    if (remote.status !== 0) return undefined;
+    const match = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(remote.stdout);
+    return match ? `refs/remotes/origin/${match[1]}` : undefined;
   }
 
   listRunBranches(prefix: string): string[] {

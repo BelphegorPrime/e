@@ -61,6 +61,8 @@ import {
 import { imageTag } from '../../core/identity/imageTag.js';
 import { skillMountSpec } from '../../core/skill/index.js';
 import { skillDir } from '../../core/store/paths.js';
+import { EVENT_MOUNT_PATH } from '../../core/trigger/oneShot.js';
+import type { RunBase } from '../runs/runSpawn.js';
 
 /**
  * The env files a run loads, in precedence order. `--env-file` entries loaded
@@ -275,6 +277,17 @@ export interface SpawnFacts {
   readonly localRuntimes: readonly LocalRuntime[];
   /** The store's `gitPlatform` (`config.json`): which PR/MR opener a finished run gets, if any. */
   readonly gitPlatform?: GitPlatform;
+  /**
+   * A one-shot trigger's declared base (ADR-0016 section 13), already
+   * through the base rule: the commit the run branches from and the branch
+   * its PR targets. Absent, the run cuts from the host's HEAD.
+   */
+  readonly base?: Readonly<RunBase>;
+  /**
+   * A one-shot trigger's payload file (`--event`), mounted read-only at
+   * `/run/e/event.json` for the agent that wants the whole thing.
+   */
+  readonly eventFile?: string;
 }
 
 /** True when the positional prompt carries anything but whitespace. */
@@ -336,6 +349,13 @@ export function validateSpawn(facts: SpawnFacts): void {
   if (facts.sibling && (facts.role ?? 'parent') !== 'child') {
     throw new Error(
       `A spawn started for sibling ${facts.sibling.id} must carry E_SPAWN_ROLE=child.`
+    );
+  }
+  // A sibling branches from its parent's checkpoint; a declared base would
+  // be a second answer to where it cuts from.
+  if (facts.sibling && facts.base) {
+    throw new Error(
+      `A spawn started for sibling ${facts.sibling.id} branches from its parent; it cannot also declare a base.`
     );
   }
   // A sibling already reports into its parent's spool; a second spool would
@@ -453,6 +473,11 @@ export interface SpawnPlan {
   agentImagePlan?: DerivedImagePlan;
   /** Read-only per-run skill mounts (outside `/workspace`). */
   skillMounts: Mount[];
+  /**
+   * The payload's read-only mount at `/run/e/event.json` (ADR-0016): outside
+   * `/workspace`, so it can never ride along in a `commitAll`.
+   */
+  eventMount?: Mount;
   /**
    * The agent container's `-e` env: the user's `-e`, any config-dir relocation
    * env, then the host-set role contract (`E_ROLE`, `E_BROKER_URL`). A user
@@ -647,6 +672,9 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     configOverlay,
     agentImagePlan,
     skillMounts,
+    eventMount: facts.eventFile
+      ? { host: facts.eventFile, container: EVENT_MOUNT_PATH, ro: true }
+      : undefined,
     agentEnv: [
       ...facts.env,
       ...containerEnvArgs(configOverlay?.env ?? []),

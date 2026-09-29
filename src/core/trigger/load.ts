@@ -36,6 +36,38 @@ export function listTriggerNames(root?: string): string[] {
     .map(entry => entry.name);
 }
 
+/**
+ * Parses one trigger from the text of its files, wherever they were read:
+ * the Store on disk, or a commit (`git show`, the one-shot shape reading the
+ * declaration from `base`). `promptMd` is `prompt.md`'s text when that file
+ * exists. Any failure becomes a reason, never a throw.
+ */
+export function parseTriggerFiles(
+  name: string,
+  where: string,
+  triggerJson: string,
+  promptMd: string | undefined,
+  context: TriggerContext = {}
+): LoadedTrigger {
+  try {
+    const raw = JSON.parse(triggerJson) as Record<string, unknown>;
+    if (promptMd !== undefined) {
+      // "Instead of", not "as well as": two sources for one value drift, and
+      // preferring one silently would make the other look applied.
+      if (typeof raw.prompt === 'string' && raw.prompt !== '') {
+        return {
+          name,
+          error: `${name} declares a prompt in trigger.json and in prompt.md; keep one`,
+        };
+      }
+      raw.prompt = promptMd;
+    }
+    return { name, trigger: parseTrigger(raw, name, where, context) };
+  } catch (err) {
+    return { name, error: errorMessage(err) };
+  }
+}
+
 /** Loads one trigger directory, turning any failure into a reason. */
 export function loadTrigger(
   name: string,
@@ -47,23 +79,16 @@ export function loadTrigger(
     if (!fs.existsSync(file)) {
       return { name, error: `no trigger.json in ${name}/` };
     }
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<
-      string,
-      unknown
-    >;
     const promptFile = triggerPromptPath(name, root);
-    if (fs.existsSync(promptFile)) {
-      // "Instead of", not "as well as": two sources for one value drift, and
-      // preferring one silently would make the other look applied.
-      if (typeof raw.prompt === 'string' && raw.prompt !== '') {
-        return {
-          name,
-          error: `${name} declares a prompt in trigger.json and in prompt.md; keep one`,
-        };
-      }
-      raw.prompt = fs.readFileSync(promptFile, 'utf8');
-    }
-    return { name, trigger: parseTrigger(raw, name, file, context) };
+    return parseTriggerFiles(
+      name,
+      file,
+      fs.readFileSync(file, 'utf8'),
+      fs.existsSync(promptFile)
+        ? fs.readFileSync(promptFile, 'utf8')
+        : undefined,
+      context
+    );
   } catch (err) {
     return { name, error: errorMessage(err) };
   }

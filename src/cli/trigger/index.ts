@@ -1,9 +1,5 @@
 import type { Command } from 'commander';
-import os from 'os';
-import path from 'path';
-import { listAgents } from '../../core/agent/agent.js';
-import { HARNESSES } from '../../core/harness/index.js';
-import type { TriggerContext } from '../../core/trigger/index.js';
+import { storeTriggerContext } from '../../core/trigger/context.js';
 import { findRoot } from '../../core/store/root.js';
 import { loadTriggers, type LoadedTrigger } from '../../core/trigger/load.js';
 import { triggersBaseDir } from '../../core/store/paths.js';
@@ -52,25 +48,6 @@ export function triggerListLines(loaded: LoadedTrigger[]): TriggerLine[] {
   });
 }
 
-/**
- * What the Store around a trigger knows: the names `agent` may resolve to,
- * and whether this Store sits inside the repository it targets. The home
- * Store is the one case where it does not - `resolveRoot` falls back there
- * exactly when no ancestor had a `.e` - and a trigger there must name its own
- * `repo`.
- */
-function storeContext(root: string | undefined): TriggerContext {
-  // An unresolved root is the home Store by the same rule that resolves it.
-  const resolved = path.resolve(root ?? os.homedir());
-  return {
-    knownAgents: [
-      ...listAgents(root).map(agent => agent.name),
-      ...Object.keys(HARNESSES),
-    ],
-    repoLocal: resolved !== path.resolve(os.homedir()),
-  };
-}
-
 /** Registers `e trigger list`. */
 export function registerTriggerCommands(program: Command): void {
   const trigger = program
@@ -88,7 +65,7 @@ export function registerTriggerCommands(program: Command): void {
       const root = findRoot(options.dir);
       log.debug(`Reading triggers from ${triggersBaseDir(root)}`);
       for (const line of triggerListLines(
-        loadTriggers(root, storeContext(root))
+        loadTriggers(root, storeTriggerContext(root))
       )) {
         log[line.level](line.text);
       }
