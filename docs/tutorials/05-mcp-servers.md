@@ -90,8 +90,9 @@ DOCKER
   only, never baked; a missing value fails the spawn before any container
   starts.
 
-The image is tagged `e-mcp-<name>`. Rebuild after editing the Dockerfile with
-`e spawn --rebuild ...`.
+The image is tagged `e-mcp-<name>`. Every spawn rebuilds it, so an edited
+Dockerfile takes effect on the next run; `e spawn --no-rebuild ...` skips the
+rebuild and keeps an existing image.
 
 ## Step 3: a remote server with a token
 

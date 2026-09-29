@@ -196,6 +196,16 @@ A cron trigger runs one-shot as well - from a systemd timer, say - with its
 e spawn --trigger nightly --env-file ~/.config/e/nightly.env
 ```
 
+## On a self-hosted runner
+
+Every spawn rebuilds its images, so a merged Dockerfile change reaches the
+next job, and a warm runner turns an unchanged one into layer-cache hits.
+That cache, and the image labels the version pin is read from, live in the
+runner's Docker daemon. A self-hosted runner that also runs untrusted PR jobs
+shares that daemon with them, poisoned layers and forged labels included, and
+is outside `e`'s threat model ([ADR-0016](../adr/0016-autonomous-runs.md),
+section 10).
+
 ## What you have
 
 A trigger that runs the same way under `e serve` and in a CI job, read from

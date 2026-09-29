@@ -1,8 +1,8 @@
 # Tutorial 2: Agents for every Harness on a hosted Provider
 
 Goal: define Agents for pi, Claude Code, and Codex that all use hosted
-Providers, understand how each Harness receives its Provider, and rebuild an
-Agent after changing it.
+Providers, understand how each Harness receives its Provider, and see a
+changed Agent reach the next run.
 
 Prerequisite: [Tutorial 1](./01-first-run.md) (a Store exists).
 
@@ -45,8 +45,9 @@ echo 'MY_GATEWAY_KEY=sk-...' >> ~/.e/.env
 Two consequences:
 
 - Editing a pi, Codex or opencode Agent's Provider changes a **baked** file,
-  so the next spawn needs `--rebuild`. A Claude Code Agent picks the change up
-  on the next run without a rebuild.
+  so it reaches the run through the next spawn's image rebuild, which every
+  spawn does unless you pass `--no-rebuild`. A Claude Code Agent picks the
+  change up at run time and needs no rebuild at all.
 - opencode has no MCP delivery yet, so `--mcp` on an opencode Agent is
   rejected.
 
@@ -129,17 +130,19 @@ For Claude Code there is no file: the Provider becomes env vars on the run
 command. The README's [rendering checks](../../README.md#2-rendering-checks-no-container-no-gateway)
 show how to print what an adapter renders from the compiled modules.
 
-## Change a Provider and rebuild
+## Change a Provider
 
 Switch `pi-gw` to another model:
 
 ```bash
 sed -i 's/"model": "claude-sonnet-4-5"/"model": "claude-opus-5"/' ~/.e/agents/pi-gw/agent.json
-e spawn --rebuild pi-gw "Which model are you? Answer in one line and exit"
+e spawn pi-gw "Which model are you? Answer in one line and exit"
 ```
 
-Without `--rebuild` the old `models.json` stays baked in the derived image and
-pi keeps using the previous model.
+The spawn rebuilds the derived image, so the new `models.json` is baked in;
+the unchanged layers below it come from the build cache. With `--no-rebuild`
+the old `models.json` stays baked in the derived image and pi keeps using the
+previous model.
 
 ## Bake Skills into an Agent
 

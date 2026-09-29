@@ -23,7 +23,7 @@ import {
   runsDirs,
   writeLedgerEntry,
 } from '../queue/runsSpool.js';
-import { executeSpawn } from './executeSpawn.js';
+import { executeSpawn, siblingPassthroughArgs } from './executeSpawn.js';
 import { planSpawn, type SpawnFacts, type SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../../core/harness/index.js';
 import type { HarnessAgent } from '../../core/agent/index.js';
@@ -56,6 +56,7 @@ function facts(overrides: Partial<SpawnFacts> = {}): SpawnFacts {
     bakedSkills: [],
     prompt: 'do it',
     localStackPresent: false,
+    // `--no-rebuild`, so the build gate decides; the default is covered on its own.
     rebuild: false,
     env: [],
     worktreesDir: '/tmp/e-worktrees',
@@ -332,6 +333,78 @@ test('pin: an unlabelled image from before pinning is rebuilt once, then aborts 
     assert.equal(runtime.ranCommand, undefined);
     assert.deepEqual(git.worktrees, []);
   });
+});
+
+// Every spawn rebuilds by default (ADR-0016 section 10): the pin catches a
+// moved version, not a changed Dockerfile, so an image that is present and
+// pinned is built again anyway, and the layer cache makes that cheap.
+test('rebuild: a default spawn builds every image it needs; --no-rebuild builds none that is present and pinned', async () => {
+  await withDemoStore(async root => {
+    const plan: SpawnPlan = {
+      ...derivedPlan,
+      sidecars: [{ alias: 'gh', image: 'mcp-gh', port: 3000 }],
+      broker: defaultBrokerPlan(),
+    };
+    const present = (): RecordingRuntime => {
+      const runtime = new RecordingRuntime();
+      for (const tag of [
+        'e-harness-demo',
+        'e-agent-demo',
+        'mcp-gh',
+        'e-broker',
+      ]) {
+        runtime.images.set(tag, pinnedLabels);
+      }
+      return runtime;
+    };
+    const spawn = (runtime: RecordingRuntime, rebuild: boolean) =>
+      executeSpawn(
+        facts({ root, rebuild, worktreesDir: path.join(root, 'wt') }),
+        plan,
+        { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+      );
+
+    const rebuilt = present();
+    assert.equal((await spawn(rebuilt, true)).ran, true);
+    assert.deepEqual(rebuilt.built, [
+      'e-harness-demo',
+      'e-agent-demo',
+      'mcp-gh',
+      'e-broker',
+    ]);
+    // The pin check still follows the build: the base went in with its pin.
+    assert.deepEqual(rebuilt.images.get('e-harness-demo'), pinnedLabels);
+
+    const kept = present();
+    assert.equal((await spawn(kept, false)).ran, true);
+    assert.deepEqual(kept.built, []);
+  });
+});
+
+test('rebuild: an image rebuilt off its pin still aborts the spawn before any worktree', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    runtime.legacyDockerfile = true;
+    const git = new InMemoryGit();
+    await assert.rejects(
+      executeSpawn(facts({ root, rebuild: true }), emptyPlan, {
+        git,
+        runtime,
+        scratch: new RunScratch(),
+      }),
+      /still carries no version labels/
+    );
+    assert.deepEqual(runtime.built, ['e-harness-demo']);
+    assert.deepEqual(git.worktrees, []);
+  });
+});
+
+test('siblingPassthroughArgs: a sibling inherits the store and env-file, and skips the rebuild its parent just did', () => {
+  assert.deepEqual(siblingPassthroughArgs({}), ['--no-rebuild']);
+  assert.deepEqual(
+    siblingPassthroughArgs({ dirOpt: '/store', userEnvFile: 'user.env' }),
+    ['--dir', '/store', '--env-file', 'user.env', '--no-rebuild']
+  );
 });
 
 test('a sidecar with credentials gets its own env-file; one without gets none', async () => {

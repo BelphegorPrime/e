@@ -42,6 +42,7 @@ import { log } from '../../shared/utils/log.js';
 import { errorMessage } from '../../shared/utils/errors.js';
 import { openRunLedger, type RunLedger } from '../queue/ledger.js';
 import { Env } from '../../shared/utils/env.js';
+import { SPAWN_FLAGS } from '../../shared/spawnArgs.js';
 import { EGRESS_CONTAINER } from '../../shared/constants.js';
 import type { ChildLauncher } from '../runs/childRun.js';
 import { productionSiblingLauncher } from '../a2a/siblingLauncher.js';
@@ -84,8 +85,9 @@ function buildImages(
   const { harness, root, rebuild } = facts;
   const pin = harnessPin(harness);
   const buildArgs = pinBuildArgs(pin);
-  // Preserve the short-circuit: with --rebuild the decision is always `build`,
-  // so skip the (otherwise wasted) image-inspect probe.
+  // Preserve the short-circuit: when rebuilding (the default) the decision is
+  // always `build`, so skip the (otherwise wasted) image-inspect probe. A
+  // rebuild is a plain build, so an unchanged Dockerfile is all cache hits.
   const labels = rebuild ? undefined : runtime.imageLabels(harness.imageTag);
   const drift = labels === undefined ? undefined : checkPin(labels, pin);
   const initialized = root !== undefined && isInitialized(harness.name, root);
@@ -185,6 +187,22 @@ function buildImages(
     }
   }
   return tag;
+}
+
+/**
+ * The `e spawn` arguments every sibling inherits from this invocation: the
+ * same store and the same user env-file. And `--no-rebuild`: this run built
+ * its images a moment ago, so a sibling's rebuild would repeat the same cache
+ * hits once per sibling. It still builds whatever is missing or off the pin.
+ */
+export function siblingPassthroughArgs(
+  facts: Pick<SpawnFacts, 'dirOpt' | 'userEnvFile'>
+): string[] {
+  return [
+    ...(facts.dirOpt ? [SPAWN_FLAGS.dir, facts.dirOpt] : []),
+    ...(facts.userEnvFile ? [SPAWN_FLAGS.envFile, facts.userEnvFile] : []),
+    SPAWN_FLAGS.noRebuild,
+  ];
 }
 
 /**
@@ -387,10 +405,7 @@ async function executeSpawnWith(
         launch:
           deps.launchSibling ??
           productionSiblingLauncher(facts.root, facts.storeEnv),
-        passthroughArgs: [
-          ...(facts.dirOpt ? ['--dir', facts.dirOpt] : []),
-          ...(facts.userEnvFile ? ['--env-file', facts.userEnvFile] : []),
-        ],
+        passthroughArgs: siblingPassthroughArgs(facts),
         passthroughEnv: { [Env.RUNTIME_VAR]: runtime.engine },
       },
     }

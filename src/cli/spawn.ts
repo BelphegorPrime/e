@@ -78,6 +78,11 @@ const CANCEL_GRACE_MS = 60_000;
 /** The parsed `e spawn` CLI options, as Commander hands them to the action. */
 export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   runtime?: string;
+  /**
+   * `--rebuild` sets it, `--no-rebuild` clears it, the last one wins; neither
+   * leaves it undefined, because Commander sets no default once both are
+   * declared. Only an explicit `false` skips the rebuild.
+   */
   rebuild?: boolean;
   dir?: string;
   /** Raw `--env-file <path>` value from the CLI (a single path). */
@@ -245,7 +250,9 @@ export function gatherSpawnFacts(
     // it is a gathered fact like any other; bringing it *up* is an effect and
     // happens later, in `prepareLocalStack`.
     localStackPresent: localStack(root)?.present === true,
-    rebuild: Boolean(opts.rebuild),
+    // Every spawn rebuilds (ADR-0016 section 10): the pin catches a moved
+    // version, not a changed Dockerfile, and a trigger has nobody to ask.
+    rebuild: opts.rebuild !== false,
     name: opts.name,
     env: opts.env ?? [],
     port: opts.port,
@@ -689,7 +696,14 @@ export function registerSpawnCommand(program: Command): void {
       `${SPAWN_FLAGS.skill} <name...>`,
       'Skill(s) to add for this run, from .e/skills (comma-separated or repeated)'
     )
-    .option(SPAWN_FLAGS.rebuild, 'force a rebuild of the harness image', false)
+    .option(
+      SPAWN_FLAGS.rebuild,
+      'build every image the run needs (the default; kept so old command lines parse)'
+    )
+    .option(
+      SPAWN_FLAGS.noRebuild,
+      'build only the images that are missing or off the version pin'
+    )
     .option(
       `${SPAWN_FLAGS.dir} <path>`,
       'root directory holding the harness Dockerfiles (default: home directory)'

@@ -453,7 +453,8 @@ export const piAdapter: FileHarnessAdapter = {
       runtimeEnv: [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }],
       // pi selects a model by flag and only from what `models.json` declares, so
       // every model is both baked and named on the command line (ADR-0007
-      // staleness applies: a newly-shipped `auto` pick needs `--rebuild`).
+      // staleness applies: a newly-shipped `auto` pick lands with the next
+      // spawn's rebuild, and not under `--no-rebuild`).
       runtimeModel: provider.model,
     };
   },

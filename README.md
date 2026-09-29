@@ -114,7 +114,7 @@ Hands-on walkthroughs in [docs/tutorials/](./docs/tutorials/), each ending
 with something you can inspect. Read them in order the first time:
 
 1. [Your first run](./docs/tutorials/01-first-run.md) - install, `e init`, one Agent on a hosted key, a run branch to diff.
-2. [Agents for every Harness on a hosted Provider](./docs/tutorials/02-hosted-provider.md) - pi, Claude Code, and Codex on one gateway; protocols, delivery, `--rebuild`.
+2. [Agents for every Harness on a hosted Provider](./docs/tutorials/02-hosted-provider.md) - pi, Claude Code, and Codex on one gateway; protocols, delivery, rebuilds.
 3. [Run agents on local models](./docs/tutorials/03-local-models.md) - the OmniRoute stack with llama.cpp or Ollama, model downloads, the default Agents.
 4. [Give an agent a Skill](./docs/tutorials/04-skills.md) - write a Skill, add it per run, bake it into an Agent.
 5. [Wire an MCP server into a run](./docs/tutorials/05-mcp-servers.md) - container Sidecars and remote servers with a token.
@@ -659,8 +659,9 @@ e spawn codex --env-file ./ci.env -e FEATURE_FLAG=on "Run the migration dry-run"
 e spawn pi --runtime podman "Fix the flaky test"
 e init --dir ./infra && e spawn pi --dir ./infra "Bump the base images"
 
-# Force an image rebuild after editing an agent's provider/model or a Dockerfile
-e spawn smart-claude --rebuild "hello"
+# Every spawn rebuilds its images (layer-cache hits when nothing changed), so an
+# edited provider/model or Dockerfile is picked up; skip that with --no-rebuild
+e spawn smart-claude --no-rebuild "hello"
 
 # Browser UI + terminal: start it in the repo you want runs to happen in
 e serve --detached && open http://127.0.0.1:8080   # `e serve stop` ends it
@@ -828,7 +829,7 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | `e spawn <agent-or-harness>`                   | Start the harness TUI (no prompt means interactive)                                                                              |
 | `e spawn … --skill <name>`                     | Add a Skill for this run                                                                                                         |
 | `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for opencode, which has no MCP delivery yet)                                                        |
-| `e spawn … --rebuild`                          | Force-rebuild the image (needed after changing a baked provider/model)                                                           |
+| `e spawn … --no-rebuild`                       | Build only what is missing or off the pin; by default every spawn rebuilds from the layer cache (`--rebuild` is a no-op)         |
 | `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                                                                                   |
 | `e spawn … --runtime <name>`                   | Pick the container engine (`docker`, `podman`, `nerdctl`, `finch`); default `$E_RUNTIME`, else the first one on `PATH`           |
 | `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                  |

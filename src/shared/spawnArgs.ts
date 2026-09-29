@@ -26,6 +26,7 @@ export const SPAWN_FLAGS = {
   dir: '--dir',
   runtime: '--runtime',
   rebuild: '--rebuild',
+  noRebuild: '--no-rebuild',
   keepWorktree: '--keep-worktree',
   parent: '--parent',
 } as const;

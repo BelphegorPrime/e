@@ -98,12 +98,13 @@ cat > ~/.e/agents/pi-anthropic/agent.json <<'JSON'
   "skills": ["web-search", "changelog-note"]
 }
 JSON
-e spawn --rebuild pi-anthropic "List the skills you have available, then exit"
+e spawn pi-anthropic "List the skills you have available, then exit"
 ```
 
-Baked Skills are copied into the derived image, so a changed Skill or a
-changed list needs `--rebuild`. A per-run `--skill` is a mount and needs
-none.
+Baked Skills are copied into the derived image. Every spawn rebuilds that
+image, so a changed Skill or a changed list lands in the next run; only
+`--no-rebuild` keeps the old copy. A per-run `--skill` is a mount and needs
+no image at all.
 
 ## Step 4: see it from inside
 

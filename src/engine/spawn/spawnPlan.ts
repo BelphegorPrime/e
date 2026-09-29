@@ -83,7 +83,7 @@ export function orderEnvFiles(
 
 /** Inputs to the image-build gate; all pre-resolved by the caller. */
 export interface ImageActionInput {
-  /** `--rebuild` was passed: always (re)build. */
+  /** Always (re)build: the default, off only with `--no-rebuild`. */
   rebuild: boolean;
   /** An image with the harness's tag already exists locally. */
   imageExists: boolean;
@@ -101,7 +101,7 @@ export interface ImageActionInput {
  * Decides what a spawn should do about the harness image before running:
  *
  * - `skip` - a usable image is already present, built from the pinned
- *   version, and no rebuild was requested.
+ *   version, and `--no-rebuild` turned the default rebuild off.
  * - `build` - an image is needed and the harness is initialized (has a Dockerfile).
  * - `not-initialized` - an image is needed but the harness has no Dockerfile;
  *   the caller surfaces the "run `e init`" error.
@@ -200,7 +200,7 @@ export interface SpawnFacts {
    * and whether the provider needs an endpoint key.
    */
   readonly localStackPresent: boolean;
-  /** `--rebuild`. */
+  /** Rebuild every image: true unless `--no-rebuild`. */
   readonly rebuild: boolean;
   /** `--name` run-name override. */
   readonly name?: string;

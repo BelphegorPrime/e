@@ -18,6 +18,7 @@ import { validateSpawn } from '../engine/spawn/spawnPlan.js';
 import { InMemoryGit } from '../ports/git/memory.js';
 import { RunScratch } from '../engine/runs/runScratch.js';
 import { Env } from '../shared/utils/env.js';
+import { SPAWN_FLAGS } from '../shared/spawnArgs.js';
 import {
   readRequest,
   writeRunInfo,
@@ -115,7 +116,8 @@ test('a bare spawn runs the favorite harness (pi by default) with an empty promp
     assert.deepEqual(facts.mcpServers, []);
     assert.deepEqual(facts.perRunSkills, []);
     assert.deepEqual(facts.bakedSkills, []);
-    assert.equal(facts.rebuild, false);
+    // Every spawn rebuilds its images unless told not to (ADR-0016 section 10).
+    assert.equal(facts.rebuild, true);
     assert.equal(facts.keepWorktree, false);
     assert.deepEqual(facts.env, []);
     // No `.e/.env` on disk: no base env-file is layered.
@@ -345,9 +347,28 @@ test('spawn CLI: target and prompt words are positional; --rm defaults on', asyn
   assert.equal(target, 'demo');
   assert.deepEqual(prompt, ['fix', 'the', 'bug']);
   assert.equal(opts.rm, true);
-  assert.equal(opts.rebuild, false);
+  // Neither flag given: Commander leaves it unset, and the facts read that as a rebuild.
+  assert.equal(opts.rebuild, undefined);
   assert.equal(opts.mcp, undefined);
   assert.equal(opts.skill, undefined);
+});
+
+test('spawn CLI: --no-rebuild opts out, --rebuild still parses, the last one wins', async () => {
+  const cases: [string[], boolean | undefined, boolean][] = [
+    [[], undefined, true],
+    [[SPAWN_FLAGS.rebuild], true, true],
+    [[SPAWN_FLAGS.noRebuild], false, false],
+    [[SPAWN_FLAGS.rebuild, SPAWN_FLAGS.noRebuild], false, false],
+    [[SPAWN_FLAGS.noRebuild, SPAWN_FLAGS.rebuild], true, true],
+  ];
+  for (const [flags, parsed, rebuild] of cases) {
+    const { opts } = await parseSpawn(['demo', ...flags, 'go']);
+    assert.equal(opts.rebuild, parsed, flags.join(' '));
+    withStore(root => {
+      const facts = gather(root, undefined, [], { rebuild: opts.rebuild });
+      assert.equal(facts.rebuild, rebuild, flags.join(' '));
+    });
+  }
 });
 
 test('spawn CLI: no positionals at all is allowed (favorite harness, TUI)', async () => {
