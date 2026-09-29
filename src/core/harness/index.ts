@@ -125,7 +125,7 @@ export const HARNESSES: Record<string, Harness> = {
       skillsAgent: 'pi',
     },
     // renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-    version: '0.85.1',
+    version: '0.99.0',
     requiredEnv: ['ANTHROPIC_API_KEY'],
     // pi speaks three wire protocols (its `openai-completions` is our
     // `openai-chat`). It is file-configured: a custom endpoint lives only in
