@@ -173,7 +173,7 @@ export const HARNESSES: Record<string, Harness> = {
       // here only if this CLI ever needs root at runtime (attack-surface.md Zone 1).
     },
     // renovate: datasource=npm depName=@anthropic-ai/claude-code
-    version: '2.1.267',
+    version: '2.1.284',
     requiredEnv: ['ANTHROPIC_API_KEY'],
     // Claude Code speaks only the Anthropic Messages API and is configured via
     // env vars, so it carries the env-based adapter.
