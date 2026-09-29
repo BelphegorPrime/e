@@ -5,6 +5,8 @@
  * planning, and the executor, so they live here next to the other utils.
  */
 
+import fs from 'node:fs';
+
 /**
  * Parses `.env`-style content into a key→value map, following docker's
  * `--env-file` basics: `KEY=VALUE` lines, `#` comment lines and blank lines
@@ -22,6 +24,21 @@ export function parseDotenv(content: string): Record<string, string> {
     env[key] = line.slice(eq + 1);
   }
   return env;
+}
+
+/**
+ * Reads and parses a `.env` file, afresh on every call; a missing or
+ * unreadable file, or none at all, has no keys.
+ */
+export function readDotenvFile(
+  file: string | undefined
+): Record<string, string> {
+  if (file === undefined) return {};
+  try {
+    return parseDotenv(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return {};
+  }
 }
 
 /**

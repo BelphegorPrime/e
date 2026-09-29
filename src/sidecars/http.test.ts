@@ -6,7 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { createBrokerApi } from './broker/server/api.js';
 import { createEgressApi } from './egress/server/api.js';
-import { MAX_BODY_BYTES, type SidecarHandler } from './http.js';
+import {
+  MAX_BODY_BYTES,
+  readRawBody,
+  withErrorTail,
+  writeJson,
+  type SidecarHandler,
+} from './http.js';
 
 /**
  * Every sidecar that takes a POST, and the route that takes it. The list is
@@ -78,4 +84,78 @@ test('sidecar http: an oversized body is the same 413 from every sidecar', async
   assert.equal(answers.length, SIDECARS.length);
   assert.deepEqual(new Set(answers), new Set([answers[0]]));
   assert.equal(answers[0], '413 {"error":"Request body too large"}');
+});
+
+/** A server echoing the byte length and hex of a body capped at `cap`. */
+async function rawBodyServer(cap: number): Promise<{
+  port: number;
+  close: () => Promise<void>;
+}> {
+  const server = http.createServer(
+    withErrorTail(async (req, res) => {
+      const body = await readRawBody(req, cap);
+      writeJson(res, 200, { bytes: body.length, hex: body.toString('hex') });
+    })
+  );
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  return {
+    port: address.port,
+    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
+}
+
+/** POSTs `chunks` with chunked encoding: no content-length to refuse up front. */
+function postChunked(
+  port: number,
+  chunks: Buffer[]
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, method: 'POST', path: '/' },
+      res => {
+        let body = '';
+        res.on('data', chunk => (body += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      }
+    );
+    req.on('error', reject);
+    for (const chunk of chunks) req.write(chunk);
+    req.end();
+  });
+}
+
+test('readRawBody: the exact bytes, a multibyte character split across chunks included', async () => {
+  const server = await rawBodyServer(16);
+  try {
+    const euro = Buffer.from('\u20ac', 'utf8');
+    const res = await postChunked(server.port, [
+      Buffer.from('a'),
+      euro.subarray(0, 1),
+      euro.subarray(1),
+    ]);
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+      bytes: 4,
+      hex: Buffer.concat([Buffer.from('a'), euro]).toString('hex'),
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test('readRawBody: a streamed body past the cap is 413, counted in bytes', async () => {
+  const server = await rawBodyServer(4);
+  try {
+    // Three characters, six bytes: over a four-byte cap.
+    const res = await postChunked(server.port, [
+      Buffer.from('\u00e9\u00e9'),
+      Buffer.from('\u00e9'),
+    ]);
+    assert.equal(res.status, 413);
+    assert.equal(res.body, '{"error":"Request body too large"}');
+  } finally {
+    await server.close();
+  }
 });

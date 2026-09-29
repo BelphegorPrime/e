@@ -33,7 +33,7 @@ import {
   type RemoteA2aAgent,
 } from '../core/agent/index.js';
 import { runRemoteAgent } from '../engine/a2a/remoteSpawn.js';
-import { parseDotenv } from '../shared/utils/dotenv.js';
+import { readDotenvFile } from '../shared/utils/dotenv.js';
 import {
   ensureShippedSkill,
   resolveSkill,
@@ -139,17 +139,6 @@ export interface TriggeredSpawn {
    * one-shot edge accepts the event the way the queue accepts a delivery.
    */
   provenance: Provenance;
-}
-
-/**
- * Reads the store's shared `.e/.env` into a key→value map, for resolving a
- * provider's `apiKeyEnv` by name. This is the sole source of a provider's API
- * key (ADR-0006); a missing or unreadable file yields an empty map, so an unset
- * key surfaces as the adapter's clear "add it to .e/.env" error.
- */
-function loadStoreEnv(baseEnvFile: string | undefined): Record<string, string> {
-  if (baseEnvFile === undefined || !fs.existsSync(baseEnvFile)) return {};
-  return parseDotenv(fs.readFileSync(baseEnvFile, 'utf8'));
 }
 
 /**
@@ -268,7 +257,7 @@ export function gatherSpawnFacts(
   // The shared `.e/.env` is the sole source of a provider's API key and any MCP
   // credential (ADR-0006) - read once, only when something needs it.
   const needStoreEnv = Boolean(agent.provider) || mcpNames.length > 0;
-  const storeEnv = needStoreEnv ? loadStoreEnv(baseEnvPath) : {};
+  const storeEnv = needStoreEnv ? readDotenvFile(baseEnvPath) : {};
 
   // Resolve requested MCP servers and skills from disk now (existence checked).
   const mcpServers = mcpNames.map(name => resolveMcpServer(name, root));
@@ -453,7 +442,7 @@ export function resolveRemoteTarget(
   return {
     agent,
     prompt: resolved.prompt.join(' '),
-    storeEnv: loadStoreEnv(baseEnvPath),
+    storeEnv: readDotenvFile(baseEnvPath),
   };
 }
 

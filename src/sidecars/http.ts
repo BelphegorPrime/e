@@ -44,7 +44,7 @@ export type JsonSender<Body> = (
 export const MAX_BODY_BYTES = 64 * 1024;
 
 /**
- * What `readBody` rejects with past the cap. Deliberately not exported: the
+ * What `readRawBody` (and so `readBody`) rejects with past the cap. Deliberately not exported: the
  * error tail is the only place allowed to turn it into a status, which is what
  * keeps the two sidecars from drifting apart again.
  */
@@ -67,20 +67,41 @@ export function writeJson<Body>(
  * cost the client the status - measured, the 413 never once arrived. Tearing
  * the socket down is `withErrorTail`'s job, after the 413 is on the wire.
  */
-export function readBody(req: IncomingMessage): Promise<string> {
+export async function readBody(req: IncomingMessage): Promise<string> {
+  return (await readRawBody(req)).toString('utf8');
+}
+
+/**
+ * The body as the bytes that arrived, up to `maxBytes`, with `readBody`'s
+ * discipline past the cap. For a caller that must see the exact bytes: an
+ * HMAC is over what was sent, not over what a decode made of it.
+ */
+export function readRawBody(
+  req: IncomingMessage,
+  maxBytes: number = MAX_BODY_BYTES
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    let body = '';
+    // A declared length past the cap is refused before a byte is read.
+    if (Number(req.headers['content-length'] ?? 0) > maxBytes) {
+      req.pause();
+      reject(new BodyTooLarge('Request body too large'));
+      return;
+    }
+    let chunks: Buffer[] = [];
+    let size = 0;
     const onData = (chunk: Buffer | string): void => {
-      body += chunk;
-      if (body.length > MAX_BODY_BYTES) {
+      const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      size += bytes.length;
+      chunks.push(bytes);
+      if (size > maxBytes) {
         req.off('data', onData);
         req.pause();
-        body = '';
+        chunks = [];
         reject(new BodyTooLarge('Request body too large'));
       }
     };
     req.on('data', onData);
-    req.on('end', () => resolve(body));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }

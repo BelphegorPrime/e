@@ -724,6 +724,32 @@ to require `Authorization: Bearer <token>`; bound beyond loopback (`--host`)
 without a token the endpoint stays off. Tasks take no follow-up messages: put
 the whole task into the first one.
 
+### Webhooks
+
+`e serve` listens for forge webhooks on `POST /hooks/<source>` (GitHub only for
+now) on **its own port, BFF port + 2** (`8082` by default), so a tunnel aimed
+at it cannot reach the BFF (ADR-0016 section 7). A delivery that matches a
+Trigger (`on.type: "webhook"`) is queued as a run, one per matching trigger.
+
+The HMAC signature over the raw body is the whole authentication, loopback
+included. Put the secret you gave the forge into the serving Store's
+`.e/.env`; without one the port stays closed and `serve` says so:
+
+```bash
+echo "E_WEBHOOK_SECRET_GITHUB=$(openssl rand -hex 32)" >> .e/.env
+e serve
+# Webhook listener at http://127.0.0.1:8082/hooks/github (HMAC-signed deliveries only)
+```
+
+In the GitHub webhook settings, choose content type `application/json` and
+the same secret. The listener answers 202 when it queued a run, 200 when
+nothing matched or every match was already pending (so the forge never
+switches the webhook off over your own configuration), 429 only when the
+queue accepted nothing, 401 on a wrong or empty signature, 413 past 5 MB. A
+redelivery of a request still waiting is deduplicated. A redelivery after its
+run started is a fresh run, unless the trigger's default `"overlap": "skip"`
+drops it because that run is still going; `"allow"` runs it regardless.
+
 ### Remote A2A agents in the Store
 
 An `agent.json` with `"transport": "a2a"` names an agent hosted elsewhere that
@@ -837,7 +863,7 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | `e spawn … --skill spawn-brother`              | Let the agent request sibling runs; the host merges each back into its worktree (ADR-0013)                                       |
 | `e spawn <remote-agent> "<prompt>"`            | Ask a Store agent with `"transport": "a2a"` over the Agent2Agent protocol; the answer on stdout, no run (ADR-0015)               |
 | `e spawn --trigger <name> [--event <path>]`    | One-shot: run a Trigger from CI or a timer, its declaration read from base; a non-matching event exits 0 (Tutorial 10)           |
-| `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, and the A2A endpoint (`/.well-known/agent-card.json`, `POST /a2a`); stop the background server         |
+| `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, the A2A endpoint (`POST /a2a`) and the webhook listener (BFF port + 2); stop the background server     |
 | `e export` / `e import <file>`                 | Move the store and gateway configuration between machines as a zip                                                               |
 
 ## Environment variables

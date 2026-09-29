@@ -16,6 +16,11 @@ import { TRIGGER_NAME_PATTERN } from './provenance.js';
 export const WEBHOOK_SOURCES = ['github'] as const;
 export type WebhookSource = (typeof WEBHOOK_SOURCES)[number];
 
+/** True for a source `e` speaks: a path segment or a `trigger.json` value, narrowed. */
+export function isWebhookSource(value: unknown): value is WebhookSource {
+  return WEBHOOK_SOURCES.includes(value as WebhookSource);
+}
+
 /**
  * What a trigger listens to. A discriminated union, and a trigger carries
  * exactly one: two sources would make `<trigger id>:<event dedup value>` draw
@@ -191,7 +196,7 @@ function parseOn(raw: unknown, name: string, where: string): TriggerOn {
   }
 
   if (on.type === 'webhook') {
-    if (!WEBHOOK_SOURCES.includes(on.source as WebhookSource)) {
+    if (!isWebhookSource(on.source)) {
       invalid(
         name,
         where,
@@ -203,7 +208,7 @@ function parseOn(raw: unknown, name: string, where: string): TriggerOn {
     }
     const source: TriggerOn = {
       type: 'webhook',
-      source: on.source as WebhookSource,
+      source: on.source,
       event: on.event,
     };
     if (typeof on.action === 'string' && on.action !== '') {

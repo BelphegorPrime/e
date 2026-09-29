@@ -119,6 +119,22 @@ test('a manual spawn is in the ledger and takes no slot', () =>
     assert.equal(listLedger(dirs).length, 3);
   }));
 
+test('liveTriggers: triggers owning an unended ledger entry, never a pending request or a finished run', () =>
+  withQueue(
+    async ({ launcher, queue }) => {
+      queue.enqueue(req('running:1'));
+      queue.enqueue(req('done:1'));
+      queue.enqueue(req('waiting:1'));
+      assert.deepEqual([...queue.liveTriggers()].sort(), ['done', 'running']);
+      const done = launcher.launches.find(l =>
+        l.request.prompt.includes('done')
+      );
+      patchLedgerFile(done!.env[Env.LEDGER_FILE_VAR]!, { state: 'done' });
+      assert.deepEqual([...queue.liveTriggers()], ['running']);
+    },
+    { ...DEFAULT_QUEUE_CONFIG, slots: 2 }
+  ));
+
 test('a child that exits without ending its entry is failed, and its slot freed', () =>
   withQueue(async ({ dirs, launcher, queue }) => {
     queue.enqueue(req('t:1'));

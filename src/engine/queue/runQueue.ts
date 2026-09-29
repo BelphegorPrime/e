@@ -192,6 +192,21 @@ export class RunQueue {
     ).length;
   }
 
+  /**
+   * Triggers that own a ledger entry that has not ended: what `overlap:
+   * "skip"` checks at fire time. Never `queue/`, which is the dedup's.
+   */
+  liveTriggers(): Set<string> {
+    const live = new Set<string>();
+    for (const entry of listLedger(this.deps.dirs)) {
+      const trigger = entry.request?.trigger;
+      if (trigger !== undefined && !isTerminalLedgerState(entry.state)) {
+        live.add(trigger);
+      }
+    }
+    return live;
+  }
+
   /** Claims the oldest requests into free slots and starts their runs. */
   fill(): void {
     let free = this.deps.config.slots - this.heldSlots();

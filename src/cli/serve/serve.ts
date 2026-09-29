@@ -1,12 +1,13 @@
 /**
  * **`e serve` command wiring**: flags, ports, and the objects that only a real
  * server needs - the engine socket behind the browser terminal, the A2A
- * facade's tasks and their spool, the OmniRoute embed listener, and the
- * teardown that ties all of them to the BFF's own `close`.
+ * facade's tasks and their spool, the OmniRoute embed listener, the webhook
+ * listener, and the teardown that ties all of them to the BFF's own `close`.
  *
  * The BFF itself is `serveApp.ts`, the reverse proxies are `reverseProxy.ts`,
- * and the detached lifecycle is `detachedServe.ts`; this module just decides
- * what to hand them and what to log.
+ * the webhook listener is `webhookServer.ts`, and the detached lifecycle is
+ * `detachedServe.ts`; this module just decides what to hand them and what to
+ * log.
  */
 
 import type { Command } from 'commander';
@@ -15,7 +16,9 @@ import type { AddressInfo } from 'node:net';
 import { HARNESSES } from '../../core/harness/index.js';
 import { readConfig } from '../../core/store/config.js';
 import { findRoot } from '../../core/store/root.js';
-import { eBaseDir } from '../../core/store/paths.js';
+import { eBaseDir, envFilePath } from '../../core/store/paths.js';
+import { storeTriggerContext } from '../../core/trigger/context.js';
+import { loadTriggers } from '../../core/trigger/load.js';
 import { RunQueue } from '../../engine/queue/runQueue.js';
 import { runsDirs } from '../../engine/queue/runsSpool.js';
 import { resolveRuntime } from '../../ports/runtime/registry.js';
@@ -29,6 +32,7 @@ import {
 import { AGENT_CARD_PATH } from '../../engine/a2a/wire.js';
 import { defaultWorktreesDir } from '../../engine/runs/worktreesDir.js';
 import { env } from '../../shared/utils/env.js';
+import { readDotenvFile } from '../../shared/utils/dotenv.js';
 import { log } from '../../shared/utils/log.js';
 import { resolveFreePortBlock } from '../../shared/utils/port.js';
 import { resolveUiDirectory } from './assets.js';
@@ -53,6 +57,7 @@ import {
 } from './serveApp.js';
 import { TerminalSessions } from './terminalSessions.js';
 import { attachTerminalWebSocket } from './terminalSocket.js';
+import { openWebhookListener, webhookPortFor } from './webhookServer.js';
 
 export interface ServeOptions {
   host?: string;
@@ -93,15 +98,17 @@ export function registerServeCommand(program: Command): void {
         return;
       }
 
-      // The BFF and the embed proxy (BFF port + 1) only work as a pair, so a
-      // busy port on either side moves both to the nearest free pair.
-      const port = await resolveFreePortBlock(requestedPort, 2, { host });
+      // The BFF, the embed proxy (BFF port + 1) and the webhook listener
+      // (BFF port + 2) are one block, so a busy port on any of them moves all
+      // three to the nearest free block.
+      const port = await resolveFreePortBlock(requestedPort, 3, { host });
       if (port !== requestedPort) {
         log.warn(
-          `Port ${requestedPort} or ${omniRouteEmbedPortFor(requestedPort)} is in use, using ${port} instead`
+          `Port ${requestedPort}, ${omniRouteEmbedPortFor(requestedPort)} or ${webhookPortFor(requestedPort)} is in use, using ${port} instead`
         );
       }
       const embedPort = omniRouteEmbedPortFor(port);
+      const webhookPort = webhookPortFor(port);
       // The browser terminal attaches to run containers through the engine
       // socket; without one the routes still answer, but a start is refused
       // with a clear message.
@@ -132,10 +139,10 @@ export function registerServeCommand(program: Command): void {
         defaultAgent: readConfig(findRoot()).defaultHarness,
       });
       // The hosted shape's spine (ADR-0016 section 6): the queue, the ledger
-      // and the tick. Nothing enqueues yet but what lands on top of it - the
-      // webhook listener and the scheduler; every `e spawn` already writes
-      // the ledger.
-      const storeDir = eBaseDir(findRoot());
+      // and the tick. The webhook listener enqueues onto it (the scheduler
+      // will too); every `e spawn` already writes the ledger.
+      const root = findRoot();
+      const storeDir = eBaseDir(root);
       const runs = runsDirs(storeDir);
       let queue: RunQueue | undefined;
       try {
@@ -168,8 +175,26 @@ export function registerServeCommand(program: Command): void {
       queue?.start();
       attachTerminalWebSocket(server, terminal);
       const embedProxy = await startOmniRouteEmbedProxy(host, embedPort);
+      // The webhook listener (ADR-0016 section 7): its own port, so a tunnel
+      // aimed at it cannot reach the BFF. The secret is read from the serving
+      // Store's `.e/.env` at every verification, never from `process.env`,
+      // which a detached restart would lose; with none the port stays closed.
+      const storeEnvFile = envFilePath(root);
+      const webhooks = await openWebhookListener({
+        host,
+        port: webhookPort,
+        envFile: storeEnvFile,
+        envValue: name => readDotenvFile(storeEnvFile)[name],
+        triggers: () =>
+          loadTriggers(root, storeTriggerContext(root)).flatMap(loaded =>
+            loaded.trigger ? [loaded.trigger] : []
+          ),
+        queue,
+      });
+      if (!webhooks.server) log.warn(webhooks.warning);
       server.once('close', () => {
         embedProxy.close();
+        webhooks.server?.close();
         terminal.dispose();
         tasks.dispose();
         removeA2aSpool(a2aSpool);
@@ -181,6 +206,11 @@ export function registerServeCommand(program: Command): void {
       }
       log.info(`UI serving at http://${host}:${address.port}`);
       log.info(`OmniRoute embed proxy at http://${host}:${embedPort}`);
+      if (webhooks.server) {
+        for (const url of webhooks.urls) {
+          log.info(`Webhook listener at ${url} (HMAC-signed deliveries only)`);
+        }
+      }
       if (access.enabled) {
         log.info(
           `A2A agent card at http://${host}:${address.port}${AGENT_CARD_PATH}${access.requireBearer ? ' (bearer token required on the endpoint)' : ''}`

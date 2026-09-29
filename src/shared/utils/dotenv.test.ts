@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDotenv, filterEnvContent } from './dotenv.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { parseDotenv, filterEnvContent, readDotenvFile } from './dotenv.js';
 
 test('parseDotenv: parses KEY=VALUE, skips comments and blanks, keeps value verbatim', () => {
   const env = parseDotenv(
@@ -55,4 +58,21 @@ test('filterEnvContent: a duplicate key collapses to the last value, docker-styl
     'IDENTITY',
   ]);
   assert.equal(filtered, 'IDENTITY=second\n');
+});
+
+test('readDotenvFile: reads afresh each call; missing, unreadable or no file has no keys', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-dotenv-'));
+  try {
+    const file = path.join(dir, '.env');
+    assert.deepEqual(readDotenvFile(file), {});
+    assert.deepEqual(readDotenvFile(undefined), {});
+    fs.writeFileSync(file, 'A=1\n');
+    assert.deepEqual(readDotenvFile(file), { A: '1' });
+    fs.writeFileSync(file, 'A=2\n');
+    assert.deepEqual(readDotenvFile(file), { A: '2' });
+    // A directory where the file should be reads as no file.
+    assert.deepEqual(readDotenvFile(dir), {});
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
