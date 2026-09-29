@@ -858,6 +858,7 @@ test('one-shot: a sibling gets --dir <Base Store> and the env file by marker, ne
       'researcher',
       '--dir',
       root,
+      '--no-rebuild',
       '--',
       'look into X',
     ]);
