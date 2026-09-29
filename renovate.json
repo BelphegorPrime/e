@@ -1,6 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Harness version pins only (ADR-0016 section 10). Never automerged: a bot that bumps and merges is `latest` with extra steps, adopting exactly the defaults the pin exists to hold.",
+  "baseBranchPatterns": ["dev"],
   "enabledManagers": ["custom.regex"],
   "automerge": false,
   "customManagers": [
