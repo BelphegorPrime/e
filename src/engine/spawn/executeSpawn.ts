@@ -406,7 +406,13 @@ async function executeSpawnWith(
           deps.launchSibling ??
           productionSiblingLauncher(facts.root, facts.storeEnv),
         passthroughArgs: siblingPassthroughArgs(facts),
-        passthroughEnv: { [Env.RUNTIME_VAR]: runtime.engine },
+        passthroughEnv: {
+          [Env.RUNTIME_VAR]: runtime.engine,
+          // A one-shot run's secrets, which its Base Store has no `.env` for.
+          ...(facts.storeEnvFile
+            ? { [Env.STORE_ENV_FILE_VAR]: facts.storeEnvFile }
+            : {}),
+        },
       },
     }
   );

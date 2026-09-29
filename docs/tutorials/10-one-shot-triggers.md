@@ -47,12 +47,35 @@ e init --dir .
 printf '.e/.env\n' >> .gitignore
 ```
 
+The trigger's Agent needs a **Provider**. In one-shot the secrets file is
+filtered to the variables the run declares, exactly like `.e/.env`, and a
+bare harness (`claudeCode` with no `provider`) declares no key, so its
+container would start without one. Declare an Agent whose `apiKeyEnv` names
+the key (the shape is [Tutorial 1](./01-first-run.md)'s, the options
+[Tutorial 2](./02-hosted-provider.md)'s):
+
+```bash
+mkdir -p .e/agents/claude-ci
+cat > .e/agents/claude-ci/agent.json <<'JSON'
+{
+  "name": "claude-ci",
+  "harness": "claudeCode",
+  "provider": {
+    "baseUrl": "https://api.anthropic.com",
+    "model": "claude-sonnet-4-5",
+    "protocol": "anthropic-messages",
+    "apiKeyEnv": "ANTHROPIC_API_KEY"
+  }
+}
+JSON
+```
+
 ## Step 2: declare the trigger
 
 ```jsonc
 // .e/triggers/fix-issue/trigger.json
 {
-  "agent": "claudeCode",
+  "agent": "claude-ci",
   "prompt": "Fix issue #{{issue.number}} in {{repository.full_name}}. Read the issue with the gh CLI; the full event is at /run/e/event.json.",
   "on": {
     "type": "webhook",
@@ -81,6 +104,19 @@ Commit the trigger to your default branch. **The declaration is read from
 the workflow comes from the PR's head, so a `trigger.json` on disk is
 whatever the PR's author wrote. `e` reads it with `git show <base>:...`, and a
 trigger that is not committed there is refused.
+
+**So is the rest of the Store.** A head that cannot touch the prompt could
+still weaken `verify` in `config.json`, swap the Agent, or rewrite a
+Dockerfile that is built on the runner. The run therefore reads its **Base
+Store**: the whole `.e/` as committed at the base, copied into a scratch
+directory for this one run and removed with it; nothing of the working
+tree's `.e/` is read, and the siblings the run starts read the same copy.
+The Store is `--dir` when you pass one, else `.e/` at the repository's top
+level - never the nearest `.e/` above the working directory, which a nested
+one in the head could move. So commit everything the run needs, the harness
+Dockerfiles `e init` wrote included: running `e init` on the runner changes
+nothing the run reads. A `compose.yaml` in it is not used, since one-shot
+never starts a local stack.
 
 ## Step 3: the workflow
 
@@ -148,8 +184,15 @@ What each piece is for:
 - **`fetch-depth: 0`**: `actions/checkout` fetches one commit by default, and
   the base ref is then absent. A base that does not resolve is a base error,
   never a confusing checkout failure.
-- **`--env-file` from `$RUNNER_TEMP`**: the key never lands in the workspace.
-  Not `-e KEY=value`, which shows in the process list and the logs.
+- **`--env-file` from `$RUNNER_TEMP`** is the run's only secret source: it
+  takes the place of `.e/.env`, so `claude-ci`'s `apiKeyEnv` resolves from
+  it, and it is filtered the same way - a variable the run does not declare
+  never reaches the container. No `.env` is read from the Base Store or the
+  working tree. A `.e/.env` committed at the base fails the run with exit 1,
+  because a committed secret is a leak somebody must see; one committed only
+  in the PR's head is a warning, and ignored. The key never lands in the
+  workspace. Not `-e KEY=value`, which shows in the process list and the
+  logs.
 - **`timeout-minutes`** above `loop.totalTimeoutMs`: the exit code becomes
   the job's status, so an exhausted run is already a red job, and the job
   timeout should never cut a run short first.

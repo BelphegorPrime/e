@@ -9,6 +9,12 @@ export interface Git {
   isRepo(): boolean;
 
   /**
+   * The absolute path of the repository's top-level directory
+   * (`rev-parse --show-toplevel`); undefined outside a repository.
+   */
+  toplevel(): string | undefined;
+
+  /**
    * The commit SHA `HEAD` points at: the host repo's, or - given a path - the
    * worktree's there (a run branch's tip, e.g. after a checkpoint).
    */
@@ -31,6 +37,17 @@ export interface Git {
    * this repository.
    */
   readFileAt(ref: string, filePath: string): string | undefined;
+
+  /**
+   * Writes the directory at host path `dirPath` as committed at `ref` into
+   * `dest` (created if missing), which receives its contents: `a/b` under
+   * `dirPath` lands at `<dest>/a/b`. Never reads the working tree. A file
+   * keeps its executable bit, a symlink is written as a symlink with its
+   * target verbatim - where one leads is the caller's to judge - and a
+   * submodule is skipped. Throws when `dirPath` is not a directory in that
+   * commit.
+   */
+  exportTree(ref: string, dirPath: string, dest: string): void;
 
   /**
    * The repository's default branch as a full remote-tracking ref

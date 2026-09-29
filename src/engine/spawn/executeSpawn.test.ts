@@ -31,7 +31,10 @@ import { defaultBrokerPlan } from '../sidecarPlan.js';
 import {
   ensureSpool,
   readStatus,
+  writeRequest,
+  writeStatus,
 } from '../../sidecars/broker/contract/spool.js';
+import type { ChildLaunch } from '../runs/childRun.js';
 
 const harness: Harness = {
   name: 'demo',
@@ -791,6 +794,74 @@ test('a sibling spawn joins the parent network, syncs the configured artifacts, 
     const status = readStatus(spool, 'sib-001');
     assert.equal(status?.status, 'done');
     assert.equal(status?.branch, 'e/demo/sib-run-1');
+  });
+});
+
+test('one-shot: a sibling gets --dir <Base Store> and the env file by marker, never --env-file', async () => {
+  await withDemoStore(async root => {
+    const worktreesDir = path.join(root, 'wt');
+    const spool = path.join(worktreesDir, '.broker', 'e-demo-nightly-1');
+    const envFile = path.join(root, 'ci.env');
+    fs.writeFileSync(envFile, 'ANTHROPIC_API_KEY=sk-ci\n');
+    const launches: ChildLaunch[] = [];
+    // The agent asks for a sibling while it runs, and waits for it to start.
+    class RequestingRuntime extends RecordingRuntime {
+      override async run(
+        image: string,
+        opts: RunOptions,
+        command: string[]
+      ): Promise<number> {
+        writeRequest(spool, {
+          id: 'sib-001',
+          agent: 'researcher',
+          prompt: 'look into X',
+          requestedAt: 't',
+        });
+        while (launches.length === 0) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        return super.run(image, opts, command);
+      }
+    }
+    const result = await executeSpawn(
+      facts({
+        root,
+        worktreesDir,
+        name: 'nightly',
+        // What gatherSpawnFacts hands a triggered run: its Base Store as
+        // the sibling's --dir, `--env-file` as the stand-in `.env`.
+        dirOpt: root,
+        baseEnvFile: envFile,
+        storeEnvFile: envFile,
+      }),
+      { ...emptyPlan, broker: defaultBrokerPlan() },
+      {
+        git: new InMemoryGit(),
+        runtime: new RequestingRuntime(),
+        scratch: new RunScratch(),
+        launchSibling: launch => {
+          launches.push(launch);
+          writeStatus(spool, launch.request.id, {
+            status: 'done',
+            branch: 'e/researcher/look-into-x-1',
+            exitCode: 0,
+            updatedAt: 't',
+          });
+          return { exited: Promise.resolve(0), kill: () => {} };
+        },
+      }
+    );
+    assert.equal(result.ran, true);
+    assert.equal(launches.length, 1);
+    assert.deepEqual(launches[0].args, [
+      'spawn',
+      'researcher',
+      '--dir',
+      root,
+      '--',
+      'look into X',
+    ]);
+    assert.equal(launches[0].env[Env.STORE_ENV_FILE_VAR], envFile);
   });
 });
 

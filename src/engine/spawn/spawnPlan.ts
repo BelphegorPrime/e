@@ -224,11 +224,24 @@ export interface SpawnFacts {
   readonly rm?: boolean;
   /** `--keep-worktree`: leave the run's worktree in place after the container exits. */
   readonly keepWorktree?: boolean;
-  /** The shared `.e/.env` path when it exists on disk, for env-file layering. */
+  /**
+   * The shared `.e/.env` path when it exists on disk, for env-file layering -
+   * or {@link storeEnvFile} when a file stands in for it. Filtered to the
+   * plan's whitelist either way.
+   */
   readonly baseEnvFile?: string;
   /** The user's `--env-file` path, layered over the base. */
   readonly userEnvFile?: string;
-  /** The raw `--dir` value, only for the "run `e init` --dir <x>" hint. */
+  /**
+   * The file read in place of the Store's `.env`: a one-shot run's
+   * `--env-file`, or `E_STORE_ENV_FILE` on its sibling (ADR-0016 section 13).
+   * Handed on to this run's siblings.
+   */
+  readonly storeEnvFile?: string;
+  /**
+   * The `--dir` a sibling gets and the "run `e init` --dir <x>" hint names:
+   * the raw `--dir` value, or a one-shot run's Base Store root.
+   */
   readonly dirOpt?: string;
   /**
    * Where the run's worktree is created: `E_WORKTREES_DIR` or the platform rule

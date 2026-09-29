@@ -870,3 +870,87 @@ test('HostGit.defaultBranchRef: origin/HEAD, else the remote asked, else undefin
     upstream
   );
 });
+
+test('HostGit.toplevel: the repository root from any subdirectory, undefined outside one', () => {
+  const repo = initRepo('e-host-git-toplevel-');
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-plain-'));
+  inRepo(
+    repo,
+    () => {
+      const host = new HostGit();
+      const top = fs.realpathSync(repo);
+      assert.equal(host.toplevel(), top);
+      fs.mkdirSync(path.join(repo, 'a', 'b'), { recursive: true });
+      process.chdir(path.join(repo, 'a', 'b'));
+      assert.equal(host.toplevel(), top);
+      process.chdir(plain);
+      assert.equal(host.toplevel(), undefined);
+    },
+    plain
+  );
+});
+
+test('HostGit.exportTree: a directory as committed, nested dirs, executable bits, links as links', () => {
+  const repo = initRepo('e-host-git-export-');
+  const store = path.join(repo, 'sub', '.e');
+  const write = (file: string, content: string) => {
+    fs.mkdirSync(path.dirname(path.join(store, file)), { recursive: true });
+    fs.writeFileSync(path.join(store, file), content);
+  };
+  write('config.json', '{"verify":{"command":"npm test"}}');
+  write('harnesses/pi/Dockerfile', 'FROM node\n');
+  write('skills/tidy/scripts/run.sh', '#!/bin/sh\necho tidy\n');
+  fs.chmodSync(path.join(store, 'skills/tidy/scripts/run.sh'), 0o755);
+  write('skills/tidy/data.bin', '\u0000\u0001binary\n');
+  fs.symlinkSync('scripts/run.sh', path.join(store, 'skills/tidy/run'));
+  fs.symlinkSync('/etc/passwd', path.join(store, 'passwd'));
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'store');
+  const sha = git(repo, 'rev-parse', 'HEAD');
+  // The working tree now says something else, as a PR head would.
+  write('config.json', '{"verify":{"command":"true"}}');
+  write('untracked.txt', 'never committed');
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-export-dest-'));
+  inRepo(
+    repo,
+    () => {
+      // From a subdirectory the path still means the same tree.
+      fs.mkdirSync(path.join(repo, 'src'));
+      process.chdir(path.join(repo, 'src'));
+      new HostGit().exportTree(sha, store, path.join(dest, '.e'));
+      const out = (file: string) => path.join(dest, '.e', file);
+      assert.equal(
+        fs.readFileSync(out('config.json'), 'utf8'),
+        '{"verify":{"command":"npm test"}}'
+      );
+      assert.equal(
+        fs.readFileSync(out('harnesses/pi/Dockerfile'), 'utf8'),
+        'FROM node\n'
+      );
+      assert.equal(
+        fs.readFileSync(out('skills/tidy/data.bin'), 'utf8'),
+        '\u0000\u0001binary\n'
+      );
+      assert.equal(
+        fs.statSync(out('skills/tidy/scripts/run.sh')).mode & 0o111,
+        0o111
+      );
+      assert.equal(fs.statSync(out('config.json')).mode & 0o111, 0);
+      // A link is a link, target verbatim: judging it is the caller's job.
+      assert.equal(fs.readlinkSync(out('skills/tidy/run')), 'scripts/run.sh');
+      assert.equal(fs.readlinkSync(out('passwd')), '/etc/passwd');
+      assert.ok(!fs.existsSync(out('untracked.txt')));
+      // Not a directory at that commit: an error, not an empty Store.
+      assert.throws(
+        () =>
+          new HostGit().exportTree(
+            sha,
+            path.join(repo, 'absent'),
+            path.join(dest, 'x')
+          ),
+        /git failed/
+      );
+    },
+    dest
+  );
+});

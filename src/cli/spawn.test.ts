@@ -13,8 +13,10 @@ import {
   runSpawnCommand,
   spawnReport,
   type SpawnCommandOptions,
+  type TriggeredSpawn,
 } from './spawn.js';
-import { validateSpawn } from '../engine/spawn/spawnPlan.js';
+import { planSpawn, validateSpawn } from '../engine/spawn/spawnPlan.js';
+import { filterEnvContent } from '../shared/utils/dotenv.js';
 import { InMemoryGit } from '../ports/git/memory.js';
 import { RunScratch } from '../engine/runs/runScratch.js';
 import { Env } from '../shared/utils/env.js';
@@ -26,6 +28,7 @@ import {
 import {
   agentDir,
   configFilePath,
+  dockerfilePath,
   eBaseDir,
   envFilePath,
   mcpDir,
@@ -48,6 +51,7 @@ const MARKERS = [
   Env.SPAWN_SIBLING_ID_VAR,
   Env.WORKTREES_DIR_VAR,
   Env.GITHUB_EVENT_NAME_VAR,
+  Env.STORE_ENV_FILE_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -952,17 +956,87 @@ const labeledTrigger = {
   },
 };
 
-/** A git whose default branch carries `declaration` as the trigger `fix`. */
-function triggerGit(root: string, declaration: unknown): InMemoryGit {
+/**
+ * What `main` commits under `.e/` besides the trigger: the harness the
+ * trigger's agent builds from, and `extra`, both by path under `.e/`.
+ */
+function committedStore(
+  root: string,
+  extra: Record<string, string> = {}
+): Record<string, string> {
+  const files = { 'harnesses/claudeCode/Dockerfile': 'FROM base\n', ...extra };
+  return Object.fromEntries(
+    Object.entries(files).map(([file, content]) => [
+      path.join(eBaseDir(root), file),
+      content,
+    ])
+  );
+}
+
+/**
+ * A git whose default branch carries `declaration` as the trigger `fix`,
+ * the rest of its Store `store` (see {@link committedStore}), and `head`,
+ * files committed in HEAD only (host paths).
+ */
+function triggerGit(
+  root: string,
+  declaration: unknown,
+  store: Record<string, string> = {},
+  head: Record<string, string> = {}
+): InMemoryGit {
   return new InMemoryGit({
+    toplevel: root,
     defaultBranchRef: ORIGIN_MAIN,
     refCommits: { [ORIGIN_MAIN]: 'main-sha' },
     files: {
       [ORIGIN_MAIN]: {
+        ...committedStore(root, store),
         [triggerConfigPath('fix', root)]: JSON.stringify(declaration),
       },
+      HEAD: head,
     },
   });
+}
+
+/** A payload-free trigger, so a test needs no event file. */
+const nightlyTrigger = {
+  agent: 'claudeCode',
+  prompt: 'Nightly {{tick}}.',
+  on: { type: 'cron', expr: '0 3 * * *' },
+};
+
+/**
+ * Resolves the trigger `fix` as a run to start, its Base Store in
+ * `scratch`, which the caller disposes of.
+ */
+function triggered(
+  root: string,
+  git: InMemoryGit,
+  scratch: RunScratch,
+  opts: Partial<SpawnCommandOptions> = {}
+): TriggeredSpawn {
+  const out = resolveTriggerSpawn(
+    undefined,
+    [],
+    { dir: root, trigger: 'fix', ...opts },
+    { git, scratch }
+  );
+  if ('skip' in out) throw new Error(`the trigger was skipped: ${out.skip}`);
+  return out;
+}
+
+/** The facts of the run `triggered` resolved, gathered as the action does. */
+function triggeredFacts(
+  root: string,
+  out: TriggeredSpawn,
+  opts: Partial<SpawnCommandOptions> = {}
+) {
+  return gatherSpawnFacts(
+    out.agent,
+    [out.prompt],
+    { dir: root, name: out.name, ...opts },
+    out
+  );
 }
 
 function writePayload(root: string, label: string): string {
@@ -982,36 +1056,35 @@ test('--trigger: the declaration supplies agent, prompt, name, base, payload and
   withStore(root => {
     const event = writePayload(root, 'agent');
     process.env[Env.GITHUB_EVENT_NAME_VAR] = 'issues';
-    const out = resolveTriggerSpawn(
-      undefined,
-      [],
-      { dir: root, trigger: 'fix', event },
-      triggerGit(root, labeledTrigger)
-    );
-    assert.ok(!('skip' in out));
-    if ('skip' in out) return;
-    assert.deepEqual(out, {
-      agent: 'claudeCode',
-      prompt: 'Fix issue #42.',
-      name: 'fix',
-      base: { ref: ORIGIN_MAIN, sha: 'main-sha', branch: 'main' },
-      eventFile: event,
-      loop: { maxIterations: 2 },
-    });
-    // The spawn facts carry them on, the loop field-wise over the Store's.
-    const facts = gatherSpawnFacts(
-      out.agent,
-      [out.prompt],
-      { dir: root, name: out.name },
-      out
-    );
-    assert.equal(facts.agent.name, 'claudeCode');
-    assert.equal(facts.prompt, 'Fix issue #42.');
-    assert.equal(facts.name, 'fix');
-    assert.deepEqual(facts.base, out.base);
-    assert.equal(facts.eventFile, event);
-    assert.equal(facts.loop?.maxIterations, 2);
-    assert.ok((facts.loop?.totalTimeoutMs ?? 0) > 0);
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(root, triggerGit(root, labeledTrigger), scratch, {
+        event,
+      });
+      const { store, ...rest } = out;
+      assert.deepEqual(rest, {
+        agent: 'claudeCode',
+        prompt: 'Fix issue #42.',
+        name: 'fix',
+        base: { ref: ORIGIN_MAIN, sha: 'main-sha', branch: 'main' },
+        eventFile: event,
+        loop: { maxIterations: 2 },
+      });
+      assert.equal(store.checkoutRoot, root);
+      assert.notEqual(store.root, root);
+      // The spawn facts carry them on, the loop field-wise over the Store's.
+      const facts = triggeredFacts(root, out);
+      assert.equal(facts.root, store.root);
+      assert.equal(facts.agent.name, 'claudeCode');
+      assert.equal(facts.prompt, 'Fix issue #42.');
+      assert.equal(facts.name, 'fix');
+      assert.deepEqual(facts.base, out.base);
+      assert.equal(facts.eventFile, event);
+      assert.equal(facts.loop?.maxIterations, 2);
+      assert.ok((facts.loop?.totalTimeoutMs ?? 0) > 0);
+    } finally {
+      scratch.dispose();
+    }
   });
 });
 
@@ -1027,7 +1100,7 @@ test('--trigger: --event-name wins over $GITHUB_EVENT_NAME', () => {
         event: writePayload(root, 'agent'),
         eventName: 'pull_request',
       },
-      triggerGit(root, labeledTrigger)
+      { git: triggerGit(root, labeledTrigger), scratch: new RunScratch() }
     );
     assert.ok('skip' in out);
   });
@@ -1041,7 +1114,7 @@ test('--trigger: positional arguments are refused, the declaration decides', () 
           'claudeCode',
           ['do', 'it'],
           { dir: root, trigger: 'fix' },
-          triggerGit(root, labeledTrigger)
+          { git: triggerGit(root, labeledTrigger), scratch: new RunScratch() }
         ),
       /takes its agent and prompt from the declaration/
     );
@@ -1094,24 +1167,333 @@ test('--event without --trigger is refused', async () => {
 
 test('--trigger: a remote A2A agent is refused, it has no base or payload mount', async () => {
   await withStoreAsync(async root => {
-    writeAgent(root, {
+    const remote = {
       name: 'faraway',
       transport: 'a2a',
       url: 'https://agents.example.com/a2a',
-    });
+    };
     const code = await runSpawnCommand(
       undefined,
       [],
       { dir: root, trigger: 'fix' },
       {
         scratch: new RunScratch(),
-        git: triggerGit(root, {
-          agent: 'faraway',
-          prompt: 'Nightly {{tick}}.',
-          on: { type: 'cron', expr: '0 3 * * *' },
-        }),
+        git: triggerGit(
+          root,
+          { ...nightlyTrigger, agent: 'faraway' },
+          { 'agents/faraway/agent.json': JSON.stringify(remote) }
+        ),
       }
     );
     assert.equal(code, 1);
+  });
+});
+
+// --- --trigger: the Base Store (ADR-0016 section 13, #197) ------------------
+
+test('--trigger: the gate is the one committed at base, whatever the working tree says', () => {
+  withStore(root => {
+    // The PR head weakens verify in the checkout's config.json.
+    fs.writeFileSync(
+      configFilePath(root),
+      JSON.stringify({ verify: { command: 'true' } })
+    );
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(
+        root,
+        triggerGit(root, nightlyTrigger, {
+          'config.json': JSON.stringify({
+            verify: { command: 'npm test', guards: ['test/**'] },
+            siblingArtifacts: ['vendor'],
+          }),
+        }),
+        scratch
+      );
+      const facts = triggeredFacts(root, out);
+      assert.equal(facts.verify?.command, 'npm test');
+      assert.deepEqual(facts.verify?.guards, ['test/**']);
+      assert.deepEqual(facts.siblingArtifacts, ['vendor']);
+      // The verify cache is named after the checkout's Store, never the
+      // scratch copy: the same volume a manual spawn in this checkout uses.
+      assert.equal(
+        facts.cacheVolume,
+        gather(root, 'claudeCode', ['x']).cacheVolume
+      );
+    } finally {
+      scratch.dispose();
+    }
+  });
+});
+
+test("--trigger: the agent and its harness Dockerfile are base's, not the head's", () => {
+  withStore(root => {
+    // The head swaps the agent's harness and rewrites the Dockerfile.
+    writeAgent(root, { name: 'fixer', harness: 'pi' });
+    fs.mkdirSync(path.join(eBaseDir(root), 'harnesses', 'claudeCode'), {
+      recursive: true,
+    });
+    fs.writeFileSync(dockerfilePath('claudeCode', root), 'FROM evil\n');
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(
+        root,
+        triggerGit(
+          root,
+          { ...nightlyTrigger, agent: 'fixer' },
+          {
+            'agents/fixer/agent.json': JSON.stringify({
+              name: 'fixer',
+              harness: 'claudeCode',
+            }),
+          }
+        ),
+        scratch
+      );
+      const facts = triggeredFacts(root, out);
+      assert.equal(facts.agent.harness, 'claudeCode');
+      // The image is built from the Store root the facts carry.
+      assert.equal(
+        fs.readFileSync(dockerfilePath('claudeCode', facts.root), 'utf8'),
+        'FROM base\n'
+      );
+    } finally {
+      scratch.dispose();
+    }
+  });
+});
+
+test('--trigger: a nested .e/ closer to the cwd does not move the Store root', () => {
+  withStore(root => {
+    const nested = path.join(root, 'pkg');
+    fs.mkdirSync(eBaseDir(nested), { recursive: true });
+    fs.writeFileSync(
+      configFilePath(nested),
+      JSON.stringify({ verify: { command: 'true' } })
+    );
+    const git = triggerGit(root, nightlyTrigger);
+    const scratch = new RunScratch();
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(nested);
+      // No --dir: the toplevel, never the nearest `.e/` above the cwd.
+      const out = triggered(root, git, scratch, { dir: undefined });
+      assert.equal(out.store.checkoutRoot, root);
+      assert.deepEqual(
+        git.exports.map(e => e.dirPath),
+        [eBaseDir(root)]
+      );
+    } finally {
+      process.chdir(originalCwd);
+      scratch.dispose();
+    }
+  });
+});
+
+test('--trigger: a --dir outside the repository is refused', () => {
+  withStore(root => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'e-elsewhere-'));
+    try {
+      assert.throws(
+        () =>
+          triggered(root, triggerGit(root, nightlyTrigger), new RunScratch(), {
+            dir: elsewhere,
+          }),
+        /is outside the repository/
+      );
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+});
+
+test('--trigger: a harness not committed at base is named, since e init on the runner cannot help', () => {
+  withStore(root => {
+    const git = new InMemoryGit({
+      toplevel: root,
+      defaultBranchRef: ORIGIN_MAIN,
+      refCommits: { [ORIGIN_MAIN]: 'main-sha' },
+      files: {
+        [ORIGIN_MAIN]: {
+          [triggerConfigPath('fix', root)]: JSON.stringify(nightlyTrigger),
+        },
+      },
+    });
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(root, git, scratch);
+      assert.throws(
+        () => triggeredFacts(root, out),
+        /Harness "claudeCode" is not in the Base Store: commit \.e\/harnesses\/claudeCode\/Dockerfile/
+      );
+    } finally {
+      scratch.dispose();
+    }
+  });
+});
+
+/** An agent on the hosted Anthropic API, its key named in `.env` terms. */
+const providerAgent = {
+  name: 'claude-api',
+  harness: 'claudeCode',
+  provider: {
+    baseUrl: 'https://api.anthropic.com',
+    model: 'claude-sonnet-4-5',
+    protocol: 'anthropic-messages',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+  },
+};
+
+test('--trigger: --env-file takes the place of .e/.env, filtered to the whitelist', () => {
+  withStore(root => {
+    // The checkout's `.e/.env` is the head's to write; it is never read.
+    fs.writeFileSync(
+      envFilePath(root),
+      'ANTHROPIC_API_KEY=sk-head\nANTHROPIC_BASE_URL=https://attacker.example\n'
+    );
+    const envFile = path.join(root, 'ci.env');
+    fs.writeFileSync(envFile, 'ANTHROPIC_API_KEY=sk-ci\nDEPLOY_TOKEN=prod\n');
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(
+        root,
+        triggerGit(
+          root,
+          { ...nightlyTrigger, agent: 'claude-api' },
+          { 'agents/claude-api/agent.json': JSON.stringify(providerAgent) }
+        ),
+        scratch,
+        { envFile }
+      );
+      const facts = triggeredFacts(root, out, { envFile });
+      assert.equal(facts.storeEnv.ANTHROPIC_API_KEY, 'sk-ci');
+      assert.equal(facts.storeEnv.ANTHROPIC_BASE_URL, undefined);
+      // Layered as the filtered base, never verbatim as a user env-file.
+      assert.equal(facts.baseEnvFile, envFile);
+      assert.equal(facts.userEnvFile, undefined);
+      const plan = planSpawn(facts);
+      const delivered = [
+        filterEnvContent(
+          fs.readFileSync(envFile, 'utf8'),
+          plan.baseEnvWhitelist
+        ),
+        plan.providerEnvContent ?? '',
+      ].join('\n');
+      assert.match(delivered, /ANTHROPIC_API_KEY=sk-ci/);
+      assert.doesNotMatch(delivered, /DEPLOY_TOKEN|sk-head|attacker/);
+    } finally {
+      scratch.dispose();
+    }
+  });
+});
+
+test('--trigger: an --env-file that does not exist is an error, not a run without secrets', () => {
+  withStore(root => {
+    const scratch = new RunScratch();
+    try {
+      const envFile = path.join(root, 'absent.env');
+      const out = triggered(root, triggerGit(root, nightlyTrigger), scratch, {
+        envFile,
+      });
+      assert.throws(
+        () => triggeredFacts(root, out, { envFile }),
+        /--env-file .*absent\.env does not exist/
+      );
+    } finally {
+      scratch.dispose();
+    }
+  });
+});
+
+test('--trigger: a .e/.env committed at base exits 1 before any worktree', async () => {
+  await withStoreAsync(async root => {
+    const git = triggerGit(root, nightlyTrigger, {
+      '.env': 'ANTHROPIC_API_KEY=sk-leaked\n',
+    });
+    const scratch = new RunScratch();
+    const code = await runSpawnCommand(
+      undefined,
+      [],
+      { dir: root, trigger: 'fix' },
+      { scratch, git }
+    );
+    assert.equal(code, 1);
+    assert.equal(git.worktrees.length, 0);
+    // Nothing of the copy outlives the run, the committed secret included.
+    assert.ok(!fs.existsSync(git.exports[0].dest));
+  });
+});
+
+test('--trigger: a .e/.env committed only in the head is not read', () => {
+  withStore(root => {
+    fs.writeFileSync(envFilePath(root), 'ANTHROPIC_API_KEY=sk-head\n');
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(
+        root,
+        triggerGit(
+          root,
+          { ...nightlyTrigger, agent: 'claude-api' },
+          { 'agents/claude-api/agent.json': JSON.stringify(providerAgent) },
+          { [envFilePath(root)]: 'ANTHROPIC_API_KEY=sk-head\n' }
+        ),
+        scratch
+      );
+      const facts = triggeredFacts(root, out);
+      assert.equal(facts.storeEnv.ANTHROPIC_API_KEY, undefined);
+      assert.equal(facts.baseEnvFile, undefined);
+    } finally {
+      scratch.dispose();
+    }
+  });
+});
+
+test('--trigger: a sibling is handed the Base Store as --dir and the env file by marker, no --env-file', () => {
+  withStore(root => {
+    const envFile = path.join(root, 'ci.env');
+    fs.writeFileSync(envFile, 'ANTHROPIC_API_KEY=sk-ci\n');
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(root, triggerGit(root, nightlyTrigger), scratch, {
+        envFile,
+      });
+      const facts = triggeredFacts(root, out, { envFile });
+      assert.equal(facts.dirOpt, out.store.root);
+      assert.equal(facts.storeEnvFile, envFile);
+      assert.equal(facts.userEnvFile, undefined);
+      assert.equal(facts.localStackPresent, false);
+
+      // The sibling's own spawn: `--dir <Base Store>`, the marker, no trigger.
+      process.env[Env.STORE_ENV_FILE_VAR] = envFile;
+      writeAgent(out.store.root, providerAgent);
+      const sibling = gatherSpawnFacts('claude-api', ['look into X'], {
+        dir: out.store.root,
+      });
+      assert.equal(sibling.root, out.store.root);
+      assert.equal(sibling.storeEnv.ANTHROPIC_API_KEY, 'sk-ci');
+      assert.equal(sibling.baseEnvFile, envFile);
+      assert.equal(sibling.storeEnvFile, envFile);
+    } finally {
+      delete process.env[Env.STORE_ENV_FILE_VAR];
+      scratch.dispose();
+    }
+  });
+});
+
+test('E_STORE_ENV_FILE stands in for .e/.env in any spawn that carries it', () => {
+  withStore(root => {
+    writeAgent(root, providerAgent);
+    fs.writeFileSync(envFilePath(root), 'ANTHROPIC_API_KEY=sk-store\n');
+    const envFile = path.join(root, 'stand-in.env');
+    fs.writeFileSync(envFile, 'ANTHROPIC_API_KEY=sk-stand-in\n');
+    process.env[Env.STORE_ENV_FILE_VAR] = envFile;
+    const facts = gather(root, 'claude-api', ['x']);
+    assert.equal(facts.storeEnv.ANTHROPIC_API_KEY, 'sk-stand-in');
+    assert.equal(facts.baseEnvFile, envFile);
+    fs.rmSync(envFile);
+    assert.throws(
+      () => gather(root, 'claude-api', ['x']),
+      /E_STORE_ENV_FILE names .*stand-in\.env, which does not exist/
+    );
   });
 });

@@ -17,6 +17,7 @@ const VARS = [
   Env.SPAWN_REPORT_ID_VAR,
   Env.A2A_TOKEN_VAR,
   Env.GITHUB_EVENT_NAME_VAR,
+  Env.STORE_ENV_FILE_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -245,4 +246,30 @@ test('githubEventName is the trimmed GITHUB_EVENT_NAME, undefined when unset or 
   assert.equal(env.githubEventName, undefined);
   process.env[Env.GITHUB_EVENT_NAME_VAR] = 'issues\n';
   assert.equal(env.githubEventName, 'issues');
+});
+
+test('storeEnvFile is the trimmed E_STORE_ENV_FILE; a sibling keeps it, a run of its own does not', () => {
+  assert.equal(env.storeEnvFile, undefined);
+  process.env[Env.STORE_ENV_FILE_VAR] = ' ';
+  assert.equal(env.storeEnvFile, undefined);
+  process.env[Env.STORE_ENV_FILE_VAR] = ' /tmp/e.env ';
+  assert.equal(env.storeEnvFile, '/tmp/e.env');
+  const carrying = { PATH: '/bin', [Env.STORE_ENV_FILE_VAR]: '/tmp/e.env' };
+  assert.equal(
+    env.withSibling(
+      {
+        parent: { worktreePath: '/w', branch: 'e/pi/x-1' },
+        spoolDir: '/spool',
+        id: 'sib-001',
+      },
+      carrying
+    )[Env.STORE_ENV_FILE_VAR],
+    '/tmp/e.env'
+  );
+  for (const copy of [
+    env.withReport({ spoolDir: '/spool', id: 'a2a-001' }, carrying),
+    env.withLedger('/x.json', carrying),
+  ]) {
+    assert.equal(Env.STORE_ENV_FILE_VAR in copy, false);
+  }
 });

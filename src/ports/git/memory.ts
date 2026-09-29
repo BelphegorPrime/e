@@ -19,6 +19,8 @@
  * well as on the resulting state.
  */
 
+import fs from 'fs';
+import path from 'path';
 import type {
   Git,
   MergeOutcome,
@@ -82,8 +84,14 @@ export interface InMemoryGitOptions {
   numstat?: NumstatEntry[];
   /** Full ref names to the commit each resolves to, for `resolveCommit`. */
   refCommits?: Record<string, string>;
-  /** Files as committed, by ref and then by host path, for `readFileAt`. */
+  /**
+   * Files as committed, by ref and then by host path, for `readFileAt` and
+   * `exportTree`. A ref's files are also found by the sha {@link refCommits}
+   * resolves it to, so a caller that pins the commit reads the same tree.
+   */
   files?: Record<string, Record<string, string>>;
+  /** What `toplevel` answers; undefined models a directory outside a repository. */
+  toplevel?: string;
   /** What `defaultBranchRef` answers; undefined models a repo with no origin. */
   defaultBranchRef?: string;
   /** Messages that make a call throw instead of doing its work. */
@@ -117,6 +125,8 @@ export class InMemoryGit implements Git {
   readonly pushed: string[] = [];
   /** Every `numstat` asked, in order. */
   readonly numstats: { base: string; tip: string; pathspecs: string[] }[] = [];
+  /** Every `exportTree`, in order. */
+  readonly exports: { ref: string; dirPath: string; dest: string }[] = [];
   /** Worktree paths whose merge was aborted, in order. */
   readonly aborted: string[] = [];
   /** Merges attempted, in order. */
@@ -190,6 +200,11 @@ export class InMemoryGit implements Git {
     return this.opts.currentBranch ?? 'main';
   }
 
+  toplevel(): string | undefined {
+    this.calls.push('toplevel');
+    return this.opts.toplevel;
+  }
+
   resolveCommit(ref: string): string | undefined {
     this.calls.push('resolveCommit');
     return this.opts.refCommits?.[ref];
@@ -197,7 +212,36 @@ export class InMemoryGit implements Git {
 
   readFileAt(ref: string, filePath: string): string | undefined {
     this.calls.push('readFileAt');
-    return this.opts.files?.[ref]?.[filePath];
+    return this.filesAt(ref)[filePath];
+  }
+
+  /**
+   * Writes every file committed at `ref` under `dirPath` into `dest`, for
+   * real: the caller reads the result from disk as it would the host one's.
+   */
+  exportTree(ref: string, dirPath: string, dest: string): void {
+    this.calls.push('exportTree');
+    this.exports.push({ ref, dirPath, dest });
+    const inside = Object.entries(this.filesAt(ref)).filter(
+      ([file]) => !path.relative(dirPath, file).startsWith('..')
+    );
+    if (inside.length === 0) {
+      throw new Error(`fatal: not a tree object: ${ref}:${dirPath}`);
+    }
+    for (const [file, content] of inside) {
+      const target = path.join(dest, path.relative(dirPath, file));
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+    }
+  }
+
+  /** The files committed at `ref`: by its name, or by the sha a ref resolves to. */
+  private filesAt(ref: string): Record<string, string> {
+    const files = this.opts.files ?? {};
+    const named = Object.entries(this.opts.refCommits ?? {}).find(
+      ([name, sha]) => sha === ref && files[name] !== undefined
+    );
+    return files[ref] ?? (named ? files[named[0]] : undefined) ?? {};
   }
 
   defaultBranchRef(): string | undefined {

@@ -52,14 +52,22 @@ import {
 import { executeSpawn } from '../engine/spawn/executeSpawn.js';
 import { findRoot } from '../core/store/root.js';
 import { envFilePath, verifyCacheVolume } from '../core/store/paths.js';
-import { readConfig, type LoopCaps } from '../core/store/config.js';
+import {
+  isInitialized,
+  readConfig,
+  type LoopCaps,
+} from '../core/store/config.js';
 import { resolveOneShot } from '../engine/spawn/oneShot.js';
+import {
+  materializeBaseStore,
+  oneShotStoreRoot,
+  type BaseStore,
+} from '../engine/spawn/baseStore.js';
 import { NO_LEDGER } from '../engine/queue/ledger.js';
-import { storeTriggerContext } from '../core/trigger/context.js';
 import { localStack } from '../ports/runtime/stack.js';
 
 import { log } from '../shared/utils/log.js';
-import { env } from '../shared/utils/env.js';
+import { env, Env } from '../shared/utils/env.js';
 import { siblingSummaryLine } from '../engine/runs/runSiblings.js';
 import { describeGateRemovals } from '../engine/runs/gateRemovals.js';
 import { mergeLanded } from '../engine/runs/runMergeBack.js';
@@ -116,6 +124,10 @@ export interface TriggeredSpawn {
   base: RunBase;
   eventFile?: string;
   loop?: Partial<LoopCaps>;
+  /** The Base Store the run reads its whole Store from, never the working tree's `.e/`. */
+  store: BaseStore;
+  /** `--env-file`, absolute: in one-shot it takes the place of `.e/.env`. */
+  envFile?: string;
 }
 
 /**
@@ -199,7 +211,8 @@ export function gatherSpawnFacts(
   opts: SpawnCommandOptions,
   triggered?: TriggeredSpawn
 ): SpawnFacts {
-  const root = findRoot(opts.dir);
+  // A triggered run reads everything from its Base Store (ADR-0016 section 13).
+  const root = triggered?.store.root ?? findRoot(opts.dir);
   const config = readConfig(root);
 
   // The target is an agent/harness name resolved directly (a bare harness →
@@ -219,8 +232,27 @@ export function gatherSpawnFacts(
     );
   }
   const harness = resolveHarness(agent.harness);
+  if (triggered && !isInitialized(harness.name, root)) {
+    // `e init` on the runner cannot help: the Base Store is what is committed.
+    throw new Error(
+      `Harness "${harness.name}" is not in the Base Store: commit .e/harnesses/${harness.name}/Dockerfile (\`e init\`) at ${triggered.base.ref}.`
+    );
+  }
 
-  const baseEnvPath = root !== undefined ? envFilePath(root) : undefined;
+  // In one-shot `--env-file` takes the place of `.e/.env`: a provider's key
+  // resolves from it, and it is filtered like `.e/.env` rather than copied
+  // verbatim. No `.env` comes from any `.e/`, whose working tree is the
+  // head's; a sibling of such a run carries the file by `E_STORE_ENV_FILE`.
+  const storeEnvFile = triggered ? triggered.envFile : env.storeEnvFile;
+  if (storeEnvFile !== undefined && !fs.existsSync(storeEnvFile)) {
+    throw new Error(
+      triggered
+        ? `--env-file ${storeEnvFile} does not exist; in one-shot it is the only source of secrets.`
+        : `${Env.STORE_ENV_FILE_VAR} names ${storeEnvFile}, which does not exist.`
+    );
+  }
+  const baseEnvPath =
+    storeEnvFile ?? (root !== undefined ? envFilePath(root) : undefined);
   const mcpNames = opts.mcp ?? [];
   // The shared `.e/.env` is the sole source of a provider's API key and any MCP
   // credential (ADR-0006) - read once, only when something needs it.
@@ -248,7 +280,7 @@ export function gatherSpawnFacts(
     prompt: resolved.prompt.join(' '),
     // Whether the store has a local OmniRoute stack is a plain file check, so
     // it is a gathered fact like any other; bringing it *up* is an effect and
-    // happens later, in `prepareLocalStack`.
+    // happens later, in `prepareLocalStack`. A Base Store never has one.
     localStackPresent: localStack(root)?.present === true,
     // Every spawn rebuilds (ADR-0016 section 10): the pin catches a moved
     // version, not a changed Dockerfile, and a trigger has nobody to ask.
@@ -266,8 +298,11 @@ export function gatherSpawnFacts(
       baseEnvPath !== undefined && fs.existsSync(baseEnvPath)
         ? baseEnvPath
         : undefined,
-    userEnvFile: opts.envFile,
-    dirOpt: opts.dir,
+    // One-shot's `--env-file` is the base above, not a verbatim layer.
+    userEnvFile: triggered ? undefined : opts.envFile,
+    storeEnvFile,
+    // A sibling of a one-shot run reads the Base Store too, never the head.
+    dirOpt: triggered ? triggered.store.root : opts.dir,
     // Platform default or `E_WORKTREES_DIR`; a path the engine can bind-mount.
     worktreesDir: defaultWorktreesDir(),
     // `parent` unless the `E_SPAWN_ROLE` marker says `child` (ADR-0013).
@@ -283,9 +318,10 @@ export function gatherSpawnFacts(
     gitPlatform: config.gitPlatform,
     // The repository's gate (ADR-0016); the cache volume is named whether or
     // not the declaration opts in, because naming it costs nothing and the
-    // check is the only thing that ever mounts it.
+    // check is the only thing that ever mounts it. It is named after the
+    // checkout's Store, never the scratch copy, so the cache hits across runs.
     verify: config.verify,
-    cacheVolume: verifyCacheVolume(root),
+    cacheVolume: verifyCacheVolume(triggered?.store.checkoutRoot ?? root),
     // A trigger may move `loop` field-wise, and nothing else (ADR-0016).
     loop: triggered?.loop ? { ...config.loop, ...triggered.loop } : config.loop,
     resources: config.resources,
@@ -299,15 +335,17 @@ export function gatherSpawnFacts(
  * read from base, turned into the arguments of an ordinary spawn - or into
  * the reason no run starts, which is not an error. Refuses what the
  * declaration already decides: an agent or a prompt on the command line.
- * Exported for its tests.
+ * A run to start gets its Base Store, materialized into `scratch`, which
+ * disposes of it with the run. Exported for its tests.
  */
 export function resolveTriggerSpawn(
   target: string | undefined,
   prompt: string[],
   opts: SpawnCommandOptions,
-  git: Git,
+  deps: { git: Git; scratch: RunScratch },
   now: Date = new Date()
 ): TriggeredSpawn | { skip: string } {
+  const { git, scratch } = deps;
   const name = opts.trigger!;
   if (target !== undefined || prompt.length > 0) {
     throw new Error(
@@ -317,18 +355,29 @@ export function resolveTriggerSpawn(
   if (opts.parent !== undefined) {
     throw new Error('--trigger and --parent cannot be combined');
   }
-  const root = findRoot(opts.dir);
-  const context = storeTriggerContext(root);
+  // `--dir`, else the toplevel: never the upward walk, which a nested `.e/`
+  // in the head could steer.
+  const root = oneShotStoreRoot(git, opts.dir);
   const resolved = resolveOneShot(git, {
     name,
     root,
-    context,
+    // Inside the repository by construction. The agent names are not
+    // checked here: the working tree's are the head's, and an unknown agent
+    // fails in `findAgent`, against the Base Store.
+    context: { repoLocal: true },
     eventPath: opts.event !== undefined ? path.resolve(opts.event) : undefined,
     eventName: opts.eventName ?? env.githubEventName,
     now,
   });
   if (resolved.kind === 'skip') return { skip: resolved.reason };
   for (const warning of resolved.warnings) log.warn(warning);
+  const materialized = materializeBaseStore(git, {
+    checkoutRoot: root,
+    base: resolved.base,
+    dest: scratch.dir(),
+  });
+  for (const warning of materialized.warnings) log.warn(warning);
+  for (const notice of materialized.notices) log.info(notice);
   return {
     agent: resolved.trigger.agent,
     prompt: resolved.prompt,
@@ -338,6 +387,10 @@ export function resolveTriggerSpawn(
       ? { eventFile: resolved.eventFile }
       : {}),
     ...(resolved.trigger.loop ? { loop: resolved.trigger.loop } : {}),
+    store: materialized.store,
+    ...(opts.envFile !== undefined
+      ? { envFile: path.resolve(opts.envFile) }
+      : {}),
   };
 }
 
@@ -345,16 +398,18 @@ export function resolveTriggerSpawn(
  * The remote-agent short circuit (ADR-0015): when the spawn target names a
  * Store agent with `transport: "a2a"`, there is nothing to build or run -
  * the prompt goes over A2A. Returns what `runRemoteAgent` needs, or undefined
- * for an ordinary (harness) target. Exported for its tests.
+ * for an ordinary (harness) target. `root` is the Store the agent is looked
+ * up in: a triggered run's Base Store, else the one `--dir` finds. Exported
+ * for its tests.
  */
 export function resolveRemoteTarget(
   target: string | undefined,
   prompt: string[],
-  opts: SpawnCommandOptions
+  opts: SpawnCommandOptions,
+  root: string | undefined = findRoot(opts.dir)
 ):
   | { agent: RemoteA2aAgent; prompt: string; storeEnv: Record<string, string> }
   | undefined {
-  const root = findRoot(opts.dir);
   const resolved = resolveSpawnTarget({
     target,
     prompt,
@@ -604,7 +659,7 @@ export async function runSpawnCommand(
     // codes describe a run's verdict, and here no run existed.
     let triggered: TriggeredSpawn | undefined;
     if (opts.trigger !== undefined) {
-      const out = resolveTriggerSpawn(target, prompt, opts, git);
+      const out = resolveTriggerSpawn(target, prompt, opts, { git, scratch });
       if ('skip' in out) {
         log.info(out.skip);
         return 0;
@@ -617,7 +672,12 @@ export async function runSpawnCommand(
 
     // A remote A2A agent (ADR-0015) is answered over the wire: no image, no
     // worktree, the answer on stdout.
-    const remote = resolveRemoteTarget(target, prompt, opts);
+    const remote = resolveRemoteTarget(
+      target,
+      prompt,
+      opts,
+      triggered?.store.root ?? findRoot(opts.dir)
+    );
     if (remote && triggered) {
       // A remote agent has no worktree to cut from base and nowhere to mount
       // the payload; running it anyway would drop both without a word.

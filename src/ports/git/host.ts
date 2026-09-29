@@ -1,4 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import type {
   Git,
@@ -79,19 +80,62 @@ export class HostGit implements Git {
     return sha === '' ? undefined : sha;
   }
 
+  toplevel(): string | undefined {
+    const result = this.spawnGit(['rev-parse', '--show-toplevel']);
+    if (result.status !== 0) return undefined;
+    const dir = result.stdout.trim();
+    return dir === '' ? undefined : dir;
+  }
+
   readFileAt(ref: string, filePath: string): string | undefined {
-    // `<rev>:./<path>` is relative to the cwd, which is where every other
-    // call here runs too; a bare `<rev>:<path>` would be the repo root's.
-    const relative = path.relative(process.cwd(), filePath);
-    const spec = relative.startsWith('..') ? relative : `./${relative}`;
-    const result = this.spawnGit(['show', `${ref}:${spec}`]);
+    const result = this.spawnGit(['show', revPath(ref, filePath)]);
     if (result.status !== 0) {
       log.debug(
-        `No ${relative} at ${ref}: ${result.stderr?.trim() ?? 'git show failed'}`
+        `No ${path.relative(process.cwd(), filePath)} at ${ref}: ${result.stderr?.trim() ?? 'git show failed'}`
       );
       return undefined;
     }
     return result.stdout;
+  }
+
+  exportTree(ref: string, dirPath: string, dest: string): void {
+    const tree = revPath(ref, dirPath);
+    const description = `export ${tree}`;
+    // `-z`: NUL-terminated and never quoted, so every file name survives;
+    // the paths are relative to that tree. Submodules are commits, not blobs.
+    const entries = parseLsTreeZ(
+      this.capture(['ls-tree', '-r', '-z', '--full-tree', tree], description)
+    ).filter(entry => entry.type === 'blob');
+    const blobs = this.readBlobs(
+      entries.map(entry => entry.object),
+      description
+    );
+    const root = path.resolve(dest);
+    fs.mkdirSync(root, { recursive: true });
+    const destOf = (file: string): string => {
+      const target = path.resolve(root, file);
+      const relative = path.relative(root, target);
+      if (relative === '' || relative.startsWith('..')) {
+        throw new Error(
+          `git failed (${description}): ${file} is not inside the tree`
+        );
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      return target;
+    };
+    // Files first and links last, so no file is ever written through a
+    // link this export itself created.
+    entries.forEach((entry, i) => {
+      if (entry.mode === SYMLINK_MODE) return;
+      const target = destOf(entry.path);
+      fs.writeFileSync(target, blobs[i]);
+      fs.chmodSync(target, parseInt(entry.mode, 8) & 0o111 ? 0o755 : 0o644);
+    });
+    entries.forEach((entry, i) => {
+      if (entry.mode !== SYMLINK_MODE) return;
+      fs.symlinkSync(blobs[i].toString('utf8'), destOf(entry.path));
+    });
+    log.command(description);
   }
 
   defaultBranchRef(): string | undefined {
@@ -364,6 +408,30 @@ export class HostGit implements Git {
     return result.stdout;
   }
 
+  /**
+   * The contents of `objects`, in order, from one `cat-file --batch`: binary
+   * safe, so the output stays a Buffer, with room for a whole Store.
+   */
+  private readBlobs(objects: string[], description: string): Buffer[] {
+    if (objects.length === 0) return [];
+    const result = spawnSync('git', ['cat-file', '--batch'], {
+      input: `${objects.join('\n')}\n`,
+      maxBuffer: EXPORT_MAX_BYTES,
+      shell: false,
+    });
+    if (result.error) {
+      throw new Error(
+        `Failed to start git (${description}): ${result.error.message}`
+      );
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `git failed (${description}): ${result.stderr.toString().trim()}`
+      );
+    }
+    return parseCatFileBatch(result.stdout, objects.length, description);
+  }
+
   /** Runs `git <args>` capturing stdout/stderr; callers decide what the exit status means. */
   private spawnGit(args: string[]): SpawnSyncReturns<string> {
     return spawnSync('git', args, { encoding: 'utf8', shell: false });
@@ -382,6 +450,70 @@ export class HostGit implements Git {
     const detail = result.stderr?.trim() || result.stdout?.trim() || '';
     return new Error(`git failed (${description}): ${detail}`);
   }
+}
+
+/** The tree-entry mode of a symlink, whose blob is the link's target. */
+const SYMLINK_MODE = '120000';
+
+/** Room for every blob of an exported tree at once; a Store is far smaller. */
+const EXPORT_MAX_BYTES = 512 * 1024 * 1024;
+
+/**
+ * `<ref>:./<path>`, the revision syntax for a host path as committed at
+ * `ref`. The `./` makes it relative to the cwd, which is where every other
+ * call here runs too; a bare `<ref>:<path>` would be the repo root's.
+ */
+function revPath(ref: string, filePath: string): string {
+  const relative = path.relative(process.cwd(), filePath);
+  return `${ref}:${relative.startsWith('..') ? relative : `./${relative}`}`;
+}
+
+/** One entry of `git ls-tree -z`. */
+interface LsTreeEntry {
+  mode: string;
+  type: string;
+  object: string;
+  path: string;
+}
+
+/** Reads `git ls-tree -z`: `<mode> <type> <object>\t<path>\0` per entry. */
+function parseLsTreeZ(out: string): LsTreeEntry[] {
+  return out
+    .split('\0')
+    .filter(record => record !== '')
+    .map(record => {
+      const tab = record.indexOf('\t');
+      const [mode = '', type = '', object = ''] = record
+        .slice(0, tab)
+        .split(' ');
+      return { mode, type, object, path: record.slice(tab + 1) };
+    });
+}
+
+/**
+ * Reads `git cat-file --batch`: per object `<oid> blob <size>\n`, then
+ * `size` bytes and a newline.
+ */
+function parseCatFileBatch(
+  out: Buffer,
+  count: number,
+  description: string
+): Buffer[] {
+  const blobs: Buffer[] = [];
+  let at = 0;
+  for (let i = 0; i < count; i++) {
+    const eol = out.indexOf(0x0a, at);
+    const header = out.subarray(at, eol < 0 ? out.length : eol).toString();
+    const match = /^\S+ blob (\d+)$/.exec(header);
+    if (eol < 0 || !match) {
+      throw new Error(`git failed (${description}): cat-file said ${header}`);
+    }
+    const start = eol + 1;
+    const size = Number(match[1]);
+    blobs.push(out.subarray(start, start + size));
+    at = start + size + 1;
+  }
+  return blobs;
 }
 
 /**
