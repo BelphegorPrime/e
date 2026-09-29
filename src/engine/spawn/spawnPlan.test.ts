@@ -113,11 +113,32 @@ const cases: Array<{
 for (const { rebuild, imageExists, initialized, expected } of cases) {
   test(`decideImageAction: rebuild=${rebuild} imageExists=${imageExists} initialized=${initialized} -> ${expected}`, () => {
     assert.equal(
-      decideImageAction({ rebuild, imageExists, initialized }),
+      decideImageAction({ rebuild, imageExists, initialized, pinned: true }),
       expected
     );
   });
 }
+
+test('decideImageAction: an existing image off the pin is rebuilt, never run - or, uninitialized, refused', () => {
+  assert.equal(
+    decideImageAction({
+      rebuild: false,
+      imageExists: true,
+      initialized: true,
+      pinned: false,
+    }),
+    'build'
+  );
+  assert.equal(
+    decideImageAction({
+      rebuild: false,
+      imageExists: true,
+      initialized: false,
+      pinned: false,
+    }),
+    'not-initialized'
+  );
+});
 
 // resolveSpawnTarget is pure: it takes the positional args, the favorite
 // harness, and a `isKnownTarget` predicate, and decides target-vs-prompt.

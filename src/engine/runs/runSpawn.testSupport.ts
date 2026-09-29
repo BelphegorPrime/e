@@ -1,4 +1,5 @@
 import type {
+  BuildOptions,
   ContainerRunner,
   RunOptions,
   SidecarSpec,
@@ -71,7 +72,11 @@ export class FakeRuntime implements ContainerRunner {
     this.calls.push('imageExists');
     return this.imageExistsResult;
   }
-  build(imageTag: string, _contextDir: string, _dockerfile?: string): void {
+  imageLabels(_imageTag: string): Record<string, string> | undefined {
+    this.calls.push('imageLabels');
+    return this.imageExistsResult ? {} : undefined;
+  }
+  build(imageTag: string, _contextDir: string, _options?: BuildOptions): void {
     this.calls.push('build');
     this.built.push(imageTag);
   }
@@ -205,6 +210,7 @@ export const demoHarness: Harness = {
   name: 'demo',
   imageTag: 'e-harness-demo',
   dockerfile: { label: 'demo', npmPackage: 'demo' },
+  version: '1.0.0',
   requiredEnv: [],
   protocols: [],
   buildCommand: (prompt: string) => ['demo', '-p', prompt],

@@ -1,5 +1,6 @@
 import {
   ContainerRunner,
+  type BuildOptions,
   type RunOptions,
   type SidecarSpec,
 } from '../../ports/runtime/index.js';
@@ -20,7 +21,11 @@ export class RecordingRunner implements ContainerRunner {
     this.calls.push('imageExists');
     return true;
   }
-  build(_imageTag: string, _contextDir: string, _dockerfile?: string): void {
+  imageLabels(_imageTag: string): Record<string, string> | undefined {
+    this.calls.push('imageLabels');
+    return {};
+  }
+  build(_imageTag: string, _contextDir: string, _options?: BuildOptions): void {
     this.calls.push('build');
   }
   composeUp(

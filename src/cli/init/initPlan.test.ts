@@ -292,6 +292,9 @@ test('planInit: steps are ordered - harnesses, shipped servers, bootstrap, then 
   // First harness's Dockerfile, then its default agent definition.
   const [dockerfile, agent] = first.writes;
   assert.equal(dockerfile.clobber, 'never');
+  // A Dockerfile from before pinning is re-seeded once (ADR-0016 section 10).
+  assert.equal(dockerfile.reseedUnless, 'ARG HARNESS_VERSION');
+  assert.ok(dockerfile.content.includes(dockerfile.reseedUnless));
   assert.equal(agent.clobber, 'never');
   assert.ok(
     posix(dockerfile.file).endsWith(

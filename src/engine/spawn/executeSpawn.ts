@@ -23,12 +23,21 @@ import { RunScratch } from '../runs/runScratch.js';
 import { writeIfAbsent } from '../../shared/scaffold.js';
 import {
   harnessDir,
+  dockerfilePath,
   agentDir,
   brokerDir,
   mcpDir,
   skillDir,
 } from '../../core/store/paths.js';
 import { isInitialized } from '../../core/store/config.js';
+import {
+  checkPin,
+  harnessPin,
+  pinBuildArgs,
+  pinRebuildMessage,
+  unpinnedAfterBuildMessage,
+} from '../../core/harness/pin.js';
+import { log } from '../../shared/utils/log.js';
 import { Env } from '../../shared/utils/env.js';
 import { EGRESS_CONTAINER } from '../../shared/constants.js';
 import type { ChildLauncher } from '../runs/childRun.js';
@@ -68,21 +77,49 @@ function buildImages(
   scratch: RunScratch
 ): string {
   const { harness, root, rebuild } = facts;
+  const pin = harnessPin(harness);
+  const buildArgs = pinBuildArgs(pin);
   // Preserve the short-circuit: with --rebuild the decision is always `build`,
   // so skip the (otherwise wasted) image-inspect probe.
-  const imageExists = !rebuild && runtime.imageExists(harness.imageTag);
+  const labels = rebuild ? undefined : runtime.imageLabels(harness.imageTag);
+  const drift = labels === undefined ? undefined : checkPin(labels, pin);
   const initialized = root !== undefined && isInitialized(harness.name, root);
-  const action = decideImageAction({ rebuild, imageExists, initialized });
+  const action = decideImageAction({
+    rebuild,
+    imageExists: labels !== undefined,
+    initialized,
+    pinned: drift === undefined || drift.status === 'match',
+  });
   if (action === 'not-initialized') {
     throw new Error(
       `Harness "${harness.name}" is not initialized. Run \`e init\`${facts.dirOpt ? ` --dir ${facts.dirOpt}` : ''} first.`
     );
   }
   if (action === 'build') {
-    // The base harness image is self-contained: the Dockerfile installs npm,
-    // then runs `npx skills@latest add <collection> …` for each declared
-    // collection, so the harness dir alone is the whole build context.
-    runtime.build(harness.imageTag, harnessDir(harness.name, root));
+    // Announced and done here, before any worktree (ADR-0005), rather than
+    // refused with a demand for --rebuild: a cron trigger has nobody to type it.
+    if (drift && drift.status !== 'match') {
+      log.info(pinRebuildMessage(harness.imageTag, drift, pin));
+    }
+    // The base harness image is self-contained: the Dockerfile installs the
+    // pinned package, then the skills collections, so the harness dir alone
+    // is the whole build context.
+    runtime.build(harness.imageTag, harnessDir(harness.name, root), {
+      buildArgs,
+    });
+    // One build per spawn, never a loop: a Dockerfile that ignores the build
+    // args yields the same image again, so the abort names the remedy.
+    const built = checkPin(runtime.imageLabels(harness.imageTag) ?? {}, pin);
+    if (built.status !== 'match') {
+      throw new Error(
+        unpinnedAfterBuildMessage(
+          harness.imageTag,
+          dockerfilePath(harness.name, root),
+          built,
+          pin
+        )
+      );
+    }
   }
 
   let tag = harness.imageTag;
@@ -94,7 +131,20 @@ function buildImages(
       writeIfAbsent(dir, filePath, file.content);
     }
     tag = agentImagePlan.imageTag;
-    if (rebuild || !runtime.imageExists(tag)) {
+    // The derived image inherits the base's labels and is otherwise never
+    // rebuilt when the base is, which would leave exactly the agents that
+    // run unattended outside the pin: a rebuilt base rebuilds it too.
+    const derivedLabels = rebuild ? undefined : runtime.imageLabels(tag);
+    const derivedDrift =
+      derivedLabels === undefined ? undefined : checkPin(derivedLabels, pin);
+    if (
+      action === 'build' ||
+      derivedDrift === undefined ||
+      derivedDrift.status !== 'match'
+    ) {
+      if (derivedDrift && derivedDrift.status !== 'match') {
+        log.info(pinRebuildMessage(tag, derivedDrift, pin));
+      }
       if (agentImagePlan.skillNames.length === 0) {
         // No baked skills: the agent dir is the whole build context.
         runtime.build(tag, dir);

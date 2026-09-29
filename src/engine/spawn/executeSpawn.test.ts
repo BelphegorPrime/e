@@ -5,10 +5,16 @@ import os from 'os';
 import path from 'path';
 import { InMemoryGit } from '../../ports/git/memory.js';
 import type {
+  BuildOptions,
   ContainerRunner,
   RunOptions,
   SidecarSpec,
 } from '../../ports/runtime/index.js';
+import {
+  PIN_BUILD_ARGS,
+  PIN_LABELS,
+  SKILLS_CLI_VERSION,
+} from '../../core/harness/pin.js';
 import { RunScratch } from '../runs/runScratch.js';
 import { executeSpawn } from './executeSpawn.js';
 import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
@@ -24,6 +30,7 @@ const harness: Harness = {
   name: 'demo',
   imageTag: 'e-harness-demo',
   dockerfile: { label: 'demo', npmPackage: 'demo' },
+  version: '1.0.0',
   requiredEnv: [],
   protocols: [],
   buildCommand: (prompt: string) => ['demo', '-p', prompt],
@@ -76,14 +83,48 @@ class RecordingRuntime implements ContainerRunner {
   /** Every container this run started, in order - a gated run starts two. */
   ranCommands: string[][] = [];
   built: string[] = [];
+  /** The build args each build was given, by tag, in build order. */
+  builtWith: { tag: string; buildArgs?: Record<string, string> }[] = [];
   sidecars: SidecarSpec[] = [];
+  /**
+   * The local images and their labels, as a daemon keeps them. Empty by
+   * default, so every build gate fires.
+   */
+  images = new Map<string, Record<string, string>>();
+  /** Models a Store Dockerfile from before pinning: its builds ignore the args and carry no labels. */
+  legacyDockerfile = false;
 
-  imageExists(_imageTag: string): boolean {
-    return false;
+  imageExists(tag: string): boolean {
+    return this.images.has(tag);
   }
 
-  build(tag: string, _dir: string): void {
+  imageLabels(tag: string): Record<string, string> | undefined {
+    return this.images.get(tag);
+  }
+
+  /**
+   * Like a daemon: a pinned Dockerfile turns its build args into labels
+   * (`LABEL e.harness.*="${ARG}"`), and an image built without args - the
+   * derived agent image, `FROM` the base - inherits the base's.
+   */
+  build(tag: string, _dir: string, options: BuildOptions = {}): void {
     this.built.push(tag);
+    this.builtWith.push({ tag, buildArgs: options.buildArgs });
+    const args = options.buildArgs;
+    if (args) {
+      this.images.set(
+        tag,
+        this.legacyDockerfile
+          ? {}
+          : {
+              [PIN_LABELS.package]: args[PIN_BUILD_ARGS.package],
+              [PIN_LABELS.version]: args[PIN_BUILD_ARGS.version],
+              [PIN_LABELS.skillsCli]: args[PIN_BUILD_ARGS.skillsCli],
+            }
+      );
+    } else {
+      this.images.set(tag, { ...(this.images.get(harness.imageTag) ?? {}) });
+    }
   }
 
   composeUp(): void {}
@@ -169,6 +210,122 @@ async function withDemoStore<T>(fn: (root: string) => Promise<T>): Promise<T> {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
+
+// Version pins (ADR-0016 section 10): the image says what it was built from,
+// and the host rebuilds - once, announced, before any worktree - when that is
+// not the pin.
+
+/** The labels a build of the demo harness at its pin carries. */
+const pinnedLabels = {
+  [PIN_LABELS.package]: 'demo',
+  [PIN_LABELS.version]: '1.0.0',
+  [PIN_LABELS.skillsCli]: SKILLS_CLI_VERSION,
+};
+
+/** A derived agent image on the demo base, as the plan names one. */
+const derivedPlan: SpawnPlan = {
+  ...emptyPlan,
+  agentImagePlan: {
+    imageTag: 'e-agent-demo',
+    files: [{ fileName: 'Dockerfile', content: 'FROM e-harness-demo\n' }],
+    skillNames: [],
+  },
+};
+
+test('pin: a missing base image is built with the pinned versions as build args', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    const result = await executeSpawn(facts({ root }), emptyPlan, {
+      git: new InMemoryGit(),
+      runtime,
+      scratch: new RunScratch(),
+    });
+    assert.equal(result.ran, true);
+    assert.deepEqual(runtime.builtWith, [
+      {
+        tag: 'e-harness-demo',
+        buildArgs: {
+          [PIN_BUILD_ARGS.package]: 'demo',
+          [PIN_BUILD_ARGS.version]: '1.0.0',
+          [PIN_BUILD_ARGS.skillsCli]: SKILLS_CLI_VERSION,
+        },
+      },
+    ]);
+  });
+});
+
+test('pin: an image whose labels match the pin is not rebuilt', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    runtime.images.set('e-harness-demo', pinnedLabels);
+    runtime.images.set('e-agent-demo', pinnedLabels);
+    const result = await executeSpawn(facts({ root }), derivedPlan, {
+      git: new InMemoryGit(),
+      runtime,
+      scratch: new RunScratch(),
+    });
+    assert.equal(result.ran, true);
+    assert.deepEqual(runtime.built, []);
+  });
+});
+
+test('pin: a base built from another version is rebuilt once, and the derived image with it', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    const stale = { ...pinnedLabels, [PIN_LABELS.version]: '0.9.0' };
+    runtime.images.set('e-harness-demo', stale);
+    runtime.images.set('e-agent-demo', stale);
+    const result = await executeSpawn(facts({ root }), derivedPlan, {
+      git: new InMemoryGit(),
+      runtime,
+      scratch: new RunScratch(),
+    });
+    assert.equal(result.ran, true);
+    // Base first, then the derived image on it - or the derived one would keep
+    // running the old version under the new base's name.
+    assert.deepEqual(runtime.built, ['e-harness-demo', 'e-agent-demo']);
+    assert.deepEqual(runtime.images.get('e-agent-demo'), pinnedLabels);
+  });
+});
+
+test('pin: a derived image left behind a pinned base is rebuilt alone', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    runtime.images.set('e-harness-demo', pinnedLabels);
+    runtime.images.set('e-agent-demo', {
+      ...pinnedLabels,
+      [PIN_LABELS.version]: '0.9.0',
+    });
+    await executeSpawn(facts({ root }), derivedPlan, {
+      git: new InMemoryGit(),
+      runtime,
+      scratch: new RunScratch(),
+    });
+    assert.deepEqual(runtime.built, ['e-agent-demo']);
+  });
+});
+
+test('pin: an unlabelled image from before pinning is rebuilt once, then aborts naming e init --force, before any worktree', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    runtime.images.set('e-harness-demo', {});
+    // The Store's Dockerfile predates the ARGs, so the rebuild is unlabelled too.
+    runtime.legacyDockerfile = true;
+    const git = new InMemoryGit();
+    await assert.rejects(
+      executeSpawn(facts({ root }), emptyPlan, {
+        git,
+        runtime,
+        scratch: new RunScratch(),
+      }),
+      /still carries no version labels.*e init --force/s
+    );
+    // Exactly one attempt - never a loop - and nothing ran or was cut.
+    assert.deepEqual(runtime.built, ['e-harness-demo']);
+    assert.equal(runtime.ranCommand, undefined);
+    assert.deepEqual(git.worktrees, []);
+  });
+});
 
 test('a sidecar with credentials gets its own env-file; one without gets none', async () => {
   await withDemoStore(async root => {

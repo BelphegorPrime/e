@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { diffLines, writeIfAbsent } from './scaffold.js';
+import { diffLines, writeIfAbsent, writeIfAbsentOrReseed } from './scaffold.js';
 
 test('diffLines: identical content is all unchanged lines', () => {
   const out = diffLines('a\nb\n', 'a\nb\n');
@@ -66,5 +66,33 @@ test('writeIfAbsent: a divergent existing file is kept verbatim (never clobbered
     assert.equal(fs.readFileSync(file, 'utf8'), 'FROM old\n');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('writeIfAbsentOrReseed: a file without the marker is replaced once, the old kept as .bak; after that it is never clobbered', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-reseed-'));
+  try {
+    const file = path.join(dir, 'Dockerfile');
+    fs.writeFileSync(file, 'FROM node\nRUN npm install -g x\n');
+
+    writeIfAbsentOrReseed(dir, file, 'FROM node\nARG V\nv1\n', 'ARG V');
+    assert.equal(fs.readFileSync(file, 'utf8'), 'FROM node\nARG V\nv1\n');
+    assert.equal(
+      fs.readFileSync(`${file}.bak`, 'utf8'),
+      'FROM node\nRUN npm install -g x\n'
+    );
+
+    // Hand-edited since, marker kept: left alone, like writeIfAbsent.
+    fs.writeFileSync(file, 'FROM node\nARG V\nmine\n');
+    writeIfAbsentOrReseed(dir, file, 'FROM node\nARG V\nv2\n', 'ARG V');
+    assert.equal(fs.readFileSync(file, 'utf8'), 'FROM node\nARG V\nmine\n');
+
+    // Absent: written.
+    const fresh = path.join(dir, 'Other');
+    writeIfAbsentOrReseed(dir, fresh, 'ARG V\n', 'ARG V');
+    assert.equal(fs.readFileSync(fresh, 'utf8'), 'ARG V\n');
+    assert.equal(fs.existsSync(`${fresh}.bak`), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

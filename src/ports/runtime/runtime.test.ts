@@ -349,6 +349,52 @@ test('imageExists inspects the image', () => {
   assert.deepEqual(calls[0], ['image', 'inspect', 'e-harness-codex']);
 });
 
+test('build: each build arg is a --build-arg before the context', () => {
+  const { runtime, calls } = recording();
+  runtime.build('e-harness-codex', '/ctx', {
+    buildArgs: { HARNESS_VERSION: '0.159.0', SKILLS_CLI_VERSION: '1.7.0' },
+  });
+  assert.deepEqual(calls[0], [
+    'build',
+    '-t',
+    'e-harness-codex',
+    '--build-arg',
+    'HARNESS_VERSION=0.159.0',
+    '--build-arg',
+    'SKILLS_CLI_VERSION=1.7.0',
+    '/ctx',
+  ]);
+});
+
+test('imageLabels reads Config.Labels from the inspect JSON', () => {
+  const { runtime, calls } = recording(
+    JSON.stringify([{ Config: { Labels: { 'e.harness.version': '1.2.3' } } }])
+  );
+  assert.deepEqual(runtime.imageLabels('e-harness-codex'), {
+    'e.harness.version': '1.2.3',
+  });
+  assert.deepEqual(calls[0], ['image', 'inspect', 'e-harness-codex']);
+});
+
+test('imageLabels: no labels and unreadable output are {}, a missing image is undefined', () => {
+  assert.deepEqual(
+    recording(
+      JSON.stringify([{ Config: { Labels: null } }])
+    ).runtime.imageLabels('x'),
+    {}
+  );
+  assert.deepEqual(recording('not json').runtime.imageLabels('x'), {});
+  const missing = new ContainerRuntime('docker', undefined, (() => ({
+    status: 1,
+    stdout: '',
+    stderr: 'No such image',
+    signal: null,
+    output: [],
+    pid: 0,
+  })) as unknown as typeof spawnSync);
+  assert.equal(missing.imageLabels('x'), undefined);
+});
+
 test('build: tag then context, default Dockerfile', () => {
   const { runtime, calls } = recording();
   runtime.build('e-agent-x', '/ctx');
@@ -357,7 +403,7 @@ test('build: tag then context, default Dockerfile', () => {
 
 test('build: explicit -f Dockerfile precedes the context', () => {
   const { runtime, calls } = recording();
-  runtime.build('e-agent-x', '/ctx', '/ctx/Other');
+  runtime.build('e-agent-x', '/ctx', { dockerfile: '/ctx/Other' });
   assert.deepEqual(calls[0], [
     'build',
     '-t',

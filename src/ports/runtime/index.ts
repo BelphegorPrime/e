@@ -112,11 +112,18 @@ export interface ContainerRunner {
   imageExists(imageTag: string): boolean;
 
   /**
+   * The labels of the local image `imageTag` (`{}` when it has none), or
+   * `undefined` when there is no such image. How the host reads which
+   * harness version an image was built from (ADR-0016 section 10).
+   */
+  imageLabels(imageTag: string): Record<string, string> | undefined;
+
+  /**
    * Build `imageTag` from `contextDir`; the Dockerfile defaults to
    * `<contextDir>/Dockerfile`. Throws on failure, so a broken build ends the
    * spawn before any worktree exists (ADR-0005).
    */
-  build(imageTag: string, contextDir: string, dockerfile?: string): void;
+  build(imageTag: string, contextDir: string, options?: BuildOptions): void;
 
   /**
    * Bring the store's local Compose stack up in the background, before a run
@@ -224,10 +231,13 @@ function imageInspectArgs(imageTag: string): string[] {
 function buildImageArgs(
   imageTag: string,
   contextDir: string,
-  dockerfile?: string
+  options: BuildOptions = {}
 ): string[] {
   const args = ['build', '-t', imageTag];
-  if (dockerfile) args.push('-f', dockerfile);
+  if (options.dockerfile) args.push('-f', options.dockerfile);
+  for (const [name, value] of Object.entries(options.buildArgs ?? {})) {
+    args.push('--build-arg', `${name}=${value}`);
+  }
   args.push(contextDir);
   return args;
 }
@@ -327,6 +337,14 @@ function volumeCopyInArgs(
   ];
 }
 
+/** How {@link ContainerRunner.build} builds, beyond the tag and the context. */
+export interface BuildOptions {
+  /** A Dockerfile other than `<contextDir>/Dockerfile`. */
+  dockerfile?: string;
+  /** `--build-arg NAME=value` per entry: the Dockerfile's `ARG`s. */
+  buildArgs?: Record<string, string>;
+}
+
 /**
  * A container runtime (docker, podman, ...).
  *
@@ -377,11 +395,41 @@ export class ContainerRuntime implements ContainerRunner {
    * The Dockerfile defaults to `<contextDir>/Dockerfile`.
    * Throws on failure - the edge (the spawn action) owns the exit.
    */
-  build(imageTag: string, contextDir: string, dockerfile?: string): void {
-    const args = buildImageArgs(imageTag, contextDir, dockerfile);
+  /**
+   * Reads the image's labels from `image inspect`'s JSON (every supported
+   * engine prints the Docker shape: an array whose entry has
+   * `Config.Labels`). No image is `undefined`; an image without labels is
+   * `{}`, as is output this cannot parse - which then reads as "unlabelled"
+   * and costs one rebuild, never a wrong match.
+   */
+  imageLabels(imageTag: string): Record<string, string> | undefined {
+    const result = this.exec(this.engine, imageInspectArgs(imageTag), {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      shell: false,
+    });
+    if (result.status !== 0) return undefined;
+    try {
+      const parsed = JSON.parse(String(result.stdout)) as Array<{
+        Config?: { Labels?: Record<string, string> | null };
+      }>;
+      return parsed[0]?.Config?.Labels ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  build(
+    imageTag: string,
+    contextDir: string,
+    options: BuildOptions = {}
+  ): void {
+    const args = buildImageArgs(imageTag, contextDir, options);
 
     log.command(`> ${this.engine} ${args.join(' ')}`);
-    log.debug(`Context: ${contextDir}, Dockerfile: ${dockerfile ?? 'default'}`);
+    log.debug(
+      `Context: ${contextDir}, Dockerfile: ${options.dockerfile ?? 'default'}`
+    );
     const result = this.exec(this.engine, args, {
       stdio: 'inherit',
       shell: false,

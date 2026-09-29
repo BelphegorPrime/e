@@ -1,4 +1,5 @@
 import Mustache from 'mustache';
+import { PIN_BUILD_ARGS, PIN_LABELS } from './pin.js';
 
 /**
  * Parameters for rendering a harness Dockerfile from the shared template.
@@ -56,19 +57,25 @@ export interface DockerfileParams {
 const TEMPLATE = `FROM {{{baseImage}}}
 
 # {{{label}}}
-{{#homeLine}}{{{.}}}{{/homeLine}}RUN apk add --no-cache git && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}
+# The versions are build args, passed by \`e spawn\` from the harness registry
+# (ADR-0016 section 10) - pinned there, never here - and carried back out as labels.
+ARG {{{argPackage}}}
+ARG {{{argVersion}}}
+ARG {{{argSkillsCli}}}
+{{#homeLine}}{{{.}}}{{/homeLine}}RUN apk add --no-cache git && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}@{{{versionRef}}}
 {{#setupSteps}}
 {{{.}}}
 {{/setupSteps}}
 {{#skillsBlock}}
 {{{.}}}
 {{/skillsBlock}}
+{{{labelLine}}}
 {{#ownerLine}}{{{.}}}{{/ownerLine}}WORKDIR {{{workdir}}}{{#userLine}}{{{.}}}{{/userLine}}
 `;
 
 /**
  * Renders the skill-collection install block. Each collection becomes its own
- * `RUN npx -y skills@latest add <collection> -a <agent> -g -y --copy`, so the
+ * `RUN npx -y skills@<pinned CLI> add <collection> -a <agent> -g -y --copy`, so the
  * CLI places it into the harness agent's global skills dir (verified against
  * the skills CLI's agent map: claude-code → `~/.claude/skills`; the universal
  * codex/opencode → `~/.agents/skills`; pi → `~/.pi/agent/skills`). Git is
@@ -81,10 +88,26 @@ function renderSkillsBlock(collections: string[], agent: string): string {
   ];
   for (const collection of collections) {
     lines.push(
-      `RUN npx -y skills@latest add ${collection} -a ${agent} -g -y --copy`
+      `RUN npx -y skills@${argRef(PIN_BUILD_ARGS.skillsCli)} add ${collection} -a ${agent} -g -y --copy`
     );
   }
   return lines.join('\n');
+}
+
+/** A build-arg reference as the Dockerfile spells it, `${NAME}`. */
+function argRef(name: string): string {
+  return `\${${name}}`;
+}
+
+/**
+ * The `LABEL` that carries the pin back out of the image, each label the value
+ * of its build arg, so what the host reads is what the build was given.
+ */
+function renderLabelLine(): string {
+  const pairs = (['package', 'version', 'skillsCli'] as const).map(
+    key => `${PIN_LABELS[key]}="${argRef(PIN_BUILD_ARGS[key])}"`
+  );
+  return `LABEL ${pairs.join(' ')}`;
 }
 
 /**
@@ -125,5 +148,10 @@ export function renderDockerfile(p: DockerfileParams): string {
     homeLine: nonRoot ? `ENV HOME=${NODE_HOME}\n` : '',
     ownerLine: nonRoot ? `RUN chown -R node:node ${NODE_HOME}\n` : '',
     userLine: nonRoot ? `\nUSER node` : '',
+    argPackage: PIN_BUILD_ARGS.package,
+    argVersion: PIN_BUILD_ARGS.version,
+    argSkillsCli: PIN_BUILD_ARGS.skillsCli,
+    versionRef: argRef(PIN_BUILD_ARGS.version),
+    labelLine: renderLabelLine(),
   });
 }

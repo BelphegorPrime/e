@@ -87,12 +87,19 @@ export interface ImageActionInput {
   imageExists: boolean;
   /** `e init` has written this harness's Dockerfile under the resolved root. */
   initialized: boolean;
+  /**
+   * The existing image carries the harness's version pin in its labels
+   * (ADR-0016 section 10). An image that does not is rebuilt, never run:
+   * its argv was verified against another version, or against none.
+   */
+  pinned: boolean;
 }
 
 /**
  * Decides what a spawn should do about the harness image before running:
  *
- * - `skip` - a usable image is already present and no rebuild was requested.
+ * - `skip` - a usable image is already present, built from the pinned
+ *   version, and no rebuild was requested.
  * - `build` - an image is needed and the harness is initialized (has a Dockerfile).
  * - `not-initialized` - an image is needed but the harness has no Dockerfile;
  *   the caller surfaces the "run `e init`" error.
@@ -103,8 +110,9 @@ export function decideImageAction({
   rebuild,
   imageExists,
   initialized,
+  pinned,
 }: ImageActionInput): 'skip' | 'build' | 'not-initialized' {
-  const needBuild = rebuild || !imageExists;
+  const needBuild = rebuild || !imageExists || !pinned;
   if (!needBuild) return 'skip';
   return initialized ? 'build' : 'not-initialized';
 }

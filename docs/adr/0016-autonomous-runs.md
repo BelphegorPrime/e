@@ -712,7 +712,9 @@ announced and happens before the worktree exists (ADR-0005), so it runs against
 none of section 4's budgets. Aborting and demanding `--rebuild` was rejected: a
 cron trigger has nobody to retype it, and the run would die on its own safety net.
 A pre-existing unlabelled image gets **one** rebuild attempt, then a hard abort
-naming `e init --force`; never a loop, never a silent pass.
+naming `e init --force`; never a loop, never a silent pass. `e init` re-seeds a
+Store Dockerfile that lacks `ARG HARNESS_VERSION` once, keeping the old one as
+`Dockerfile.bak`; one that has the `ARG` is never clobbered again.
 
 **Bumping** is Renovate with a `customManager` over the registry file and **no
 automerge** - a bot that bumps and merges is `latest` with extra steps, adopting

@@ -1,6 +1,7 @@
 import path from 'path';
 import { randomBytes } from 'node:crypto';
 import { renderDockerfile } from '../../core/harness/renderDockerfile.js';
+import { PIN_BUILD_ARGS } from '../../core/harness/pin.js';
 import { renderEnvTemplate } from '../../core/harness/renderEnvTemplate.js';
 import { renderCompose } from './renderCompose.js';
 import { renderBootstrap } from './renderBootstrap.js';
@@ -161,6 +162,11 @@ export interface InitWrite {
    * `always` - an unconditional overwrite (bootstrap script, config).
    */
   clobber: 'never' | 'always';
+  /**
+   * With `never`: an existing file lacking this text predates a format change
+   * and is re-seeded once, the old one kept as `.bak` (`writeIfAbsentOrReseed`).
+   */
+  reseedUnless?: string;
 }
 
 /** An ordered build step; harness steps log a banner, plain batches log per write. */
@@ -291,6 +297,9 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
           file: dockerfilePath(harness.name, root),
           content: renderDockerfile(harness.dockerfile),
           clobber: clobberRule,
+          // A Dockerfile from before version pinning takes no version as a
+          // build arg, so its image never carries the pin (ADR-0016 section 10).
+          reseedUnless: `ARG ${PIN_BUILD_ARGS.version}`,
         },
         {
           directory: agentDir(harness.name, root),

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Harness version pins only (ADR-0016 section 10). Never automerged: a bot that bumps and merges is `latest` with extra steps, adopting exactly the defaults the pin exists to hold.",
+  "enabledManagers": ["custom.regex"],
+  "automerge": false,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The `// renovate:` comment above each pin in the harness registry and the skills CLI constant.",
+      "managerFilePatterns": ["/^src/core/harness/(index|pin)\\.ts$/"],
+      "matchStrings": [
+        "// renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*(?:version: |export const \\w+ = )'(?<currentValue>[^']+)'"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["custom.regex"],
+      "automerge": false,
+      "labels": ["harness-pin"],
+      "prBodyNotes": [
+        "**Do not merge before the bump checklist in [ADR-0016 section 10](docs/adr/0016-autonomous-runs.md) is done:** every flag in `HARNESSES` still parses (`--help`); the approval/sandbox default beneath them has not moved; one real unattended run against a scratch repo changed the worktree; a refusal still exits 0. A pin asserts that this version was verified against these flags."
+      ]
+    }
+  ]
+}

@@ -24,6 +24,15 @@ export interface Harness {
   imageTag: string;
   /** Template parameters used to render this harness's Dockerfile. */
   dockerfile: DockerfileParams;
+  /**
+   * The exact version of {@link DockerfileParams.npmPackage} that
+   * {@link buildCommand}'s argv was verified against - never a range, since a
+   * minor release is what moved Codex's sandbox default beneath an unchanged
+   * flag (ADR-0016 section 10). Reaches the image as a build arg and comes
+   * back as a label the host checks before every spawn (`pin.ts`). A bump
+   * goes through the ADR's checklist.
+   */
+  version: string;
   /** Env vars this harness expects to find (typically supplied via --env-file). */
   requiredEnv: string[];
   /**
@@ -115,6 +124,8 @@ export const HARNESSES: Record<string, Harness> = {
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'pi',
     },
+    // renovate: datasource=npm depName=@earendil-works/pi-coding-agent
+    version: '0.85.1',
     requiredEnv: ['ANTHROPIC_API_KEY'],
     // pi speaks three wire protocols (its `openai-completions` is our
     // `openai-chat`). It is file-configured: a custom endpoint lives only in
@@ -161,6 +172,8 @@ export const HARNESSES: Record<string, Harness> = {
       // Non-root runtime user (the template default); set `runtimeUser: 'root'`
       // here only if this CLI ever needs root at runtime (attack-surface.md Zone 1).
     },
+    // renovate: datasource=npm depName=@anthropic-ai/claude-code
+    version: '2.1.267',
     requiredEnv: ['ANTHROPIC_API_KEY'],
     // Claude Code speaks only the Anthropic Messages API and is configured via
     // env vars, so it carries the env-based adapter.
@@ -211,6 +224,8 @@ export const HARNESSES: Record<string, Harness> = {
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'codex',
     },
+    // renovate: datasource=npm depName=@openai/codex
+    version: '0.159.0',
     requiredEnv: ['OPENAI_API_KEY'],
     // Codex speaks only OpenAI Responses (`/v1/chat/completions` was removed).
     protocols: ['openai-responses'],
@@ -255,6 +270,8 @@ export const HARNESSES: Record<string, Harness> = {
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'opencode',
     },
+    // renovate: datasource=npm depName=opencode-ai
+    version: '1.18.33',
     requiredEnv: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
     // opencode (Vercel AI SDK) speaks all three via its provider plugins.
     protocols: ['openai-chat', 'openai-responses', 'anthropic-messages'],

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { detectHardware, llamaCppImage } from '../../ports/hardware/index.js';
-import { writeIfAbsent } from '../../shared/scaffold.js';
+import { writeIfAbsent, writeIfAbsentOrReseed } from '../../shared/scaffold.js';
 import { HARNESSES, requiredEnvKeys } from '../../core/harness/index.js';
 import { parseDotenv } from '../../shared/utils/dotenv.js';
 import { SHIPPED_MCP_SERVERS } from '../../core/mcp/index.js';
@@ -227,7 +227,14 @@ function applyPlan(
 
 /** One filesystem write: mkdir the parent, then write honoring the clobber rule. */
 function applyWrite(write: InitWrite): void {
-  if (write.clobber === 'never') {
+  if (write.clobber === 'never' && write.reseedUnless !== undefined) {
+    writeIfAbsentOrReseed(
+      write.directory,
+      write.file,
+      write.content,
+      write.reseedUnless
+    );
+  } else if (write.clobber === 'never') {
     writeIfAbsent(write.directory, write.file, write.content);
   } else {
     fs.mkdirSync(write.directory, { recursive: true });

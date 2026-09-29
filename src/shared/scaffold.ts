@@ -41,6 +41,34 @@ export function writeIfAbsent(
 }
 
 /**
+ * {@link writeIfAbsent}, with one exception for a file that predates a format
+ * change: an existing file that lacks `marker` is replaced once - the old one
+ * kept beside it as `<file>.bak` - and from then on carries the marker and is
+ * never clobbered again. For a Dockerfile from before version pinning
+ * (ADR-0016 section 10), whose image a spawn would otherwise refuse forever;
+ * a hand edit that keeps the marker is left alone as always.
+ */
+export function writeIfAbsentOrReseed(
+  dir: string,
+  file: string,
+  content: string,
+  marker: string
+): void {
+  if (fs.existsSync(file)) {
+    const existing = fs.readFileSync(file, 'utf8');
+    if (!existing.includes(marker)) {
+      fs.writeFileSync(`${file}.bak`, existing);
+      fs.writeFileSync(file, content);
+      log.warn(
+        `re-seeded ${file}: it predates "${marker}" (the old one is at ${file}.bak)`
+      );
+      return;
+    }
+  }
+  writeIfAbsent(dir, file, content);
+}
+
+/**
  * Minimal line-based diff via a longest-common-subsequence. Returns lines
  * prefixed with `-` (only in the existing file), `+` (only in the newly
  * rendered content), or a space (unchanged).

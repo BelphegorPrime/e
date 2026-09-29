@@ -41,7 +41,7 @@ test('renderDockerfile: gives the non-root runtime user a writable home', () => 
   // HOME is set before the skills install RUN, so `npx skills add -g` (which
   // resolves `~` from HOME) lands under the same home the runtime user reads.
   const homeIdx = dockerfile.indexOf('ENV HOME=/home/node');
-  const skillsIdx = dockerfile.indexOf('npx -y skills@latest');
+  const skillsIdx = dockerfile.indexOf('npx -y skills@');
   assert.ok(homeIdx !== -1 && skillsIdx !== -1 && homeIdx < skillsIdx);
 });
 
@@ -52,9 +52,32 @@ test('renderDockerfile: hands the home back to the runtime user after the root b
   // runtime (opencode's `~/.local/share/opencode/log`) otherwise dies on start.
   const chownIdx = dockerfile.indexOf('RUN chown -R node:node /home/node');
   assert.ok(chownIdx !== -1);
-  assert.ok(chownIdx > dockerfile.lastIndexOf('npx -y skills@latest'));
+  assert.ok(chownIdx > dockerfile.lastIndexOf('npx -y skills@'));
   assert.ok(chownIdx > dockerfile.lastIndexOf('RUN pi install'));
   assert.ok(chownIdx < dockerfile.lastIndexOf('USER node'));
+});
+
+test('renderDockerfile: the versions are build args, installed pinned and carried back out as labels', () => {
+  const dockerfile = renderDockerfile(pi);
+  // Never a literal version: `e init` writes this file once, so a literal
+  // would pin every Store to whatever was current when it was created.
+  assert.match(dockerfile, /^ARG HARNESS_PACKAGE$/m);
+  assert.match(dockerfile, /^ARG HARNESS_VERSION$/m);
+  assert.match(dockerfile, /^ARG SKILLS_CLI_VERSION$/m);
+  assert.match(
+    dockerfile,
+    /npm install -g --ignore-scripts @earendil-works\/pi-coding-agent@\$\{HARNESS_VERSION\}$/m
+  );
+  assert.match(
+    dockerfile,
+    /^LABEL e\.harness\.package="\$\{HARNESS_PACKAGE\}" e\.harness\.version="\$\{HARNESS_VERSION\}" e\.skills-cli\.version="\$\{SKILLS_CLI_VERSION\}"$/m
+  );
+  assert.doesNotMatch(dockerfile, /@latest/);
+  // The ARGs come before the install that reads them.
+  assert.ok(
+    dockerfile.indexOf('ARG HARNESS_VERSION') <
+      dockerfile.indexOf('npm install -g')
+  );
 });
 
 test('renderDockerfile: no USER or HOME relocation when the harness needs root', () => {
@@ -94,11 +117,11 @@ test('renderDockerfile: runs npx skills add per collection, agent-scoped', () =>
   const dockerfile = renderDockerfile(pi);
   assert.match(
     dockerfile,
-    /RUN npx -y skills@latest add mattpocock\/skills -a pi -g -y --copy/
+    /RUN npx -y skills@\$\{SKILLS_CLI_VERSION\} add mattpocock\/skills -a pi -g -y --copy/
   );
   assert.match(
     dockerfile,
-    /RUN npx -y skills@latest add JuliusBrussee\/caveman -a pi -g -y --copy/
+    /RUN npx -y skills@\$\{SKILLS_CLI_VERSION\} add JuliusBrussee\/caveman -a pi -g -y --copy/
   );
   // Each harness maps to the agent name its skills dir follows.
   const claude = renderDockerfile({
@@ -109,7 +132,7 @@ test('renderDockerfile: runs npx skills add per collection, agent-scoped', () =>
   });
   assert.match(
     claude,
-    /RUN npx -y skills@latest add mattpocock\/skills -a claude-code -g -y --copy/
+    /RUN npx -y skills@\$\{SKILLS_CLI_VERSION\} add mattpocock\/skills -a claude-code -g -y --copy/
   );
 });
 
@@ -118,7 +141,7 @@ test('renderDockerfile: no skills when no collections or agent', () => {
     label: 'Bare harness.',
     npmPackage: 'bare-cli',
   });
-  assert.doesNotMatch(dockerfile, /npx -y skills@latest/);
+  assert.doesNotMatch(dockerfile, /npx -y skills@/);
   assert.doesNotMatch(dockerfile, /skillsBlock/);
   // Collections without an agent degrade gracefully (no install lines).
   const agentless = renderDockerfile({
@@ -126,5 +149,5 @@ test('renderDockerfile: no skills when no collections or agent', () => {
     npmPackage: 'bare-cli',
     skillCollections: ['mattpocock/skills'],
   });
-  assert.doesNotMatch(agentless, /npx -y skills@latest/);
+  assert.doesNotMatch(agentless, /npx -y skills@/);
 });
