@@ -1,9 +1,18 @@
 import type { Command } from 'commander';
+import path from 'node:path';
 import { storeTriggerContext } from '../../core/trigger/context.js';
 import { findRoot } from '../../core/store/root.js';
-import { loadTriggers, type LoadedTrigger } from '../../core/trigger/load.js';
-import { triggersBaseDir } from '../../core/store/paths.js';
+import { loadTriggers } from '../../core/trigger/load.js';
+import {
+  listingActivity,
+  triggerListing,
+  type TriggerListingResponse,
+  type TriggerListItem,
+} from '../../core/trigger/listing.js';
+import { eBaseDir, triggersBaseDir } from '../../core/store/paths.js';
 import { log } from '../../shared/utils/log.js';
+import type { ServeState } from '../serve/detachedServe.js';
+import { readStoreServe } from '../serve/storeServe.js';
 
 /**
  * `e trigger` (ADR-0016): the read surface over the Store's triggers. A
@@ -11,6 +20,11 @@ import { log } from '../../shared/utils/log.js';
  * the "why is my schedule not running?" case - so the listing is where that
  * question is answered, and where a trigger that failed to load says why.
  * That makes this command the linter for trigger files.
+ *
+ * `nextFireAt` is computed here and needs no `serve`. When and what a trigger
+ * last fired lives only in a running `serve`'s memory, so it is asked of the
+ * `serve` this Store records in `.e/runs/serve.json` - foreground or
+ * detached; otherwise it reads unknown.
  */
 
 /** One rendered line, at the level it should be read at. */
@@ -19,33 +33,80 @@ export interface TriggerLine {
   text: string;
 }
 
-/** A one-line summary of what a trigger listens to. */
-function sourceSummary(loaded: LoadedTrigger): string {
-  const on = loaded.trigger!.on;
-  if (on.type === 'cron') {
-    return `cron ${on.expr}${on.tz ? ` ${on.tz}` : ' UTC'}`;
+/** When the trigger last fired, as far as anybody knows. */
+function lastFired(
+  item: TriggerListItem,
+  serve?: Pick<TriggerListingResponse, 'activitySince'>
+): string {
+  if (item.lastFiredAt !== null) {
+    return `last fired ${item.lastFiredAt} (${item.lastRequestId})`;
   }
-  const action = on.action ? `.${on.action}` : '';
-  return `${on.source} ${on.event}${action}`;
+  if (!serve) return 'last fired unknown (no serve answering for this store)';
+  if (serve.activitySince === null) {
+    return 'last fired unknown (serve has no run queue)';
+  }
+  return `last fired unknown (not since serve started ${serve.activitySince})`;
 }
 
 /** Renders the listing. Pure, so the shape is testable without a Store. */
-export function triggerListLines(loaded: LoadedTrigger[]): TriggerLine[] {
-  if (loaded.length === 0) {
+export function triggerListLines(
+  items: readonly TriggerListItem[],
+  /** What the `serve` that answered said about its memory; undefined when none did. */
+  serve?: Pick<TriggerListingResponse, 'activitySince'>
+): TriggerLine[] {
+  if (items.length === 0) {
     return [{ level: 'info', text: 'No triggers in this store.' }];
   }
-  return loaded.map(entry => {
+  return items.map(item => {
     // Disabled and failed-to-load are both inactive, for very different
     // reasons, so they never render alike.
-    if (entry.error) {
-      return { level: 'warn' as const, text: `${entry.name}: ${entry.error}` };
+    if (item.error !== undefined) {
+      return { level: 'warn' as const, text: `${item.id}: ${item.error}` };
     }
-    const state = entry.trigger!.enabled ? '' : ' (disabled)';
-    return {
-      level: 'info' as const,
-      text: `${entry.name}${state}: ${sourceSummary(entry)} -> ${entry.trigger!.agent}`,
-    };
+    const state = item.enabled ? '' : ' (disabled)';
+    const parts = [`${item.id}${state}: ${item.on} -> ${item.agent}`];
+    if (item.type === 'cron' && item.enabled) {
+      parts.push(
+        `next ${item.nextFireAt ?? 'never (the schedule matches no date)'}`
+      );
+    }
+    parts.push(lastFired(item, serve));
+    return { level: 'info' as const, text: parts.join('; ') };
   });
+}
+
+/** Where a client reaches a `serve` bound to `host`: a wildcard bind answers on loopback. */
+function reachableHost(host: string): string {
+  if (host === '0.0.0.0' || host === '') return '127.0.0.1';
+  if (host === '::') return '[::1]';
+  return host.includes(':') ? `[${host}]` : host;
+}
+
+/**
+ * Asks this Store's `serve` for its listing, if one is recorded and answers
+ * for the Store `root` - a stale record's port may by now be another Store's
+ * `serve`, whose memory names other triggers. Undefined on anything else,
+ * fast: this is a lookup, not a dependency.
+ */
+export async function fetchServeListing(
+  root: string | undefined,
+  state: ServeState | undefined = readStoreServe(eBaseDir(root)),
+  timeoutMs = 1000
+): Promise<TriggerListingResponse | undefined> {
+  if (!state) return undefined;
+  try {
+    const res = await fetch(
+      `http://${reachableHost(state.host)}:${state.port}/api/triggers`,
+      { signal: AbortSignal.timeout(timeoutMs) }
+    );
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as TriggerListingResponse;
+    return path.resolve(body.store) === path.resolve(eBaseDir(root))
+      ? body
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Registers `e trigger list`. */
@@ -61,12 +122,16 @@ export function registerTriggerCommands(program: Command): void {
       '-d, --dir <path>',
       'store root to read (default: walk up from cwd)'
     )
-    .action((options: { dir?: string }) => {
+    .action(async (options: { dir?: string }) => {
       const root = findRoot(options.dir);
       log.debug(`Reading triggers from ${triggersBaseDir(root)}`);
-      for (const line of triggerListLines(
-        loadTriggers(root, storeTriggerContext(root))
-      )) {
+      const serve = await fetchServeListing(root);
+      const items = triggerListing(
+        loadTriggers(root, storeTriggerContext(root)),
+        new Date(),
+        { activity: listingActivity(serve) }
+      );
+      for (const line of triggerListLines(items, serve)) {
         log[line.level](line.text);
       }
     });

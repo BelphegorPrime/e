@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
 import { WEBHOOK_SOURCES, type Trigger, type WebhookSource } from './index.js';
 import { matchesEvent, readPath } from './match.js';
-import { renderTriggerPrompt } from './prompt.js';
-import { EVENT_ID_PATTERN, type ProvenanceEvent } from './provenance.js';
-import type { LoopCaps } from '../store/config.js';
+import { overlapDrop, triggerRequest, type TriggerFire } from './fire.js';
+import { EVENT_ID_PATTERN } from './provenance.js';
 
 /**
  * **The webhook edge's pure half** (ADR-0016 section 7): the signature over
@@ -120,24 +119,6 @@ export interface WebhookDelivery {
   payload: unknown;
 }
 
-/** What a matching trigger asks the queue for: the queue assigns the rest. */
-export interface WebhookRequest {
-  key: string;
-  trigger: string;
-  agent: string;
-  prompt: string;
-  base?: string;
-  loop?: Partial<LoopCaps>;
-  /** The raw event: the queue's acceptance validates its id. */
-  event: ProvenanceEvent;
-  payload: unknown;
-}
-
-/** One matching trigger: its request, or why this delivery drops for it. */
-export type WebhookFire =
-  | { trigger: string; request: WebhookRequest }
-  | { trigger: string; dropped: string };
-
 /** What {@link fireWebhook} needs besides the delivery. */
 export interface FireContext {
   /** Triggers that own a run in the ledger that has not ended. */
@@ -169,8 +150,8 @@ export function fireWebhook(
   triggers: readonly Trigger[],
   delivery: WebhookDelivery,
   ctx: FireContext
-): WebhookFire[] {
-  const fires: WebhookFire[] = [];
+): TriggerFire[] {
+  const fires: TriggerFire[] = [];
   for (const trigger of triggers) {
     const on = trigger.on;
     if (!trigger.enabled || on.type !== 'webhook') continue;
@@ -187,15 +168,13 @@ function fireOne(
   trigger: Trigger,
   delivery: WebhookDelivery,
   ctx: FireContext
-): WebhookFire {
-  const drop = (dropped: string): WebhookFire => ({
+): TriggerFire {
+  const drop = (dropped: string): TriggerFire => ({
     trigger: trigger.name,
     dropped,
   });
-  // Two runs off the same base race each other into two PRs.
-  if (trigger.overlap === 'skip' && ctx.live.has(trigger.name)) {
-    return drop(`${trigger.name} already owns a live run (overlap: skip)`);
-  }
+  const overlap = overlapDrop(trigger, ctx.live);
+  if (overlap !== undefined) return drop(overlap);
 
   // Absent, the source's own identity; declared, a coarser subject. A
   // declared path that is missing drops the event: falling back would widen
@@ -213,27 +192,9 @@ function fireOne(
       : ctx.fallbackId;
   }
 
-  const rendered = { payload: delivery.payload, trigger: trigger.name };
-  const prompt = renderTriggerPrompt(trigger.prompt, rendered);
-  if (!prompt.ok) return drop(`"prompt": ${prompt.reason}`);
-  let base: string | undefined;
-  if (trigger.base !== undefined) {
-    const result = renderTriggerPrompt(trigger.base, rendered);
-    if (!result.ok) return drop(`"base": ${result.reason}`);
-    base = result.text;
-  }
-
-  return {
-    trigger: trigger.name,
-    request: {
-      key: `${trigger.name}:${dedupValue}`,
-      trigger: trigger.name,
-      agent: trigger.agent,
-      prompt: prompt.text,
-      ...(base !== undefined ? { base } : {}),
-      ...(trigger.loop ? { loop: trigger.loop } : {}),
-      event: { source: delivery.source, event: delivery.name, id: delivery.id },
-      payload: delivery.payload,
-    },
-  };
+  return triggerRequest(trigger, {
+    dedupValue,
+    event: { source: delivery.source, event: delivery.name, id: delivery.id },
+    payload: delivery.payload,
+  });
 }

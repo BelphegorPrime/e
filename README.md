@@ -122,6 +122,8 @@ with something you can inspect. Read them in order the first time:
 7. [The web UI, browser terminal, and `e` as an A2A agent](./docs/tutorials/07-serve-and-a2a.md) - `e serve`, runs from the browser, Agent2Agent tasks, remote agents.
 8. [Watch and block what agents talk to](./docs/tutorials/08-egress-blacklist.md) - the egress log and DNS blacklist API.
 9. [Several Stores, and moving one](./docs/tutorials/09-stores-export-import.md) - per-project Stores, `e export` / `e import`.
+10. [A trigger in CI, one-shot](./docs/tutorials/10-one-shot-triggers.md) - `e spawn --trigger` in a GitHub Actions job, the declaration read from base.
+11. [A nightly trigger in `e serve`, under systemd](./docs/tutorials/11-cron-triggers.md) - cron Triggers, `e trigger list`, a systemd user unit around `e serve`.
 
 ## Install
 
@@ -750,6 +752,16 @@ redelivery of a request still waiting is deduplicated. A redelivery after its
 run started is a fresh run, unless the trigger's default `"overlap": "skip"`
 drops it because that run is still going; `"allow"` runs it regardless.
 
+### Cron triggers
+
+A Trigger with `"on": { "type": "cron", "expr": "0 3 * * *", "tz": "Europe/Berlin" }`
+fires on `serve`'s 30 s tick, keyed by its scheduled time. `tz` defaults to
+UTC, a fire missed while `serve` was not running is discarded rather than
+caught up, and an edited trigger takes effect within one tick. `e trigger list`
+and `GET /api/triggers` show each trigger's next fire, and its last one while
+`serve` remembers it. Keeping `serve` up is the host's job; [Tutorial
+11](./docs/tutorials/11-cron-triggers.md) has a systemd user unit.
+
 ### Remote A2A agents in the Store
 
 An `agent.json` with `"transport": "a2a"` names an agent hosted elsewhere that
@@ -863,7 +875,8 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | `e spawn … --skill spawn-brother`              | Let the agent request sibling runs; the host merges each back into its worktree (ADR-0013)                                       |
 | `e spawn <remote-agent> "<prompt>"`            | Ask a Store agent with `"transport": "a2a"` over the Agent2Agent protocol; the answer on stdout, no run (ADR-0015)               |
 | `e spawn --trigger <name> [--event <path>]`    | One-shot: run a Trigger from CI or a timer, its declaration read from base; a non-matching event exits 0 (Tutorial 10)           |
-| `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, the A2A endpoint (`POST /a2a`) and the webhook listener (BFF port + 2); stop the background server     |
+| `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, A2A (`POST /a2a`), webhooks (BFF port + 2) and the cron tick; stop the background server               |
+| `e trigger list`                               | Each Trigger's source, agent, next cron fire, and last fire when a detached `serve` knows it (Tutorial 11)                       |
 | `e export` / `e import <file>`                 | Move the store and gateway configuration between machines as a zip                                                               |
 
 ## Environment variables

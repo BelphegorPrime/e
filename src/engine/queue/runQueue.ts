@@ -2,9 +2,12 @@
  * **The `serve` tick** (ADR-0016 section 6): the one consumer of the run
  * queue, and the one place a slot is counted.
  *
- * One interval of 30 s, in fixed order - reconcile (at start only), expire,
- * sweep terminal, fill free slots - plus an immediate fill on enqueue, so a
- * triggered run does not wait an interval on an idle box. A claimed request
+ * One interval of 30 s, in fixed order - reconcile (at start only), due
+ * triggers, expire, sweep terminal, fill free slots - plus an immediate fill
+ * on enqueue, so a triggered run does not wait an interval on an idle box.
+ * Reconcile runs in `start`, before the first tick; that tick fires nothing,
+ * since every next fire is computed from `now`, so on every tick that can
+ * fire, due triggers are the first step, as ADR-0016 section 6 orders it. A claimed request
  * becomes an `e spawn` child (the ADR-0014 pattern) carrying `E_LEDGER_FILE`,
  * so the run reports into the very entry `serve` claimed, and `serve` itself
  * only launches a process and reads files (ADR-0010's BFF line).
@@ -18,8 +21,8 @@
  * normal teardown the container is already gone too, so a restart inside
  * that window marks a healthy teardown `interrupted`.
  *
- * Due triggers (the scheduler) and the dead-request spool land on top of
- * this; until then a request that expires is dropped and logged.
+ * The dead-request spool lands on top of this; until then a request that
+ * expires is dropped and logged.
  */
 
 import path from 'node:path';
@@ -27,6 +30,7 @@ import type { QueueConfig } from '../../core/store/config.js';
 import { env } from '../../shared/utils/env.js';
 import { log } from '../../shared/utils/log.js';
 import { errorMessage } from '../../shared/utils/errors.js';
+import type { TriggerActivity } from '../../core/trigger/listing.js';
 import {
   acceptEvent,
   provenanceStrings,
@@ -87,6 +91,11 @@ export interface RunQueueDeps {
   launch?: ChildLauncher;
   /** `e spawn` arguments every child inherits (`--dir`, `--env-file`). */
   passthroughArgs?: readonly string[];
+  /**
+   * The tick's first step: whatever fires on the clock enqueues here (the
+   * cron scheduler), so a slot is still counted in one place only.
+   */
+  dueTriggers?: (now: Date) => void;
   now?: () => Date;
 }
 
@@ -102,12 +111,22 @@ export type NewRunRequest = Omit<
 
 export class RunQueue {
   private readonly children = new Map<string, ChildHandle>();
+  /** In memory since this queue started: after a restart it is unknown, not never. */
+  private readonly activity = new Map<string, TriggerActivity>();
   private timer: NodeJS.Timeout | undefined;
   private readonly now: () => Date;
+  /** Since when {@link triggerActivity} knows anything. */
+  readonly startedAt: string;
 
   constructor(private readonly deps: RunQueueDeps) {
     this.now = deps.now ?? (() => new Date());
+    this.startedAt = this.now().toISOString();
     ensureRunsDirs(deps.dirs);
+  }
+
+  /** The trigger's last accepted request since {@link startedAt}, or undefined. */
+  triggerActivity(trigger: string): TriggerActivity | undefined {
+    return this.activity.get(trigger);
   }
 
   /** Reconciles the ledger once, runs a first tick, then ticks every {@link QUEUE_TICK_MS}. */
@@ -154,6 +173,10 @@ export class RunQueue {
     switch (result.status) {
       case 'enqueued':
         log.info(`Queued ${full.id} (${full.key}) for ${full.agent}`);
+        this.activity.set(full.trigger, {
+          lastFiredAt: full.enqueuedAt,
+          lastRequestId: full.id,
+        });
         this.fill();
         break;
       case 'duplicate':
@@ -169,9 +192,15 @@ export class RunQueue {
     return result;
   }
 
-  /** One pass after start: expire, sweep terminal, fill free slots. */
+  /** One pass after start: due triggers, expire, sweep terminal, fill free slots. */
   tick(): void {
     const now = this.now();
+    try {
+      this.deps.dueTriggers?.(now);
+    } catch (err) {
+      // The scheduler failing must not stop the queue it feeds.
+      log.warn(`Due triggers: ${errorMessage(err)}`);
+    }
     for (const expired of expireQueue(
       this.deps.dirs,
       now,

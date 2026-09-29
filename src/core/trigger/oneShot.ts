@@ -44,15 +44,6 @@ export function requirePayloadFree(trigger: Trigger): void {
 }
 
 /**
- * The `{{tick}}` value: minute-granular, UTC, compact - the cron dedup
- * value's spelling, so a one-shot tick and a hosted one read alike.
- */
-export function tickStamp(date: Date): string {
-  const iso = date.toISOString();
-  return `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}T${iso.slice(11, 13)}${iso.slice(14, 16)}Z`;
-}
-
-/**
  * Full ref prefixes that name the target repository itself: origin's
  * branches and the tags. A local branch is this machine's state, not the
  * repository's - `gh pr checkout` makes one out of a fork's head.

@@ -14,8 +14,8 @@ import {
   renderBaseName,
   renderOneShotPrompt,
   requireSameBase,
-  tickStamp,
 } from '../../core/trigger/oneShot.js';
+import { tickStamp } from '../../core/trigger/cron.js';
 import {
   triggerConfigPath,
   triggerPromptPath,

@@ -41,6 +41,7 @@ import { egressRoutes } from './reverseProxy.js';
 import { RunsApi, runsRoutes } from './runsApi.js';
 import { spawnRoutes } from './spawnApi.js';
 import { TerminalRequestError, TerminalSessions } from './terminalSessions.js';
+import { triggersRoutes, type TriggersApiDeps } from './triggersApi.js';
 
 /** The JSON-RPC endpoint of the A2A facade (ADR-0015), outside `/api` so the card can name it plainly. */
 export const A2A_RPC_PATH = '/a2a';
@@ -98,6 +99,8 @@ export interface ServeAppDeps {
   worktreesDir?: string;
   /** The serving Store's run queue and ledger, joined into `GET /api/runs` (ADR-0016 section 6). */
   runs?: RunsDirs;
+  /** The serving Store's triggers for `GET /api/triggers` (ADR-0016 section 8); absent, the route is 404. */
+  triggers?: TriggersApiDeps;
 }
 
 /** The A2A handlers' deps: live when configured and allowed, otherwise the reason the endpoint is off. */
@@ -297,6 +300,7 @@ export function createServeApp(deps: ServeAppDeps = {}): Express {
   // router so the POST has no GET sibling view to collide with.
   app.use(spawnRoutes(worktreesDir));
   app.use(runsRoutes(new RunsApi({ git, worktreesDir, runs })));
+  if (deps.triggers) app.use(triggersRoutes(deps.triggers));
 
   app.use('/api', (_request, response) => {
     respondNotFound(response);

@@ -26,6 +26,7 @@ import http, {
 } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isWebhookSource, type Trigger } from '../../core/trigger/index.js';
+import type { TriggerFire } from '../../core/trigger/fire.js';
 import { EVENT_PAYLOAD_MAX_BYTES } from '../../core/trigger/oneShot.js';
 import {
   fireWebhook,
@@ -33,7 +34,6 @@ import {
   WEBHOOK_HEADERS,
   webhookListenerAccess,
   webhookSecret,
-  type WebhookFire,
   type WebhookHeaders,
 } from '../../core/trigger/webhook.js';
 import { newUlid } from '../../engine/queue/runsSpool.js';
@@ -212,7 +212,7 @@ export function handleWebhookDelivery(
 /** Enqueues each fired request in declaration order, collecting the outcome. */
 function enqueueFires(
   deps: WebhookServerDeps,
-  fires: readonly WebhookFire[]
+  fires: readonly TriggerFire[]
 ): { accepted: WebhookAccepted[]; rejected: WebhookRejected[]; full: boolean } {
   const accepted: WebhookAccepted[] = [];
   const rejected: WebhookRejected[] = [];

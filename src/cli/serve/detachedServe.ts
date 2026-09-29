@@ -171,19 +171,25 @@ export function removeServeState(): void {
   }
 }
 
+/** A parsed state file, or undefined when it is not one. */
+export function asServeState(value: unknown): ServeState | undefined {
+  const state = value as Partial<ServeState> | null;
+  if (
+    !state ||
+    !Number.isInteger(state.pid) ||
+    typeof state.host !== 'string' ||
+    !Number.isInteger(state.port)
+  ) {
+    return undefined;
+  }
+  return state as ServeState;
+}
+
 export function readServeState(): ServeState | undefined {
   try {
-    const state = JSON.parse(
-      fs.readFileSync(serveStatePath(), 'utf8')
-    ) as Partial<ServeState>;
-    if (
-      !Number.isInteger(state.pid) ||
-      typeof state.host !== 'string' ||
-      !Number.isInteger(state.port)
-    ) {
-      return undefined;
-    }
-    return state as ServeState;
+    return asServeState(
+      JSON.parse(fs.readFileSync(serveStatePath(), 'utf8')) as unknown
+    );
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return undefined;
     // A truncated or hand-edited file is stale state, not a crash: the caller

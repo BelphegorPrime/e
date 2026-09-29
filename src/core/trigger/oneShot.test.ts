@@ -10,7 +10,6 @@ import {
   renderOneShotPrompt,
   requirePayloadFree,
   requireSameBase,
-  tickStamp,
 } from './oneShot.js';
 import type { Trigger } from './index.js';
 import { payloadReferences } from './prompt.js';
@@ -53,13 +52,6 @@ test('requirePayloadFree: a base referencing the payload fails, naming the field
   assert.throws(
     () => requirePayloadFree({ ...trigger, base: '{{pull_request.head.ref}}' }),
     /"base" references \{\{pull_request\.head\.ref\}\}/
-  );
-});
-
-test('tickStamp: minute-granular, UTC, compact', () => {
-  assert.equal(
-    tickStamp(new Date('2026-09-18T03:00:42.123Z')),
-    '20260918T0300Z'
   );
 });
 

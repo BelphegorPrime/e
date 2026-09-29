@@ -1,4 +1,6 @@
 import type { LoopCaps } from '../store/config.js';
+import { cronExprError } from './cron.js';
+import { payloadReferences } from './prompt.js';
 import { TRIGGER_NAME_PATTERN } from './provenance.js';
 
 /**
@@ -176,7 +178,36 @@ export function parseTrigger(
   if (typeof p.dedup === 'string' && p.dedup !== '') trigger.dedup = p.dedup;
   const loop = parseLoopOverride(p.loop, name, where);
   if (loop) trigger.loop = loop;
+  if (trigger.on.type === 'cron') requireTickOnly(trigger, where);
   return trigger;
+}
+
+/**
+ * A cron event has no payload: only `{{tick}}` and `{{trigger}}` interpolate,
+ * and its dedup value is the scheduled time. Refused at load, so a trigger
+ * that would drop every tick says so when the Store is read.
+ */
+function requireTickOnly(trigger: Trigger, where: string): void {
+  for (const [field, template] of [
+    ['prompt', trigger.prompt],
+    ['base', trigger.base],
+  ] as const) {
+    const [path] = payloadReferences(template ?? '');
+    if (path !== undefined) {
+      invalid(
+        trigger.name,
+        where,
+        `"${field}" references {{${path}}}, and a cron tick has no payload; only {{tick}} and {{trigger}} interpolate`
+      );
+    }
+  }
+  if (trigger.dedup !== undefined) {
+    invalid(
+      trigger.name,
+      where,
+      '"dedup" names a payload path, and a cron tick has none: its dedup value is always the scheduled time'
+    );
+  }
 }
 
 /** The one event source, as its own union arm. */
@@ -192,6 +223,15 @@ function parseOn(raw: unknown, name: string, where: string): TriggerOn {
     }
     const source: TriggerOn = { type: 'cron', expr: on.expr };
     if (typeof on.tz === 'string' && on.tz !== '') source.tz = on.tz;
+    // A load error, so one typo disables this trigger and nothing else.
+    const why = cronExprError(source.expr, source.tz);
+    if (why !== undefined) {
+      invalid(
+        name,
+        where,
+        `"on.expr" ${JSON.stringify(source.expr)}${source.tz ? ` in ${source.tz}` : ''} is not a schedule: ${why} (5 fields or an @-alias, no seconds)`
+      );
+    }
     return source;
   }
 

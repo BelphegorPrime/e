@@ -16,6 +16,7 @@ order the first time; later they work as recipes.
 | 8   | [Watch and block what agents talk to](./08-egress-blacklist.md)                | The egress log per domain, a blocked domain, and the API behind the Egress page              |
 | 9   | [Several Stores, and moving one](./09-stores-export-import.md)                 | A per-project Store next to `~/.e`, and a Store carried to another machine                   |
 | 10  | [A trigger in CI, one-shot](./10-one-shot-triggers.md)                         | `e spawn --trigger` in a GitHub Actions job: filtered on the event, read from base           |
+| 11  | [A nightly trigger in `e serve`, under systemd](./11-cron-triggers.md)         | A cron Trigger, its next fire in `e trigger list`, and a supervised `serve` firing it        |
 
 ## The path through them
 
@@ -31,6 +32,7 @@ flowchart TB
     t8["<b>8</b> egress: watch<br/>and block"]
     t9["<b>9</b> several Stores,<br/>moving one"]
     t10["<b>10</b> a trigger in CI,<br/><i>one-shot</i>"]
+    t11["<b>11</b> a nightly trigger<br/><i>serve + systemd</i>"]
 
     t1 --> t2 --> t3
     t1 --> t4
@@ -41,6 +43,7 @@ flowchart TB
     t3 --> t8
     t1 --> t9
     t9 --> t10
+    t10 --> t11
 
     classDef start stroke-width:3px
     class t1 start
@@ -48,7 +51,7 @@ flowchart TB
 
 Start at 1. After that: **2 and 3** are about _where the model comes from_,
 **4 and 5** about _what a run can reach_, **6 and 7** about _agents talking to
-agents_, and **8, 9 and 10** are operational.
+agents_, and **8 to 11** are operational.
 
 Conventions used throughout:
 

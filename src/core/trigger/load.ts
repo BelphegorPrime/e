@@ -26,6 +26,16 @@ export interface LoadedTrigger {
   error?: string;
 }
 
+/**
+ * A Store's triggers as a long-lived reader - the scheduler, the listing
+ * route - sees them: where they live, and what the Store knows, read afresh
+ * at each load so an agent added under a running `serve` counts.
+ */
+export interface TriggerStore {
+  root: string | undefined;
+  context: () => TriggerContext;
+}
+
 /** Lists the trigger directory names, in directory order. */
 export function listTriggerNames(root?: string): string[] {
   const dir = triggersBaseDir(root);
@@ -100,4 +110,28 @@ export function loadTriggers(
   context: TriggerContext = {}
 ): LoadedTrigger[] {
   return listTriggerNames(root).map(name => loadTrigger(name, root, context));
+}
+
+/** One file's change marker: its mtime and size, `-` when it is absent. */
+function fileSignature(file: string): string {
+  try {
+    const stat = fs.statSync(file);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return '-';
+  }
+}
+
+/**
+ * Each trigger directory's change marker, by name: the `serve` tick's mtime
+ * scan (ADR-0016 section 8). A trigger whose marker changed is reloaded, so
+ * an edit takes effect within one tick and no restart severs live runs.
+ */
+export function triggerSignatures(root?: string): Map<string, string> {
+  return new Map(
+    listTriggerNames(root).map(name => [
+      name,
+      `${fileSignature(triggerConfigPath(name, root))}|${fileSignature(triggerPromptPath(name, root))}`,
+    ])
+  );
 }

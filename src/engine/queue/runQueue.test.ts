@@ -305,3 +305,71 @@ test('provenance: a well-formed event id is the source identity, kept as it came
     );
     assert.equal(launcher.launches[0].env[Env.EVENT_URL_VAR], undefined);
   }));
+
+test('tick: due triggers are the first step, and what they enqueue fills a slot the same tick', () => {
+  const store = fs.mkdtempSync(path.join(os.tmpdir(), 'e-queue-'));
+  try {
+    const dirs = runsDirs(store);
+    const launcher = new ScriptedLauncher();
+    const seen: string[] = [];
+    let queue: RunQueue | undefined = undefined;
+    queue = new RunQueue({
+      dirs,
+      config: DEFAULT_QUEUE_CONFIG,
+      containerRunning: () => false,
+      launch: launcher.launch,
+      now: () => new Date('2026-09-18T03:00:20Z'),
+      dueTriggers: now => {
+        seen.push(now.toISOString());
+        queue!.enqueue(req('nightly:20260918T0300Z'));
+      },
+    });
+    queue.tick();
+    assert.deepEqual(seen, ['2026-09-18T03:00:20.000Z']);
+    assert.equal(launcher.launches.length, 1);
+  } finally {
+    fs.rmSync(store, { recursive: true, force: true });
+  }
+});
+
+test('tick: a scheduler that throws is logged and the queue still ticks', () => {
+  const store = fs.mkdtempSync(path.join(os.tmpdir(), 'e-queue-'));
+  try {
+    const dirs = runsDirs(store);
+    const launcher = new ScriptedLauncher();
+    const queue = new RunQueue({
+      dirs,
+      config: DEFAULT_QUEUE_CONFIG,
+      containerRunning: () => false,
+      launch: launcher.launch,
+      dueTriggers: () => {
+        throw new Error('boom');
+      },
+    });
+    queue.enqueue(req('t:1'));
+    assert.doesNotThrow(() => queue.tick());
+    assert.equal(launcher.launches.length, 1);
+  } finally {
+    fs.rmSync(store, { recursive: true, force: true });
+  }
+});
+
+test('triggerActivity: the last accepted request per trigger, in memory since the queue started; a rejection records nothing', () =>
+  withQueue(
+    ({ queue }) => {
+      assert.match(queue.startedAt, /^\d{4}-\d\d-\d\dT/);
+      assert.equal(queue.triggerActivity('t'), undefined);
+      const first = queue.enqueue(req('t:1'));
+      assert.equal(first.status, 'enqueued');
+      const second = queue.enqueue(req('t:2'));
+      assert.equal(second.status, 'enqueued');
+      assert.equal(queue.enqueue(req('t:3')).status, 'full');
+      const activity = queue.triggerActivity('t');
+      assert.equal(
+        activity?.lastRequestId,
+        second.status === 'enqueued' ? second.request.id : ''
+      );
+      assert.ok(activity?.lastFiredAt);
+    },
+    { ...DEFAULT_QUEUE_CONFIG, slots: 0, maxLength: 2 }
+  ));

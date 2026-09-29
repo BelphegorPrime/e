@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { loadTriggers, parseTriggerFiles, type LoadedTrigger } from './load.js';
+import {
+  loadTriggers,
+  parseTriggerFiles,
+  triggerSignatures,
+  type LoadedTrigger,
+} from './load.js';
 
 /*
  * Loading (ADR-0016). One bad trigger must not take the Store down: a typo
@@ -150,3 +155,25 @@ test('parseTriggerFiles: parses from text, wherever it was read - a commit inclu
     /JSON/
   );
 });
+
+test('triggerSignatures: one marker per directory, moved by an edit to either file', () =>
+  withStore(
+    { a: { 'trigger.json': valid }, b: { 'trigger.json': valid } },
+    root => {
+      const before = triggerSignatures(root);
+      assert.deepEqual([...before.keys()].sort(), ['a', 'b']);
+      const dir = path.join(root, '.e', 'triggers', 'a');
+      fs.writeFileSync(path.join(dir, 'prompt.md'), 'a prompt');
+      let after = triggerSignatures(root);
+      assert.notEqual(after.get('a'), before.get('a'));
+      assert.equal(after.get('b'), before.get('b'));
+      // Same size, later mtime: still a change.
+      const file = path.join(dir, 'trigger.json');
+      const later = new Date(Date.now() + 5000);
+      fs.utimesSync(file, later, later);
+      const again = triggerSignatures(root);
+      assert.notEqual(again.get('a'), after.get('a'));
+      after = again;
+      assert.equal(triggerSignatures(root).get('a'), after.get('a'));
+    }
+  ));

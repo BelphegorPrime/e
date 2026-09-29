@@ -129,6 +129,59 @@ test('parseTrigger: a cron trigger carries its expression and zone', () => {
   });
 });
 
+test('parseTrigger: a bad cron expression or zone is a load error naming the field', () => {
+  for (const on of [
+    { type: 'cron', expr: '61 3 * * *' },
+    { type: 'cron', expr: '0 0 3 * * *' },
+    { type: 'cron', expr: '@reboot' },
+    { type: 'cron', expr: '0 3 * * *', tz: 'Mars/Olympus' },
+  ]) {
+    assert.throws(
+      () => parseTrigger({ agent: 'a', prompt: 'p', on }, 'nightly', where),
+      /Invalid trigger "nightly".*"on\.expr".*not a schedule/,
+      JSON.stringify(on)
+    );
+  }
+});
+
+test('parseTrigger: a cron trigger may interpolate only {{tick}} and {{trigger}}, and declares no dedup', () => {
+  const cron = { type: 'cron', expr: '0 3 * * *' };
+  assert.doesNotThrow(() =>
+    parseTrigger(
+      { agent: 'a', prompt: '{{trigger}} at {{tick}}', base: 'main', on: cron },
+      'nightly',
+      where
+    )
+  );
+  assert.throws(
+    () =>
+      parseTrigger(
+        { agent: 'a', prompt: 'Fix #{{issue.number}}', on: cron },
+        'nightly',
+        where
+      ),
+    /"prompt" references \{\{issue\.number\}\}.*no payload/
+  );
+  assert.throws(
+    () =>
+      parseTrigger(
+        { agent: 'a', prompt: 'p', base: '{{ref}}', on: cron },
+        'nightly',
+        where
+      ),
+    /"base" references \{\{ref\}\}/
+  );
+  assert.throws(
+    () =>
+      parseTrigger(
+        { agent: 'a', prompt: 'p', dedup: 'issue.number', on: cron },
+        'nightly',
+        where
+      ),
+    /"dedup".*scheduled time/
+  );
+});
+
 test('parseTrigger: an agent nobody has is a load error, not a 3am surprise', () => {
   const known = ['claude-pr', 'pi'];
   assert.doesNotThrow(() =>

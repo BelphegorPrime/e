@@ -19,6 +19,7 @@ import { findRoot } from '../../core/store/root.js';
 import { eBaseDir, envFilePath } from '../../core/store/paths.js';
 import { storeTriggerContext } from '../../core/trigger/context.js';
 import { loadTriggers } from '../../core/trigger/load.js';
+import { CronScheduler } from '../../engine/queue/cronScheduler.js';
 import { RunQueue } from '../../engine/queue/runQueue.js';
 import { runsDirs } from '../../engine/queue/runsSpool.js';
 import { resolveRuntime } from '../../ports/runtime/registry.js';
@@ -57,6 +58,7 @@ import {
 } from './serveApp.js';
 import { TerminalSessions } from './terminalSessions.js';
 import { attachTerminalWebSocket } from './terminalSocket.js';
+import { removeStoreServe, writeStoreServe } from './storeServe.js';
 import { openWebhookListener, webhookPortFor } from './webhookServer.js';
 
 export interface ServeOptions {
@@ -139,19 +141,34 @@ export function registerServeCommand(program: Command): void {
         defaultAgent: readConfig(findRoot()).defaultHarness,
       });
       // The hosted shape's spine (ADR-0016 section 6): the queue, the ledger
-      // and the tick. The webhook listener enqueues onto it (the scheduler
-      // will too); every `e spawn` already writes the ledger.
+      // and the tick. The webhook listener and the cron scheduler (the
+      // tick's first step, ADR-0016 section 8) enqueue onto it; every
+      // `e spawn` already writes the ledger.
       const root = findRoot();
       const storeDir = eBaseDir(root);
       const runs = runsDirs(storeDir);
+      const triggerStore = {
+        root,
+        context: () => storeTriggerContext(root),
+      };
       let queue: RunQueue | undefined;
+      let scheduler: CronScheduler | undefined;
       try {
         const runtime = resolveRuntime();
-        queue = new RunQueue({
+        // The scheduler is the tick's first step, and it enqueues onto the
+        // queue it is a step of; the tick only runs once `start()` is called.
+        const runQueue = new RunQueue({
           dirs: runs,
-          config: readConfig(findRoot()).queue,
+          config: readConfig(root).queue,
           containerRunning: name => runtime.isRunning(name),
+          dueTriggers: now => cron.tick(now),
         });
+        const cron = new CronScheduler({
+          store: triggerStore,
+          queue: runQueue,
+        });
+        queue = runQueue;
+        scheduler = cron;
       } catch (err) {
         log.warn(
           `Run queue disabled: ${errorMessage(err)}; nothing triggered can start.`
@@ -168,6 +185,11 @@ export function registerServeCommand(program: Command): void {
         },
         worktreesDir,
         runs,
+        triggers: {
+          store: triggerStore,
+          ...(queue ? { queue } : {}),
+          ...(scheduler ? { scheduler } : {}),
+        },
       });
       const server = await startServeServer(app, host, port);
       // Only once serve is up: a serve that fails to start must not have
@@ -186,7 +208,7 @@ export function registerServeCommand(program: Command): void {
         envFile: storeEnvFile,
         envValue: name => readDotenvFile(storeEnvFile)[name],
         triggers: () =>
-          loadTriggers(root, storeTriggerContext(root)).flatMap(loaded =>
+          loadTriggers(root, triggerStore.context()).flatMap(loaded =>
             loaded.trigger ? [loaded.trigger] : []
           ),
         queue,
@@ -201,6 +223,9 @@ export function registerServeCommand(program: Command): void {
         queue?.stop();
       });
       const address = server.address() as AddressInfo;
+      // Where this Store's serve listens, for `e trigger list`'s last fires.
+      writeStoreServe(storeDir, { pid: process.pid, host, port: address.port });
+      server.once('close', () => removeStoreServe(storeDir, process.pid));
       if (env.serveDetached) {
         trackDetachedServer(server, host, address.port);
       }
