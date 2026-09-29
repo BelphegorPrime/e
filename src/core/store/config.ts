@@ -139,6 +139,31 @@ export const DEFAULT_LOOP_CAPS: LoopCaps = {
   softTotalTimeoutMs: 2 * 60 * 60 * 1000,
 };
 
+/**
+ * The hosted shape's admission bounds (ADR-0016 section 6): how many
+ * triggered runs `e serve` runs at once, how many requests may wait, how long
+ * a request stays worth starting, and how long a finished run stays in the
+ * ledger. A manual `e spawn` takes no slot.
+ */
+export type QueueConfig = {
+  /** Triggered runs in flight at once; a positive integer. */
+  slots: number;
+  /** Requests that may wait in `queue/`; the next one is rejected. */
+  maxLength: number;
+  /** Past this age from `enqueuedAt` a waiting request is dropped unstarted. */
+  ttlMs: number;
+  /** How long a terminal ledger entry stays visible before it is swept. */
+  retentionMs: number;
+};
+
+/** `queue` when `config.json` sets none. */
+export const DEFAULT_QUEUE_CONFIG: QueueConfig = {
+  slots: 2,
+  maxLength: 50,
+  ttlMs: 24 * 60 * 60 * 1000,
+  retentionMs: 60 * 60 * 1000,
+};
+
 /** Host-only orchestration settings, persisted in `config.json`. */
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
@@ -164,6 +189,8 @@ export type StoreConfig = {
   resources: ResourceCaps;
   /** Bounds on the loop (ADR-0016). */
   loop: LoopCaps;
+  /** Admission bounds of the hosted shape (ADR-0016 section 6). */
+  queue: QueueConfig;
 };
 
 export type ModelDataEntry = {
@@ -207,6 +234,18 @@ function resolveResources(raw: unknown): ResourceCaps {
 }
 
 /** Resolves the `loop` block over {@link DEFAULT_LOOP_CAPS}. */
+/** Resolves the `queue` block per key; a malformed field keeps its default. */
+function resolveQueue(raw: unknown): QueueConfig {
+  const block = asBlock(raw);
+  return {
+    slots: positiveInt(block.slots) ?? DEFAULT_QUEUE_CONFIG.slots,
+    maxLength: positiveInt(block.maxLength) ?? DEFAULT_QUEUE_CONFIG.maxLength,
+    ttlMs: positiveInt(block.ttlMs) ?? DEFAULT_QUEUE_CONFIG.ttlMs,
+    retentionMs:
+      positiveInt(block.retentionMs) ?? DEFAULT_QUEUE_CONFIG.retentionMs,
+  };
+}
+
 function resolveLoop(raw: unknown): LoopCaps {
   const block = asBlock(raw);
   const totalTimeoutMs =
@@ -348,6 +387,7 @@ export function resolveConfig(raw: unknown): StoreConfig {
     ...(verify ? { verify } : {}),
     resources: resolveResources(parsed.resources),
     loop: resolveLoop(parsed.loop),
+    queue: resolveQueue((parsed as { queue?: unknown }).queue),
   };
 }
 

@@ -49,6 +49,13 @@ export class Env {
    */
   static readonly SPAWN_REPORT_SPOOL_VAR = 'E_SPAWN_REPORT_SPOOL';
   static readonly SPAWN_REPORT_ID_VAR = 'E_SPAWN_REPORT_ID';
+  /**
+   * The ledger entry (`.e/runs/live/<id>.json`) an `e spawn` started by `e
+   * serve`'s queue reports into (ADR-0016 section 6): `serve` claimed it and
+   * holds its slot, so the run patches that entry rather than writing its own.
+   * Never inherited by a sibling or a watched child, which are runs of their own.
+   */
+  static readonly LEDGER_FILE_VAR = 'E_LEDGER_FILE';
 
   /**
    * The bearer token `e serve` requires on its A2A endpoint (ADR-0015). Unset,
@@ -221,11 +228,33 @@ export class Env {
       Env.SPAWN_PARENT_NETWORK_VAR,
       Env.SPAWN_SPOOL_VAR,
       Env.SPAWN_SIBLING_ID_VAR,
+      Env.LEDGER_FILE_VAR,
     ]) {
       delete copy[name];
     }
     copy[Env.SPAWN_REPORT_SPOOL_VAR] = report.spoolDir;
     copy[Env.SPAWN_REPORT_ID_VAR] = report.id;
+    return copy;
+  }
+
+  /** The claimed ledger entry this `e spawn` reports into (see {@link Env.LEDGER_FILE_VAR}), or undefined. */
+  get ledgerFile(): string | undefined {
+    return process.env[Env.LEDGER_FILE_VAR]?.trim() || undefined;
+  }
+
+  /**
+   * Copies `base` for the `e spawn` child of a claimed queue request: the
+   * ledger marker set, every serve, terminal, sibling and report marker
+   * dropped - it is a run of the user's own, just not started by one.
+   */
+  withLedger(
+    file: string,
+    base: Record<string, string | undefined> = process.env
+  ): Record<string, string | undefined> {
+    const copy = this.withReport({ spoolDir: '', id: '' }, base);
+    delete copy[Env.SPAWN_REPORT_SPOOL_VAR];
+    delete copy[Env.SPAWN_REPORT_ID_VAR];
+    copy[Env.LEDGER_FILE_VAR] = file;
     return copy;
   }
 
@@ -250,6 +279,7 @@ export class Env {
     delete copy[Env.TTY_HEADLESS_VAR];
     delete copy[Env.SPAWN_REPORT_SPOOL_VAR];
     delete copy[Env.SPAWN_REPORT_ID_VAR];
+    delete copy[Env.LEDGER_FILE_VAR];
     copy[Env.SPAWN_ROLE_VAR] = 'child';
     copy[Env.SPAWN_PARENT_WORKTREE_VAR] = sibling.parent.worktreePath;
     copy[Env.SPAWN_PARENT_BRANCH_VAR] = sibling.parent.branch;

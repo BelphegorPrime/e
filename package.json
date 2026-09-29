@@ -57,6 +57,7 @@
     "express": "^5.2.1",
     "http-proxy-middleware": "^4.2.0",
     "mustache": "^4.2.0",
+    "ulid": "^3.0.2",
     "ws": "^8.21.3"
   },
   "devDependencies": {

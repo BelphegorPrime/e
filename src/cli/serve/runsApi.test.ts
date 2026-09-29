@@ -13,7 +13,8 @@ import {
   writeRequest,
   writeRunInfo,
 } from '../../sidecars/broker/contract/spool.js';
-import { parseRunRequest, RunsApi } from './runsApi.js';
+import { parseRunRequest, runList, RunsApi } from './runsApi.js';
+import { buildRunIndex } from '../../engine/runs/runIndex.js';
 
 const runRefs: RunRef[] = [
   {
@@ -109,7 +110,11 @@ test('index: the branch-backed runs list, newest first, with local and pushed fl
   assert.deepEqual(
     runsOver()
       .index()
-      .map(entry => [entry.branch, entry.agent, entry.counter, entry.pushed]),
+      .map(entry =>
+        entry.branch === null
+          ? []
+          : [entry.branch, entry.agent, entry.counter, entry.pushed]
+      ),
     [
       ['e/claudeCode/fix-typos-2', 'claudeCode', 2, true],
       ['e/claudeCode/fix-typos-1', 'claudeCode', 1, false],
@@ -248,4 +253,93 @@ test('siblings come from the run spool; a run without one has none', t => {
     run: null,
     siblings: [],
   });
+});
+
+// The ledger and the queue join the index (ADR-0016 section 6).
+
+test('runList: queued requests and claims first, then branch runs carrying their ledger state; no payload', () => {
+  const index = buildRunIndex(runRefs);
+  const list = runList(
+    index,
+    [
+      {
+        id: 'trg-01K00000000000000000000001',
+        state: 'running',
+        slot: true,
+        agent: 'claudeCode',
+        run: 'e/claudeCode/fix-typos-2',
+        container: 'e-claudeCode-fix-typos-2',
+        startedAt: '2026-09-29T10:00:00.000Z',
+        request: {
+          id: 'trg-01K00000000000000000000001',
+          key: 'fix:42',
+          trigger: 'fix',
+          agent: 'claudeCode',
+          prompt: 'x',
+          payload: { secret: 'never listed' },
+          enqueuedAt: '2026-09-29T09:59:00.000Z',
+        },
+      },
+      {
+        id: 'trg-01K00000000000000000000002',
+        state: 'claimed',
+        slot: true,
+        agent: 'pi',
+        run: null,
+        claimedAt: '2026-09-29T10:01:00.000Z',
+        request: {
+          id: 'trg-01K00000000000000000000002',
+          key: 'fix:43',
+          trigger: 'fix',
+          agent: 'pi',
+          prompt: 'x',
+          enqueuedAt: '2026-09-29T10:00:30.000Z',
+        },
+      },
+    ],
+    [
+      {
+        id: 'trg-01K00000000000000000000003',
+        key: 'fix:44',
+        trigger: 'fix',
+        agent: 'pi',
+        prompt: 'x',
+        payload: { secret: 'never listed' },
+        enqueuedAt: '2026-09-29T10:02:00.000Z',
+      },
+    ]
+  );
+  assert.deepEqual(list.slice(0, 2), [
+    {
+      branch: null,
+      state: 'queued',
+      id: 'trg-01K00000000000000000000003',
+      agent: 'pi',
+      trigger: 'fix',
+      key: 'fix:44',
+      enqueuedAt: '2026-09-29T10:02:00.000Z',
+    },
+    {
+      branch: null,
+      state: 'claimed',
+      id: 'trg-01K00000000000000000000002',
+      agent: 'pi',
+      trigger: 'fix',
+      key: 'fix:43',
+      enqueuedAt: '2026-09-29T10:00:30.000Z',
+      claimedAt: '2026-09-29T10:01:00.000Z',
+    },
+  ]);
+  const running = list.find(item => item.branch === 'e/claudeCode/fix-typos-2');
+  assert.equal(running?.state, 'running');
+  assert.equal(
+    (running as { startedAt?: string }).startedAt,
+    '2026-09-29T10:00:00.000Z'
+  );
+  // A branch the ledger does not know is exactly what it always was.
+  assert.deepEqual(
+    list.find(item => item.branch === 'e/claudeCode/fix-typos-1'),
+    index.find(run => run.branch === 'e/claudeCode/fix-typos-1')
+  );
+  assert.doesNotMatch(JSON.stringify(list), /never listed/);
 });

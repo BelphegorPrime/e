@@ -18,6 +18,7 @@ import {
   configFilePath,
   verifyCacheVolume,
   DEFAULT_LOOP_CAPS,
+  DEFAULT_QUEUE_CONFIG,
   DEFAULT_RESOURCE_CAPS,
   DEFAULT_VERIFY_TIMEOUT_MS,
   modelsFilePath,
@@ -99,6 +100,7 @@ test('resolveConfig: a missing config yields the built-in defaults', () => {
     gitPlatform: undefined,
     resources: DEFAULT_RESOURCE_CAPS,
     loop: DEFAULT_LOOP_CAPS,
+    queue: DEFAULT_QUEUE_CONFIG,
   });
 });
 
@@ -112,6 +114,7 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
     gitPlatform: undefined,
     resources: DEFAULT_RESOURCE_CAPS,
     loop: DEFAULT_LOOP_CAPS,
+    queue: DEFAULT_QUEUE_CONFIG,
   });
 });
 
@@ -173,6 +176,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
         maxSiblings: 2,
         resources: DEFAULT_RESOURCE_CAPS,
         loop: DEFAULT_LOOP_CAPS,
+        queue: DEFAULT_QUEUE_CONFIG,
       },
       root
     );
@@ -186,6 +190,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
       maxSiblings: 2,
       resources: DEFAULT_RESOURCE_CAPS,
       loop: DEFAULT_LOOP_CAPS,
+      queue: DEFAULT_QUEUE_CONFIG,
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -204,6 +209,7 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
       gitPlatform: undefined,
       resources: DEFAULT_RESOURCE_CAPS,
       loop: DEFAULT_LOOP_CAPS,
+      queue: DEFAULT_QUEUE_CONFIG,
     });
     assert.ok(!fs.existsSync(configFilePath(root)));
   } finally {
@@ -545,4 +551,19 @@ test('readConfigChain: a repository that keeps a config and declares no gate has
     fs.rmSync(serving, { recursive: true, force: true });
     fs.rmSync(target, { recursive: true, force: true });
   }
+});
+
+test('resolveConfig: the queue block resolves per key; a malformed field keeps its default', () => {
+  assert.deepEqual(resolveConfig({}).queue, DEFAULT_QUEUE_CONFIG);
+  assert.deepEqual(
+    resolveConfig({
+      queue: { slots: 4, maxLength: 'lots', ttlMs: -1, retentionMs: 600000 },
+    }).queue,
+    {
+      slots: 4,
+      maxLength: DEFAULT_QUEUE_CONFIG.maxLength,
+      ttlMs: DEFAULT_QUEUE_CONFIG.ttlMs,
+      retentionMs: 600000,
+    }
+  );
 });

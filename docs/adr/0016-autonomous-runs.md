@@ -400,6 +400,11 @@ two slots and a handful of jobs an hour does not have. The filesystem gives the
 rest directly: the claim **is** `rename(queue/<key>, live/<key>)`, the dedup key
 **is** the filename, max length is a `readdir` count, TTL is a field and a sweep.
 
+The live file is named by the **request id**, not the key: the claim is
+`rename(queue/<key>, live/<id>)`, because a claimed key is free for the next
+request at once and the two must not share a file. A pending key blocks a second
+enqueue by the write itself - temp + `link`, which fails where the name exists.
+
 **Identity**: `trg-<ulid>` from `ulid`'s `monotonicFactory()`, naming the
 **request**, not the run - the move `spool.ts` already makes with `sib-NNN`. The
 `run` field is null while `queued` and set at claim. ADR-0003 is untouched.
@@ -415,6 +420,15 @@ process, not the run. Loop state lives in the worktree, and re-entering an
 iteration after a crash risks a double commit. Known sharp edge, documented rather
 than repaired: during a normal teardown the container is also already gone, so a
 restart inside that narrow window marks a healthy teardown `interrupted`.
+
+**Every `e spawn` writes the ledger.** A run `serve` starts is an `e spawn`
+child carrying `E_LEDGER_FILE`, the entry `serve` claimed for it, and patches that
+entry itself - branch and container once it has them, the end after teardown - so
+`serve` only launches a process and reads files. A sibling or a watched child
+never inherits the marker: it is a run of its own. The queue starts only once the
+server is up, so a `serve` that fails to start never launched a run. Defaults, all
+in a `queue` block of `config.json`: 2 slots, 50 waiting, a 24 h TTL, 1 h
+retention.
 
 **A manual `e spawn` writes a ledger entry and consumes no slot.** The ledger
 describes what is running; slots gate only what autonomy may _start_, and the

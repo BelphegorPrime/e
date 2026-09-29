@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
-/** One run as served by the BFF `/api/runs` index (branch-backed, ADR-0010). */
+/** Where a run stands in `e serve`'s ledger (ADR-0016 section 6); absent for a run the ledger no longer holds. */
+export type RunState =
+  'claimed' | 'running' | 'done' | 'failed' | 'interrupted';
+
+/** One run as served by the BFF `/api/runs` index (branch-backed, ADR-0010), with its ledger state while live. */
 export interface Run {
   branch: string;
   agent: string;
@@ -11,16 +15,34 @@ export interface Run {
   subject: string;
   local: boolean;
   pushed: boolean;
+  state?: RunState;
+  exitCode?: number;
+  /** A gated run's verdict: `verified`, `exhausted`, `aborted`. */
+  outcome?: string;
+  reason?: string;
+  /** Lines the branch removed under `verify.guards` (ADR-0016 section 11). */
+  gateRemovals?: { files: number; lines: number };
+}
+
+/** A triggered request waiting for a slot, or claimed and not yet on a branch. */
+export interface PendingRun {
+  branch: null;
+  state: 'queued' | 'claimed';
+  id: string;
+  agent: string;
+  trigger?: string;
+  key?: string;
+  enqueuedAt?: string;
 }
 
 interface RunsResponse {
-  runs: Run[];
+  runs: Array<Run | PendingRun>;
 }
 
 export type RunsLoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; runs: Run[] };
+  | { status: 'ready'; runs: Run[]; pending: PendingRun[] };
 
 /**
  * Fetches the branch-backed runs index from the BFF. The runs index is the
@@ -39,7 +61,14 @@ export function useRuns(): [RunsLoadState, () => void] {
         throw new Error(`BFF returned HTTP ${response.status}`);
       }
       const body = (await response.json()) as RunsResponse;
-      setState({ status: 'ready', runs: body.runs });
+      // One list from the BFF; every page but the runs page wants branches only.
+      setState({
+        status: 'ready',
+        runs: body.runs.filter((run): run is Run => run.branch !== null),
+        pending: body.runs.filter(
+          (run): run is PendingRun => run.branch === null
+        ),
+      });
     } catch (error) {
       setState({
         status: 'error',

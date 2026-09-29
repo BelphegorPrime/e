@@ -1,0 +1,380 @@
+/**
+ * **The run queue and the ledger** (ADR-0016 section 6): two file-backed
+ * spools under the serving Store, gitignored with the rest of `.e/`.
+ *
+ * - `.e/runs/queue/` holds pending **requests** - no branch, no identity yet.
+ *   One file per request, named by its dedup key, so the filesystem is the
+ *   dedup: a second request with a pending key cannot be created.
+ * - `.e/runs/live/` is the **ledger**: runs that exist, from claim to
+ *   terminal-within-retention, one file per run named by its request id.
+ *
+ * The broker spool's discipline, reused rather than reinvented: every write is
+ * temp + rename (or temp + link, where the write must not replace anything),
+ * and a corrupt or half-written file reads as **absent**. The payload lives
+ * **inline** in the record, so a claim is one rename and a crash can never
+ * leave a record whose payload went missing.
+ *
+ * No queue library and no database: the claim **is**
+ * `rename(queue/<key>, live/<id>)` - whoever wins the rename owns the job -
+ * the maximum length is a `readdir` count, the TTL a field and a sweep, and
+ * ordering the request id's ULID. The live file is named by the id rather than
+ * the key because a claimed key is free for the next request at once, and the
+ * two must not share a file.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { monotonicFactory } from 'ulid';
+import {
+  readJson,
+  writeJsonAtomic,
+} from '../../sidecars/broker/contract/spool.js';
+import type { LoopCaps } from '../../core/store/config.js';
+import type { GateRemovals } from '../runs/gateRemovals.js';
+
+/** `.e/runs/`, and its three parts. */
+export const RUNS_DIR = 'runs';
+export const QUEUE_DIR = 'queue';
+export const LIVE_DIR = 'live';
+/** Where a queued run's `e spawn` child writes its output. */
+export const RUN_LOGS_DIR = 'logs';
+
+/** The directories of one Store's run spools. */
+export interface RunsDirs {
+  queue: string;
+  live: string;
+  logs: string;
+}
+
+/** The run spools of the Store whose `.e/` directory is `storeDir`. */
+export function runsDirs(storeDir: string): RunsDirs {
+  const root = path.join(storeDir, RUNS_DIR);
+  return {
+    queue: path.join(root, QUEUE_DIR),
+    live: path.join(root, LIVE_DIR),
+    logs: path.join(root, RUN_LOGS_DIR),
+  };
+}
+
+/** Creates the spool layout (idempotent). */
+export function ensureRunsDirs(dirs: RunsDirs): void {
+  for (const dir of [dirs.queue, dirs.live, dirs.logs]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+/**
+ * Request ids: `trg-<ulid>` for a triggered request, `man-<ulid>` for the
+ * ledger entry a manual `e spawn` writes. Monotonic, because two triggers can
+ * fire in the same millisecond; `crypto.randomUUID({ version: 7 })` would be
+ * the builtin, but Node 24.15 ignores the option and returns a v4.
+ */
+const nextUlid = monotonicFactory();
+
+export function newRequestId(kind: 'trg' | 'man' = 'trg'): string {
+  return `${kind}-${nextUlid()}`;
+}
+
+const REQUEST_ID_RE = /^(trg|man)-[0-9A-HJKMNP-TV-Z]{26}$/;
+
+export function isRunRequestId(value: string): boolean {
+  return REQUEST_ID_RE.test(value);
+}
+
+/** Where a triggered request came from, as a provenance trailer will name it. */
+export interface RequestEvent {
+  /** `github`, `cron`, ... */
+  source: string;
+  /** The provider's event name, or `tick`. */
+  event: string;
+  /** The source's own identity for this delivery (delivery id, scheduled tick). */
+  id: string;
+}
+
+/** A pending trigger request: everything a run needs, and nothing named yet. */
+export interface RunRequest {
+  /** `trg-<ulid>`: names the request, never the run (ADR-0003 is untouched). */
+  id: string;
+  /** `<trigger id>:<event dedup value>`; the queue file's name, once sanitized. */
+  key: string;
+  /** The trigger that fired. */
+  trigger: string;
+  agent: string;
+  /** The rendered prompt, identifiers only interpolated. */
+  prompt: string;
+  /** The branch the run cuts from. */
+  base?: string;
+  /** The trigger's field-wise `loop` override. */
+  loop?: Partial<LoopCaps>;
+  event?: RequestEvent;
+  /** The event payload, inline: a sidecar file would end the one-rename claim. */
+  payload?: unknown;
+  enqueuedAt: string;
+}
+
+/** The states of a run in the ledger; `queued` is a request, not yet here. */
+export type LedgerState =
+  'claimed' | 'running' | 'done' | 'failed' | 'interrupted';
+
+/** States nothing more will happen in. */
+export const TERMINAL_LEDGER_STATES: readonly LedgerState[] = [
+  'done',
+  'failed',
+  'interrupted',
+];
+
+export function isTerminalLedgerState(state: LedgerState): boolean {
+  return TERMINAL_LEDGER_STATES.includes(state);
+}
+
+/** A run in the ledger. */
+export interface LedgerEntry {
+  /** The request id: `trg-<ulid>` for a triggered run, `man-<ulid>` for a manual spawn. */
+  id: string;
+  state: LedgerState;
+  /** Whether this run holds one of `serve`'s slots: triggered runs do, a manual spawn never. */
+  slot: boolean;
+  agent: string;
+  /** The run branch; null until the run has one. */
+  run: string | null;
+  /** The run container's name, what a restart checks the entry against. */
+  container?: string;
+  /** For a triggered run, the request it was claimed from, payload included. */
+  request?: RunRequest;
+  claimedAt?: string;
+  startedAt?: string;
+  endedAt?: string;
+  exitCode?: number;
+  /** A gated run's verdict and its reason (ADR-0016 section 4). */
+  outcome?: string;
+  reason?: string;
+  pushed?: boolean;
+  pullRequestUrl?: string;
+  /** Lines removed under `verify.guards` (section 11): for the human's eyes. */
+  gateRemovals?: GateRemovals;
+  error?: string;
+}
+
+/** A dedup key as a file name: anything outside `[A-Za-z0-9._-]` percent-encoded, so no two keys collide. */
+export function keyFileName(key: string): string {
+  const safe = key.replace(
+    /[^A-Za-z0-9._-]/g,
+    ch =>
+      '%' +
+      [...Buffer.from(ch, 'utf8')]
+        .map(b => b.toString(16).toUpperCase().padStart(2, '0'))
+        .join('%')
+  );
+  return `${safe}.json`;
+}
+
+/** The `*.json` records of `dir`, never a temp file. */
+function recordFiles(dir: string): string[] {
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter(name => name.endsWith('.json'))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Why an enqueue did not take the request. */
+export type EnqueueResult =
+  | { status: 'enqueued'; request: RunRequest }
+  /** A request with this key is already pending. */
+  | { status: 'duplicate' }
+  /** `maxLength` requests are waiting; the new one is rejected, never the oldest. */
+  | { status: 'full' };
+
+/**
+ * Adds a request, unless its key is pending or the queue is full. The write
+ * must not replace anything, so it is temp + **link**: `link` fails when the
+ * name exists, which is what makes the key the dedup and one process's
+ * duplicate check race-free.
+ */
+export function enqueueRequest(
+  dirs: RunsDirs,
+  request: RunRequest,
+  maxLength: number
+): EnqueueResult {
+  ensureRunsDirs(dirs);
+  if (recordFiles(dirs.queue).length >= maxLength) return { status: 'full' };
+  const file = path.join(dirs.queue, keyFileName(request.key));
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(request, null, 2) + '\n');
+  try {
+    fs.linkSync(tmp, file);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      return { status: 'duplicate' };
+    }
+    throw err;
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+  return { status: 'enqueued', request };
+}
+
+/** A pending request, or `undefined` when the file is not a usable one. */
+function asRequest(value: unknown): RunRequest | undefined {
+  const r = value as Partial<RunRequest> | undefined;
+  if (
+    !r ||
+    typeof r.id !== 'string' ||
+    !isRunRequestId(r.id) ||
+    typeof r.key !== 'string' ||
+    typeof r.agent !== 'string' ||
+    typeof r.prompt !== 'string' ||
+    typeof r.enqueuedAt !== 'string'
+  ) {
+    return undefined;
+  }
+  return r as RunRequest;
+}
+
+/** Every pending request, oldest first (by its ULID); a corrupt file reads as absent. */
+export function listQueue(dirs: RunsDirs): RunRequest[] {
+  return recordFiles(dirs.queue)
+    .map(name => asRequest(readJson(path.join(dirs.queue, name))))
+    .filter((r): r is RunRequest => r !== undefined)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Claims the pending request under `key`: `rename(queue/<key>, live/<id>)`,
+ * then rewrites the live file as a {@link LedgerEntry} in `claimed`. Of two
+ * concurrent claims exactly one rename succeeds; the other gets `undefined`.
+ * A crash between the two steps leaves a live file holding the bare request,
+ * which {@link readLedgerEntry} reads as `claimed`.
+ */
+export function claimRequest(
+  dirs: RunsDirs,
+  key: string,
+  now: Date
+): LedgerEntry | undefined {
+  const from = path.join(dirs.queue, keyFileName(key));
+  const request = asRequest(readJson(from));
+  if (!request) return undefined;
+  const to = path.join(dirs.live, `${request.id}.json`);
+  try {
+    fs.renameSync(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+  const entry = claimedEntry(request, now.toISOString());
+  writeJsonAtomic(to, entry);
+  return entry;
+}
+
+function claimedEntry(request: RunRequest, claimedAt: string): LedgerEntry {
+  return {
+    id: request.id,
+    state: 'claimed',
+    slot: true,
+    agent: request.agent,
+    run: null,
+    request,
+    claimedAt,
+  };
+}
+
+/** The ledger file of the run `id`. */
+export function ledgerFile(dirs: RunsDirs, id: string): string {
+  return path.join(dirs.live, `${id}.json`);
+}
+
+/** Reads a ledger file; a bare request (a claim cut short) reads as `claimed`, garbage as absent. */
+export function readLedgerFile(file: string): LedgerEntry | undefined {
+  const value = readJson<Partial<LedgerEntry>>(file);
+  if (!value || typeof value.id !== 'string') return undefined;
+  if (value.state === undefined) {
+    const request = asRequest(value);
+    return request ? claimedEntry(request, request.enqueuedAt) : undefined;
+  }
+  if (typeof value.agent !== 'string' || typeof value.slot !== 'boolean') {
+    return undefined;
+  }
+  return value as LedgerEntry;
+}
+
+export function readLedgerEntry(
+  dirs: RunsDirs,
+  id: string
+): LedgerEntry | undefined {
+  return readLedgerFile(ledgerFile(dirs, id));
+}
+
+/** Every run in the ledger, oldest first; a corrupt file reads as absent. */
+export function listLedger(dirs: RunsDirs): LedgerEntry[] {
+  return recordFiles(dirs.live)
+    .map(name => readLedgerFile(path.join(dirs.live, name)))
+    .filter((e): e is LedgerEntry => e !== undefined)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Merges `patch` into a ledger file, atomically. Only ever written by one
+ * process at a time for a given run - `serve` at claim and after, or the run's
+ * own `e spawn` - so read-modify-write needs no lock.
+ */
+export function patchLedgerFile(
+  file: string,
+  patch: Partial<LedgerEntry>
+): void {
+  const current = readLedgerFile(file);
+  if (!current) return;
+  writeJsonAtomic(file, { ...current, ...patch });
+}
+
+/** Writes a new ledger entry (a manual spawn's), atomically. */
+export function writeLedgerEntry(dirs: RunsDirs, entry: LedgerEntry): string {
+  ensureRunsDirs(dirs);
+  const file = ledgerFile(dirs, entry.id);
+  writeJsonAtomic(file, entry);
+  return file;
+}
+
+/**
+ * Drops pending requests older than `ttlMs` from `enqueuedAt`, unstarted: a
+ * webhook event from three days ago is stale. Queue entries only - a run in
+ * the ledger is bounded by its own caps. Returns what was dropped.
+ */
+export function expireQueue(
+  dirs: RunsDirs,
+  now: Date,
+  ttlMs: number
+): RunRequest[] {
+  const expired: RunRequest[] = [];
+  for (const request of listQueue(dirs)) {
+    const age = now.getTime() - Date.parse(request.enqueuedAt);
+    if (!(age > ttlMs)) continue;
+    fs.rmSync(path.join(dirs.queue, keyFileName(request.key)), {
+      force: true,
+    });
+    expired.push(request);
+  }
+  return expired;
+}
+
+/**
+ * Removes terminal ledger entries whose `endedAt` is older than
+ * `retentionMs`: the ledger is what is running and what just ended, never an
+ * archive. Returns the ids swept.
+ */
+export function sweepLedger(
+  dirs: RunsDirs,
+  now: Date,
+  retentionMs: number
+): string[] {
+  const swept: string[] = [];
+  for (const entry of listLedger(dirs)) {
+    if (!isTerminalLedgerState(entry.state) || !entry.endedAt) continue;
+    if (now.getTime() - Date.parse(entry.endedAt) <= retentionMs) continue;
+    fs.rmSync(ledgerFile(dirs, entry.id), { force: true });
+    swept.push(entry.id);
+  }
+  return swept;
+}

@@ -109,6 +109,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     currentVerify: config.verify,
     currentResources: config.resources,
     currentLoop: config.loop,
+    currentQueue: config.queue,
     hardware: detectHardware(),
     force: opts.force,
   };

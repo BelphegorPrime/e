@@ -1,5 +1,6 @@
 import {
   DEFAULT_LOOP_CAPS,
+  DEFAULT_QUEUE_CONFIG,
   DEFAULT_RESOURCE_CAPS,
 } from '../../core/store/config.js';
 import { test } from 'node:test';
@@ -33,6 +34,7 @@ function state(): InitState {
     currentSiblingArtifacts: ['node_modules'],
     currentResources: DEFAULT_RESOURCE_CAPS,
     currentLoop: DEFAULT_LOOP_CAPS,
+    currentQueue: DEFAULT_QUEUE_CONFIG,
     currentMaxSiblings: 3,
     existingEnvContent: undefined,
     runtimeCatalogs: WIZARD_STATE.runtimeCatalogs,

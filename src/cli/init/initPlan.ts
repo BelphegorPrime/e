@@ -23,6 +23,7 @@ import type {
   VerifyConfig,
   ResourceCaps,
   LoopCaps,
+  QueueConfig,
 } from '../../core/store/config.js';
 import {
   LOCAL_RUNTIMES,
@@ -114,6 +115,7 @@ export interface InitState {
   currentVerify?: VerifyConfig;
   currentResources: ResourceCaps;
   currentLoop: LoopCaps;
+  currentQueue: QueueConfig;
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
   /**
@@ -200,6 +202,7 @@ export interface InitPlan {
     verify?: VerifyConfig;
     resources: ResourceCaps;
     loop: LoopCaps;
+    queue: QueueConfig;
   };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
@@ -434,6 +437,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       ...(state.currentVerify ? { verify: state.currentVerify } : {}),
       resources: state.currentResources,
       loop: state.currentLoop,
+      queue: state.currentQueue,
     },
     defaultHarness,
     models,

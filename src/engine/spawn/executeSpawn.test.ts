@@ -16,6 +16,13 @@ import {
   SKILLS_CLI_VERSION,
 } from '../../core/harness/pin.js';
 import { RunScratch } from '../runs/runScratch.js';
+import { Env } from '../../shared/utils/env.js';
+import {
+  listLedger,
+  newRequestId,
+  runsDirs,
+  writeLedgerEntry,
+} from '../queue/runsSpool.js';
 import { executeSpawn } from './executeSpawn.js';
 import type { SpawnFacts, SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../../core/harness/index.js';
@@ -704,5 +711,76 @@ test('a store with no verify declaration starts exactly one container', async ()
       scratch: new RunScratch(),
     });
     assert.equal(runtime.ranCommands.length, 1);
+  });
+});
+
+// The ledger (ADR-0016 section 6): every spawn writes itself into it.
+
+test('ledger: a manual e spawn writes its own entry, takes no slot, and ends it done with its branch', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    const result = await executeSpawn(facts({ root }), emptyPlan, {
+      git: new InMemoryGit(),
+      runtime,
+      scratch: new RunScratch(),
+    });
+    const entries = listLedger(runsDirs(path.join(root, '.e')));
+    assert.equal(entries.length, 1);
+    const [entry] = entries;
+    assert.match(entry.id, /^man-/);
+    assert.equal(entry.slot, false);
+    assert.equal(entry.state, 'done');
+    assert.equal(entry.run, result.branch);
+    assert.equal(entry.exitCode, 0);
+    assert.ok(entry.container);
+    assert.ok(entry.endedAt);
+  });
+});
+
+test('ledger: started by the queue, the spawn patches the entry serve claimed instead of writing one', async () => {
+  await withDemoStore(async root => {
+    const dirs = runsDirs(path.join(root, '.e'));
+    const id = newRequestId('trg');
+    const file = writeLedgerEntry(dirs, {
+      id,
+      state: 'claimed',
+      slot: true,
+      agent: 'demo',
+      run: null,
+    });
+    const previous = process.env[Env.LEDGER_FILE_VAR];
+    process.env[Env.LEDGER_FILE_VAR] = file;
+    try {
+      await executeSpawn(facts({ root }), emptyPlan, {
+        git: new InMemoryGit(),
+        runtime: new RecordingRuntime(),
+        scratch: new RunScratch(),
+      });
+    } finally {
+      if (previous === undefined) delete process.env[Env.LEDGER_FILE_VAR];
+      else process.env[Env.LEDGER_FILE_VAR] = previous;
+    }
+    assert.deepEqual(
+      listLedger(dirs).map(e => [e.id, e.state, e.slot]),
+      [[id, 'done', true]]
+    );
+  });
+});
+
+test('ledger: a run that dies before runSpawn - an image build - still ends its entry failed', async () => {
+  await withDemoStore(async root => {
+    const runtime = new RecordingRuntime();
+    runtime.images.set('e-harness-demo', {});
+    runtime.legacyDockerfile = true;
+    await assert.rejects(
+      executeSpawn(facts({ root }), emptyPlan, {
+        git: new InMemoryGit(),
+        runtime,
+        scratch: new RunScratch(),
+      })
+    );
+    const [entry] = listLedger(runsDirs(path.join(root, '.e')));
+    assert.equal(entry.state, 'failed');
+    assert.match(entry.error ?? '', /still carries no version labels/);
   });
 });

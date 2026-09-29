@@ -37,6 +37,13 @@ import {
 } from '../../sidecars/broker/contract/spool.js';
 import type { StatusResponse } from '../../sidecars/broker/contract/types.js';
 import { NotFoundError, respondJson, respondNotFound } from './apiResponse.js';
+import {
+  listLedger,
+  listQueue,
+  type LedgerEntry,
+  type RunRequest as QueuedRequest,
+  type RunsDirs,
+} from '../../engine/queue/runsSpool.js';
 
 /** Where the runs index and every per-run view hang off. */
 const RUNS_PATH = '/api/runs';
@@ -105,6 +112,121 @@ export interface RunsApiDeps {
   git: Git;
   /** Where run Spools live (`<worktreesDir>/.broker/<runName>`). */
   worktreesDir: string;
+  /**
+   * The serving Store's run queue and ledger (ADR-0016 section 6), whose
+   * pending requests and live runs join the index; absent, the index is
+   * branches only.
+   */
+  runs?: RunsDirs;
+}
+
+/** What the ledger adds to a branch run while it is live or just ended. */
+export type LedgerView = Pick<
+  LedgerEntry,
+  | 'state'
+  | 'exitCode'
+  | 'outcome'
+  | 'reason'
+  | 'pushed'
+  | 'pullRequestUrl'
+  | 'gateRemovals'
+  | 'startedAt'
+  | 'endedAt'
+  | 'error'
+>;
+
+/** A run with a branch, and what the ledger knows of it, if anything. */
+export type BranchRunItem = RunIndexEntry &
+  Partial<LedgerView> & { id?: string };
+
+/**
+ * Something that is not a branch yet: a request still `queued`, or a run
+ * `serve` has `claimed` that has not cut its branch. Metadata only - the
+ * index never carries a payload body.
+ */
+export interface PendingRunItem {
+  branch: null;
+  state: 'queued' | 'claimed';
+  /** The request id, `trg-<ulid>`. */
+  id: string;
+  agent: string;
+  trigger?: string;
+  /** The dedup key: what "did my webhook fire?" looks for. */
+  key?: string;
+  enqueuedAt?: string;
+  claimedAt?: string;
+}
+
+/** One entry of `GET /api/runs`: one list, one state machine, `queued -> running -> terminal`. */
+export type RunListItem = BranchRunItem | PendingRunItem;
+
+/**
+ * Joins the branch index with the ledger and the queue: pending requests and
+ * claims first (oldest first, the order they will start in), then branch runs
+ * newest first, each carrying its ledger state where the ledger has one.
+ */
+export function runList(
+  index: RunIndexEntry[],
+  ledger: LedgerEntry[],
+  queue: QueuedRequest[]
+): RunListItem[] {
+  const byBranch = new Map(
+    ledger
+      .filter(entry => entry.run !== null)
+      .map(entry => [entry.run as string, entry])
+  );
+  const pending: PendingRunItem[] = [
+    ...queue.map((request): PendingRunItem => ({
+      branch: null,
+      state: 'queued',
+      id: request.id,
+      agent: request.agent,
+      trigger: request.trigger,
+      key: request.key,
+      enqueuedAt: request.enqueuedAt,
+    })),
+    ...ledger
+      .filter(entry => entry.run === null && entry.state === 'claimed')
+      .map((entry): PendingRunItem => ({
+        branch: null,
+        state: 'claimed',
+        id: entry.id,
+        agent: entry.agent,
+        ...(entry.request
+          ? {
+              trigger: entry.request.trigger,
+              key: entry.request.key,
+              enqueuedAt: entry.request.enqueuedAt,
+            }
+          : {}),
+        ...(entry.claimedAt ? { claimedAt: entry.claimedAt } : {}),
+      })),
+  ];
+  const branches = index.map((run): BranchRunItem => {
+    const entry = byBranch.get(run.branch);
+    if (!entry) return run;
+    const view: Partial<LedgerView> & { id: string } = {
+      id: entry.id,
+      state: entry.state,
+    };
+    for (const key of [
+      'exitCode',
+      'outcome',
+      'reason',
+      'pushed',
+      'pullRequestUrl',
+      'gateRemovals',
+      'startedAt',
+      'endedAt',
+      'error',
+    ] as const) {
+      if (entry[key] !== undefined) {
+        (view as Record<string, unknown>)[key] = entry[key];
+      }
+    }
+    return { ...run, ...view };
+  });
+  return [...pending, ...branches];
 }
 
 /**
@@ -115,9 +237,12 @@ export interface RunsApiDeps {
 export class RunsApi {
   constructor(private readonly deps: RunsApiDeps) {}
 
-  /** Every run branch with its tip metadata, newest first. */
-  index(): RunIndexEntry[] {
-    return buildRunIndex(this.deps.git.listRunRefs('e'));
+  /** Every pending request and live claim, then every run branch newest first, with its ledger state. */
+  index(): RunListItem[] {
+    const index = buildRunIndex(this.deps.git.listRunRefs('e'));
+    const dirs = this.deps.runs;
+    if (!dirs) return index;
+    return runList(index, listLedger(dirs), listQueue(dirs));
   }
 
   /** `run`'s status, or `undefined` when no branch of that name exists. */

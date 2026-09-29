@@ -22,6 +22,7 @@ import {
 import { RunScratch } from '../runs/runScratch.js';
 import { writeIfAbsent } from '../../shared/scaffold.js';
 import {
+  eBaseDir,
   harnessDir,
   dockerfilePath,
   agentDir,
@@ -38,6 +39,8 @@ import {
   unpinnedAfterBuildMessage,
 } from '../../core/harness/pin.js';
 import { log } from '../../shared/utils/log.js';
+import { errorMessage } from '../../shared/utils/errors.js';
+import { openRunLedger, type RunLedger } from '../queue/ledger.js';
 import { Env } from '../../shared/utils/env.js';
 import { EGRESS_CONTAINER } from '../../shared/constants.js';
 import type { ChildLauncher } from '../runs/childRun.js';
@@ -55,6 +58,8 @@ export interface ExecuteSpawnDeps {
   gitPlatform?: GitPlatform;
   /** A cancel (SIGTERM), forwarded to `runSpawn` (ADR-0015). */
   abort?: AbortSignal;
+  /** This run's ledger entry; defaults to the claimed one or a new manual one. */
+  ledger?: RunLedger;
   /**
    * Starts one sibling for the run's consumer; defaults to the production
    * launcher (a child `e spawn` process, or the in-process A2A client for a
@@ -195,6 +200,38 @@ export async function executeSpawn(
   plan: SpawnPlan,
   deps: ExecuteSpawnDeps
 ): Promise<RunSpawnResult> {
+  // Opened first, so a run that dies in a preflight guard or an image build -
+  // before `runSpawn` could say so - still ends its ledger entry, and a
+  // claimed queue request never leaves its slot held (ADR-0016 section 6).
+  const ledger =
+    deps.ledger ??
+    openRunLedger({
+      storeDir: facts.root !== undefined ? eBaseDir(facts.root) : undefined,
+      agent: facts.agent.name,
+    });
+  const failed = (error: string, exitCode?: number): void =>
+    ledger.patch({
+      state: 'failed',
+      error,
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      endedAt: new Date().toISOString(),
+    });
+  try {
+    const result = await executeSpawnWith(facts, plan, deps, ledger);
+    if (!result.ran && result.error) failed(result.error, result.exitCode);
+    return result;
+  } catch (err) {
+    failed(errorMessage(err));
+    throw err;
+  }
+}
+
+async function executeSpawnWith(
+  facts: SpawnFacts,
+  plan: SpawnPlan,
+  deps: ExecuteSpawnDeps,
+  ledger: RunLedger
+): Promise<RunSpawnResult> {
   const { git, runtime, scratch } = deps;
 
   if (!git.isRepo()) {
@@ -323,6 +360,7 @@ export async function executeSpawn(
       configMounts,
       keepWorktree: facts.keepWorktree,
       worktreesDir: facts.worktreesDir,
+      ledger,
       role: facts.role,
       broker: plan.broker,
       maxSiblings: facts.maxSiblings,

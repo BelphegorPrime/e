@@ -15,6 +15,11 @@ import type { AddressInfo } from 'node:net';
 import { HARNESSES } from '../../core/harness/index.js';
 import { readConfig } from '../../core/store/config.js';
 import { findRoot } from '../../core/store/root.js';
+import { eBaseDir } from '../../core/store/paths.js';
+import { RunQueue } from '../../engine/queue/runQueue.js';
+import { runsDirs } from '../../engine/queue/runsSpool.js';
+import { resolveRuntime } from '../../ports/runtime/registry.js';
+import { errorMessage } from '../../shared/utils/errors.js';
 import { a2aAccess } from '../../engine/a2a/access.js';
 import {
   A2aTasks,
@@ -126,6 +131,25 @@ export function registerServeCommand(program: Command): void {
           ),
         defaultAgent: readConfig(findRoot()).defaultHarness,
       });
+      // The hosted shape's spine (ADR-0016 section 6): the queue, the ledger
+      // and the tick. Nothing enqueues yet but what lands on top of it - the
+      // webhook listener and the scheduler; every `e spawn` already writes
+      // the ledger.
+      const storeDir = eBaseDir(findRoot());
+      const runs = runsDirs(storeDir);
+      let queue: RunQueue | undefined;
+      try {
+        const runtime = resolveRuntime();
+        queue = new RunQueue({
+          dirs: runs,
+          config: readConfig(findRoot()).queue,
+          containerRunning: name => runtime.isRunning(name),
+        });
+      } catch (err) {
+        log.warn(
+          `Run queue disabled: ${errorMessage(err)}; nothing triggered can start.`
+        );
+      }
       const app = createServeApp({
         uiDirectory: resolveUiDirectory(),
         omniRouteEmbedPort: embedPort,
@@ -136,8 +160,12 @@ export function registerServeCommand(program: Command): void {
           url: `http://${host}:${port}${A2A_RPC_PATH}`,
         },
         worktreesDir,
+        runs,
       });
       const server = await startServeServer(app, host, port);
+      // Only once serve is up: a serve that fails to start must not have
+      // launched a run nobody can see.
+      queue?.start();
       attachTerminalWebSocket(server, terminal);
       const embedProxy = await startOmniRouteEmbedProxy(host, embedPort);
       server.once('close', () => {
@@ -145,6 +173,7 @@ export function registerServeCommand(program: Command): void {
         terminal.dispose();
         tasks.dispose();
         removeA2aSpool(a2aSpool);
+        queue?.stop();
       });
       const address = server.address() as AddressInfo;
       if (env.serveDetached) {

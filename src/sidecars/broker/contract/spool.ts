@@ -78,7 +78,12 @@ export function spoolLogPath(root: string, id: string): string {
   return path.join(root, SPOOL_LOGS_DIR, `${id}.log`);
 }
 
-function writeJsonAtomic(file: string, value: unknown): void {
+/**
+ * Writes `value` as JSON to `file` atomically (temp + rename), so a reader
+ * never sees half of it. Shared with the run queue and ledger (ADR-0016
+ * section 6), which reuse this spool's discipline rather than reinvent it.
+ */
+export function writeJsonAtomic(file: string, value: unknown): void {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n');
   fs.renameSync(tmp, file);
@@ -95,7 +100,7 @@ function writeJsonAtomic(file: string, value: unknown): void {
  * this should not happen; nothing enforces that, which is exactly why the
  * reader does not depend on it.
  */
-function readJson<T>(file: string): T | undefined {
+export function readJson<T>(file: string): T | undefined {
   let raw;
   try {
     raw = fs.readFileSync(file, 'utf8');

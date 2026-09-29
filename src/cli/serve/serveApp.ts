@@ -29,6 +29,7 @@ import {
   type A2aServerDeps,
 } from '../../engine/a2a/server.js';
 import type { A2aTasks } from '../../engine/a2a/tasks.js';
+import type { RunsDirs } from '../../engine/queue/runsSpool.js';
 import { AGENT_CARD_PATH } from '../../engine/a2a/wire.js';
 import { defaultWorktreesDir } from '../../engine/runs/worktreesDir.js';
 import type { Git } from '../../ports/git/index.js';
@@ -95,6 +96,8 @@ export interface ServeAppDeps {
   a2a?: { tasks: A2aTasks; access: A2aAccess; url: string };
   /** Where run spools live (`<worktreesDir>/.broker/<runName>`), for the siblings view; default: the platform rule. */
   worktreesDir?: string;
+  /** The serving Store's run queue and ledger, joined into `GET /api/runs` (ADR-0016 section 6). */
+  runs?: RunsDirs;
 }
 
 /** The A2A handlers' deps: live when configured and allowed, otherwise the reason the endpoint is off. */
@@ -174,6 +177,7 @@ export function createServeApp(deps: ServeAppDeps = {}): Express {
     listAgents = storeAgents,
     a2a,
     worktreesDir = defaultWorktreesDir(),
+    runs,
   } = deps;
 
   const app = express();
@@ -292,7 +296,7 @@ export function createServeApp(deps: ServeAppDeps = {}): Express {
   // Manual child requests first (ADR-0013, ticket 09), ahead of the read
   // router so the POST has no GET sibling view to collide with.
   app.use(spawnRoutes(worktreesDir));
-  app.use(runsRoutes(new RunsApi({ git, worktreesDir })));
+  app.use(runsRoutes(new RunsApi({ git, worktreesDir, runs })));
 
   app.use('/api', (_request, response) => {
     respondNotFound(response);

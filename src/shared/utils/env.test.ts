@@ -195,3 +195,44 @@ test('a2aToken is the trimmed E_A2A_TOKEN, undefined when unset or blank', () =>
   process.env[Env.A2A_TOKEN_VAR] = ' secret ';
   assert.equal(env.a2aToken, 'secret');
 });
+
+test('withLedger sets E_LEDGER_FILE and drops every other role marker; siblings and watched children never inherit it', () => {
+  const base = {
+    PATH: '/bin',
+    [Env.SPAWN_REPORT_SPOOL_VAR]: '/spool',
+    [Env.SPAWN_REPORT_ID_VAR]: 'a2a-001',
+    [Env.SPAWN_ROLE_VAR]: 'child',
+    [Env.SERVE_DETACHED_VAR]: '1',
+  };
+  const copy = env.withLedger('/s/.e/runs/live/trg-x.json', base);
+  assert.equal(copy[Env.LEDGER_FILE_VAR], '/s/.e/runs/live/trg-x.json');
+  assert.equal(copy.PATH, '/bin');
+  for (const name of [
+    Env.SPAWN_REPORT_SPOOL_VAR,
+    Env.SPAWN_REPORT_ID_VAR,
+    Env.SPAWN_ROLE_VAR,
+    Env.SERVE_DETACHED_VAR,
+  ]) {
+    assert.equal(name in copy, false, name);
+  }
+  // A sibling or an A2A child of a queued run is a run of its own: patching
+  // the parent's entry would end the parent's slot on the child's exit.
+  const queued = { PATH: '/bin', [Env.LEDGER_FILE_VAR]: '/x.json' };
+  assert.equal(
+    Env.LEDGER_FILE_VAR in
+      env.withSibling(
+        {
+          parent: { worktreePath: '/w', branch: 'e/pi/x-1' },
+          spoolDir: '/spool',
+          id: 'sib-001',
+        },
+        queued
+      ),
+    false
+  );
+  assert.equal(
+    Env.LEDGER_FILE_VAR in
+      env.withReport({ spoolDir: '/spool', id: 'a2a-001' }, queued),
+    false
+  );
+});

@@ -43,6 +43,8 @@ import {
 import { reportChildRun, type ChildLauncher } from './childRun.js';
 import { mergeLanded } from './runMergeBack.js';
 import { measureGateRemovals, type GateRemovals } from './gateRemovals.js';
+import { NO_LEDGER, type RunLedger } from '../queue/ledger.js';
+import type { LedgerEntry } from '../queue/runsSpool.js';
 import {
   brokerSidecarSpec,
   brokerSpoolDirFor,
@@ -176,6 +178,12 @@ export interface RunSpawnParams {
    * it changes nothing else about the run.
    */
   report?: { spoolDir: string; id: string };
+  /**
+   * This run's ledger entry (ADR-0016 section 6): a manual spawn's own, or the
+   * one `e serve` claimed for it. Patched as the run gets a branch and when it
+   * has ended - after teardown, which is when a slot frees. Best-effort.
+   */
+  ledger?: RunLedger;
   /**
    * A cancel (ADR-0015): aborted before the container starts, the run ends
    * without one; aborted while the container runs, the host removes it, so
@@ -397,6 +405,9 @@ export async function runSpawn(
   const reportTo = params.sibling ?? params.report;
   const report = (patch: Omit<SiblingStatusPatch, 'updatedAt'>): void =>
     reportChildRun(reportTo, patch);
+  const ledger = params.ledger ?? NO_LEDGER;
+  // How the run ended, for the ledger; written once teardown is over.
+  let ledgerEnd: Partial<LedgerEntry> | undefined;
 
   try {
     const slug = params.name ?? slugify(params.prompt);
@@ -421,6 +432,12 @@ export async function runSpawn(
     // A sibling has its identity now: the parent's status shows the branch
     // before any image build or container.
     report({ status: 'starting', branch });
+    ledger.patch({
+      state: 'running',
+      run: branch,
+      container: run.name,
+      startedAt: new Date().toISOString(),
+    });
 
     // Artifact sync (ADR-0013): the sibling's worktree holds only committed
     // state, so the parent's gitignored build artifacts are copied into a
@@ -585,6 +602,11 @@ export async function runSpawn(
         branch,
         error: 'canceled before the container started',
       });
+      ledgerEnd = {
+        state: 'failed',
+        exitCode: CANCELED_EXIT_CODE,
+        error: 'canceled before the container started',
+      };
       return {
         ran: false,
         exitCode: CANCELED_EXIT_CODE,
@@ -930,6 +952,14 @@ export async function runSpawn(
       ...(params.report ? { pushed } : {}),
       ...(pullRequestUrl !== undefined ? { pullRequestUrl } : {}),
     });
+    ledgerEnd = {
+      state: 'done',
+      exitCode,
+      pushed,
+      ...(pullRequestUrl !== undefined ? { pullRequestUrl } : {}),
+      ...(gated ? { outcome, ...(reason ? { reason } : {}) } : {}),
+      ...(gateRemovals ? { gateRemovals } : {}),
+    };
 
     return {
       ran: true,
@@ -952,6 +982,7 @@ export async function runSpawn(
     };
   } catch (err) {
     report({ status: 'failed', branch, error: errorMessage(err) });
+    ledgerEnd = { state: 'failed', error: errorMessage(err) };
     throw err;
   } finally {
     if (loopTimer) clearTimeout(loopTimer);
@@ -978,6 +1009,10 @@ export async function runSpawn(
       }
     } catch {
       // Teardown is best-effort.
+    }
+    // Terminal only now: a run still pushing or tearing down holds its slot.
+    if (ledgerEnd) {
+      ledger.patch({ ...ledgerEnd, endedAt: new Date().toISOString() });
     }
   }
 }
