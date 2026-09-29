@@ -74,7 +74,10 @@ container: `siblingArtifacts` copies **host-built** `node_modules`, and alpine i
 musl, so native modules built against glibc do not run there. `cache` mounts a
 package cache outside the worktree (`~/.npm`, `~/.cache/pip`) as an opt-in named
 volume, shared per Store; two concurrent runs share it, which npm tolerates and
-pip may not.
+pip may not. The volume is named after the checkout's `.e/` path, also for a
+triggered run that reads a Base Store (section 13) out of a scratch directory:
+the cache belongs to the machine and the repository, not to a commit, and
+naming it after the scratch path would make every run a miss (#197).
 
 **Which runs are gated.** Every non-interactive run of the user's own. Not an
 interactive run, which has its human in front of it, and **not a sibling**: a
@@ -359,8 +362,13 @@ nightly cron it is whatever somebody left checked out yesterday evening.
 repository and ignores `repo`; a home Store uses the trigger's `repo`; neither is
 a load error. `verify`, `loop` and `resources` resolve along the same chain - the
 target repo's `.e/config.json`, then the serving Store's, then the built-in
-defaults - which keeps the check with the repository. The queue and ledger stay
-with the **serving** Store: slots bound how many containers this machine runs.
+defaults - which keeps the check with the repository. For a triggered run the
+target repo's settings come from its **Base Store** - the target's `.e/` as
+committed at the run's base - never from the checkout's working tree, which is
+whatever somebody left checked out, the same reason `HEAD` is refused as a base;
+agents, Dockerfiles, skills and `.env` stay the serving Store's (#199). The
+queue and ledger stay with the **serving** Store: slots bound how many
+containers this machine runs.
 
 **Dedup**: absent, the source supplies its own identity (the delivery id, the
 tick). Declaring a path **coarsens** the key into coalescing -
@@ -716,8 +724,8 @@ flag survives and the **default beneath it moves**, exactly the read-only sandbo
 that appeared under an unchanged `codex exec` - which no `--help` grep can see,
 least of all opencode's hidden `--yolo` alias.
 
-**What makes the pin bite**: `imageTag()` hashes nothing and `executeSpawn` builds
-only what is missing, so a bumped pin would otherwise be a commit no running Store
+**What makes the pin bite**: `imageTag()` hashes nothing and `executeSpawn` built
+only what was missing, so a bumped pin would otherwise be a commit no running Store
 ever sees. The image carries two labels (harness package and version, skills CLI
 version); the host compares label against pin and rebuilds on mismatch - on the
 **derived agent image** as well as the base, which inherits the labels and would
@@ -729,6 +737,18 @@ A pre-existing unlabelled image gets **one** rebuild attempt, then a hard abort
 naming `e init --force`; never a loop, never a silent pass. `e init` re-seeds a
 Store Dockerfile that lacks `ARG HARNESS_VERSION` once, keeping the old one as
 `Dockerfile.bak`; one that has the `ARG` is never clobbered again.
+
+**Every spawn rebuilds by default** (#198). The pin catches a moved version, not a
+changed Dockerfile: a merged Dockerfile change otherwise runs the old image until
+someone types `--rebuild`, and a trigger has nobody to type it. A rebuild is a
+plain `build` without `--no-cache`, so an unchanged Dockerfile costs layer-cache
+hits and a changed one misses from the changed line; a content digest in a
+label was rejected as a second mechanism for what the layer cache already does.
+`--no-rebuild` restores "build only what is missing or off the pin". What this
+does **not** defend is a daemon shared with untrusted code - a self-hosted runner
+that also runs PR jobs can hold a poisoned layer cache or an image with forged
+labels, and labels are a claim, not a proof. That runner is outside `e`'s
+threat model and is documented as such.
 
 **Bumping** is Renovate with a `customManager` over the registry file and **no
 automerge** - a bot that bumps and merges is `latest` with extra steps, adopting
@@ -913,6 +933,38 @@ above. A `pull_request_target` workflow passes `--event-name pull_request`,
 the name the trigger declares. The run's slug is the trigger's id unless
 `--name` says otherwise.
 
+**The whole Store comes from base, not just the declaration** (#193). A PR
+head that cannot touch the prompt can still weaken `verify`, swap the agent,
+or rewrite a Dockerfile that is built on the runner. So a triggered run reads
+its **Base Store**: the Store's path as committed at the resolved base,
+materialized into a per-run scratch directory and used as the Store root for
+everything - `config.json`, agents, Dockerfiles, skills, the trigger. Nothing
+of the working tree's `.e/` is read. A list of files to take from base was
+rejected: every future Store file would have to join it, and the one that
+did not would be the hole. The Store's path is `--dir`, or `<toplevel>/.e`
+with no upward search, which would let the head decide where the Store is.
+Siblings get `--dir <Base Store>`, so they cannot read the head either (#197).
+
+**Secrets in one-shot come only from `--env-file`**, which takes the place of
+`.e/.env`: a provider's `apiKeyEnv` resolves from it, and it is filtered to
+the plan's whitelist rather than copied verbatim. No `.env` is ever read from
+the Base Store or the working tree. `.gitignore` is no defence there: a PR
+commits an ignored file with `git add -f`, or edits `.gitignore` itself, and a
+head-supplied `ANTHROPIC_BASE_URL` would send the real key to its author. A
+`.e/.env` committed at base exits 1, since a committed secret is a leak that
+somebody must see; one only in the head warns and is ignored.
+
+**A local stack is used, never started** (#200). One-shot counts a stack as
+present when `e-egress` and `omniroute` are running - their names are fixed
+per host - and never calls `composeUp`, which would run a Compose file from
+base or, worse, from the head. With a stack, a provider that targets
+OmniRoute gets **one endpoint key per run**: minted at start with
+`OMNIROUTE_INITIAL_PASSWORD` from `--env-file`, deleted after teardown, and
+leftover `e-run-*` keys swept at the next start. A key an agent leaks is dead
+once its run is. This depends on OmniRoute deleting and listing keys over its
+API (#196); if it cannot, the key comes only from `--env-file`, checked, never
+minted and never asked for.
+
 **Void in one-shot**: the queue and slot accounting, dedup, the `live/` ledger,
 `nextFireAt`/`lastFiredAt`, `GET /api/runs`, A2A cancel. Siblings and the
 runtime-broker still work, being per-run rather than per-`serve` (ADR-0013).
@@ -926,9 +978,11 @@ runtime-broker still work, being per-run rather than per-`serve` (ADR-0013).
   (GitHub-hosted: 360 min default, 6 h cap). The exit codes become the job's
   status, so an exhausted run is already a red job.
 - Secrets travel by the existing `--env-file`, pointed at a file the pipeline
-  writes outside the checkout (`$RUNNER_TEMP`). Not `process.env` passthrough,
-  which retires the invariant that `.e/.env` is the sole secret source (ADR-0006);
-  not `-e KEY=value`, which is visible in the process list and in pipeline logs.
+  writes outside the checkout (`$RUNNER_TEMP`); in one-shot it is the sole
+  secret source, in the place of `.e/.env`. Not `process.env` passthrough,
+  which retires the invariant that one file is the sole secret source
+  (ADR-0006); not `-e KEY=value`, which is visible in the process list and in
+  pipeline logs.
 - A **committed `.e/`** is the recommendation, so the trigger, agent, verify
   command and caps are reviewed through PRs like any other code. Worth saying
   plainly: `e`'s own repo gitignores `.e/`, so adopting one-shot is a deliberate
