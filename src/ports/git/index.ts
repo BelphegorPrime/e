@@ -55,6 +55,15 @@ export interface Git {
   /** True if `branch` has any commits not reachable from `base`. */
   hasCommitsBeyondBase(branch: string, base: string): boolean;
 
+  /**
+   * Per-file added/removed line counts of `base..tip`, limited to
+   * `pathspecs` (git evaluates them; `git diff --numstat`). Rename detection
+   * is git's default and stays on: a rename inside the pathspecs is one entry
+   * with its `from`, while one leaving them reads as a removal of the source.
+   * `pathspecs` must not be empty - that would be every file.
+   */
+  numstat(base: string, tip: string, pathspecs: string[]): NumstatEntry[];
+
   /** Push `branch` to origin. Throws on any failure (no remote, auth, reject). */
   push(branch: string): void;
 
@@ -94,6 +103,18 @@ export interface Git {
    * as it was.
    */
   abortMerge(worktreePath: string): void;
+}
+
+/** One file of a {@link Git.numstat}. */
+export interface NumstatEntry {
+  /** The path at `tip` (for a rename, the destination). */
+  path: string;
+  /** The path at `base`, for a rename. */
+  from?: string;
+  /** Lines added; `null` for a binary file, which git does not count. */
+  added: number | null;
+  /** Lines removed; `null` for a binary file. */
+  removed: number | null;
 }
 
 /** How a {@link Git.merge} ended. */

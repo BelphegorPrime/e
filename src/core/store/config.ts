@@ -62,7 +62,28 @@ export type VerifyConfig = {
   network?: boolean;
   /** Mount a per-Store package cache outside the worktree. Off by default. */
   cache?: boolean;
+  /**
+   * Git pathspecs of what the check measures - the tests (ADR-0016 section
+   * 11). Lines removed under them over the run branch are reported as gate
+   * removals: a smell, never a verdict. Declared here in the Store and never
+   * in the repository, where the agent could weaken the detector before what
+   * it guards. Absent means {@link DEFAULT_VERIFY_GUARDS}; `[]` measures nothing.
+   */
+  guards?: string[];
 };
+
+/**
+ * The built-in test paths `verify.guards` defaults to, as git pathspecs (git
+ * evaluates them, so `e` carries no glob library; `*` crosses directories).
+ */
+export const DEFAULT_VERIFY_GUARDS: readonly string[] = [
+  '**/*.test.*',
+  '*_test.*',
+  'test/',
+  'tests/',
+  'spec/',
+  '__tests__/',
+];
 
 /**
  * Container limits that apply to **every** run, interactive included, and to
@@ -249,6 +270,19 @@ function resolveVerify(raw: unknown): VerifyConfig | undefined {
   const network =
     typeof parsed.network === 'boolean' ? parsed.network : undefined;
   const cache = typeof parsed.cache === 'boolean' ? parsed.cache : undefined;
+  let guards: string[] | undefined;
+  if (parsed.guards !== undefined) {
+    if (
+      Array.isArray(parsed.guards) &&
+      parsed.guards.every(g => typeof g === 'string' && g.length > 0)
+    ) {
+      guards = [...parsed.guards];
+    } else {
+      log.warn(
+        'Ignoring verify.guards: expected an array of git pathspecs; using the built-in test paths'
+      );
+    }
+  }
   return {
     command: parsed.command,
     // Spread each optional key so a resolved block deep-equals what was
@@ -259,6 +293,7 @@ function resolveVerify(raw: unknown): VerifyConfig | undefined {
     timeoutMs: timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS,
     ...(network !== undefined ? { network } : {}),
     ...(cache !== undefined ? { cache } : {}),
+    ...(guards !== undefined ? { guards } : {}),
   };
 }
 

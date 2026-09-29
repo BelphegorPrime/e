@@ -2,6 +2,7 @@ import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import type {
   Git,
   MergeOutcome,
+  NumstatEntry,
   RunCommit,
   RunRef,
   WorktreeSpec,
@@ -186,6 +187,20 @@ export class HostGit implements Git {
     return count > 0;
   }
 
+  numstat(base: string, tip: string, pathspecs: string[]): NumstatEntry[] {
+    if (pathspecs.length === 0) {
+      throw new Error(
+        'numstat needs at least one pathspec (none is every file)'
+      );
+    }
+    return parseNumstatZ(
+      this.capture(
+        ['diff', '--numstat', '-z', `${base}..${tip}`, '--', ...pathspecs],
+        `numstat ${base}..${tip}`
+      )
+    );
+  }
+
   push(branch: string): void {
     this.run(['push', 'origin', branch], `push ${branch} to origin`);
   }
@@ -322,4 +337,34 @@ export class HostGit implements Git {
     const detail = result.stderr?.trim() || result.stdout?.trim() || '';
     return new Error(`git failed (${description}): ${detail}`);
   }
+}
+
+/**
+ * Reads `git diff --numstat -z`: `added\tremoved\tpath\0` per file, and for
+ * a rename `added\tremoved\t\0from\0to\0`. NUL-separated so no path is
+ * ever quoted or split; `-` counts (a binary file) read as `null`.
+ */
+export function parseNumstatZ(out: string): NumstatEntry[] {
+  const tokens = out.split('\0');
+  const entries: NumstatEntry[] = [];
+  const count = (raw: string): number | null =>
+    raw === '-' ? null : Number(raw);
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === '') continue;
+    const [added, removed, path] = token.split('\t');
+    if (path === undefined) continue;
+    if (path === '') {
+      entries.push({
+        from: tokens[i + 1],
+        path: tokens[i + 2],
+        added: count(added),
+        removed: count(removed),
+      });
+      i += 2;
+    } else {
+      entries.push({ path, added: count(added), removed: count(removed) });
+    }
+  }
+  return entries;
 }

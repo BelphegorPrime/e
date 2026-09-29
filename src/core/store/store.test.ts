@@ -341,6 +341,7 @@ test('resolveConfig: the verify object keeps every field it declares', () => {
         timeoutMs: 600000,
         network: true,
         cache: true,
+        guards: ['src/**/*.spec.ts', ':(glob)e2e/**'],
       },
     }).verify,
     {
@@ -349,8 +350,29 @@ test('resolveConfig: the verify object keeps every field it declares', () => {
       timeoutMs: 600000,
       network: true,
       cache: true,
+      guards: ['src/**/*.spec.ts', ':(glob)e2e/**'],
     }
   );
+});
+
+test('resolveConfig: verify.guards absent stays absent (the built-in list applies at use); [] is kept, a malformed list dropped', () => {
+  assert.equal(
+    resolveConfig({ verify: { command: 'npm test' } }).verify?.guards,
+    undefined
+  );
+  assert.deepEqual(
+    resolveConfig({ verify: { command: 'npm test', guards: [] } }).verify
+      ?.guards,
+    []
+  );
+  for (const bad of ['tests/', [''], [42], {}]) {
+    assert.equal(
+      resolveConfig({ verify: { command: 'npm test', guards: bad } }).verify
+        ?.guards,
+      undefined,
+      JSON.stringify(bad)
+    );
+  }
 });
 
 test('resolveConfig: a verify block without a usable command is no gate at all', () => {

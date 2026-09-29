@@ -22,6 +22,7 @@
 import type {
   Git,
   MergeOutcome,
+  NumstatEntry,
   RunCommit,
   RunRef,
   WorktreeSpec,
@@ -77,6 +78,8 @@ export interface InMemoryGitOptions {
    * `[{status:'conflict',files:[...]}, {status:'merged'}]`.
    */
   merge?: Record<string, ScriptedMerge | ScriptedMerge[]>;
+  /** What `numstat` answers, whatever it is asked: the diff of the run branch. */
+  numstat?: NumstatEntry[];
   /** Messages that make a call throw instead of doing its work. */
   fail?: Partial<
     Record<
@@ -106,6 +109,8 @@ export class InMemoryGit implements Git {
   readonly commits: { path: string; message: string }[] = [];
   /** Branches pushed, in order. */
   readonly pushed: string[] = [];
+  /** Every `numstat` asked, in order. */
+  readonly numstats: { base: string; tip: string; pathspecs: string[] }[] = [];
   /** Worktree paths whose merge was aborted, in order. */
   readonly aborted: string[] = [];
   /** Merges attempted, in order. */
@@ -274,6 +279,12 @@ export class InMemoryGit implements Git {
     // A commit with MERGE_HEAD set is the merge commit: it concludes it.
     this.merging.delete(worktreePath);
     this.concluded.add(worktreePath);
+  }
+
+  numstat(base: string, tip: string, pathspecs: string[]): NumstatEntry[] {
+    this.calls.push('numstat');
+    this.numstats.push({ base, tip, pathspecs });
+    return this.opts.numstat ?? [];
   }
 
   hasCommitsBeyondBase(_branch: string, _base: string): boolean {

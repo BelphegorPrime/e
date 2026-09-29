@@ -42,6 +42,7 @@ import {
 } from './runSiblings.js';
 import { reportChildRun, type ChildLauncher } from './childRun.js';
 import { mergeLanded } from './runMergeBack.js';
+import { measureGateRemovals, type GateRemovals } from './gateRemovals.js';
 import {
   brokerSidecarSpec,
   brokerSpoolDirFor,
@@ -296,6 +297,13 @@ export interface RunSpawnResult {
    * the human only: it stops nothing, and it never reaches the prompt.
    */
   softTimeoutWarning?: string;
+  /**
+   * Lines the run branch removed under `verify.guards` (ADR-0016 section 11):
+   * present whenever the gate was in force, `0/0` included, so absence means
+   * exactly "no gate". For the human's report and PR only - never handed to
+   * an agent (not the sibling or A2A status, not the iteration feedback).
+   */
+  gateRemovals?: GateRemovals;
   error?: string;
 }
 
@@ -814,6 +822,22 @@ export async function runSpawn(
       deps.git.commitAll(worktreePath, `e: merge-back reports for ${branch}`);
       captured = true;
     }
+
+    // Once, over everything the branch now holds - what the PR will contain,
+    // merged sibling work included. A failure to measure is no finding.
+    let gateRemovals: GateRemovals | undefined;
+    if (gated) {
+      try {
+        gateRemovals = measureGateRemovals(
+          deps.git,
+          base,
+          branch,
+          params.verify!.guards
+        );
+      } catch (err) {
+        log.warn(`Could not measure gate removals: ${errorMessage(err)}`);
+      }
+    }
     // The push no longer hangs on the harness's exit code (ADR-0016): an
     // exhausted run exits non-zero and its attempts are exactly what a human
     // needs to read, so anything that produced commits travels. A cancel does
@@ -924,6 +948,7 @@ export async function runSpawn(
       ...(verifyOutcome ? { verify: verifyOutcome } : {}),
       ...(gated ? { iterations, outcome, reason } : {}),
       ...(softTimeoutWarning ? { softTimeoutWarning } : {}),
+      ...(gateRemovals ? { gateRemovals } : {}),
     };
   } catch (err) {
     report({ status: 'failed', branch, error: errorMessage(err) });

@@ -699,6 +699,60 @@ test('spawnReport: a push or PR warning is a warning, not a failure', () => {
   );
 });
 
+test('spawnReport: gate removals qualify "verified" and are always stated; 0/0 qualifies nothing', () => {
+  const weakened = spawnReport({
+    ran: true,
+    exitCode: 0,
+    branch: 'e/pi/fix-login-1',
+    iterations: [{ attempt: 1, harnessExitCode: 0, verdict: 'green' }],
+    outcome: 'verified',
+    gateRemovals: { files: 2, lines: 47 },
+  });
+  assert.ok(
+    weakened.some(
+      l =>
+        l.level === 'warn' &&
+        l.text ===
+          'Verified after 1 attempt (gate weakened: 2 files, -47 lines).'
+    )
+  );
+  assert.ok(
+    weakened.some(l =>
+      l.text.startsWith('Gate removals (lines deleted under verify.guards')
+    )
+  );
+
+  const clean = spawnReport({
+    ran: true,
+    exitCode: 0,
+    branch: 'e/pi/fix-login-1',
+    iterations: [{ attempt: 1, harnessExitCode: 0, verdict: 'green' }],
+    outcome: 'verified',
+    gateRemovals: { files: 0, lines: 0 },
+  });
+  assert.ok(
+    clean.some(
+      l => l.level === 'success' && l.text === 'Verified after 1 attempt.'
+    )
+  );
+  assert.ok(clean.some(l => l.text.endsWith('0 files, -0 lines.')));
+
+  // Not verified: no claim to qualify, the numbers still recorded.
+  const exhausted = spawnReport({
+    ran: true,
+    exitCode: 2,
+    branch: 'e/pi/fix-login-1',
+    iterations: [
+      { attempt: 1, harnessExitCode: 0, verdict: 'red', verifyExitCode: 1 },
+    ],
+    outcome: 'exhausted',
+    reason: 'exhausted:iterations',
+    gateRemovals: { files: 1, lines: 3 },
+  });
+  assert.ok(!exhausted.some(l => /gate weakened/.test(l.text)));
+  assert.ok(exhausted.some(l => l.text.endsWith('1 file, -3 lines.')));
+});
+
 test('spawnReport: where unmerged sibling work went, and why the host stopped committing', () => {
   const lines = spawnReport({
     ran: true,

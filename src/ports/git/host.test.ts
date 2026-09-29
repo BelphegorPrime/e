@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HostGit, overwrittenPaths } from './host.js';
+import { HostGit, overwrittenPaths, parseNumstatZ } from './host.js';
 import { git, initRepo } from './host.testSupport.js';
 import { buildRunIndex } from '../../engine/runs/runIndex.js';
 
@@ -734,4 +734,61 @@ test('HostGit.headSha(worktreePath) resolves that worktree, not the repo it was 
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+});
+
+// numstat (ADR-0016 section 11): probed, not assumed - these are the cases
+// gateRemovals rests on.
+test('HostGit.numstat: a git mv out of the pathspecs is a full removal, one inside them a zero-line rename, an addition removes nothing', () => {
+  const repo = initRepo('e-numstat-');
+  try {
+    fs.mkdirSync(path.join(repo, 'src'));
+    fs.mkdirSync(path.join(repo, 'tests'));
+    fs.writeFileSync(path.join(repo, 'src', 'a.test.ts'), 'a\nb\nc\n');
+    fs.writeFileSync(path.join(repo, 'tests', 'in.ts'), 'x\ny\n');
+    fs.writeFileSync(path.join(repo, 'tests', 'grow.ts'), '1\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'base');
+    const base = git(repo, 'rev-parse', 'HEAD');
+    git(repo, 'mv', 'src/a.test.ts', 'src/a.ts');
+    git(repo, 'mv', 'tests/in.ts', 'tests/renamed.ts');
+    fs.writeFileSync(path.join(repo, 'tests', 'grow.ts'), '1\n2\n');
+    git(repo, 'commit', '-q', '-am', 'tip');
+
+    // Like every ref query, numstat reads the repository `e` runs in.
+    const originalCwd = process.cwd();
+    let entries;
+    try {
+      process.chdir(repo);
+      entries = new HostGit().numstat(base, 'HEAD', ['**/*.test.*', 'tests/']);
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    assert.deepEqual(entries, [
+      { path: 'src/a.test.ts', added: 0, removed: 3 },
+      { path: 'tests/grow.ts', added: 1, removed: 0 },
+      { from: 'tests/in.ts', path: 'tests/renamed.ts', added: 0, removed: 0 },
+    ]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.numstat refuses an empty pathspec list, which git would read as every file', () => {
+  assert.throws(() => new HostGit().numstat('a', 'b', []), /at least one/);
+});
+
+test('parseNumstatZ: plain entries, renames, binary counts as null, odd names verbatim', () => {
+  assert.deepEqual(
+    parseNumstatZ(
+      '1\t0\tpkg/foo_test.go\0-\t-\ttests/blob.bin\0' +
+        '0\t0\t\0tests/in.ts\0tests/a b.ts\0'
+    ),
+    [
+      { path: 'pkg/foo_test.go', added: 1, removed: 0 },
+      { path: 'tests/blob.bin', added: null, removed: null },
+      { from: 'tests/in.ts', path: 'tests/a b.ts', added: 0, removed: 0 },
+    ]
+  );
+  assert.deepEqual(parseNumstatZ(''), []);
 });

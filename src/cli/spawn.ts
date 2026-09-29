@@ -56,6 +56,7 @@ import { localStack } from '../ports/runtime/stack.js';
 import { log } from '../shared/utils/log.js';
 import { env } from '../shared/utils/env.js';
 import { siblingSummaryLine } from '../engine/runs/runSiblings.js';
+import { describeGateRemovals } from '../engine/runs/gateRemovals.js';
 import { mergeLanded } from '../engine/runs/runMergeBack.js';
 import {
   CANCELED_EXIT_CODE,
@@ -421,11 +422,17 @@ export function spawnReport(result: RunSpawnResult): ReportLine[] {
     // The reason is carried rather than inferred: an OOM and our own kill both
     // end the container on 137, so "exhausted" alone would not say which.
     const why = result.reason ? ` (${result.reason})` : '';
+    // Gate removals qualify the one word they cast doubt on, and only it:
+    // no other outcome makes a claim to qualify (ADR-0016 section 11).
+    const weakened =
+      result.gateRemovals && result.gateRemovals.files > 0
+        ? ` (gate weakened: ${describeGateRemovals(result.gateRemovals)})`
+        : '';
     lines.push(
       result.outcome === 'verified'
         ? {
-            level: 'success',
-            text: `Verified after ${attempts} ${plural}.`,
+            level: weakened ? 'warn' : 'success',
+            text: `Verified after ${attempts} ${plural}${weakened}.`,
           }
         : {
             level: 'warn',
@@ -435,6 +442,13 @@ export function spawnReport(result: RunSpawnResult): ReportLine[] {
                 : `Aborted after ${attempts} ${plural}${why}.`,
           }
     );
+  }
+  // The numbers themselves, whatever the outcome: recorded, not a verdict.
+  if (result.gateRemovals) {
+    lines.push({
+      level: 'info',
+      text: `Gate removals (lines deleted under verify.guards over the branch): ${describeGateRemovals(result.gateRemovals)}.`,
+    });
   }
   // Siblings this run requested and how their work came back (ticket 07).
   for (const sibling of result.siblings ?? []) {

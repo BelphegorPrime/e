@@ -2070,3 +2070,134 @@ test('runSpawn: the soft mark warns the human and never the agent', async () => 
   // `.skip` and `|| true`.
   assert.doesNotMatch(runtime.runs[2].command.join(' '), /time limit/i);
 });
+
+// Gate integrity (ADR-0016 section 11): the lines the branch removed under
+// verify.guards, measured once and shown to humans only.
+
+test('runSpawn: gate removals are measured once over base..branch, after the last attempt, and never reach the next prompt', async () => {
+  const git = new InMemoryGit({
+    numstat: [{ path: 'src/auth.test.ts', added: 0, removed: 47 }],
+  });
+  const { deps, runtime } = makeDeps({ git });
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 1, 0, 0];
+  const result = await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.equal(result.outcome, 'verified');
+  assert.deepEqual(result.gateRemovals, { files: 1, lines: 47 });
+  // Once per run, not per attempt: the branch, not an iteration, is the claim.
+  assert.deepEqual(
+    git.numstats.map(n => [n.base, n.tip]),
+    [['basesha', result.branch]]
+  );
+  assert.ok(git.numstats[0].pathspecs.includes('**/*.test.*'));
+  // The agent never learns it: a counted signal teaches laundering.
+  for (const run of runtime.runs) {
+    assert.doesNotMatch(run.command.join(' '), /gate|removal|47/i);
+  }
+});
+
+test('runSpawn: a gated run with nothing removed still reports 0/0; a run without verify reports nothing and measures nothing', async () => {
+  const gatedGit = new InMemoryGit();
+  const gated = makeDeps({ git: gatedGit });
+  gatedRun(gated.runtime, gatedGit);
+  gated.runtime.exitCodes = [0, 0];
+  const withGate = await runSpawn(
+    gated.deps,
+    makeParams({ verify: { command: 'npm test' } })
+  );
+  assert.deepEqual(withGate.gateRemovals, { files: 0, lines: 0 });
+
+  const plain = makeDeps();
+  const withoutGate = await runSpawn(plain.deps, makeParams());
+  assert.equal('gateRemovals' in withoutGate, false);
+  assert.deepEqual(plain.git.numstats, []);
+});
+
+test('runSpawn: the Store guards are the pathspecs; [] measures nothing', async () => {
+  const git = new InMemoryGit({
+    numstat: [{ path: 'e2e/login.ts', added: 0, removed: 3 }],
+  });
+  const { deps, runtime } = makeDeps({ git });
+  gatedRun(runtime, git);
+  runtime.exitCodes = [0, 0];
+  await runSpawn(
+    deps,
+    makeParams({ verify: { command: 'npm test', guards: ['e2e/'] } })
+  );
+  assert.deepEqual(git.numstats[0].pathspecs, ['e2e/']);
+
+  const none = makeDeps({ git: new InMemoryGit({ numstat: [] }) });
+  gatedRun(none.runtime, none.git);
+  none.runtime.exitCodes = [0, 0];
+  const result = await runSpawn(
+    none.deps,
+    makeParams({ verify: { command: 'npm test', guards: [] } })
+  );
+  assert.deepEqual(result.gateRemovals, { files: 0, lines: 0 });
+  assert.deepEqual(none.git.numstats, []);
+});
+
+test('runSpawn: gate removals stay out of the status a watched run reports - the A2A task an agent reads', async () => {
+  const spool = fs.mkdtempSync(path.join(os.tmpdir(), 'e-gate-a2a-'));
+  try {
+    ensureSpool(spool);
+    writeRequest(spool, {
+      id: 'a2a-001',
+      agent: 'demo',
+      prompt: 'Fix the flaky test',
+      requestedAt: 't',
+    });
+    const git = new InMemoryGit({
+      numstat: [{ path: 'tests/a.ts', added: 0, removed: 9 }],
+    });
+    const { deps, runtime } = makeDeps({ git });
+    gatedRun(runtime, git);
+    runtime.exitCodes = [0, 0];
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        verify: { command: 'npm test' },
+        report: { spoolDir: spool, id: 'a2a-001' },
+      })
+    );
+    assert.deepEqual(result.gateRemovals, { files: 1, lines: 9 });
+    const status = readStatus(spool, 'a2a-001');
+    assert.equal(status?.status, 'done');
+    assert.doesNotMatch(
+      JSON.stringify(readRecord(spool, 'a2a-001')),
+      /gate|removal/i
+    );
+  } finally {
+    fs.rmSync(spool, { recursive: true, force: true });
+  }
+});
+
+test('runSpawn: a sibling is never gated, so nothing is measured for the report its parent agent reads', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, 'spool');
+    ensureSpool(spool);
+    const git = new InMemoryGit({
+      numstat: [{ path: 'tests/a.ts', added: 0, removed: 9 }],
+    });
+    const { deps } = makeDeps({ git });
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        role: 'child',
+        parent,
+        sibling: { spoolDir: spool, id: 'sib-001' },
+        verify: { command: 'npm test' },
+      })
+    );
+    assert.equal('gateRemovals' in result, false);
+    assert.deepEqual(git.numstats, []);
+    assert.doesNotMatch(
+      JSON.stringify(readStatus(spool, 'sib-001')),
+      /gate|removal/i
+    );
+  });
+});
