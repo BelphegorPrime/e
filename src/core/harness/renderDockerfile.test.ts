@@ -45,6 +45,18 @@ test('renderDockerfile: gives the non-root runtime user a writable home', () => 
   assert.ok(homeIdx !== -1 && skillsIdx !== -1 && homeIdx < skillsIdx);
 });
 
+test('renderDockerfile: hands the home back to the runtime user after the root build steps', () => {
+  const dockerfile = renderDockerfile(pi);
+  // Every build step runs as root under HOME=/home/node, so whatever an
+  // installer creates under `~` is root-owned; a harness that writes there at
+  // runtime (opencode's `~/.local/share/opencode/log`) otherwise dies on start.
+  const chownIdx = dockerfile.indexOf('RUN chown -R node:node /home/node');
+  assert.ok(chownIdx !== -1);
+  assert.ok(chownIdx > dockerfile.lastIndexOf('npx -y skills@latest'));
+  assert.ok(chownIdx > dockerfile.lastIndexOf('RUN pi install'));
+  assert.ok(chownIdx < dockerfile.lastIndexOf('USER node'));
+});
+
 test('renderDockerfile: no USER or HOME relocation when the harness needs root', () => {
   const dockerfile = renderDockerfile({
     label: 'Root-needing harness.',
@@ -53,6 +65,7 @@ test('renderDockerfile: no USER or HOME relocation when the harness needs root',
   });
   assert.doesNotMatch(dockerfile, /USER/);
   assert.doesNotMatch(dockerfile, /ENV HOME=/);
+  assert.doesNotMatch(dockerfile, /chown/);
   assert.match(dockerfile, /WORKDIR \/workspace/);
 });
 

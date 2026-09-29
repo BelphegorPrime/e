@@ -63,7 +63,7 @@ const TEMPLATE = `FROM {{{baseImage}}}
 {{#skillsBlock}}
 {{{.}}}
 {{/skillsBlock}}
-WORKDIR {{{workdir}}}{{#userLine}}{{{.}}}{{/userLine}}
+{{#ownerLine}}{{{.}}}{{/ownerLine}}WORKDIR {{{workdir}}}{{#userLine}}{{{.}}}{{/userLine}}
 `;
 
 /**
@@ -100,7 +100,11 @@ export const NODE_HOME = '/home/node';
  * (apk, npm, skills install) run as root; the final `USER` switches to the
  * runtime user (`node` by default, `root` per-harness override). The build-time
  * `ENV HOME` makes the skills CLI's `-g` installs land under the runtime
- * user's home, matching where each harness reads them at runtime.
+ * user's home, matching where each harness reads them at runtime - and leaves
+ * whatever they create there root-owned, so the home is handed back to the
+ * runtime user before the switch (#192: opencode writes its log under
+ * `~/.local/share` and dies on start otherwise). The derived agent image does
+ * the same for its COPY layers ({@link renderDerivedDockerfile}).
  */
 export function renderDockerfile(p: DockerfileParams): string {
   const collections = p.skillCollections ?? [];
@@ -119,6 +123,7 @@ export function renderDockerfile(p: DockerfileParams): string {
     skillsBlock,
     workdir: p.workdir ?? '/workspace',
     homeLine: nonRoot ? `ENV HOME=${NODE_HOME}\n` : '',
+    ownerLine: nonRoot ? `RUN chown -R node:node ${NODE_HOME}\n` : '',
     userLine: nonRoot ? `\nUSER node` : '',
   });
 }
