@@ -699,6 +699,30 @@ test('spawnReport: a push or PR warning is a warning, not a failure', () => {
   );
 });
 
+test('spawnReport: where unmerged sibling work went, and why the host stopped committing', () => {
+  const lines = spawnReport({
+    ran: true,
+    exitCode: 1,
+    branch: 'e/pi/fix-login-1',
+    siblingBranchesPushed: ['e/pi/docs-1'],
+    siblingPushWarnings: [
+      'could not push e/pi/tests-1 (sibling sib-001, not merged): no origin',
+    ],
+    mergeWarning: 'a merge-back conflict could not be abandoned (not uptodate)',
+  });
+  assert.deepEqual(lines.slice(0, 3), [
+    { level: 'info', text: 'Pushed unmerged sibling e/pi/docs-1.' },
+    {
+      level: 'warn',
+      text: 'Warning: could not push e/pi/tests-1 (sibling sib-001, not merged): no origin',
+    },
+    {
+      level: 'warn',
+      text: 'Warning: a merge-back conflict could not be abandoned (not uptodate)',
+    },
+  ]);
+});
+
 test('spawnReport: a sibling whose work landed is info, one that did not is a warning', () => {
   const lines = spawnReport({
     ran: true,

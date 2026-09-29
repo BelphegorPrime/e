@@ -210,9 +210,11 @@ function explain(record: SiblingRecord, merge: MergeBack): string[] {
         signal,
         '```',
         '',
-        'The host concludes the merge as a commit that also carries your current',
-        'work. Until then no other sibling can be merged. The host never resolves a',
-        'conflict for you; if your run ends first, it commits what it finds.',
+        'The host then concludes the merge as a commit that also carries your',
+        'current work. Until then no other sibling can be merged and you cannot',
+        'spawn another. The host never resolves a conflict for you: if your run',
+        "ends unresolved, the host abandons the merge and the sibling's branch",
+        'keeps its work.',
       ];
     case 'held':
       return [
@@ -225,7 +227,9 @@ function explain(record: SiblingRecord, merge: MergeBack): string[] {
         signal,
         '```',
         '',
-        'The host also retries when your run ends with exit code 0.',
+        'The host also retries once when your run ends with exit code 0. If it',
+        "still cannot merge then, it gives up and the sibling's branch keeps its",
+        'work.',
       ];
     case 'skipped':
     case 'failed':

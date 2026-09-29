@@ -39,6 +39,13 @@
  * (`POST /merge/<id>`, a file in the spool the tick takes) and is retried;
  * the parent run's end retries the held ones once more, after the parent's
  * own work is committed. A merge that lands frees every held one to retry.
+ *
+ * The host never concludes a merge it did not resolve (ADR-0016 section 12):
+ * before any host commit into the parent worktree a conflict still in
+ * progress is abandoned (`git merge --abort`) and its sibling skipped, and
+ * when the parent run ends nothing is left waiting on it - no sibling stays
+ * `input-required`. A skipped sibling's branch keeps its work; the parent run
+ * pushes it.
  */
 
 import {
@@ -154,6 +161,14 @@ export function siblingSummaryLine(outcome: SiblingOutcome): string {
 export const PARENT_ENDED_MESSAGE =
   'the parent run ended before the request was picked up';
 
+/** Why a merge-back conflict the parent run ended on is not merged. */
+export const UNRESOLVED_CONFLICT_MESSAGE =
+  'conflict left unresolved by the parent';
+
+/** Why a merge-back still held when the parent run ended is not merged. */
+export const HELD_AT_END_MESSAGE =
+  'files still in flight when the parent ended';
+
 /** Why a canceled sibling is not merged. */
 export const CANCEL_ACTOR = 'the parent';
 
@@ -205,31 +220,77 @@ export class SiblingConsumer {
   }
 
   /**
-   * The parent run has ended and committed its own work (or had nothing to):
-   * the last retry of every merge held over files in flight - the tree is
-   * quiet now, so each lands or conflicts - and a conflict the parent's own
-   * commit concluded (the commit with `MERGE_HEAD` set is the merge commit)
-   * is reported merged. A conflict still in progress stays as it is: only
-   * the parent could have resolved it.
+   * Abandons a merge-back conflict still in progress in the parent worktree
+   * (`git merge --abort`), so the host's next commit there cannot conclude it
+   * with the markers in (ADR-0016 section 12): the host never concludes a
+   * merge it did not resolve. Called before every host commit into the parent
+   * worktree. The conflicted sibling is skipped; its branch keeps its work.
+   *
+   * Returns why the worktree must **not** be committed, or `undefined` when it
+   * may: nothing was in progress, or the abort succeeded. git refuses the
+   * abort once the agent has edited a file the merge brought in cleanly - it
+   * cannot tell the parent's lines from the sibling's - and then the merge
+   * stays in progress and the host commits nothing.
    */
-  finish(): void {
+  abandonConflict(): string | undefined {
+    const { git, parent } = this.opts;
+    if (!git.mergeInProgress(parent.worktreePath)) return undefined;
+    let refusal: string | undefined;
+    try {
+      git.abortMerge(parent.worktreePath);
+    } catch (err) {
+      refusal = errorMessage(err);
+      log.warn(
+        `Could not abandon the merge-back in progress in ${parent.worktreePath}: ${refusal}`
+      );
+    }
+    for (const outcome of this.outcomes) {
+      if (outcome.merge.status !== 'conflict') continue;
+      this.skip(
+        outcome.id,
+        refusal === undefined
+          ? `${UNRESOLVED_CONFLICT_MESSAGE}; the host abandoned the merge`
+          : `${UNRESOLVED_CONFLICT_MESSAGE}; the host could not abandon the merge (${refusal}), so nothing after it was committed`
+      );
+    }
+    return refusal;
+  }
+
+  /**
+   * The parent run has ended; nobody is left to resolve or clear anything, so
+   * after this no sibling is waiting on the parent (`input-required`). A
+   * conflict in progress is abandoned first ({@link abandonConflict}), since
+   * every held merge would otherwise wait behind it again. A parent that
+   * exited 0 (`retryHeld`) then gives each held merge its last retry - the
+   * tree is quiet now, so each lands or conflicts, and a new conflict is
+   * abandoned in turn; a failed parent's tree is not checkpointed for a
+   * merge. What is still held is skipped. Returns what
+   * {@link abandonConflict} returns.
+   */
+  finish(opts: { retryHeld: boolean }): string | undefined {
+    let refusal = this.abandonConflict();
+    if (opts.retryHeld && refusal === undefined) {
+      for (const outcome of this.outcomes) {
+        if (outcome.merge.status === 'held') this.retry(outcome.id);
+      }
+      refusal = this.abandonConflict();
+    }
     for (const outcome of this.outcomes) {
       if (outcome.merge.status === 'held') {
-        this.retry(outcome.id);
-      } else if (
-        outcome.merge.status === 'conflict' &&
-        !this.opts.git.mergeInProgress(this.opts.parent.worktreePath)
-      ) {
-        const record = readRecord(this.opts.spoolDir, outcome.id);
-        if (record) {
-          this.publish(record, {
-            status: 'merged',
-            reason:
-              "concluded by the run's final commit with the files as the agent left them; check them for leftover conflict markers",
-          });
-        }
+        this.skip(outcome.id, HELD_AT_END_MESSAGE);
+      } else if (outcome.merge.status === 'conflict') {
+        // Reported as a conflict, yet nothing is in progress: concluded or
+        // aborted by someone other than the host. It did not land by the host.
+        this.skip(outcome.id, UNRESOLVED_CONFLICT_MESSAGE);
       }
     }
+    return refusal;
+  }
+
+  /** Re-publishes a waiting merge-back as skipped: the parent run will never act on it. */
+  private skip(id: string, reason: string): void {
+    const record = readRecord(this.opts.spoolDir, id);
+    if (record) this.publish(record, { status: 'skipped', reason });
   }
 
   private cancelWaiting(): void {

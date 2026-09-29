@@ -443,6 +443,16 @@ export function spawnReport(result: RunSpawnResult): ReportLine[] {
       text: siblingSummaryLine(sibling),
     });
   }
+  // Where a sibling's unmerged work went, since it is not in this branch.
+  for (const branch of result.siblingBranchesPushed ?? []) {
+    lines.push({ level: 'info', text: `Pushed unmerged sibling ${branch}.` });
+  }
+  for (const warning of result.siblingPushWarnings ?? []) {
+    lines.push({ level: 'warn', text: `Warning: ${warning}` });
+  }
+  if (result.mergeWarning) {
+    lines.push({ level: 'warn', text: `Warning: ${result.mergeWarning}` });
+  }
   if (result.pullRequestWarning) {
     lines.push({
       level: 'warn',

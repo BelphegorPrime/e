@@ -41,6 +41,7 @@ import {
   type SiblingOutcome,
 } from './runSiblings.js';
 import { reportChildRun, type ChildLauncher } from './childRun.js';
+import { mergeLanded } from './runMergeBack.js';
 import {
   brokerSidecarSpec,
   brokerSpoolDirFor,
@@ -227,7 +228,8 @@ export type LoopReason =
   | 'exhausted:total-timeout'
   | 'aborted:oom'
   | 'aborted:harness-exit'
-  | 'aborted:verify-broken';
+  | 'aborted:verify-broken'
+  | 'aborted:merge-unabandonable';
 
 /** What one attempt of the loop did. */
 export interface IterationOutcome {
@@ -260,6 +262,19 @@ export interface RunSpawnResult {
    * reached this run's worktree (the merge-back of ticket 07).
    */
   siblings?: SiblingOutcome[];
+  /**
+   * Branches of siblings whose work did not reach this run, pushed so it
+   * survives off this host (ADR-0016 section 12).
+   */
+  siblingBranchesPushed?: string[];
+  /** One per sibling branch that should have been pushed and could not be. */
+  siblingPushWarnings?: string[];
+  /**
+   * Set when a merge-back conflict could not be abandoned, so the host
+   * stopped committing this run's work (ADR-0016 section 12); the worktree
+   * is kept on disk instead.
+   */
+  mergeWarning?: string;
   /** The gate's verdict, for a run that declared one (ADR-0016). */
   verify?: VerifyOutcome;
   /**
@@ -348,6 +363,16 @@ export async function runSpawn(
   // The gate writes its own dependencies into the worktree, so once it has
   // run, what is left uncommitted there is the check's and not the run's.
   let gateRan = false;
+  // Why the host stopped committing: git refused to abandon a merge-back
+  // conflict in the worktree (the agent edited a file the merge brought in).
+  let mergeStuck: string | undefined;
+  // The host never concludes a merge it did not resolve (ADR-0016 section
+  // 12): before every commit of ours into the worktree, a conflict still in
+  // progress is abandoned. False once one could not be.
+  const mayCommit = (): boolean => {
+    mergeStuck ??= consumer?.abandonConflict();
+    return mergeStuck === undefined;
+  };
   // The run's total wall clock (ADR-0016). Hoisted so teardown can drop it on
   // every path out, including a throw: a live timer outlives the run.
   let loopTimer: ReturnType<typeof setTimeout> | undefined;
@@ -653,7 +678,7 @@ export async function runSpawn(
       // Nothing is fed forward - the run ends - so keeping it is not the same
       // act as using a half-state as input.
       if (killedBy) {
-        if (deps.git.isDirty(worktreePath)) {
+        if (deps.git.isDirty(worktreePath) && mayCommit()) {
           deps.git.commitAll(
             worktreePath,
             `e: timed-out attempt ${attempt} for ${branch}`
@@ -688,8 +713,15 @@ export async function runSpawn(
       }
 
       if (deps.git.isDirty(worktreePath)) {
-        // With a merge-back conflict still in progress this commit concludes
-        // it as the merge commit - with whatever the agent left in the files.
+        // Committing past a conflict git would not abandon would conclude it
+        // with the markers in; checking an uncommitted tree would judge work
+        // the branch does not hold. Neither is honest, so the run stops here.
+        if (!mayCommit()) {
+          outcome = 'aborted';
+          reason = 'aborted:merge-unabandonable';
+          if (gated) iterations.push({ attempt, harnessExitCode: exitCode });
+          break;
+        }
         deps.git.commitAll(worktreePath, `e: run output for ${branch}`);
         captured = true;
       }
@@ -750,9 +782,15 @@ export async function runSpawn(
     // The agent is done: stop taking sibling requests and wait for the
     // siblings in flight (each is merged back as it exits), so nothing of
     // theirs outlives the run's network.
+    // Then nothing is left waiting on the agent: a conflict is abandoned, a
+    // held merge gets its last retry (only from a tree the run committed),
+    // and what still did not land is skipped.
     if (consumer) {
       await consumer.stop();
       consumerStopped = true;
+      mergeStuck ??= consumer.finish({
+        retryHeld: exitCode === 0 && mergeStuck === undefined,
+      });
     }
 
     // The loop is over: drop the total timer, or it outlives the run and keeps
@@ -765,21 +803,16 @@ export async function runSpawn(
     let pushWarning: string | undefined;
     const canceled =
       exitCode === CANCELED_EXIT_CODE || params.abort?.aborted === true;
-    if (exitCode === 0) {
-      // The tree is quiet and committed: the last retry of every merge-back
-      // held over files in flight (ticket 07), before the branch is pushed so
-      // the merge commits travel with it. Each retry rewrites its report in
-      // the worktree, so what it left is committed too.
-      if (consumer) {
-        consumer.finish();
-        if (deps.git.isDirty(worktreePath)) {
-          deps.git.commitAll(
-            worktreePath,
-            `e: merge-back reports for ${branch}`
-          );
-          captured = true;
-        }
-      }
+    // `finish` rewrote the reports in the worktree; commit them before the
+    // push, with the merge commits of the last retries.
+    if (
+      consumer &&
+      exitCode === 0 &&
+      mergeStuck === undefined &&
+      deps.git.isDirty(worktreePath)
+    ) {
+      deps.git.commitAll(worktreePath, `e: merge-back reports for ${branch}`);
+      captured = true;
     }
     // The push no longer hangs on the harness's exit code (ADR-0016): an
     // exhausted run exits non-zero and its attempts are exactly what a human
@@ -798,13 +831,40 @@ export async function runSpawn(
       }
     }
 
+    // A sibling whose work did not reach this run keeps it only on its own
+    // branch, which nothing else pushes: a sibling never pushes itself. One
+    // that committed nothing has nothing beyond the parent and is left alone.
+    const siblingBranchesPushed: string[] = [];
+    const siblingPushWarnings: string[] = [];
+    if (consumer && !canceled) {
+      for (const sibling of consumer.outcomes) {
+        if (!sibling.branch || mergeLanded(sibling.merge)) continue;
+        if (!deps.git.hasCommitsBeyondBase(sibling.branch, branch)) continue;
+        try {
+          deps.git.push(sibling.branch);
+          siblingBranchesPushed.push(sibling.branch);
+        } catch (err) {
+          siblingPushWarnings.push(
+            `could not push ${sibling.branch} (sibling ${sibling.id}, not merged): ${errorMessage(err)}`
+          );
+        }
+      }
+    }
+
     // Open a PR/MR when a platform is configured and the branch was pushed.
     let pullRequestUrl: string | undefined;
     let pullRequestWarning: string | undefined;
     // A run that did not end verified has nothing to propose: the branch is
     // pushed so the attempts survive, and no PR claims they were accepted.
+    // Nor does a run that stopped committing: its branch lacks the work since.
     const gateFailed = gated && outcome !== 'verified';
-    if (params.gitPlatform && pushed && deps.pullRequest && !gateFailed) {
+    if (
+      params.gitPlatform &&
+      pushed &&
+      deps.pullRequest &&
+      !gateFailed &&
+      mergeStuck === undefined
+    ) {
       const log = deps.git.runLog(branch);
       const title =
         log.length > 0 ? log[0].subject : `e: run output for ${branch}`;
@@ -829,7 +889,15 @@ export async function runSpawn(
     if (gated && outcome !== 'verified') {
       exitCode =
         outcome === 'exhausted' ? EXHAUSTED_EXIT_CODE : ABORTED_EXIT_CODE;
+    } else if (mergeStuck !== undefined && exitCode === 0) {
+      // Ungated, the exit code is the harness's - but a 0 over work the host
+      // could not commit would repeat the silent success #157 removed.
+      exitCode = ABORTED_EXIT_CODE;
     }
+    const mergeWarning =
+      mergeStuck === undefined
+        ? undefined
+        : `a merge-back conflict could not be abandoned (${mergeStuck}); nothing of the run after it was committed, and the worktree is kept at ${worktreePath}`;
 
     report({
       status: 'done',
@@ -850,6 +918,9 @@ export async function runSpawn(
       pullRequestUrl,
       pullRequestWarning,
       ...(consumer ? { siblings: consumer.outcomes } : {}),
+      ...(siblingBranchesPushed.length > 0 ? { siblingBranchesPushed } : {}),
+      ...(siblingPushWarnings.length > 0 ? { siblingPushWarnings } : {}),
+      ...(mergeWarning !== undefined ? { mergeWarning } : {}),
       ...(verifyOutcome ? { verify: verifyOutcome } : {}),
       ...(gated ? { iterations, outcome, reason } : {}),
       ...(softTimeoutWarning ? { softTimeoutWarning } : {}),
@@ -870,10 +941,12 @@ export async function runSpawn(
       // A dirty worktree is normally uncommitted run work and must not be
       // discarded. Once the gate has run, it is the check's own install
       // (`node_modules`, `.venv`, `target/`) instead: the run's work was
-      // committed immediately before the check started, by construction.
+      // committed immediately before the check started, by construction -
+      // unless a conflict stopped the commits, and then it is the run's again.
       if (
         worktreePath &&
         !params.keepWorktree &&
+        mergeStuck === undefined &&
         (gateRan || !deps.git.isDirty(worktreePath))
       ) {
         deps.git.removeWorktree(worktreePath);

@@ -32,6 +32,7 @@ import {
   writeStatus,
 } from '../../sidecars/broker/contract/spool.js';
 import type { ChildLaunch, ChildLauncher } from './childRun.js';
+import type { MergeBack } from '../../sidecars/broker/contract/types.js';
 import { Env } from '../../shared/utils/env.js';
 import { DEFAULT_LOOP_CAPS } from '../../core/store/config.js';
 
@@ -1186,6 +1187,218 @@ test('a merge held until the run ends is retried after the output commit and bef
       ['commitAll', 'merge', 'merge', 'push']
     );
     assert.equal(git.pushed.length, 1);
+  });
+});
+
+/**
+ * One sibling, `e/researcher/look-1`, requested by the agent and finished
+ * while it still runs; the agent then waits until its merge-back reached
+ * `waitFor` and does `then` before it exits. For the run-end rules of
+ * ADR-0016 section 12.
+ */
+function oneSiblingRun(
+  worktreesDir: string,
+  runtime: FakeRuntime,
+  waitFor: MergeBack['status'],
+  then: () => void = () => {}
+): { spool: string; launch: ChildLauncher } {
+  const spool = path.join(
+    worktreesDir,
+    '.broker',
+    `e-demo-${slugify('Fix the flaky test')}-1`
+  );
+  const launch: ChildLauncher = l => {
+    writeStatus(spool, l.request.id, {
+      status: 'done',
+      branch: 'e/researcher/look-1',
+      exitCode: 0,
+      updatedAt: 't',
+    });
+    return { exited: Promise.resolve(0), kill: () => {} };
+  };
+  runtime.onRun = async () => {
+    writeRequest(spool, {
+      id: 'sib-001',
+      agent: 'researcher',
+      prompt: 'look',
+      requestedAt: 't',
+    });
+    while (readStatus(spool, 'sib-001')?.merge?.status !== waitFor) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    then();
+  };
+  return { spool, launch };
+}
+
+test('a conflict the agent leaves unresolved is aborted before the output commit: no marker is committed, the sibling is skipped and its branch pushed', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, git, runtime } = makeDeps({
+      git: new InMemoryGit({
+        merge: { 'e/researcher/look-1': { status: 'conflict', files: ['x'] } },
+      }),
+    });
+    // The markers are uncommitted work as far as `isDirty` can tell.
+    const { spool, launch } = oneSiblingRun(
+      worktreesDir,
+      runtime,
+      'conflict',
+      () => git.setDirty(true)
+    );
+    const result = await runSpawn(
+      { ...deps, sleep: yielding },
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        keepWorktree: true,
+        siblingHost: { launch, readiness: { attempts: 600, intervalMs: 1 } },
+      })
+    );
+    assert.equal(result.exitCode, 0);
+    // Abandoned first, then the output commit - which therefore is not the
+    // merge commit of a conflict nobody resolved.
+    const worktree = git.worktrees[0].path;
+    assert.deepEqual(git.aborted, [worktree]);
+    assert.deepEqual(
+      git.calls.filter(c => ['abortMerge', 'commitAll'].includes(c)),
+      ['abortMerge', 'commitAll']
+    );
+    assert.equal(result.siblings?.[0].merge.status, 'skipped');
+    assert.equal(readRecord(spool, 'sib-001')?.taskState, 'completed');
+    // Its work is only on its own branch, so the parent pushes that too.
+    assert.deepEqual(git.pushed, [result.branch, 'e/researcher/look-1']);
+    assert.deepEqual(result.siblingBranchesPushed, ['e/researcher/look-1']);
+    assert.equal(result.mergeWarning, undefined);
+  });
+});
+
+test('a conflict git refuses to abort stops the commits: the run aborts, the worktree is kept, no PR opens, the sibling branch is still pushed', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const pullRequest = new FakePullRequest();
+    const { deps, git, runtime } = makeDeps({
+      pullRequest,
+      git: new InMemoryGit({
+        merge: { 'e/researcher/look-1': { status: 'conflict', files: ['x'] } },
+        fail: { abortMerge: "error: Entry 'y' not uptodate. Cannot merge." },
+      }),
+    });
+    const { launch } = oneSiblingRun(worktreesDir, runtime, 'conflict', () =>
+      git.setDirty(true)
+    );
+    const result = await runSpawn(
+      { ...deps, sleep: yielding },
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        gitPlatform: 'github',
+        siblingHost: { launch, readiness: { attempts: 600, intervalMs: 1 } },
+      })
+    );
+    // An ungated run exits with the harness's 0 - except over work the host
+    // could not commit, which would be a silent success.
+    assert.equal(result.exitCode, 1);
+    assert.match(
+      result.mergeWarning ?? '',
+      /could not be abandoned.*not uptodate/
+    );
+    assert.match(result.mergeWarning ?? '', /worktree is kept at/);
+    assert.deepEqual(git.commits, []);
+    assert.deepEqual(git.removedWorktrees, []);
+    assert.deepEqual(pullRequest.specs, []);
+    // The spool is gone with the teardown; the result keeps the outcome.
+    const merge = result.siblings?.[0].merge;
+    assert.equal(merge?.status, 'skipped');
+    assert.match(merge?.reason ?? '', /could not abandon the merge/);
+    assert.ok(git.pushed.includes('e/researcher/look-1'));
+  });
+});
+
+test('a gated run whose conflict cannot be abandoned ends aborted:merge-unabandonable, before the check', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, git, runtime } = makeDeps({
+      git: new InMemoryGit({
+        merge: { 'e/researcher/look-1': { status: 'conflict', files: ['x'] } },
+        fail: { abortMerge: 'not uptodate' },
+      }),
+    });
+    const { launch } = oneSiblingRun(worktreesDir, runtime, 'conflict', () =>
+      git.setDirty(true)
+    );
+    const result = await runSpawn(
+      { ...deps, sleep: yielding },
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        keepWorktree: true,
+        verify: { command: 'npm test' },
+        siblingHost: { launch, readiness: { attempts: 600, intervalMs: 1 } },
+      })
+    );
+    assert.equal(result.outcome, 'aborted');
+    assert.equal(result.reason, 'aborted:merge-unabandonable');
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.verify, undefined);
+    assert.deepEqual(result.iterations, [{ attempt: 1, harnessExitCode: 0 }]);
+  });
+});
+
+test('a parent that exits non-zero leaves nothing waiting on it: a held merge is skipped, not retried into its uncommitted tree', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, git } = makeDeps({
+      runtime: new FakeRuntime(3),
+      git: new InMemoryGit({
+        merge: { 'e/researcher/look-1': { status: 'refused', files: ['a'] } },
+      }),
+    });
+    const { spool, launch } = oneSiblingRun(
+      worktreesDir,
+      deps.runtime as FakeRuntime,
+      'held'
+    );
+    const result = await runSpawn(
+      { ...deps, sleep: yielding },
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        keepWorktree: true,
+        siblingHost: { launch, readiness: { attempts: 600, intervalMs: 1 } },
+      })
+    );
+    assert.equal(result.exitCode, 3);
+    assert.equal(git.merges.length, 1);
+    const merge = readStatus(spool, 'sib-001')?.merge;
+    assert.equal(merge?.status, 'skipped');
+    assert.match(merge?.reason ?? '', /still in flight when the parent ended/);
+    assert.equal(readRecord(spool, 'sib-001')?.taskState, 'completed');
+  });
+});
+
+test('a sibling that committed nothing beyond the parent has no branch worth pushing', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const { deps, git, runtime } = makeDeps({
+      git: new InMemoryGit({
+        hasCommitsBeyondBase: false,
+        merge: { 'e/researcher/look-1': { status: 'conflict', files: ['x'] } },
+      }),
+    });
+    const { launch } = oneSiblingRun(worktreesDir, runtime, 'conflict');
+    const result = await runSpawn(
+      { ...deps, sleep: yielding },
+      makeParams({
+        worktreesDir,
+        broker: brokerPlan,
+        readiness: fastReadiness,
+        keepWorktree: true,
+        siblingHost: { launch, readiness: { attempts: 600, intervalMs: 1 } },
+      })
+    );
+    assert.equal(result.siblings?.[0].merge.status, 'skipped');
+    assert.deepEqual(git.pushed, []);
+    assert.equal(result.siblingBranchesPushed, undefined);
   });
 });
 

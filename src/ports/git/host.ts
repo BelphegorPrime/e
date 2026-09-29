@@ -262,6 +262,13 @@ export class HostGit implements Git {
     return this.refResolves('MERGE_HEAD', worktreePath);
   }
 
+  abortMerge(worktreePath: string): void {
+    this.run(
+      ['-C', worktreePath, 'merge', '--abort'],
+      `abort the merge in ${worktreePath}`
+    );
+  }
+
   /** Paths with unmerged index entries, NUL-separated so `core.quotePath` never mangles a name. */
   private conflictedFiles(worktreePath: string): string[] {
     return this.capture(

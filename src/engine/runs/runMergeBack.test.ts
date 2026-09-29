@@ -268,6 +268,14 @@ test('the report names the sibling, its branch, task and merge state, and tells 
   assert.match(conflict, /^- `docs\/b\.md`$/m);
   assert.match(conflict, /spawn-brother\.mjs --merge sib-001/);
   assert.match(conflict, /never resolves a\s+conflict for you/);
+  // The drop consequence, never the old promise to commit what it finds
+  // (ADR-0016 section 12).
+  assert.match(conflict, /you cannot\s+spawn another/);
+  assert.match(
+    conflict,
+    /if your run\s+ends unresolved, the host abandons the merge and the sibling's branch\s+keeps its work\./
+  );
+  assert.doesNotMatch(conflict, /commits what it finds/);
 
   const held = renderSiblingReport(record(), {
     status: 'held',
@@ -277,7 +285,8 @@ test('the report names the sibling, its branch, task and merge state, and tells 
   assert.match(held, /not started - in flight/);
   assert.match(held, /Files in the way:/);
   assert.match(held, /--merge sib-001/);
-  assert.match(held, /also retries when your run ends/);
+  assert.match(held, /also retries once when your run ends with exit code 0/);
+  assert.match(held, /it gives up and the sibling's branch keeps its\s+work\./);
 
   const skipped = renderSiblingReport(
     record({ status: 'failed', exitCode: 3, error: 'gave up' }),

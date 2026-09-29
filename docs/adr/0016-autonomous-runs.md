@@ -272,7 +272,7 @@ little memory. An OOM and our own timeout both end the container on 137 and are
 separable only host-side (_our timer fired_ or not), so the outcome carries the
 reason: `exhausted:iterations` / `exhausted:iteration-timeout` /
 `exhausted:total-timeout`, `aborted:oom` / `aborted:harness-exit` /
-`aborted:verify-broken`.
+`aborted:verify-broken` / `aborted:merge-unabandonable` (section 12).
 
 **A slot frees at terminal, after teardown**, not at the kill: commit, push and
 worktree removal are not milliseconds, and a run that is still pushing still holds
@@ -786,15 +786,35 @@ run-end `commitAll` concluded a merge with `MERGE_HEAD` still set, shipping
 markers" reason nobody autonomous will read. Four fixes, all unconditional, because
 each is a bug in its own right that autonomy merely makes unsurvivable:
 
-1. **The host never concludes a merge it did not resolve.** Before the run-end
-   commit, an in-progress merge is `git merge --abort`ed; the sibling becomes
-   `skipped` and the parent's own work is committed cleanly on top. ADR-0013 says
-   the host never resolves a conflict, and silently committing markers _is_
-   resolving it, badly.
+1. **The host never concludes a merge it did not resolve.** Before **every** host
+   commit into the parent worktree - each attempt's output commit, a timed-out
+   attempt's partial-work commit, the merge-back reports commit - an in-progress
+   merge is `git merge --abort`ed; the sibling becomes `skipped` and the parent's
+   own work is committed cleanly on top. "Run end" is not one commit: a gated
+   run commits once per attempt, and a sibling that exits after the agent can
+   still conflict before `finish()`. ADR-0013 says the host never resolves a
+   conflict, and silently committing markers _is_ resolving it, badly.
+
+   **The abort can fail**, and then the host commits nothing more. git refuses
+   `merge --abort` once the agent has edited a file the merge brought in
+   cleanly: it cannot tell the parent's lines from the sibling's. Committing
+   anyway would conclude the conflict; resetting hard would discard the parent's
+   work since; replaying the agent's files onto a reset tree would pass the
+   sibling's lines off as the parent's, with no merge parent. So the merge stays
+   in progress, the sibling is `skipped`, the worktree is kept on disk (even
+   after a gate ran), no PR opens, and the run exits `1` - a gated one as
+   `aborted:merge-unabandonable`, an ungated one too, whose harness `0` would
+   otherwise be a success over work the branch does not hold.
+
 2. **`input-required` may not outlive the run.** `taskStateOf` is unchanged -
    mapping `conflict`/`held` to `input-required` is accurate while the parent is
    alive, because the parent is the input source. The invariant is enforced in
-   `finish()`: **after a run ends, none of its siblings are `input-required`.**
+   `finish()`, which runs whatever the parent's exit code: **after a run ends,
+   none of its siblings are `input-required`.** A `conflict` becomes `skipped`
+   ("conflict left unresolved by the parent"), a `held` that will not land
+   becomes `skipped` ("files still in flight when the parent ended"). Only a
+   parent that exited `0` gives a held merge its last retry, because a retry
+   checkpoints the parent's tree and a failed parent's tree is not committed.
    This holds for interactive runs too, where a terminal `input-required` was
    always a task nobody was going to answer.
 3. **The report keeps its instruction and loses its false promise.** One report for
@@ -807,13 +827,16 @@ each is a bug in its own right that autonomy merely makes unsurvivable:
    on the assumption that a sibling's work arrives by merge-back; now that "not
    merged" is routine, that assumption is gone, and the work would survive only as
    a local branch on whichever host ran `e serve`. The sibling's run ends before the
-   parent decides its merge outcome, so the parent does it in `finish()`, for every
-   sibling whose final status is not `merged`/`up-to-date`. A failed sibling
+   parent decides its merge outcome, so the parent does it after `finish()`, beside
+   its own push and under the same cancel rule, for every sibling whose final
+   status is not `merged`/`up-to-date`; a failed push is a warning. A failed sibling
    committed nothing, so `hasCommitsBeyondBase` makes it a no-op.
 
 **The spawn-time refusal survives unchanged.** At spawn time the agent is mid-turn
 and may be one edit from resolving, so an auto-abort would destroy a resolution in
-progress; at run end the agent is out of moves and aborting costs nothing. An agent
+progress; at run end the agent is out of moves, and aborting costs at most its
+half-resolution of the conflicted files (or, where git refuses, nothing is
+committed at all - see fix 1). An agent
 that ignores the refusal forever merely ends the run, and the run-end abort catches
 it.
 

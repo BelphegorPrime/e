@@ -727,16 +727,17 @@ test('a merge refused over files in flight is held with the files named; the par
   });
 });
 
-test('finish (the parent run ended, its work committed): held merges get their last retry; a conflict the run commit concluded is merged', async () => {
+/** Every sibling's A2A task state, as `GET /status` would report it. */
+const taskStates = (spool: string, ids: string[]) =>
+  ids.map(id => readRecord(spool, id)?.taskState);
+
+test('finish: a held merge gets its last retry and lands; a conflict nobody resolved is aborted, never committed, and skipped', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
     const git = new InMemoryGit({
       merge: {
-        'e/researcher/look-1': { status: 'conflict', files: ['x'] },
-        'e/researcher/look-2': [
-          { status: 'refused', files: ['y'] },
-          { status: 'merged' },
-        ],
+        'e/researcher/look-1': { status: 'refused', files: ['y'] },
+        'e/researcher/look-2': { status: 'conflict', files: ['x'] },
       },
     });
     const c = consumer(spool, launcher, { git });
@@ -744,47 +745,101 @@ test('finish (the parent run ended, its work committed): held merges get their l
     request(spool, 'sib-002');
     c.tick();
     await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
-    // A refusal while a conflict is in progress reads as "in progress" first;
-    // script the conflict concluded by the run's own commit before sib-002.
-    git.commitAll(parentWorktree(spool), 'e: run output for e/demo/parent-1');
     await finishSibling(spool, launcher, 'sib-002', 'e/researcher/look-2');
-    assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'conflict');
-    assert.equal(readStatus(spool, 'sib-002')?.merge?.status, 'held');
+    assert.deepEqual(taskStates(spool, ['sib-001', 'sib-002']), [
+      'input-required',
+      'input-required',
+    ]);
+    // The held one's retry lands this time.
+    git.setMerge('e/researcher/look-1', { status: 'merged' });
 
-    c.finish();
-    // The conflict was concluded by the run's own commit, not by the parent's
-    // hand: merged, but said so, since the files may still carry markers.
-    const concluded = readStatus(spool, 'sib-001')?.merge;
-    assert.equal(concluded?.status, 'merged');
-    assert.match(concluded?.reason ?? '', /leftover conflict markers/);
-    assert.match(reportOf(spool, 'sib-001'), /^# Sibling sib-001: merged/);
-    assert.deepEqual(readStatus(spool, 'sib-002')?.merge, { status: 'merged' });
-    assert.deepEqual(
-      c.outcomes.map(o => [o.id, o.merge.status]),
-      [
-        ['sib-001', 'merged'],
-        ['sib-002', 'merged'],
-      ]
+    assert.equal(c.finish({ retryHeld: true }), undefined);
+
+    assert.deepEqual(readStatus(spool, 'sib-001')?.merge, { status: 'merged' });
+    // The markers never reach a commit: the merge is abandoned instead.
+    assert.deepEqual(git.aborted, [parentWorktree(spool)]);
+    assert.equal(git.mergeInProgress(parentWorktree(spool)), false);
+    assert.deepEqual(git.commits, []);
+    const abandoned = readStatus(spool, 'sib-002')?.merge;
+    assert.equal(abandoned?.status, 'skipped');
+    assert.match(abandoned?.reason ?? '', /conflict left unresolved/);
+    assert.match(reportOf(spool, 'sib-002'), /^# Sibling sib-002: skipped/);
+    assert.match(
+      reportOf(spool, 'sib-002'),
+      /branch `e\/researcher\/look-2` keeps whatever it committed/
     );
+    // Nobody is left to answer an input-required once the run has ended.
+    assert.deepEqual(taskStates(spool, ['sib-001', 'sib-002']), [
+      'completed',
+      'completed',
+    ]);
   });
 });
 
-test('finish leaves a conflict still in progress alone: only the parent could have resolved it', async () => {
+test('finish without a retry (the parent failed): a held merge is skipped, not left waiting on a parent that is gone', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new InMemoryGit({
+      merge: { 'e/researcher/look-1': { status: 'refused', files: ['y'] } },
+    });
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
+
+    assert.equal(c.finish({ retryHeld: false }), undefined);
+
+    // No retry: nothing of a failed parent's tree is checkpointed or merged.
+    assert.equal(git.merges.length, 1);
+    assert.deepEqual(git.commits, []);
+    const merge = readStatus(spool, 'sib-001')?.merge;
+    assert.equal(merge?.status, 'skipped');
+    assert.match(merge?.reason ?? '', /still in flight when the parent ended/);
+    assert.deepEqual(taskStates(spool, ['sib-001']), ['completed']);
+  });
+});
+
+test('finish: a conflict git refuses to abort stays in progress, is skipped all the same, and the reason is handed back so nothing is committed', async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const git = new InMemoryGit({
+      merge: { 'e/researcher/look-1': { status: 'conflict', files: ['x'] } },
+      fail: { abortMerge: "error: Entry 'y' not uptodate. Cannot merge." },
+    });
+    const c = consumer(spool, launcher, { git });
+    request(spool, 'sib-001');
+    c.tick();
+    await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
+
+    const unsafe = c.finish({ retryHeld: true });
+
+    assert.match(unsafe ?? '', /not uptodate/);
+    assert.equal(git.mergeInProgress(parentWorktree(spool)), true);
+    assert.deepEqual(git.commits, []);
+    const merge = readStatus(spool, 'sib-001')?.merge;
+    assert.equal(merge?.status, 'skipped');
+    assert.match(merge?.reason ?? '', /could not abandon the merge/);
+    assert.deepEqual(taskStates(spool, ['sib-001']), ['completed']);
+  });
+});
+
+test('abandonConflict: nothing in progress is nothing to do; a conflict in progress mid-run is aborted and its sibling skipped', async () => {
   await withSpool('parent', async spool => {
     const launcher = new FakeLauncher();
     const git = new InMemoryGit({
       merge: { 'e/researcher/look-1': { status: 'conflict', files: ['x'] } },
     });
     const c = consumer(spool, launcher, { git });
+    assert.equal(c.abandonConflict(), undefined);
+    assert.deepEqual(git.aborted, []);
+
     request(spool, 'sib-001');
     c.tick();
     await finishSibling(spool, launcher, 'sib-001', 'e/researcher/look-1');
-    c.finish();
-    assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'conflict');
-    assert.deepEqual(
-      git.commits.map(commit => commit.message),
-      []
-    );
+    assert.equal(c.abandonConflict(), undefined);
+
+    assert.deepEqual(git.aborted, [parentWorktree(spool)]);
+    assert.equal(readStatus(spool, 'sib-001')?.merge?.status, 'skipped');
   });
 });
 

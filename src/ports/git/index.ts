@@ -84,6 +84,16 @@ export interface Git {
    * `commitAll` there concludes it as the merge commit.
    */
   mergeInProgress(worktreePath: string): boolean;
+
+  /**
+   * Abandon the merge in progress in the worktree at `worktreePath`
+   * (`merge --abort`): the index and the merged-in files go back to the
+   * pre-merge commit, `MERGE_HEAD` is cleared, and edits to files the merge
+   * never touched are kept. Throws when git refuses - a file the merge brought
+   * in has been edited since - leaving the merge in progress and every file
+   * as it was.
+   */
+  abortMerge(worktreePath: string): void;
 }
 
 /** How a {@link Git.merge} ended. */

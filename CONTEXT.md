@@ -188,7 +188,7 @@ The iterate-until-green cycle a Run performs when a Verify is declared (ADR-0016
 _Avoid_: retry (a retry repeats an Iteration; the Loop starts a new one on new feedback)
 
 **Verdict**:
-How a Run ended, and since ADR-0016 the meaning of its exit code - the _Run's_, no longer the harness's, which is only a liveness signal (zero means the process finished, nothing more): `verified` (`0`), `aborted` (`1`), `exhausted` (`2`), `canceled` (`143`, ADR-0015). A bad end carries a reason - `exhausted:iterations` / `exhausted:iteration-timeout` / `exhausted:total-timeout`, `aborted:oom` / `aborted:harness-exit` / `aborted:verify-broken` - because an OOM kill and a timeout kill both end the container on 137 and are separable only host-side. Rendered into the PR body, qualified by **gate removals** (`{ files, lines }` of Verify-guarded paths deleted over the branch): a smell, never a gate.
+How a Run ended, and since ADR-0016 the meaning of its exit code - the _Run's_, no longer the harness's, which is only a liveness signal (zero means the process finished, nothing more): `verified` (`0`), `aborted` (`1`), `exhausted` (`2`), `canceled` (`143`, ADR-0015). A bad end carries a reason - `exhausted:iterations` / `exhausted:iteration-timeout` / `exhausted:total-timeout`, `aborted:oom` / `aborted:harness-exit` / `aborted:verify-broken` / `aborted:merge-unabandonable` - because an OOM kill and a timeout kill both end the container on 137 and are separable only host-side. Rendered into the PR body, qualified by **gate removals** (`{ files, lines }` of Verify-guarded paths deleted over the branch): a smell, never a gate.
 _Avoid_: status (the run state), result (the whole `RunSpawnResult`)
 
 **Cap**:

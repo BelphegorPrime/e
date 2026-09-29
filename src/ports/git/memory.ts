@@ -79,7 +79,10 @@ export interface InMemoryGitOptions {
   merge?: Record<string, ScriptedMerge | ScriptedMerge[]>;
   /** Messages that make a call throw instead of doing its work. */
   fail?: Partial<
-    Record<'addWorktree' | 'commitAll' | 'push' | 'listRunRefs', string>
+    Record<
+      'addWorktree' | 'commitAll' | 'push' | 'listRunRefs' | 'abortMerge',
+      string
+    >
   >;
   /**
    * Branches whose `addWorktree` reports a collision **without** being visible
@@ -103,6 +106,8 @@ export class InMemoryGit implements Git {
   readonly commits: { path: string; message: string }[] = [];
   /** Branches pushed, in order. */
   readonly pushed: string[] = [];
+  /** Worktree paths whose merge was aborted, in order. */
+  readonly aborted: string[] = [];
   /** Merges attempted, in order. */
   readonly merges: {
     worktreePath: string;
@@ -321,5 +326,14 @@ export class InMemoryGit implements Git {
       return true;
     }
     return this.merging.has(worktreePath);
+  }
+
+  abortMerge(worktreePath: string): void {
+    this.calls.push('abortMerge');
+    // A refusal leaves the merge in progress, like git's.
+    if (this.opts.fail?.abortMerge) throw new Error(this.opts.fail.abortMerge);
+    this.aborted.push(worktreePath);
+    this.merging.delete(worktreePath);
+    this.concluded.add(worktreePath);
   }
 }

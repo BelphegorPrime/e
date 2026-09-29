@@ -7,7 +7,10 @@ import path from 'node:path';
 import { HostGit } from '../../ports/git/host.js';
 import { git, initRepo } from '../../ports/git/host.testSupport.js';
 import { createBrokerApi } from '../../sidecars/broker/server/api.js';
-import { readStatus } from '../../sidecars/broker/contract/spool.js';
+import {
+  readRecord,
+  readStatus,
+} from '../../sidecars/broker/contract/spool.js';
 import type {
   MergeSignalAccepted,
   SiblingStatusPatch,
@@ -294,8 +297,8 @@ test("e2e: a parent spawns children through the real broker; a child spawns a si
       'utf8'
     );
 
-    // A second conflict the agent leaves unresolved when it exits: the run's
-    // own output commit concludes it, markers and all, and says so.
+    // A second conflict the agent leaves unresolved when it exits: the host
+    // abandons it rather than let its own output commit conclude it.
     fs.writeFileSync(path.join(worktree, 'base.txt'), 'parent version 3\n');
     const fourth = await post(`${brokerUrl}/spawn`, {
       agent: 'researcher',
@@ -375,24 +378,31 @@ test("e2e: a parent spawns children through the real broker; a child spawns a si
     );
     assert.equal(seenWhileRunning.resolvedBase, 'resolved: both versions\n');
 
-    // --- The conflict left open at exit: the output commit concluded it with
-    // the markers in place (visible, never chosen by the host), the status
-    // and report say so, and the rewritten report was committed too.
+    // --- The conflict left open at exit (ADR-0016 section 12): abandoned
+    // before the output commit, so no marker is ever committed; the parent's
+    // own version stands, the sibling is skipped, and nobody is left
+    // `input-required`.
     const left = status('sib-004');
-    assert.equal(left?.merge?.status, 'merged');
-    assert.match(left?.merge?.reason ?? '', /leftover conflict markers/);
-    const committedBase = fs.readFileSync(
-      path.join(parentWorktree, 'base.txt'),
-      'utf8'
+    assert.equal(left?.merge?.status, 'skipped');
+    assert.match(
+      left?.merge?.reason ?? '',
+      /conflict left unresolved by the parent; the host abandoned the merge/
     );
-    assert.match(committedBase, /^<<<<<<< /m);
-    assert.match(committedBase, /sibling version 2/);
+    assert.equal(readRecord(spool, 'sib-004')?.taskState, 'completed');
+    assert.equal(
+      fs.readFileSync(path.join(parentWorktree, 'base.txt'), 'utf8'),
+      'parent version 4\n'
+    );
+    assert.equal(
+      git(parentWorktree, 'log', '-G', '^<<<<<<< ', '--format=%s', 'HEAD'),
+      ''
+    );
     assert.match(
       fs.readFileSync(
         path.join(parentWorktree, 'e-runs', 'sib-004', 'report.md'),
         'utf8'
       ),
-      /^# Sibling sib-004: merged/
+      /^# Sibling sib-004: skipped/
     );
 
     // --- Depth two, never three: the child's request became a sibling of the
@@ -464,7 +474,8 @@ test("e2e: a parent spawns children through the real broker; a child spawns a si
     );
 
     // --- The run's end: every sibling accounted for, three merge commits on
-    // the parent branch, the worktree clean and kept.
+    // the parent branch (the abandoned one is not among them), the worktree
+    // clean and kept.
     assert.deepEqual(
       (result.siblings ?? []).map(s => [
         s.id,
@@ -476,12 +487,12 @@ test("e2e: a parent spawns children through the real broker; a child spawns a si
         ['sib-001', lookBranch, 'merged', 'e-runs/sib-001/report.md'],
         ['sib-002', docsBranch, 'merged', 'e-runs/sib-002/report.md'],
         ['sib-003', rewriteBranch, 'merged', 'e-runs/sib-003/report.md'],
-        ['sib-004', breakBranch, 'merged', 'e-runs/sib-004/report.md'],
+        ['sib-004', breakBranch, 'skipped', 'e-runs/sib-004/report.md'],
       ]
     );
     assert.equal(
       git(parentWorktree, 'rev-list', '--merges', '--count', 'HEAD'),
-      '4'
+      '3'
     );
     const subjects = git(parentWorktree, 'log', '--format=%s').split('\n');
     assert.ok(subjects.includes(`e: merge back ${lookBranch}`));
@@ -491,16 +502,13 @@ test("e2e: a parent spawns children through the real broker; a child spawns a si
         `e: merge back ${rewriteBranch} (conflict resolved in e/demo/${parentSlug}-1)`
       )
     );
-    // The run's output commit is the merge commit of the open conflict; the
-    // reports `finish` rewrote after it got their own commit before the push.
-    assert.deepEqual(subjects.slice(0, 2), [
-      `e: merge-back reports for e/demo/${parentSlug}-1`,
-      `e: run output for e/demo/${parentSlug}-1`,
-    ]);
+    // The run's output commit is an ordinary commit, not the merge commit of
+    // the open conflict: it carries the rewritten report, and `finish` found
+    // nothing left to rewrite.
+    assert.equal(subjects[0], `e: run output for e/demo/${parentSlug}-1`);
     assert.equal(
-      git(parentWorktree, 'log', '-1', '--format=%P', 'HEAD~1').split(' ')
-        .length,
-      2
+      git(parentWorktree, 'log', '-1', '--format=%P', 'HEAD').split(' ').length,
+      1
     );
     assert.equal(host.isDirty(parentWorktree), false);
     assert.equal(host.mergeInProgress(parentWorktree), false);
@@ -509,8 +517,16 @@ test("e2e: a parent spawns children through the real broker; a child spawns a si
       git(parentWorktree, 'ls-files', 'e-runs').split('\n').sort().join(','),
       'e-runs/sib-001/report.md,e-runs/sib-002/report.md,e-runs/sib-003/report.md,e-runs/sib-004/report.md'
     );
-    // No remote here: the push is a warning, the run itself succeeded.
+    // No remote here: the push is a warning, the run itself succeeded. The
+    // abandoned sibling's branch is pushed too - it is where its work lives.
     assert.match(result.pushWarning ?? '', /could not push/);
+    assert.equal(result.siblingPushWarnings?.length, 1);
+    assert.match(
+      result.siblingPushWarnings?.[0] ?? '',
+      new RegExp(
+        `could not push ${breakBranch} \\(sibling sib-004, not merged\\)`
+      )
+    );
     // The host's own HEAD (main) never moved.
     assert.equal(
       git(repo, 'log', '-1', '--format=%s', 'main'),

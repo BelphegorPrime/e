@@ -623,6 +623,69 @@ test('HostGit.mergeInProgress is true from a conflict until commitAll concludes 
   }
 });
 
+/** A parent worktree with a conflict in progress on base.txt and a clean merge-in of sibling.txt. */
+function seedConflict(): { repo: string; worktree: string; before: string } {
+  const { repo, worktree } = seedMergeRepo();
+  cutBranch(repo, sibling, {
+    files: { 'base.txt': 'sibling version\n', 'sibling.txt': 'from sibling\n' },
+    message: 'sibling edit',
+  });
+  fs.writeFileSync(path.join(worktree, 'base.txt'), 'parent version\n');
+  git(worktree, 'commit', '-q', '-am', 'parent edit');
+  const before = git(worktree, 'rev-parse', 'HEAD');
+  assert.equal(new HostGit().merge(worktree, sibling).status, 'conflict');
+  return { repo, worktree, before };
+}
+
+test('HostGit.abortMerge abandons the conflict and keeps edits to files the merge never touched', () => {
+  const { repo, worktree, before } = seedConflict();
+  try {
+    // The agent half-resolves the conflict and writes an unrelated file.
+    fs.writeFileSync(path.join(worktree, 'base.txt'), 'half resolved\n');
+    fs.writeFileSync(path.join(worktree, 'mine.txt'), 'parent work\n');
+
+    new HostGit().abortMerge(worktree);
+
+    assert.equal(mergeInProgress(worktree), false);
+    assert.equal(git(worktree, 'rev-parse', 'HEAD'), before);
+    // The conflicted file is back to the parent's version, markers and
+    // half-resolution gone; the merged-in file is gone; the parent's own file stays.
+    assert.equal(
+      fs.readFileSync(path.join(worktree, 'base.txt'), 'utf8'),
+      'parent version\n'
+    );
+    assert.equal(fs.existsSync(path.join(worktree, 'sibling.txt')), false);
+    assert.equal(
+      fs.readFileSync(path.join(worktree, 'mine.txt'), 'utf8'),
+      'parent work\n'
+    );
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.abortMerge throws, leaving the merge in progress, once a merged-in file was edited', () => {
+  const { repo, worktree } = seedConflict();
+  try {
+    // An edit on top of what the merge staged cleanly: git cannot tell the
+    // parent's lines from the sibling's, so it refuses to reset the file.
+    fs.writeFileSync(
+      path.join(worktree, 'sibling.txt'),
+      'from sibling\nand the parent\n'
+    );
+
+    assert.throws(() => new HostGit().abortMerge(worktree), /abort the merge/);
+
+    assert.equal(mergeInProgress(worktree), true);
+    assert.equal(
+      fs.readFileSync(path.join(worktree, 'sibling.txt'), 'utf8'),
+      'from sibling\nand the parent\n'
+    );
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('HostGit.merge throws, not "conflict", when a pre-merge-commit hook stops the merge', () => {
   const { repo, worktree } = seedMergeRepo();
   try {
