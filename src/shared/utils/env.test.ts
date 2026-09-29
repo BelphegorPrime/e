@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { Env, env } from './env.js';
+import { Env, env, type ProvenanceVars } from './env.js';
 
 const VARS = [
   'LOCAL_LLAMA_URL',
@@ -18,6 +18,9 @@ const VARS = [
   Env.A2A_TOKEN_VAR,
   Env.GITHUB_EVENT_NAME_VAR,
   Env.STORE_ENV_FILE_VAR,
+  Env.TRIGGER_VAR,
+  Env.EVENT_VAR,
+  Env.EVENT_URL_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -271,5 +274,53 @@ test('storeEnvFile is the trimmed E_STORE_ENV_FILE; a sibling keeps it, a run of
     env.withLedger('/x.json', carrying),
   ]) {
     assert.equal(Env.STORE_ENV_FILE_VAR in copy, false);
+  }
+});
+
+test('provenance markers: undefined when unset, trigger and event together, an error with one', () => {
+  for (const name of [Env.TRIGGER_VAR, Env.EVENT_VAR, Env.EVENT_URL_VAR]) {
+    delete process.env[name];
+  }
+  // Through a function: an assertion on `env.provenance` would narrow it.
+  const read = (): ProvenanceVars | undefined => env.provenance;
+  assert.equal(read(), undefined);
+  process.env[Env.TRIGGER_VAR] = 'nightly';
+  assert.throws(() => env.provenance, /Incomplete provenance markers/);
+  process.env[Env.EVENT_VAR] = 'cron:tick:20260918T0300Z';
+  assert.deepEqual(read(), {
+    trigger: 'nightly',
+    event: 'cron:tick:20260918T0300Z',
+  });
+  process.env[Env.EVENT_URL_VAR] = 'https://github.com/o/r/issues/1';
+  assert.equal(read()?.url, 'https://github.com/o/r/issues/1');
+  assert.deepEqual(
+    env.provenanceEnv({ trigger: 'nightly', event: 'cron:tick:1' }),
+    { [Env.TRIGGER_VAR]: 'nightly', [Env.EVENT_VAR]: 'cron:tick:1' }
+  );
+});
+
+test('provenance markers never reach a run of its own or a sibling from the ambient environment', () => {
+  const carrying = {
+    PATH: '/usr/bin',
+    [Env.TRIGGER_VAR]: 'nightly',
+    [Env.EVENT_VAR]: 'cron:tick:1',
+    [Env.EVENT_URL_VAR]: 'https://github.com/o/r',
+  };
+  for (const copy of [
+    env.withReport({ spoolDir: '/spool', id: 'a2a-001' }, carrying),
+    env.withLedger('/x.json', carrying),
+    env.withSibling(
+      {
+        parent: { worktreePath: '/wt', branch: 'e/demo/p-1' },
+        spoolDir: '/spool',
+        id: 'sib-001',
+      },
+      carrying
+    ),
+  ]) {
+    assert.equal(copy[Env.TRIGGER_VAR], undefined);
+    assert.equal(copy[Env.EVENT_VAR], undefined);
+    assert.equal(copy[Env.EVENT_URL_VAR], undefined);
+    assert.equal(copy.PATH, '/usr/bin');
   }
 });

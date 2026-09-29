@@ -62,6 +62,7 @@ import { imageTag } from '../../core/identity/imageTag.js';
 import { skillMountSpec } from '../../core/skill/index.js';
 import { skillDir } from '../../core/store/paths.js';
 import { EVENT_MOUNT_PATH } from '../../core/trigger/oneShot.js';
+import type { Provenance } from '../../core/trigger/provenance.js';
 import type { RunBase } from '../runs/runSpawn.js';
 
 /**
@@ -301,6 +302,12 @@ export interface SpawnFacts {
    * `/run/e/event.json` for the agent that wants the whole thing.
    */
   readonly eventFile?: string;
+  /**
+   * What started a triggered run, or the one its parent inherited (ADR-0016
+   * section 9): trailers on every commit, the trigger lines of the PR block.
+   * Absent for a manual run.
+   */
+  readonly provenance?: Readonly<Provenance>;
 }
 
 /** True when the positional prompt carries anything but whitespace. */

@@ -44,6 +44,11 @@ import { reportChildRun, type ChildLauncher } from './childRun.js';
 import { mergeLanded } from './runMergeBack.js';
 import { measureGateRemovals, type GateRemovals } from './gateRemovals.js';
 import { NO_LEDGER, type RunLedger } from '../queue/ledger.js';
+import {
+  withProvenance,
+  type Provenance,
+} from '../../core/trigger/provenance.js';
+import { pullRequestBody } from './pullRequestBody.js';
 import type { LedgerEntry } from '../queue/runsSpool.js';
 import {
   brokerSidecarSpec,
@@ -181,6 +186,13 @@ export interface RunSpawnParams {
    * Never together with `parent`, whose tip is a sibling's base.
    */
   base?: RunBase;
+  /**
+   * What started this run, for a triggered one and every sibling it spawns
+   * (ADR-0016 section 9): two trailers on every commit the host writes for
+   * it, and the trigger lines of the PR block. Already validated where the
+   * request was accepted; absent for a manual run, which gets no trailer.
+   */
+  provenance?: Provenance;
   /**
    * Present for a sibling run: where it reports its status (`running` with
    * its branch, then `done` or `failed`) - the parent's spool and its request
@@ -337,7 +349,12 @@ export interface RunSpawnResult {
  * its own branch (host-side, no agent involvement) and return the tip the
  * sibling branches from. A clean parent needs no commit; its tip is the base.
  */
-function checkpointParent(git: Git, parent: ParentRun, slug: string): string {
+function checkpointParent(
+  git: Git,
+  parent: ParentRun,
+  slug: string,
+  provenance: Provenance | undefined
+): string {
   // `commitAll` on a worktree with `MERGE_HEAD` set would conclude the
   // merge-back in progress there, markers and all: the parent has a conflict
   // to resolve and signal before it can spawn again.
@@ -350,7 +367,10 @@ function checkpointParent(git: Git, parent: ParentRun, slug: string): string {
     try {
       git.commitAll(
         parent.worktreePath,
-        `e: checkpoint ${parent.branch} before spawning ${slug}`
+        withProvenance(
+          `e: checkpoint ${parent.branch} before spawning ${slug}`,
+          provenance
+        )
       );
     } catch (err) {
       // Nothing of the sibling exists yet; the parent keeps its work (staged
@@ -423,6 +443,10 @@ export async function runSpawn(
   const report = (patch: Omit<SiblingStatusPatch, 'updatedAt'>): void =>
     reportChildRun(reportTo, patch);
   const ledger = params.ledger ?? NO_LEDGER;
+  // Every commit the host writes into this run's worktree carries its
+  // provenance (ADR-0016 section 9); a manual run's carries none.
+  const commit = (worktree: string, subject: string): void =>
+    deps.git.commitAll(worktree, withProvenance(subject, params.provenance));
   // How the run ended, for the ledger; written once teardown is over.
   let ledgerEnd: Partial<LedgerEntry> | undefined;
 
@@ -432,7 +456,7 @@ export async function runSpawn(
     // trigger's declared base - or, for a sibling, the parent worktree's tip
     // once its WIP is checkpointed there.
     const base = params.parent
-      ? checkpointParent(deps.git, params.parent, slug)
+      ? checkpointParent(deps.git, params.parent, slug, params.provenance)
       : (params.base?.sha ?? deps.git.headSha());
     const baseBranch =
       params.base?.branch ?? (deps.git.currentBranch() || 'main');
@@ -601,7 +625,13 @@ export async function runSpawn(
     if (brokerSpool && worktreePath) {
       consumer = new SiblingConsumer({
         spoolDir: brokerSpool,
-        parent: { worktreePath, branch, network, role },
+        parent: {
+          worktreePath,
+          branch,
+          network,
+          role,
+          provenance: params.provenance,
+        },
         maxSiblings,
         readiness: params.siblingHost?.readiness ?? DEFAULT_SIBLING_READINESS,
         passthroughArgs: params.siblingHost?.passthroughArgs,
@@ -728,10 +758,7 @@ export async function runSpawn(
       // act as using a half-state as input.
       if (killedBy) {
         if (deps.git.isDirty(worktreePath) && mayCommit()) {
-          deps.git.commitAll(
-            worktreePath,
-            `e: timed-out attempt ${attempt} for ${branch}`
-          );
+          commit(worktreePath, `e: timed-out attempt ${attempt} for ${branch}`);
           captured = true;
         }
         outcome = 'exhausted';
@@ -771,7 +798,7 @@ export async function runSpawn(
           if (gated) iterations.push({ attempt, harnessExitCode: exitCode });
           break;
         }
-        deps.git.commitAll(worktreePath, `e: run output for ${branch}`);
+        commit(worktreePath, `e: run output for ${branch}`);
         captured = true;
       }
 
@@ -860,7 +887,7 @@ export async function runSpawn(
       mergeStuck === undefined &&
       deps.git.isDirty(worktreePath)
     ) {
-      deps.git.commitAll(worktreePath, `e: merge-back reports for ${branch}`);
+      commit(worktreePath, `e: merge-back reports for ${branch}`);
       captured = true;
     }
 
@@ -941,7 +968,22 @@ export async function runSpawn(
           head: branch,
           base: baseBranch,
           title,
-          body: params.prompt,
+          body: pullRequestBody({
+            prompt: params.prompt,
+            harness: params.harness,
+            ...(params.provenance ? { provenance: params.provenance } : {}),
+            ...(gated
+              ? {
+                  verdict: {
+                    outcome,
+                    attempts: iterations.length,
+                    maxIterations,
+                    reason,
+                    ...(gateRemovals ? { gateRemovals } : {}),
+                  },
+                }
+              : {}),
+          }),
         });
       } catch (error) {
         pullRequestWarning = `could not open a ${params.gitPlatform} merge request for ${branch}: ${errorMessage(error)}`;

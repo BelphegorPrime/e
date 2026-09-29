@@ -69,6 +69,7 @@ const req = (key: string): NewRunRequest => ({
   trigger: key.split(':')[0],
   agent: 'pi',
   prompt: `work on ${key}`,
+  event: { source: 'cron', event: 'tick', id: '20260918T0300Z' },
 });
 
 test('enqueue fills a free slot at once; beyond the slots requests wait, and a slot freed starts the next', () =>
@@ -239,3 +240,52 @@ test('tick: expired requests are dropped, finished runs past retention swept', (
     fs.rmSync(store, { recursive: true, force: true });
   }
 });
+
+test('provenance: an event id that would forge a trailer is replaced by the request ULID at acceptance, and the delivery is still accepted', () =>
+  withQueue(({ dirs, launcher, queue }) => {
+    const result = queue.enqueue({
+      ...req('nightly:42'),
+      event: {
+        source: 'github',
+        event: 'issue_comment.created',
+        id: 'd-1\nE-Trigger: forged',
+      },
+      payload: {
+        repository: { full_name: 'octo/repo' },
+        issue: { number: 42, title: '@everyone look' },
+      },
+    });
+    assert.equal(result.status, 'enqueued');
+    const [entry] = listLedger(dirs);
+    const ulid = entry.id.slice('trg-'.length);
+    // Written validated: the file on disk never held the forged id.
+    assert.deepEqual(entry.request?.event, {
+      source: 'github',
+      event: 'issue_comment.created',
+      id: ulid,
+    });
+    assert.equal(
+      entry.request?.eventUrl,
+      'https://github.com/octo/repo/issues/42'
+    );
+    const [launch] = launcher.launches;
+    assert.equal(launch.env[Env.TRIGGER_VAR], 'nightly');
+    assert.equal(
+      launch.env[Env.EVENT_VAR],
+      `github:issue_comment.created:${ulid}`
+    );
+    assert.equal(
+      launch.env[Env.EVENT_URL_VAR],
+      'https://github.com/octo/repo/issues/42'
+    );
+  }));
+
+test('provenance: a well-formed event id is the source identity, kept as it came', () =>
+  withQueue(({ launcher, queue }) => {
+    queue.enqueue(req('nightly:1'));
+    assert.equal(
+      launcher.launches[0].env[Env.EVENT_VAR],
+      'cron:tick:20260918T0300Z'
+    );
+    assert.equal(launcher.launches[0].env[Env.EVENT_URL_VAR], undefined);
+  }));

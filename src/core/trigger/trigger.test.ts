@@ -160,3 +160,22 @@ test('parseTrigger: a home-store trigger with no repo has no target to run again
     parseTrigger(webhook, 'nightly', where, { repoLocal: true })
   );
 });
+
+test('parseTrigger: the directory name must be a value a commit trailer can hold', () => {
+  for (const name of [
+    'night ly',
+    'a:b',
+    'x\nE-Event: forged',
+    'x'.repeat(65),
+  ]) {
+    assert.throws(
+      () => parseTrigger(webhook, name, where),
+      /directory name must match/,
+      JSON.stringify(name)
+    );
+  }
+  assert.equal(
+    parseTrigger(webhook, 'fix-issues_v2.1', where).name,
+    'fix-issues_v2.1'
+  );
+});

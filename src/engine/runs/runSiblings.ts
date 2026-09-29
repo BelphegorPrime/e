@@ -85,6 +85,10 @@ import {
 } from './childRun.js';
 import type { ReadinessPolicy } from './runSidecars.js';
 import type { RunRole } from '../runRole.js';
+import {
+  provenanceStrings,
+  type Provenance,
+} from '../../core/trigger/provenance.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';
 /**
@@ -109,6 +113,8 @@ export interface SiblingConsumerOptions {
     /** The parent's private run network, absent in the shared egress namespace. */
     network?: string;
     role: RunRole;
+    /** The parent's provenance: its merge-back commits carry the trailers, and each sibling inherits them. */
+    provenance?: Provenance;
   };
   /** Fan-out bound: siblings in flight at once. */
   maxSiblings: number;
@@ -412,6 +418,11 @@ export class SiblingConsumer {
             spoolDir,
             id: request.id,
           }),
+          // Siblings inherit both trailers unchanged: the cause is the same,
+          // and a sibling whose merge conflicts never reaches the parent.
+          ...(parent.provenance
+            ? env.provenanceEnv(provenanceStrings(parent.provenance))
+            : {}),
           ...this.opts.passthroughEnv,
         },
         launch: this.opts.launch,

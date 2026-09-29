@@ -675,6 +675,18 @@ match; the delivery is still accepted, because a rejected one is lost for good.
 id and the validated event id, `runSpawn` receives them, and the commit-writing
 code knows no sanitisation at all.
 
+Source and event names are descriptive, not identities, so acceptance reduces
+them to `[A-Za-z0-9._-]` rather than replacing them (`Nightly agent` reads
+`Nightly-agent`); the colon is left to separate the three parts. One-shot is
+its own acceptance edge: it reads `GITHUB_WORKFLOW` and `GITHUB_RUN_ID` under
+the same rules and, outside a CI it knows, names the run
+`workflow:one-shot:<fresh ulid>`. A trigger's id reaches `E-Trigger` as its
+directory name, which the loader holds to `[A-Za-z0-9._-]{1,64}`. The values
+travel to the run's `e spawn` - and from a triggered parent to each sibling -
+as `E_TRIGGER`, `E_EVENT` and `E_EVENT_URL`, honoured only beside the host's
+own ledger or sibling markers, so a stale export never makes a manual spawn
+look machine-started.
+
 **The git port stays dumb** (ADR-0002): `commitAll(path, message)` is unchanged and
 a pure core helper composes `subject\n\n<trailers>`. Because the values are already
 validated, `git interpret-trailers` buys nothing and the rule stays unit-testable

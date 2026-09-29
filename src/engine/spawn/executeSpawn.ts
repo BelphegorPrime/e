@@ -380,6 +380,7 @@ async function executeSpawnWith(
       keepWorktree: facts.keepWorktree,
       worktreesDir: facts.worktreesDir,
       base: facts.base,
+      provenance: facts.provenance,
       ledger,
       role: facts.role,
       broker: plan.broker,

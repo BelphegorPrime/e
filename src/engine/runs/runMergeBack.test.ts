@@ -178,6 +178,66 @@ test("a conflict stays in progress with markers, holds the next sibling, and con
   }
 });
 
+test("a triggered parent's checkpoint, merge and conclusion commits all carry its trailers", () => {
+  const { repo, parent: plain } = seed();
+  try {
+    const parent = {
+      ...plain,
+      provenance: {
+        trigger: 'nightly',
+        event: { source: 'cron', event: 'tick', id: '20260918T0300Z' },
+      },
+    };
+    const trailers = 'E-Trigger: nightly\nE-Event: cron:tick:20260918T0300Z';
+    const host = new HostGit();
+    const first = { id: 'sib-001', branch: 'e/researcher/look-1' };
+    const second = { id: 'sib-002', branch: 'e/researcher/look-2' };
+    cutSibling(repo, parent.branch, first.branch, { 'a.txt': 'a\n' });
+    cutSibling(repo, parent.branch, second.branch, {
+      'base.txt': 'sibling version\n',
+    });
+    fs.writeFileSync(path.join(parent.worktreePath, 'wip.txt'), 'half\n');
+    assert.equal(mergeBackSibling(host, parent, first).status, 'merged');
+    fs.writeFileSync(path.join(parent.worktreePath, 'base.txt'), 'mine\n');
+    const conflict = mergeBackSibling(host, parent, second);
+    assert.equal(conflict.status, 'conflict');
+    fs.writeFileSync(path.join(parent.worktreePath, 'base.txt'), 'both\n');
+    assert.equal(
+      concludeMergeBack(host, parent, second, conflict).status,
+      'merged'
+    );
+    // Conclusion, checkpoint, merge, checkpoint: every commit e wrote.
+    const bodies = git(
+      parent.worktreePath,
+      'log',
+      '--first-parent',
+      '-4',
+      '--format=%(trailers:only,unfold)%x00'
+    )
+      .split('\0')
+      .map(b => b.trim())
+      .filter(b => b !== '');
+    assert.deepEqual(bodies, [trailers, trailers, trailers, trailers]);
+    assert.deepEqual(
+      git(
+        parent.worktreePath,
+        'log',
+        '--first-parent',
+        '-4',
+        '--format=%s'
+      ).split('\n'),
+      [
+        `${mergeMessage(second)} (conflict resolved in ${parent.branch})`,
+        checkpointMessage(parent, second),
+        mergeMessage(first),
+        checkpointMessage(parent, first),
+      ]
+    );
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('a sibling whose branch adds nothing is up-to-date', () => {
   const { repo, parent } = seed();
   try {

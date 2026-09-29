@@ -31,6 +31,7 @@ import {
 } from '../../sidecars/broker/contract/spool.js';
 import type { LoopCaps } from '../../core/store/config.js';
 import type { GateRemovals } from '../runs/gateRemovals.js';
+import type { ProvenanceEvent } from '../../core/trigger/provenance.js';
 
 /** `.e/runs/`, and its three parts. */
 export const RUNS_DIR = 'runs';
@@ -75,21 +76,27 @@ export function newRequestId(kind: 'trg' | 'man' = 'trg'): string {
   return `${kind}-${nextUlid()}`;
 }
 
+/** A bare ULID from the same factory: an id for what has no request, a one-shot run's event. */
+export function newUlid(): string {
+  return nextUlid();
+}
+
+/** The ULID a request id carries, what acceptance substitutes for an event id it refuses. */
+export function requestUlid(id: string): string {
+  return id.slice(id.indexOf('-') + 1);
+}
+
 const REQUEST_ID_RE = /^(trg|man)-[0-9A-HJKMNP-TV-Z]{26}$/;
 
 export function isRunRequestId(value: string): boolean {
   return REQUEST_ID_RE.test(value);
 }
 
-/** Where a triggered request came from, as a provenance trailer will name it. */
-export interface RequestEvent {
-  /** `github`, `cron`, ... */
-  source: string;
-  /** The provider's event name, or `tick`. */
-  event: string;
-  /** The source's own identity for this delivery (delivery id, scheduled tick). */
-  id: string;
-}
+/**
+ * Where a triggered request came from, as the `E-Event` trailer names it.
+ * Validated before the queue file is written (see {@link RunQueue.enqueue}).
+ */
+export type RequestEvent = ProvenanceEvent;
 
 /** A pending trigger request: everything a run needs, and nothing named yet. */
 export interface RunRequest {
@@ -107,6 +114,8 @@ export interface RunRequest {
   /** The trigger's field-wise `loop` override. */
   loop?: Partial<LoopCaps>;
   event?: RequestEvent;
+  /** The event's page, derived from validated identifiers at acceptance; for the PR block. */
+  eventUrl?: string;
   /** The event payload, inline: a sidecar file would end the one-rename claim. */
   payload?: unknown;
   enqueuedAt: string;

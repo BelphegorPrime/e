@@ -58,6 +58,17 @@ export class Env {
   static readonly LEDGER_FILE_VAR = 'E_LEDGER_FILE';
 
   /**
+   * Set together on an `e spawn` a triggered run started - by `e serve`'s
+   * queue, or a triggered run's sibling (ADR-0016 section 9): the trigger's
+   * id, the `E-Event` value and, optionally, the event's page. Every commit
+   * that run writes carries them as trailers. Validated where the request was
+   * accepted; stripped from a run of the user's own, which carries none.
+   */
+  static readonly TRIGGER_VAR = 'E_TRIGGER';
+  static readonly EVENT_VAR = 'E_EVENT';
+  static readonly EVENT_URL_VAR = 'E_EVENT_URL';
+
+  /**
    * The file an `e spawn` reads in place of its Store's `.env`: set by a
    * one-shot run (ADR-0016 section 13) on each sibling it starts, whose
    * `--dir` is the Base Store, so the sibling's secrets come from the same
@@ -93,6 +104,16 @@ export class Env {
    * against when `--event-name` is not given (ADR-0016 section 13).
    */
   static readonly GITHUB_EVENT_NAME_VAR = 'GITHUB_EVENT_NAME';
+
+  /**
+   * Set by GitHub Actions about the job itself: what a one-shot run's
+   * `E-Event` names (`workflow:<name>:<run id>`) and links in its PR block
+   * (ADR-0016 section 9). Validated where they are read into provenance.
+   */
+  static readonly GITHUB_WORKFLOW_VAR = 'GITHUB_WORKFLOW';
+  static readonly GITHUB_RUN_ID_VAR = 'GITHUB_RUN_ID';
+  static readonly GITHUB_SERVER_URL_VAR = 'GITHUB_SERVER_URL';
+  static readonly GITHUB_REPOSITORY_VAR = 'GITHUB_REPOSITORY';
 
   /** Host-published base URL of the local llama.cpp router (see `renderCompose`). */
   get localLlamaUrl(): string {
@@ -246,6 +267,7 @@ export class Env {
       Env.SPAWN_SIBLING_ID_VAR,
       Env.LEDGER_FILE_VAR,
       Env.STORE_ENV_FILE_VAR,
+      ...PROVENANCE_VARS,
     ]) {
       delete copy[name];
     }
@@ -262,6 +284,25 @@ export class Env {
   /** The file standing in for the Store's `.env` (see {@link Env.STORE_ENV_FILE_VAR}), or undefined. */
   get storeEnvFile(): string | undefined {
     return process.env[Env.STORE_ENV_FILE_VAR]?.trim() || undefined;
+  }
+
+  /** What GitHub Actions says about the running job (see {@link Env.GITHUB_WORKFLOW_VAR}); blank reads as unset. */
+  get githubWorkflowRun(): {
+    workflow?: string;
+    runId?: string;
+    serverUrl?: string;
+    repository?: string;
+  } {
+    const read = (name: string) => process.env[name]?.trim() || undefined;
+    const facts = {
+      workflow: read(Env.GITHUB_WORKFLOW_VAR),
+      runId: read(Env.GITHUB_RUN_ID_VAR),
+      serverUrl: read(Env.GITHUB_SERVER_URL_VAR),
+      repository: read(Env.GITHUB_REPOSITORY_VAR),
+    };
+    return Object.fromEntries(
+      Object.entries(facts).filter(([, value]) => value !== undefined)
+    );
   }
 
   /** The claimed ledger entry this `e spawn` reports into (see {@link Env.LEDGER_FILE_VAR}), or undefined. */
@@ -283,6 +324,33 @@ export class Env {
     delete copy[Env.SPAWN_REPORT_ID_VAR];
     copy[Env.LEDGER_FILE_VAR] = file;
     return copy;
+  }
+
+  /**
+   * The provenance markers (see {@link Env.TRIGGER_VAR}), unparsed; undefined
+   * when none is set. The trigger and the event come together or not at all.
+   */
+  get provenance(): ProvenanceVars | undefined {
+    const read = (name: string) => process.env[name]?.trim() || undefined;
+    const trigger = read(Env.TRIGGER_VAR);
+    const event = read(Env.EVENT_VAR);
+    const url = read(Env.EVENT_URL_VAR);
+    if (trigger === undefined && event === undefined) return undefined;
+    if (trigger === undefined || event === undefined) {
+      throw new Error(
+        `Incomplete provenance markers: ${Env.TRIGGER_VAR} and ${Env.EVENT_VAR} must both be set.`
+      );
+    }
+    return { trigger, event, ...(url !== undefined ? { url } : {}) };
+  }
+
+  /** The provenance markers for a child process's environment. */
+  provenanceEnv(vars: ProvenanceVars): Record<string, string> {
+    return {
+      [Env.TRIGGER_VAR]: vars.trigger,
+      [Env.EVENT_VAR]: vars.event,
+      ...(vars.url !== undefined ? { [Env.EVENT_URL_VAR]: vars.url } : {}),
+    };
   }
 
   /** The `E_A2A_TOKEN` bearer token for `e serve`'s A2A endpoint, or undefined when unset or blank. */
@@ -307,6 +375,9 @@ export class Env {
     delete copy[Env.SPAWN_REPORT_SPOOL_VAR];
     delete copy[Env.SPAWN_REPORT_ID_VAR];
     delete copy[Env.LEDGER_FILE_VAR];
+    // A sibling inherits its parent's provenance explicitly, never a stale
+    // marker from the environment around it.
+    for (const name of PROVENANCE_VARS) delete copy[name];
     copy[Env.SPAWN_ROLE_VAR] = 'child';
     copy[Env.SPAWN_PARENT_WORKTREE_VAR] = sibling.parent.worktreePath;
     copy[Env.SPAWN_PARENT_BRANCH_VAR] = sibling.parent.branch;
@@ -320,6 +391,19 @@ export class Env {
     return copy;
   }
 }
+
+/** The provenance markers as the environment carries them: the trigger, the `E-Event` value, the event's page. */
+export interface ProvenanceVars {
+  trigger: string;
+  event: string;
+  url?: string;
+}
+
+const PROVENANCE_VARS = [
+  Env.TRIGGER_VAR,
+  Env.EVENT_VAR,
+  Env.EVENT_URL_VAR,
+] as const;
 
 /** What the sibling markers describe: the parent run and where to report. */
 export interface SiblingSpawn {

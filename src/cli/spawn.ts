@@ -79,6 +79,12 @@ import {
 } from '../engine/runs/runSpawn.js';
 
 import { errorMessage } from '../shared/utils/errors.js';
+import {
+  provenanceFromStrings,
+  workflowEvent,
+  type Provenance,
+} from '../core/trigger/provenance.js';
+import { newUlid } from '../engine/queue/runsSpool.js';
 import { SPAWN_COMMAND, SPAWN_FLAGS } from '../shared/spawnArgs.js';
 /** How long a canceled `e spawn` may take to stop its container and tear down before it is exited by force. */
 const CANCEL_GRACE_MS = 60_000;
@@ -128,6 +134,11 @@ export interface TriggeredSpawn {
   store: BaseStore;
   /** `--env-file`, absolute: in one-shot it takes the place of `.e/.env`. */
   envFile?: string;
+  /**
+   * The trigger and the CI run that started it (ADR-0016 section 9): the
+   * one-shot edge accepts the event the way the queue accepts a delivery.
+   */
+  provenance: Provenance;
 }
 
 /**
@@ -327,7 +338,23 @@ export function gatherSpawnFacts(
     resources: config.resources,
     base: triggered?.base,
     eventFile: triggered?.eventFile,
+    provenance: triggered?.provenance ?? inheritedProvenance(),
   };
+}
+
+/**
+ * The provenance a triggered run handed this `e spawn`: `e serve`'s queue to
+ * a claimed request's run, a triggered parent to its sibling (ADR-0016
+ * section 9). Read only where the host set the markers alongside the ones
+ * that make this such a run, so a stale export in a human's shell never
+ * makes a manual spawn look machine-started.
+ */
+export function inheritedProvenance(): Provenance | undefined {
+  if (env.ledgerFile === undefined && env.sibling === undefined) {
+    return undefined;
+  }
+  const vars = env.provenance;
+  return vars ? provenanceFromStrings(vars) : undefined;
 }
 
 /**
@@ -388,6 +415,10 @@ export function resolveTriggerSpawn(
       : {}),
     ...(resolved.trigger.loop ? { loop: resolved.trigger.loop } : {}),
     store: materialized.store,
+    provenance: {
+      trigger: resolved.trigger.name,
+      ...workflowEvent(env.githubWorkflowRun, newUlid()),
+    },
     ...(opts.envFile !== undefined
       ? { envFile: path.resolve(opts.envFile) }
       : {}),

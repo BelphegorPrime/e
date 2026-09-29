@@ -28,6 +28,11 @@ import { env } from '../../shared/utils/env.js';
 import { log } from '../../shared/utils/log.js';
 import { errorMessage } from '../../shared/utils/errors.js';
 import {
+  acceptEvent,
+  provenanceStrings,
+  webhookEventUrl,
+} from '../../core/trigger/provenance.js';
+import {
   childCliArgs,
   spawnChildProcess,
   type ChildHandle,
@@ -43,14 +48,32 @@ import {
   listLedger,
   listQueue,
   newRequestId,
+  requestUlid,
   patchLedgerFile,
   readLedgerEntry,
   sweepLedger,
   type EnqueueResult,
   type LedgerEntry,
+  type RequestEvent,
   type RunRequest,
   type RunsDirs,
 } from './runsSpool.js';
+
+/**
+ * The provenance markers a claimed request's `e spawn` receives: the queue
+ * entry is the carrier, the child only reads it back. A request written
+ * before acceptance recorded an event has none.
+ */
+function provenanceEnv(request: RunRequest): Record<string, string> {
+  if (!request.event) return {};
+  return env.provenanceEnv(
+    provenanceStrings({
+      trigger: request.trigger,
+      event: request.event,
+      ...(request.eventUrl !== undefined ? { url: request.eventUrl } : {}),
+    })
+  );
+}
 
 /** The tick interval: one timer, so a slot is counted in exactly one place. */
 export const QUEUE_TICK_MS = 30 * 1000;
@@ -67,8 +90,15 @@ export interface RunQueueDeps {
   now?: () => Date;
 }
 
-/** What a caller hands {@link RunQueue.enqueue}: a request, less what the queue assigns. */
-export type NewRunRequest = Omit<RunRequest, 'id' | 'enqueuedAt'>;
+/**
+ * What a caller hands {@link RunQueue.enqueue}: a request, less what the
+ * queue assigns. The event is required - it is the run's provenance - and
+ * arrives as the source spelled it: acceptance validates it.
+ */
+export type NewRunRequest = Omit<
+  RunRequest,
+  'id' | 'enqueuedAt' | 'event' | 'eventUrl'
+> & { event: RequestEvent };
 
 export class RunQueue {
   private readonly children = new Map<string, ChildHandle>();
@@ -97,11 +127,23 @@ export class RunQueue {
   /**
    * Accepts a request - rejected when its key is pending or the queue is full,
    * and logged either way - and fills a free slot at once.
+   *
+   * **The acceptance boundary for provenance** (ADR-0016 section 9): the HMAC
+   * signs the body, not the headers, so an event id off its pattern is
+   * replaced by this request's own ULID here, before the file is written, and
+   * the event page is derived from validated identifiers only. Everything
+   * downstream - the child's environment, the commit trailers, the PR block -
+   * takes the values as they are.
    */
   enqueue(request: NewRunRequest): EnqueueResult {
+    const id = newRequestId('trg');
+    const event = acceptEvent(request.event, requestUlid(id));
+    const eventUrl = webhookEventUrl(event.source, request.payload);
     const full: RunRequest = {
       ...request,
-      id: newRequestId('trg'),
+      id,
+      event,
+      ...(eventUrl !== undefined ? { eventUrl } : {}),
       enqueuedAt: this.now().toISOString(),
     };
     const result = enqueueRequest(
@@ -201,7 +243,7 @@ export class RunQueue {
       child = (this.deps.launch ?? spawnChildProcess)({
         request: spawnRequest,
         args: childCliArgs(spawnRequest, this.deps.passthroughArgs),
-        env: env.withLedger(file),
+        env: { ...env.withLedger(file), ...provenanceEnv(request) },
         logFile: path.join(this.deps.dirs.logs, `${request.id}.log`),
         spoolDir: this.deps.dirs.live,
       });

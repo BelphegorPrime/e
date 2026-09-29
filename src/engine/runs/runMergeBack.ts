@@ -33,6 +33,10 @@ import type {
   SiblingRecord,
 } from '../../sidecars/broker/contract/types.js';
 import type { Git } from '../../ports/git/index.js';
+import {
+  withProvenance,
+  type Provenance,
+} from '../../core/trigger/provenance.js';
 
 import { errorMessage } from '../../shared/utils/errors.js';
 /** The parent run a sibling merges back into. */
@@ -41,6 +45,11 @@ export interface MergeBackParent {
   worktreePath: string;
   /** The parent's run branch, named in the checkpoint commit. */
   branch: string;
+  /**
+   * The parent run's provenance (ADR-0016 section 9): the checkpoint and
+   * merge commits arise in that run, so they carry its trailers.
+   */
+  provenance?: Provenance;
 }
 
 /** The sibling to fold in. */
@@ -93,7 +102,10 @@ export function mergeBackSibling(
   }
   if (git.isDirty(parent.worktreePath)) {
     try {
-      git.commitAll(parent.worktreePath, checkpointMessage(parent, sibling));
+      git.commitAll(
+        parent.worktreePath,
+        withProvenance(checkpointMessage(parent, sibling), parent.provenance)
+      );
     } catch (err) {
       return {
         status: 'held',
@@ -107,7 +119,7 @@ export function mergeBackSibling(
     outcome = git.merge(
       parent.worktreePath,
       sibling.branch,
-      mergeMessage(sibling)
+      withProvenance(mergeMessage(sibling), parent.provenance)
     );
   } catch (err) {
     const message = errorMessage(err);
@@ -164,7 +176,10 @@ export function concludeMergeBack(
   try {
     git.commitAll(
       parent.worktreePath,
-      `${mergeMessage(sibling)} (conflict resolved in ${parent.branch})`
+      withProvenance(
+        `${mergeMessage(sibling)} (conflict resolved in ${parent.branch})`,
+        parent.provenance
+      )
     );
     return { status: 'merged' };
   } catch (err) {

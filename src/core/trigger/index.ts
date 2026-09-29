@@ -1,4 +1,5 @@
 import type { LoopCaps } from '../store/config.js';
+import { TRIGGER_NAME_PATTERN } from './provenance.js';
 
 /**
  * The **Trigger** (ADR-0016): a named Store entity at
@@ -106,6 +107,16 @@ export function parseTrigger(
   context: TriggerContext = {}
 ): Trigger {
   const p = (raw ?? {}) as Record<string, unknown>;
+
+  // The id is written into every commit of the runs it starts (`E-Trigger`,
+  // ADR-0016 section 9), so it must be a value a trailer can hold.
+  if (!TRIGGER_NAME_PATTERN.test(name)) {
+    invalid(
+      name,
+      where,
+      `the directory name must match ${TRIGGER_NAME_PATTERN}: it is the trigger's id, written into the commits of its runs`
+    );
+  }
 
   if (typeof p.agent !== 'string' || p.agent === '') {
     // No fallback to `defaultHarness`: that default is a convenience for a

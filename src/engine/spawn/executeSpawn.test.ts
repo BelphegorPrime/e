@@ -514,6 +514,29 @@ test('one-shot: the declared base and the payload mount reach the run, outside t
   });
 });
 
+test("a triggered run's provenance reaches its commits as trailers", async () => {
+  await withDemoStore(async root => {
+    const git = new InMemoryGit();
+    git.setDirty(true);
+    const f = facts({
+      root,
+      provenance: {
+        trigger: 'nightly',
+        event: { source: 'cron', event: 'tick', id: '20260918T0300Z' },
+      },
+    });
+    await executeSpawn(f, planSpawn(f), {
+      git,
+      runtime: new RecordingRuntime(),
+      scratch: new RunScratch(),
+    });
+    assert.match(
+      git.commits[0]?.message ?? '',
+      /\n\nE-Trigger: nightly\nE-Event: cron:tick:20260918T0300Z$/
+    );
+  });
+});
+
 test('does not attach the agent to a Compose network when the stack is present', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e-spawn-net-'));
   try {

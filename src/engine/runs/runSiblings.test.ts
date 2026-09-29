@@ -417,6 +417,43 @@ test('the launched sibling inherits the passthrough arguments and environment', 
   });
 });
 
+test("a triggered parent's sibling inherits both provenance markers unchanged; a manual parent's gets none, stale ones dropped", async () => {
+  await withSpool('parent', async spool => {
+    const launcher = new FakeLauncher();
+    const c = consumer(spool, launcher, {
+      parent: {
+        worktreePath: parentWorktree(spool),
+        branch: 'e/demo/parent-1',
+        role: 'parent',
+        provenance: {
+          trigger: 'nightly',
+          event: { source: 'cron', event: 'tick', id: '20260918T0300Z' },
+        },
+      },
+    });
+    request(spool, 'sib-001');
+    c.tick();
+    const [launch] = launcher.launches;
+    assert.equal(launch.env[Env.TRIGGER_VAR], 'nightly');
+    assert.equal(launch.env[Env.EVENT_VAR], 'cron:tick:20260918T0300Z');
+    assert.equal(launch.env[Env.EVENT_URL_VAR], undefined);
+  });
+  const stale = process.env[Env.TRIGGER_VAR];
+  process.env[Env.TRIGGER_VAR] = 'stale';
+  try {
+    await withSpool('parent', async spool => {
+      const launcher = new FakeLauncher();
+      const c = consumer(spool, launcher);
+      request(spool, 'sib-001');
+      c.tick();
+      assert.equal(launcher.launches[0].env[Env.TRIGGER_VAR], undefined);
+    });
+  } finally {
+    if (stale === undefined) delete process.env[Env.TRIGGER_VAR];
+    else process.env[Env.TRIGGER_VAR] = stale;
+  }
+});
+
 test('logTail: the last lines of a log, joined; empty for a missing or empty file', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-logtail-'));
   try {

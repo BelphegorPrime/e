@@ -333,7 +333,7 @@ export class InMemoryGit implements Git {
       this.branches.set(branch, sha);
       (this.logs[branch] ??= [...this.defaultLog]).unshift({
         sha,
-        subject: message,
+        subject: message.split('\n')[0],
         committerDate: '2026-01-01T00:00:00+00:00',
       });
     }

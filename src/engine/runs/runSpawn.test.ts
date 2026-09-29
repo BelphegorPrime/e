@@ -2225,3 +2225,121 @@ test('runSpawn: a sibling is never gated, so nothing is measured for the report 
     );
   });
 });
+
+// --- Provenance in git (ADR-0016 section 9) ------------------------------------
+
+const nightly = {
+  trigger: 'nightly',
+  event: {
+    source: 'github',
+    event: 'issue_comment.created',
+    id: '8e9a1c2d-4f00',
+  },
+  url: 'https://github.com/octo/repo/issues/42',
+};
+const TRAILERS =
+  '\n\nE-Trigger: nightly\nE-Event: github:issue_comment.created:8e9a1c2d-4f00';
+
+test('provenance: every commit of a triggered run carries both trailers; the PR keeps its title and gains the block', async () => {
+  const pullRequest = new FakePullRequest();
+  const { deps, git } = makeDeps({ pullRequest });
+  git.setDirty(true);
+  const result = await runSpawn(
+    deps,
+    makeParams({
+      gitPlatform: 'github',
+      provenance: nightly,
+      verify: { command: 'npm test' },
+    })
+  );
+  assert.deepEqual(
+    git.commits.map(c => c.message),
+    [`e: run output for ${result.branch}${TRAILERS}`]
+  );
+  const spec = pullRequest.specs[0];
+  // The title is the subject line, never the trailers.
+  assert.equal(spec.title, `e: run output for ${result.branch}`);
+  assert.equal(
+    spec.body,
+    [
+      'Trigger: nightly · github:issue_comment.created',
+      'Event: https://github.com/octo/repo/issues/42',
+      `Harness: ${harness.name} ${harness.version}`,
+      `Verdict: verified (1/${DEFAULT_LOOP_CAPS.maxIterations} iterations)`,
+      'Autonomous run - not reviewed by a human.',
+      '',
+      '---',
+      '',
+      'Fix the flaky test',
+    ].join('\n')
+  );
+});
+
+test('provenance: a manual run with verify renders the verdict and unreviewed lines, no trigger lines, and writes no trailer', async () => {
+  const pullRequest = new FakePullRequest();
+  const { deps, git } = makeDeps({ pullRequest });
+  git.setDirty(true);
+  const result = await runSpawn(
+    deps,
+    makeParams({ gitPlatform: 'github', verify: { command: 'npm test' } })
+  );
+  assert.deepEqual(
+    git.commits.map(c => c.message),
+    [`e: run output for ${result.branch}`]
+  );
+  const body = pullRequest.specs[0].body;
+  assert.match(body, /^Verdict: verified \(1\/\d+ iterations\)$/m);
+  assert.match(body, /^Autonomous run - not reviewed by a human\.$/m);
+  assert.doesNotMatch(body, /Trigger:|Event:|E-Trigger/);
+});
+
+test(
+  'provenance: a timed-out attempt commit carries the trailers too',
+  { timeout: 5000 },
+  async () => {
+    const { deps, git, runtime } = makeDeps({ runtime: new FakeRuntime(137) });
+    hangingAgent(runtime, git);
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        provenance: nightly,
+        verify: { command: 'npm test' },
+        loop: { ...DEFAULT_LOOP_CAPS, iterationTimeoutMs: 20 },
+      })
+    );
+    assert.deepEqual(
+      git.commits.map(c => c.message),
+      [`e: timed-out attempt 1 for ${result.branch}${TRAILERS}`]
+    );
+  }
+);
+
+test("provenance: a sibling's checkpoint of its parent and its own commits carry the parent's trailers unchanged", async () => {
+  await withParentWorktree(async (parentWorktree, worktreesDir) => {
+    const { deps, git } = makeDeps();
+    git.setDirty(true);
+    const spool = path.join(worktreesDir, 'spool');
+    ensureSpool(spool);
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        role: 'child',
+        provenance: nightly,
+        parent: {
+          worktreePath: parentWorktree,
+          branch: 'e/demo/parent-1',
+          artifacts: [],
+        },
+        sibling: { spoolDir: spool, id: 'sib-001' },
+      })
+    );
+    assert.deepEqual(
+      git.commits.map(c => c.message),
+      [
+        `e: checkpoint e/demo/parent-1 before spawning fix-flaky-test${TRAILERS}`,
+        `e: run output for ${result.branch}${TRAILERS}`,
+      ]
+    );
+  });
+});

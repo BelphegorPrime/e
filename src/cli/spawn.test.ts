@@ -10,6 +10,7 @@ import {
   registerSpawnCommand,
   resolveRemoteTarget,
   resolveTriggerSpawn,
+  inheritedProvenance,
   runSpawnCommand,
   spawnReport,
   type SpawnCommandOptions,
@@ -52,6 +53,14 @@ const MARKERS = [
   Env.WORKTREES_DIR_VAR,
   Env.GITHUB_EVENT_NAME_VAR,
   Env.STORE_ENV_FILE_VAR,
+  Env.LEDGER_FILE_VAR,
+  Env.TRIGGER_VAR,
+  Env.EVENT_VAR,
+  Env.EVENT_URL_VAR,
+  Env.GITHUB_WORKFLOW_VAR,
+  Env.GITHUB_RUN_ID_VAR,
+  Env.GITHUB_SERVER_URL_VAR,
+  Env.GITHUB_REPOSITORY_VAR,
 ] as const;
 let saved: Record<string, string | undefined>;
 
@@ -1061,7 +1070,8 @@ test('--trigger: the declaration supplies agent, prompt, name, base, payload and
       const out = triggered(root, triggerGit(root, labeledTrigger), scratch, {
         event,
       });
-      const { store, ...rest } = out;
+      const { store, provenance, ...rest } = out;
+      assert.equal(provenance.trigger, 'fix');
       assert.deepEqual(rest, {
         agent: 'claudeCode',
         prompt: 'Fix issue #42.',
@@ -1496,4 +1506,76 @@ test('E_STORE_ENV_FILE stands in for .e/.env in any spawn that carries it', () =
       /E_STORE_ENV_FILE names .*stand-in\.env, which does not exist/
     );
   });
+});
+
+test('--trigger: a one-shot run in GitHub Actions is provenanced by its workflow run, and the facts carry it', () => {
+  withStore(root => {
+    process.env[Env.GITHUB_WORKFLOW_VAR] = 'Nightly agent';
+    process.env[Env.GITHUB_RUN_ID_VAR] = '10987654321';
+    process.env[Env.GITHUB_SERVER_URL_VAR] = 'https://github.com';
+    process.env[Env.GITHUB_REPOSITORY_VAR] = 'octo/repo';
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(root, triggerGit(root, nightlyTrigger), scratch);
+      const expected = {
+        trigger: 'fix',
+        event: {
+          source: 'workflow',
+          event: 'Nightly-agent',
+          id: '10987654321',
+        },
+        url: 'https://github.com/octo/repo/actions/runs/10987654321',
+      };
+      assert.deepEqual(out.provenance, expected);
+      assert.deepEqual(triggeredFacts(root, out).provenance, expected);
+    } finally {
+      scratch.dispose();
+    }
+  });
+});
+
+test('--trigger: a run id that would forge a trailer is replaced by a fresh ULID at the one-shot edge', () => {
+  withStore(root => {
+    process.env[Env.GITHUB_RUN_ID_VAR] = '1\nE-Trigger: forged';
+    const scratch = new RunScratch();
+    try {
+      const out = triggered(root, triggerGit(root, nightlyTrigger), scratch);
+      assert.equal(out.provenance.event.event, 'one-shot');
+      assert.match(out.provenance.event.id, /^[0-9A-HJKMNP-TV-Z]{26}$/);
+      assert.equal(out.provenance.url, undefined);
+    } finally {
+      scratch.dispose();
+    }
+  });
+});
+
+test('a manual spawn carries no provenance, even with stale markers in the shell', () => {
+  withStore(root => {
+    process.env[Env.TRIGGER_VAR] = 'nightly';
+    process.env[Env.EVENT_VAR] = 'cron:tick:20260918T0300Z';
+    assert.equal(inheritedProvenance(), undefined);
+    assert.equal(gather(root, 'claudeCode', ['x']).provenance, undefined);
+  });
+});
+
+test("a queued run's spawn and a sibling's read the provenance their host handed them", () => {
+  process.env[Env.TRIGGER_VAR] = 'nightly';
+  process.env[Env.EVENT_VAR] = 'github:issues.labeled:d-1';
+  process.env[Env.EVENT_URL_VAR] = 'https://github.com/octo/repo/issues/42';
+  process.env[Env.LEDGER_FILE_VAR] = '/s/.e/runs/live/trg-x.json';
+  const expected = {
+    trigger: 'nightly',
+    event: { source: 'github', event: 'issues.labeled', id: 'd-1' },
+    url: 'https://github.com/octo/repo/issues/42',
+  };
+  assert.deepEqual(inheritedProvenance(), expected);
+  delete process.env[Env.LEDGER_FILE_VAR];
+  process.env[Env.SPAWN_PARENT_WORKTREE_VAR] = '/wt/parent';
+  process.env[Env.SPAWN_PARENT_BRANCH_VAR] = 'e/demo/parent-1';
+  process.env[Env.SPAWN_SPOOL_VAR] = '/wt/.broker/p';
+  process.env[Env.SPAWN_SIBLING_ID_VAR] = 'sib-001';
+  assert.deepEqual(inheritedProvenance(), expected);
+  // A broken handover fails the run rather than write a trailer nobody vouched for.
+  process.env[Env.EVENT_VAR] = 'github:issues';
+  assert.throws(() => inheritedProvenance(), /Malformed provenance/);
 });
