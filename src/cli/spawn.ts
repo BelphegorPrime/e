@@ -63,7 +63,7 @@ import {
   oneShotStoreRoot,
   type BaseStore,
 } from '../engine/spawn/baseStore.js';
-import { NO_LEDGER } from '../engine/queue/ledger.js';
+import { claimedBase, NO_LEDGER } from '../engine/queue/ledger.js';
 import { localStack } from '../ports/runtime/stack.js';
 
 import { log } from '../shared/utils/log.js';
@@ -325,7 +325,8 @@ export function gatherSpawnFacts(
     // A trigger may move `loop` field-wise, and nothing else (ADR-0016).
     loop: triggered?.loop ? { ...config.loop, ...triggered.loop } : config.loop,
     resources: config.resources,
-    base: triggered?.base,
+    // One-shot resolves its own; a queued run's was resolved by `serve`.
+    base: triggered?.base ?? claimedBase(),
     eventFile: triggered?.eventFile,
     provenance: triggered?.provenance ?? inheritedProvenance(),
   };

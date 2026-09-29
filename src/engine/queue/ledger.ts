@@ -18,10 +18,12 @@ import { errorMessage } from '../../shared/utils/errors.js';
 import {
   newRequestId,
   patchLedgerFile,
+  readLedgerFile,
   runsDirs,
   writeLedgerEntry,
   type LedgerEntry,
 } from './runsSpool.js';
+import type { RunBase } from '../runs/runSpawn.js';
 
 /** A run's handle on its ledger entry. */
 export interface RunLedger {
@@ -71,4 +73,30 @@ export function openRunLedger(opts: {
       }
     },
   };
+}
+
+/**
+ * The base `serve` resolved when it claimed this run (ADR-0016 section 7:
+ * the base rule is applied before a child exists): what a queued run's
+ * `e spawn` cuts from. Undefined for any other spawn, and for a claim made
+ * without the rule (no base recorded). A base recorded but not whole throws:
+ * falling back to the checkout would bypass the rule, so the run fails before
+ * it has a branch, and `serve` makes it a dead request.
+ */
+export function claimedBase(
+  file: string | undefined = env.ledgerFile
+): RunBase | undefined {
+  if (file === undefined) return undefined;
+  const base = readLedgerFile(file)?.base as Partial<RunBase> | undefined;
+  if (base === undefined) return undefined;
+  if (
+    typeof base.ref !== 'string' ||
+    typeof base.sha !== 'string' ||
+    typeof base.branch !== 'string'
+  ) {
+    throw new Error(
+      `The ledger entry ${file} records a base that is not whole; refusing to cut from anywhere else`
+    );
+  }
+  return { ref: base.ref, sha: base.sha, branch: base.branch };
 }

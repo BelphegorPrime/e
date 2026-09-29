@@ -10,6 +10,13 @@ import {
   type TriggerListItem,
 } from '../../core/trigger/listing.js';
 import { eBaseDir, triggersBaseDir } from '../../core/store/paths.js';
+import { readConfig } from '../../core/store/config.js';
+import { redrive } from '../../engine/queue/redrive.js';
+import {
+  listDead,
+  runsDirs,
+  type DeadRequest,
+} from '../../engine/queue/runsSpool.js';
 import { log } from '../../shared/utils/log.js';
 import type { ServeState } from '../serve/detachedServe.js';
 import { readStoreServe } from '../serve/storeServe.js';
@@ -75,6 +82,20 @@ export function triggerListLines(
   });
 }
 
+/**
+ * `e trigger dead`: the requests that died before a run branch existed,
+ * oldest death first, metadata only - never a payload.
+ */
+export function deadListLines(dead: readonly DeadRequest[]): TriggerLine[] {
+  if (dead.length === 0) {
+    return [{ level: 'info', text: 'No dead requests.' }];
+  }
+  return dead.map(({ request, stage, reason, diedAt }) => ({
+    level: 'info' as const,
+    text: `${request.id} ${request.key} (${stage}, ${diedAt}): ${reason}`,
+  }));
+}
+
 /** Where a client reaches a `serve` bound to `host`: a wildcard bind answers on loopback. */
 function reachableHost(host: string): string {
   if (host === '0.0.0.0' || host === '') return '127.0.0.1';
@@ -109,7 +130,13 @@ export async function fetchServeListing(
   }
 }
 
-/** Registers `e trigger list`. */
+/** `--dir`, as every `e trigger` command takes it. */
+const DIR_OPTION = [
+  '-d, --dir <path>',
+  'store root to read (default: walk up from cwd)',
+] as const;
+
+/** Registers `e trigger list`, `dead` and `redrive`. */
 export function registerTriggerCommands(program: Command): void {
   const trigger = program
     .command('trigger')
@@ -118,10 +145,7 @@ export function registerTriggerCommands(program: Command): void {
   trigger
     .command('list')
     .description("List this store's triggers, with any that failed to load")
-    .option(
-      '-d, --dir <path>',
-      'store root to read (default: walk up from cwd)'
-    )
+    .option(...DIR_OPTION)
     .action(async (options: { dir?: string }) => {
       const root = findRoot(options.dir);
       log.debug(`Reading triggers from ${triggersBaseDir(root)}`);
@@ -134,5 +158,42 @@ export function registerTriggerCommands(program: Command): void {
       for (const line of triggerListLines(items, serve)) {
         log[line.level](line.text);
       }
+    });
+
+  trigger
+    .command('dead')
+    .description(
+      'List the requests that died before a run branch existed (expired, overflow, base, launch)'
+    )
+    .option(...DIR_OPTION)
+    .action((options: { dir?: string }) => {
+      const root = findRoot(options.dir);
+      for (const line of deadListLines(listDead(runsDirs(eBaseDir(root))))) {
+        log[line.level](line.text);
+      }
+    });
+
+  trigger
+    .command('redrive <id>')
+    .description(
+      'Accept a dead request again against the current trigger declaration; a running serve starts it'
+    )
+    .option(...DIR_OPTION)
+    .action((id: string, options: { dir?: string }) => {
+      const root = findRoot(options.dir);
+      const result = redrive(
+        {
+          dirs: runsDirs(eBaseDir(root)),
+          store: { root, context: () => storeTriggerContext(root) },
+          maxLength: readConfig(root).queue.maxLength,
+        },
+        id
+      );
+      if (result.status === 'refused') {
+        throw new Error(`Not redriven: ${result.reason}`);
+      }
+      log.info(
+        `Redrove ${result.request.id} (${result.request.key}); a running serve starts it on its next tick`
+      );
     });
 }

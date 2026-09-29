@@ -6,20 +6,28 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  buryLedgerEntry,
   claimRequest,
+  deadFile,
   ensureRunsDirs,
   enqueueRequest,
   expireQueue,
   isRunRequestId,
   keyFileName,
   ledgerFile,
+  listDead,
   listLedger,
   listQueue,
   newRequestId,
   patchLedgerFile,
+  pendingRequest,
+  readDeadRequest,
   readLedgerEntry,
+  redriveRequest,
   runsDirs,
+  sweepDead,
   sweepLedger,
+  writeDeadRequest,
   writeLedgerEntry,
   type RunRequest,
   type RunsDirs,
@@ -179,7 +187,7 @@ test('a claim cut short between rename and rewrite reads as claimed', () =>
     assert.equal(readLedgerEntry(dirs, r.id)?.request?.key, 't:1');
   }));
 
-test('expireQueue: past the TTL from enqueuedAt a request is dropped unstarted; the ledger is never touched', () =>
+test('expireQueue: past the TTL from enqueuedAt a request dies unstarted; the ledger is never touched', () =>
   withDirs(dirs => {
     const old = request('t:old', { enqueuedAt: '2026-09-26T10:00:00.000Z' });
     const fresh = request('t:fresh', {
@@ -197,7 +205,7 @@ test('expireQueue: past the TTL from enqueuedAt a request is dropped unstarted; 
     const dropped = expireQueue(dirs, now, 24 * 60 * 60 * 1000);
 
     assert.deepEqual(
-      dropped.map(r => r.key),
+      dropped.map(d => d.request.key),
       ['t:old']
     );
     assert.deepEqual(
@@ -257,4 +265,137 @@ test('patchLedgerFile: merges into the entry; a missing entry stays missing', ()
     assert.equal(readLedgerEntry(dirs, id)?.state, 'running');
     patchLedgerFile(ledgerFile(dirs, newRequestId('man')), { state: 'done' });
     assert.equal(listLedger(dirs).length, 1);
+  }));
+
+test('expireQueue: an expired request moves into dead/ by rename, payload inline, and reads as expired', () =>
+  withDirs(dirs => {
+    const old = request('t:old', {
+      enqueuedAt: '2026-09-26T10:00:00.000Z',
+      payload: { issue: { number: 42 } },
+    });
+    enqueueRequest(dirs, old, 10);
+    const queued = path.join(dirs.queue, keyFileName('t:old'));
+    assert.ok(fs.existsSync(queued));
+    expireQueue(dirs, new Date('2026-09-29T10:00:00.000Z'), 1000);
+    assert.equal(fs.existsSync(queued), false);
+    const dead = readDeadRequest(dirs, old.id);
+    assert.equal(dead?.stage, 'expired');
+    assert.equal(dead?.diedAt, '2026-09-29T10:00:00.000Z');
+    assert.deepEqual(dead?.request.payload, { issue: { number: 42 } });
+  }));
+
+test('dead/: an expiry cut short between rename and rewrite reads as an expired dead request', () =>
+  withDirs(dirs => {
+    const bare = request('t:cut', { enqueuedAt: '2026-09-26T10:00:00.000Z' });
+    fs.writeFileSync(deadFile(dirs, bare.id), JSON.stringify(bare));
+    const [dead] = listDead(dirs);
+    assert.equal(dead.request.id, bare.id);
+    assert.equal(dead.stage, 'expired');
+    assert.equal(dead.diedAt, bare.enqueuedAt);
+    fs.writeFileSync(path.join(dirs.dead, 'garbage.json'), '{"request":');
+    assert.equal(listDead(dirs).length, 1);
+  }));
+
+test('writeDeadRequest: an overflow rejection is written, never having entered queue/', () =>
+  withDirs(dirs => {
+    const rejected = request('t:over');
+    writeDeadRequest(dirs, {
+      request: rejected,
+      stage: 'overflow',
+      reason: 'the queue is full',
+      diedAt: '2026-09-29T10:00:00.000Z',
+    });
+    assert.deepEqual(listQueue(dirs), []);
+    assert.equal(readDeadRequest(dirs, rejected.id)?.stage, 'overflow');
+  }));
+
+test('buryLedgerEntry: a claim that never got a branch leaves the ledger for dead/; a manual entry cannot', () =>
+  withDirs(dirs => {
+    const claimed = request('t:base');
+    enqueueRequest(dirs, claimed, 10);
+    const entry = claimRequest(dirs, 't:base', new Date())!;
+    const dead = buryLedgerEntry(dirs, entry, {
+      stage: 'base',
+      reason: 'Base error: nope',
+      diedAt: '2026-09-29T10:00:00.000Z',
+    });
+    assert.equal(dead?.request.id, claimed.id);
+    assert.equal(readLedgerEntry(dirs, claimed.id), undefined);
+    assert.equal(readDeadRequest(dirs, claimed.id)?.reason, 'Base error: nope');
+    const manual = {
+      id: newRequestId('man'),
+      state: 'claimed' as const,
+      slot: false,
+      agent: 'pi',
+      run: null,
+    };
+    writeLedgerEntry(dirs, manual);
+    assert.equal(
+      buryLedgerEntry(dirs, manual, {
+        stage: 'launch',
+        reason: 'x',
+        diedAt: '',
+      }),
+      undefined
+    );
+    assert.ok(readLedgerEntry(dirs, manual.id));
+  }));
+
+test('sweepDead: the age cap sweeps, then the count cap drops the oldest', () =>
+  withDirs(dirs => {
+    const died = (key: string, diedAt: string): string => {
+      const r = request(key);
+      writeDeadRequest(dirs, {
+        request: r,
+        stage: 'overflow',
+        reason: 'full',
+        diedAt,
+      });
+      return r.id;
+    };
+    const ancient = died('t:ancient', '2026-09-01T00:00:00.000Z');
+    const oldest = died('t:oldest', '2026-09-28T00:00:00.000Z');
+    const middle = died('t:middle', '2026-09-28T12:00:00.000Z');
+    const newest = died('t:newest', '2026-09-29T00:00:00.000Z');
+    const swept = sweepDead(dirs, new Date('2026-09-29T10:00:00.000Z'), {
+      maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      maxCount: 2,
+    });
+    assert.deepEqual(swept, [ancient, oldest]);
+    assert.deepEqual(
+      listDead(dirs).map(d => d.request.id),
+      [middle, newest]
+    );
+  }));
+
+test('redriveRequest: back into queue/ under its key; refused while the key is pending, keeping the dead record', () =>
+  withDirs(dirs => {
+    const dead = request('t:1');
+    writeDeadRequest(dirs, {
+      request: dead,
+      stage: 'expired',
+      reason: 'ttl',
+      diedAt: '2026-09-29T10:00:00.000Z',
+    });
+    const pending = request('t:1');
+    enqueueRequest(dirs, pending, 10);
+    assert.equal(redriveRequest(dirs, dead.id, dead, 10).status, 'duplicate');
+    assert.ok(readDeadRequest(dirs, dead.id));
+    assert.equal(pendingRequest(dirs, 't:1')?.id, pending.id);
+    fs.rmSync(path.join(dirs.queue, keyFileName('t:1')));
+    assert.equal(redriveRequest(dirs, dead.id, dead, 10).status, 'enqueued');
+    assert.equal(readDeadRequest(dirs, dead.id), undefined);
+    assert.equal(pendingRequest(dirs, 't:1')?.id, dead.id);
+  }));
+
+test('dead/ is never consulted for dedup: a dead key does not block a fresh request', () =>
+  withDirs(dirs => {
+    const dead = request('t:1');
+    writeDeadRequest(dirs, {
+      request: dead,
+      stage: 'expired',
+      reason: 'ttl',
+      diedAt: '2026-09-29T10:00:00.000Z',
+    });
+    assert.equal(enqueueRequest(dirs, request('t:1'), 10).status, 'enqueued');
   }));

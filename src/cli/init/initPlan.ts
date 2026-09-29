@@ -24,6 +24,7 @@ import type {
   ResourceCaps,
   LoopCaps,
   QueueConfig,
+  DeadConfig,
 } from '../../core/store/config.js';
 import {
   LOCAL_RUNTIMES,
@@ -116,6 +117,7 @@ export interface InitState {
   currentResources: ResourceCaps;
   currentLoop: LoopCaps;
   currentQueue: QueueConfig;
+  currentDead: DeadConfig;
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
   /**
@@ -203,6 +205,7 @@ export interface InitPlan {
     resources: ResourceCaps;
     loop: LoopCaps;
     queue: QueueConfig;
+    dead: DeadConfig;
   };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
@@ -438,6 +441,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       resources: state.currentResources,
       loop: state.currentLoop,
       queue: state.currentQueue,
+      dead: state.currentDead,
     },
     defaultHarness,
     models,

@@ -94,6 +94,17 @@ and the next fire is tomorrow's. A week of downtime therefore does not flush sev
 queue. Across DST the spring gap has no matching instant (a `30 2 * * *`
 trigger does not fire that night) and the autumn hour is not replayed.
 
+A fire that was accepted and then died before its run had a branch - the
+queue was full, it waited past the queue TTL, its `base` did not resolve - is a
+**dead request**, not lost. List them and start one again, against the trigger
+as it is now:
+
+```bash
+e trigger dead
+# trg-01K... nightly:20260918T0100Z (overflow, 2026-09-18T01:00:02.000Z): the queue is full (50 waiting)
+e trigger redrive trg-01K...
+```
+
 ## Step 4: keep `serve` running
 
 If `serve` is not running, nothing fires and nobody is told. `e` is not a

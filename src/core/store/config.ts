@@ -164,6 +164,28 @@ export const DEFAULT_QUEUE_CONFIG: QueueConfig = {
   retentionMs: 60 * 60 * 1000,
 };
 
+/**
+ * The bounds of `.e/runs/dead/` (ADR-0016 section 6), the record of requests
+ * that died before a run branch existed. It has caps of its own, and past
+ * them it drops its **oldest** record: keeping every overflow with its payload
+ * would otherwise rebuild the unbounded queue `maxLength` prevents.
+ */
+export type DeadConfig = {
+  /** Past this age from dying a dead request is swept. */
+  maxAgeMs: number;
+  /** Dead requests kept at most; past it the oldest go first. */
+  maxCount: number;
+};
+
+/**
+ * `dead` when `config.json` sets none: seven days, because "what died over
+ * the weekend?" gets asked on Monday.
+ */
+export const DEFAULT_DEAD_CONFIG: DeadConfig = {
+  maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+  maxCount: 100,
+};
+
 /** Host-only orchestration settings, persisted in `config.json`. */
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
@@ -191,6 +213,8 @@ export type StoreConfig = {
   loop: LoopCaps;
   /** Admission bounds of the hosted shape (ADR-0016 section 6). */
   queue: QueueConfig;
+  /** Bounds of the dead-request spool (ADR-0016 section 6). */
+  dead: DeadConfig;
 };
 
 export type ModelDataEntry = {
@@ -243,6 +267,15 @@ function resolveQueue(raw: unknown): QueueConfig {
     ttlMs: positiveInt(block.ttlMs) ?? DEFAULT_QUEUE_CONFIG.ttlMs,
     retentionMs:
       positiveInt(block.retentionMs) ?? DEFAULT_QUEUE_CONFIG.retentionMs,
+  };
+}
+
+/** Resolves the `dead` block per key; a malformed field keeps its default. */
+function resolveDead(raw: unknown): DeadConfig {
+  const block = asBlock(raw);
+  return {
+    maxAgeMs: positiveInt(block.maxAgeMs) ?? DEFAULT_DEAD_CONFIG.maxAgeMs,
+    maxCount: positiveInt(block.maxCount) ?? DEFAULT_DEAD_CONFIG.maxCount,
   };
 }
 
@@ -388,6 +421,7 @@ export function resolveConfig(raw: unknown): StoreConfig {
     resources: resolveResources(parsed.resources),
     loop: resolveLoop(parsed.loop),
     queue: resolveQueue((parsed as { queue?: unknown }).queue),
+    dead: resolveDead((parsed as { dead?: unknown }).dead),
   };
 }
 

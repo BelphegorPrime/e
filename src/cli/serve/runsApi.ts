@@ -38,8 +38,11 @@ import {
 import type { StatusResponse } from '../../sidecars/broker/contract/types.js';
 import { NotFoundError, respondJson, respondNotFound } from './apiResponse.js';
 import {
+  listDead,
   listLedger,
   listQueue,
+  type DeadRequest,
+  type DeathStage,
   type LedgerEntry,
   type RunRequest as QueuedRequest,
   type RunsDirs,
@@ -140,13 +143,13 @@ export type BranchRunItem = RunIndexEntry &
   Partial<LedgerView> & { id?: string };
 
 /**
- * Something that is not a branch yet: a request still `queued`, or a run
- * `serve` has `claimed` that has not cut its branch. Metadata only - the
- * index never carries a payload body.
+ * Something that is not a branch: a request still `queued`, a run `serve`
+ * has `claimed` that has not cut its branch, or a `dead` request that died
+ * before it had one. Metadata only - the index never carries a payload body.
  */
 export interface PendingRunItem {
   branch: null;
-  state: 'queued' | 'claimed';
+  state: 'queued' | 'claimed' | 'dead';
   /** The request id, `trg-<ulid>`. */
   id: string;
   agent: string;
@@ -155,6 +158,10 @@ export interface PendingRunItem {
   key?: string;
   enqueuedAt?: string;
   claimedAt?: string;
+  /** A dead request's stage (`expired`, `overflow`, `base`, `launch`), reason and time. */
+  stage?: DeathStage;
+  reason?: string;
+  diedAt?: string;
 }
 
 /** One entry of `GET /api/runs`: one list, one state machine, `queued -> running -> terminal`. */
@@ -162,13 +169,15 @@ export type RunListItem = BranchRunItem | PendingRunItem;
 
 /**
  * Joins the branch index with the ledger and the queue: pending requests and
- * claims first (oldest first, the order they will start in), then branch runs
- * newest first, each carrying its ledger state where the ledger has one.
+ * claims first (oldest first, the order they will start in), then dead
+ * requests (oldest death first), then branch runs newest first, each carrying
+ * its ledger state where the ledger has one.
  */
 export function runList(
   index: RunIndexEntry[],
   ledger: LedgerEntry[],
-  queue: QueuedRequest[]
+  queue: QueuedRequest[],
+  dead: DeadRequest[] = []
 ): RunListItem[] {
   const byBranch = new Map(
     ledger
@@ -201,6 +210,18 @@ export function runList(
           : {}),
         ...(entry.claimedAt ? { claimedAt: entry.claimedAt } : {}),
       })),
+    ...dead.map(({ request, stage, reason, diedAt }): PendingRunItem => ({
+      branch: null,
+      state: 'dead',
+      id: request.id,
+      agent: request.agent,
+      trigger: request.trigger,
+      key: request.key,
+      enqueuedAt: request.enqueuedAt,
+      stage,
+      reason,
+      diedAt,
+    })),
   ];
   const branches = index.map((run): BranchRunItem => {
     const entry = byBranch.get(run.branch);
@@ -237,12 +258,12 @@ export function runList(
 export class RunsApi {
   constructor(private readonly deps: RunsApiDeps) {}
 
-  /** Every pending request and live claim, then every run branch newest first, with its ledger state. */
+  /** Every pending request, live claim and dead request, then every run branch newest first, with its ledger state. */
   index(): RunListItem[] {
     const index = buildRunIndex(this.deps.git.listRunRefs('e'));
     const dirs = this.deps.runs;
     if (!dirs) return index;
-    return runList(index, listLedger(dirs), listQueue(dirs));
+    return runList(index, listLedger(dirs), listQueue(dirs), listDead(dirs));
   }
 
   /** `run`'s status, or `undefined` when no branch of that name exists. */

@@ -78,9 +78,14 @@ export function RunsPage() {
                       {run.key}
                     </p>
                   )}
+                  {run.reason && (
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {run.reason}
+                    </p>
+                  )}
                 </div>
                 <div className="flex shrink-0 gap-2">
-                  <StatusBadge label={run.state} on />
+                  <StatusBadge label={run.state} on={run.state !== 'dead'} />
                 </div>
               </li>
             ))}

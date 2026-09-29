@@ -1558,6 +1558,53 @@ test('a manual spawn carries no provenance, even with stale markers in the shell
   });
 });
 
+test("a queued run's spawn cuts from the base serve resolved at claim; a manual spawn from where it stands", () => {
+  withStore(root => {
+    const live = path.join(root, '.e', 'runs', 'live');
+    fs.mkdirSync(live, { recursive: true });
+    const file = path.join(live, 'trg-x.json');
+    const base = {
+      ref: 'refs/remotes/origin/main',
+      sha: 'abc1234',
+      branch: 'main',
+    };
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        id: 'trg-x',
+        state: 'claimed',
+        slot: true,
+        agent: 'claudeCode',
+        run: null,
+        base,
+      })
+    );
+    assert.equal(gather(root, 'claudeCode', ['x']).base, undefined);
+    process.env[Env.LEDGER_FILE_VAR] = file;
+    try {
+      assert.deepEqual(gather(root, 'claudeCode', ['x']).base, base);
+      // A torn base never falls back to the checkout.
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          id: 'trg-x',
+          state: 'claimed',
+          slot: true,
+          agent: 'claudeCode',
+          run: null,
+          base: { ref: 'refs/remotes/origin/main' },
+        })
+      );
+      assert.throws(
+        () => gather(root, 'claudeCode', ['x']),
+        /base that is not whole/
+      );
+    } finally {
+      delete process.env[Env.LEDGER_FILE_VAR];
+    }
+  });
+});
+
 test("a queued run's spawn and a sibling's read the provenance their host handed them", () => {
   process.env[Env.TRIGGER_VAR] = 'nightly';
   process.env[Env.EVENT_VAR] = 'github:issues.labeled:d-1';

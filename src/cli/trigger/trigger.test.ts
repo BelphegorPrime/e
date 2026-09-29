@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { TriggerListItem } from '../../core/trigger/listing.js';
 import { eBaseDir } from '../../core/store/paths.js';
-import { fetchServeListing, triggerListLines } from './index.js';
+import { deadListLines, fetchServeListing, triggerListLines } from './index.js';
 
 /*
  * `e trigger list` (ADR-0016). A trigger that has never fired is invisible in
@@ -121,4 +121,29 @@ test('fetchServeListing: asks the detached serve, and only trusts it for this ve
     await fetchServeListing(root, { pid: 1, host: '127.0.0.1', port: 1 }),
     undefined
   );
+});
+
+test('deadListLines: one line per dead request, metadata only, never the payload', () => {
+  const lines = deadListLines([
+    {
+      request: {
+        id: 'trg-01K00000000000000000000001',
+        key: 'fix:d-1',
+        trigger: 'fix',
+        agent: 'pi',
+        prompt: 'p',
+        payload: { secret: 'do-not-print' },
+        enqueuedAt: '2026-09-27T08:00:00.000Z',
+      },
+      stage: 'base',
+      reason: 'Base error: nope',
+      diedAt: '2026-09-28T08:00:00.000Z',
+    },
+  ]);
+  assert.equal(
+    lines[0].text,
+    'trg-01K00000000000000000000001 fix:d-1 (base, 2026-09-28T08:00:00.000Z): Base error: nope'
+  );
+  assert.doesNotMatch(lines[0].text, /do-not-print/);
+  assert.match(deadListLines([])[0].text, /No dead requests/);
 });

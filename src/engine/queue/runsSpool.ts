@@ -7,6 +7,10 @@
  *   dedup: a second request with a pending key cannot be created.
  * - `.e/runs/live/` is the **ledger**: runs that exist, from claim to
  *   terminal-within-retention, one file per run named by its request id.
+ * - `.e/runs/dead/` holds **dead requests**: those that died before a run
+ *   branch existed - TTL expiry, overflow, an unresolvable `base`, a launch
+ *   failure. Not a DLQ: nothing consumes it, there is no receive count, and a
+ *   redrive is a human act. Named by request id, since one key can die twice.
  *
  * The broker spool's discipline, reused rather than reinvented: every write is
  * temp + rename (or temp + link, where the write must not replace anything),
@@ -29,14 +33,16 @@ import {
   readJson,
   writeJsonAtomic,
 } from '../../sidecars/broker/contract/spool.js';
-import type { LoopCaps } from '../../core/store/config.js';
+import type { DeadConfig, LoopCaps } from '../../core/store/config.js';
 import type { GateRemovals } from '../runs/gateRemovals.js';
 import type { ProvenanceEvent } from '../../core/trigger/provenance.js';
+import type { RunBase } from '../runs/runSpawn.js';
 
 /** `.e/runs/`, and its three parts. */
 export const RUNS_DIR = 'runs';
 export const QUEUE_DIR = 'queue';
 export const LIVE_DIR = 'live';
+export const DEAD_DIR = 'dead';
 /** Where a queued run's `e spawn` child writes its output. */
 export const RUN_LOGS_DIR = 'logs';
 
@@ -44,6 +50,7 @@ export const RUN_LOGS_DIR = 'logs';
 export interface RunsDirs {
   queue: string;
   live: string;
+  dead: string;
   logs: string;
 }
 
@@ -53,13 +60,14 @@ export function runsDirs(storeDir: string): RunsDirs {
   return {
     queue: path.join(root, QUEUE_DIR),
     live: path.join(root, LIVE_DIR),
+    dead: path.join(root, DEAD_DIR),
     logs: path.join(root, RUN_LOGS_DIR),
   };
 }
 
 /** Creates the spool layout (idempotent). */
 export function ensureRunsDirs(dirs: RunsDirs): void {
-  for (const dir of [dirs.queue, dirs.live, dirs.logs]) {
+  for (const dir of [dirs.queue, dirs.live, dirs.dead, dirs.logs]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
@@ -148,6 +156,8 @@ export interface LedgerEntry {
   run: string | null;
   /** The run container's name, what a restart checks the entry against. */
   container?: string;
+  /** The base `serve` resolved at claim; the run's `e spawn` cuts from it. */
+  base?: RunBase;
   /** For a triggered run, the request it was claimed from, payload included. */
   request?: RunRequest;
   claimedAt?: string;
@@ -347,23 +357,33 @@ export function writeLedgerEntry(dirs: RunsDirs, entry: LedgerEntry): string {
 }
 
 /**
- * Drops pending requests older than `ttlMs` from `enqueuedAt`, unstarted: a
- * webhook event from three days ago is stale. Queue entries only - a run in
- * the ledger is bounded by its own caps. Returns what was dropped.
+ * Moves pending requests older than `ttlMs` from `enqueuedAt` into `dead/`,
+ * unstarted: a webhook event from three days ago is stale. A rename, so
+ * every exit from `queue/` is one; the record is then rewritten as a
+ * {@link DeadRequest}, and a crash in between leaves the bare request, which
+ * {@link readDeadFile} reads as expired. Queue entries only - a run in the
+ * ledger is bounded by its own caps. Returns what died.
  */
 export function expireQueue(
   dirs: RunsDirs,
   now: Date,
   ttlMs: number
-): RunRequest[] {
-  const expired: RunRequest[] = [];
+): DeadRequest[] {
+  const expired: DeadRequest[] = [];
   for (const request of listQueue(dirs)) {
     const age = now.getTime() - Date.parse(request.enqueuedAt);
     if (!(age > ttlMs)) continue;
-    fs.rmSync(path.join(dirs.queue, keyFileName(request.key)), {
-      force: true,
-    });
-    expired.push(request);
+    const dead = buryFile(
+      dirs,
+      path.join(dirs.queue, keyFileName(request.key)),
+      request,
+      {
+        stage: 'expired',
+        reason: expiredReason(ttlMs),
+        diedAt: now.toISOString(),
+      }
+    );
+    if (dead) expired.push(dead);
   }
   return expired;
 }
@@ -386,4 +406,176 @@ export function sweepLedger(
     swept.push(entry.id);
   }
   return swept;
+}
+
+/** Where a request died, before any run branch existed. */
+export type DeathStage = 'expired' | 'overflow' | 'base' | 'launch';
+
+/** How a request died: where, why and when. */
+export interface Death {
+  stage: DeathStage;
+  reason: string;
+  diedAt: string;
+}
+
+/** A dead request: the request, payload inline, and how it died. */
+export interface DeadRequest extends Death {
+  request: RunRequest;
+}
+
+/** Why an expired request died; the TTL when it is known. */
+export function expiredReason(ttlMs?: number): string {
+  return `waited past the queue TTL${ttlMs !== undefined ? ` (${ttlMs} ms)` : ''}, never started`;
+}
+
+/** The dead-request file of the request `id`. */
+export function deadFile(dirs: RunsDirs, id: string): string {
+  return path.join(dirs.dead, `${id}.json`);
+}
+
+/** Reads a dead file; a bare request (an expiry cut short) reads as expired, garbage as absent. */
+export function readDeadFile(file: string): DeadRequest | undefined {
+  const value = readJson<Partial<DeadRequest>>(file);
+  if (!value) return undefined;
+  if (value.request === undefined) {
+    const request = asRequest(value);
+    return request
+      ? {
+          request,
+          stage: 'expired',
+          reason: expiredReason(),
+          diedAt: request.enqueuedAt,
+        }
+      : undefined;
+  }
+  const request = asRequest(value.request);
+  if (
+    !request ||
+    typeof value.stage !== 'string' ||
+    typeof value.reason !== 'string' ||
+    typeof value.diedAt !== 'string'
+  ) {
+    return undefined;
+  }
+  return { ...(value as DeadRequest), request };
+}
+
+/** Every dead request, oldest death first; a corrupt file reads as absent. */
+export function listDead(dirs: RunsDirs): DeadRequest[] {
+  return recordFiles(dirs.dead)
+    .map(name => readDeadFile(path.join(dirs.dead, name)))
+    .filter((d): d is DeadRequest => d !== undefined)
+    .sort(
+      (a, b) =>
+        a.diedAt.localeCompare(b.diedAt) ||
+        a.request.id.localeCompare(b.request.id)
+    );
+}
+
+/** The dead request `id`, or undefined. */
+export function readDeadRequest(
+  dirs: RunsDirs,
+  id: string
+): DeadRequest | undefined {
+  return readDeadFile(deadFile(dirs, id));
+}
+
+/**
+ * Renames `from` into `dead/` and rewrites it as a dead request. Undefined
+ * when another process renamed it first.
+ */
+function buryFile(
+  dirs: RunsDirs,
+  from: string,
+  request: RunRequest,
+  death: Death
+): DeadRequest | undefined {
+  ensureRunsDirs(dirs);
+  const to = deadFile(dirs, request.id);
+  try {
+    fs.renameSync(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+  const dead: DeadRequest = { request, ...death };
+  writeJsonAtomic(to, dead);
+  return dead;
+}
+
+/**
+ * Writes a request that never entered `queue/` - an overflow rejection -
+ * straight into `dead/`: the one way in that is not a rename.
+ */
+export function writeDeadRequest(dirs: RunsDirs, dead: DeadRequest): string {
+  ensureRunsDirs(dirs);
+  const file = deadFile(dirs, dead.request.id);
+  writeJsonAtomic(file, dead);
+  return file;
+}
+
+/**
+ * Moves a claimed run that never got a branch from the ledger into `dead/`:
+ * its base did not resolve, or it failed to launch. Undefined for an entry
+ * with no request (a manual spawn) or one already gone.
+ */
+export function buryLedgerEntry(
+  dirs: RunsDirs,
+  entry: LedgerEntry,
+  death: Death
+): DeadRequest | undefined {
+  if (!entry.request) return undefined;
+  return buryFile(dirs, ledgerFile(dirs, entry.id), entry.request, death);
+}
+
+/**
+ * Sweeps `dead/` by age, then by count, **oldest first**: a record of loss is
+ * the one thing that may lose its oldest record. Returns the ids swept.
+ */
+export function sweepDead(
+  dirs: RunsDirs,
+  now: Date,
+  caps: DeadConfig
+): string[] {
+  const swept: string[] = [];
+  const kept: DeadRequest[] = [];
+  for (const dead of listDead(dirs)) {
+    if (now.getTime() - Date.parse(dead.diedAt) > caps.maxAgeMs) {
+      fs.rmSync(deadFile(dirs, dead.request.id), { force: true });
+      swept.push(dead.request.id);
+    } else {
+      kept.push(dead);
+    }
+  }
+  for (const dead of kept.slice(0, Math.max(0, kept.length - caps.maxCount))) {
+    fs.rmSync(deadFile(dirs, dead.request.id), { force: true });
+    swept.push(dead.request.id);
+  }
+  return swept;
+}
+
+/**
+ * Puts a redriven request back into `queue/` under its key - refused, like any
+ * enqueue, when the key is pending or the queue is full - and only then
+ * removes the dead record `deadId`, so a refusal loses nothing.
+ */
+export function redriveRequest(
+  dirs: RunsDirs,
+  deadId: string,
+  request: RunRequest,
+  maxLength: number
+): EnqueueResult {
+  const result = enqueueRequest(dirs, request, maxLength);
+  if (result.status === 'enqueued') {
+    fs.rmSync(deadFile(dirs, deadId), { force: true });
+  }
+  return result;
+}
+
+/** The pending request under `key`, or undefined. */
+export function pendingRequest(
+  dirs: RunsDirs,
+  key: string
+): RunRequest | undefined {
+  return asRequest(readJson(path.join(dirs.queue, keyFileName(key))));
 }

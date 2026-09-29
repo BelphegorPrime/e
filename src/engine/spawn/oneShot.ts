@@ -117,6 +117,22 @@ function resolveBase(git: Git, name: string): RunBase {
   );
 }
 
+/**
+ * A queued run's base, as `serve` resolves it at claim: the rendered `base`
+ * under the base rule, or the repository's default branch (`origin/HEAD`)
+ * when the trigger declares none - never whatever is checked out.
+ */
+export function resolveRunBase(git: Git, name: string | undefined): RunBase {
+  if (name !== undefined) return resolveBase(git, name);
+  const defaultRef = git.defaultBranchRef();
+  if (defaultRef === undefined) {
+    throw baseError(
+      "cannot determine the repository's default branch: origin/HEAD is unset and origin did not name one; set it once with `git remote set-head origin <branch>`, which needs no network"
+    );
+  }
+  return resolveBase(git, defaultRef);
+}
+
 /** Reads the payload file: bounded like the listener's, and JSON or nothing. */
 function readPayload(file: string): unknown {
   const size = fs.statSync(file).size;
@@ -157,13 +173,7 @@ export function resolveOneShot(
   }
   const rooted = { ...input, root };
 
-  const defaultRef = git.defaultBranchRef();
-  if (defaultRef === undefined) {
-    throw baseError(
-      "cannot determine the repository's default branch: origin/HEAD is unset and origin did not name one; set it once with `git remote set-head origin <branch>`, which needs no network"
-    );
-  }
-  const defaultBase = resolveBase(git, defaultRef);
+  const defaultBase = resolveRunBase(git, undefined);
   const anchor = declarationAt(git, defaultBase.ref, rooted);
 
   const { event, warnings } = oneShotEvent(

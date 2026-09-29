@@ -51,8 +51,15 @@ export function requirePayloadFree(trigger: Trigger): void {
 const TARGET_REF_PREFIXES = ['refs/remotes/origin/', 'refs/tags/'];
 
 /** A base the rule refused, or that does not exist: the run never starts. */
+class BaseError extends Error {}
+
 export function baseError(why: string): Error {
-  return new Error(`Base error: ${why}`);
+  return new BaseError(`Base error: ${why}`);
+}
+
+/** True for what {@link baseError} made, as against any other failure on the way. */
+export function isBaseError(err: unknown): boolean {
+  return err instanceof BaseError;
 }
 
 /**

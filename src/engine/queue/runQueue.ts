@@ -21,12 +21,20 @@
  * normal teardown the container is already gone too, so a restart inside
  * that window marks a healthy teardown `interrupted`.
  *
- * The dead-request spool lands on top of this; until then a request that
- * expires is dropped and logged.
+ * **Dead requests** are the ones that died before a run branch existed: TTL
+ * expiry (a rename into `dead/`), overflow (a fresh write, since it never
+ * entered `queue/`), a `base` that does not resolve at claim, and a run that
+ * failed before it had a branch. Anything with a branch stays in the ledger.
  */
 
 import path from 'node:path';
-import type { QueueConfig } from '../../core/store/config.js';
+import {
+  DEFAULT_DEAD_CONFIG,
+  type DeadConfig,
+  type QueueConfig,
+} from '../../core/store/config.js';
+import type { RunBase } from '../runs/runSpawn.js';
+import { isBaseError } from '../../core/trigger/oneShot.js';
 import { env } from '../../shared/utils/env.js';
 import { log } from '../../shared/utils/log.js';
 import { errorMessage } from '../../shared/utils/errors.js';
@@ -43,6 +51,7 @@ import {
   type ChildLauncher,
 } from '../runs/childRun.js';
 import {
+  buryLedgerEntry,
   claimRequest,
   enqueueRequest,
   ensureRunsDirs,
@@ -55,8 +64,11 @@ import {
   requestUlid,
   patchLedgerFile,
   readLedgerEntry,
+  sweepDead,
   sweepLedger,
+  writeDeadRequest,
   type EnqueueResult,
+  type DeathStage,
   type LedgerEntry,
   type RequestEvent,
   type RunRequest,
@@ -85,6 +97,15 @@ export const QUEUE_TICK_MS = 30 * 1000;
 export interface RunQueueDeps {
   dirs: RunsDirs;
   config: QueueConfig;
+  /** The bounds of `dead/`; the defaults when absent. */
+  dead?: DeadConfig;
+  /**
+   * Resolves a claimed request's `base` (a rendered name, or none for the
+   * repository's default branch) under the base rule, throwing a base error
+   * when it does not resolve. Absent, a run cuts from wherever its `e spawn`
+   * would by hand.
+   */
+  resolveBase?: (name: string | undefined) => RunBase;
   /** True while a container of this name is running: what a restart checks entries against. */
   containerRunning(name: string): boolean;
   /** Starts a claimed request's `e spawn` child; defaults to re-invoking this CLI. */
@@ -117,9 +138,11 @@ export class RunQueue {
   private readonly now: () => Date;
   /** Since when {@link triggerActivity} knows anything. */
   readonly startedAt: string;
+  private readonly deadCaps: DeadConfig;
 
   constructor(private readonly deps: RunQueueDeps) {
     this.now = deps.now ?? (() => new Date());
+    this.deadCaps = deps.dead ?? DEFAULT_DEAD_CONFIG;
     this.startedAt = this.now().toISOString();
     ensureRunsDirs(deps.dirs);
   }
@@ -182,17 +205,30 @@ export class RunQueue {
       case 'duplicate':
         log.info(`Not queued: ${full.key} is already pending`);
         break;
-      case 'full':
-        // Rejected, never dropped-oldest: that would discard work already accepted.
+      case 'full': {
+        // Rejected, never dropped-oldest: that would discard work already
+        // accepted. The rejection is kept in dead/, which has caps of its own.
+        const reason = `the queue is full (${this.deps.config.maxLength} waiting)`;
         log.warn(
-          `Not queued: the queue is full (${this.deps.config.maxLength} waiting); ${full.key} rejected`
+          `Not queued: ${reason}; ${full.key} is a dead request (${full.id})`
         );
+        writeDeadRequest(this.deps.dirs, {
+          request: full,
+          stage: 'overflow',
+          reason,
+          diedAt: full.enqueuedAt,
+        });
+        sweepDead(this.deps.dirs, this.now(), this.deadCaps);
         break;
+      }
     }
     return result;
   }
 
-  /** One pass after start: due triggers, expire, sweep terminal, fill free slots. */
+  /**
+   * One pass after start: due triggers, expire into dead/, sweep terminal,
+   * sweep dead/ by age and count, fill free slots.
+   */
   tick(): void {
     const now = this.now();
     try {
@@ -201,17 +237,38 @@ export class RunQueue {
       // The scheduler failing must not stop the queue it feeds.
       log.warn(`Due triggers: ${errorMessage(err)}`);
     }
-    for (const expired of expireQueue(
+    for (const dead of expireQueue(
       this.deps.dirs,
       now,
       this.deps.config.ttlMs
     )) {
       log.warn(
-        `Dropped ${expired.id} (${expired.key}): waited past the queue TTL, never started`
+        `Dead request ${dead.request.id} (${dead.request.key}): ${dead.reason}`
       );
     }
     sweepLedger(this.deps.dirs, now, this.deps.config.retentionMs);
+    sweepDead(this.deps.dirs, now, this.deadCaps);
     this.fill();
+  }
+
+  /**
+   * Moves a claim that died before it had a branch into dead/, freeing its
+   * slot. Only this line counts: an interrupted, exhausted, aborted or
+   * verify-red run already has a branch, a PR and a trailer.
+   */
+  private bury(
+    entry: LedgerEntry,
+    stage: Extract<DeathStage, 'base' | 'launch'>,
+    reason: string
+  ): void {
+    log.warn(
+      `Dead request ${entry.id} (${entry.request?.key ?? 'no key'}): ${reason}`
+    );
+    buryLedgerEntry(this.deps.dirs, entry, {
+      stage,
+      reason,
+      diedAt: this.now().toISOString(),
+    });
   }
 
   /** Slots held: triggered runs in the ledger that have not ended. A manual spawn holds none. */
@@ -244,8 +301,8 @@ export class RunQueue {
       const entry = claimRequest(this.deps.dirs, request.key, this.now());
       // Another consumer won the rename: not ours, and no slot taken.
       if (!entry) continue;
-      free -= 1;
-      this.launch(entry);
+      // A claim that dies before it launches holds no slot.
+      if (this.launch(entry)) free -= 1;
     }
   }
 
@@ -273,9 +330,24 @@ export class RunQueue {
     }
   }
 
-  private launch(entry: LedgerEntry): void {
+  /** Resolves the claim's base and starts its run; false when it died instead. */
+  private launch(entry: LedgerEntry): boolean {
     const request = entry.request as RunRequest;
     const file = ledgerFile(this.deps.dirs, entry.id);
+    if (this.deps.resolveBase) {
+      // The base rule, before a child exists: a base that does not resolve
+      // is a dead request with a clear reason, not a confusing checkout
+      // error. Anything else that fails here is a launch failure.
+      let base: RunBase;
+      try {
+        base = this.deps.resolveBase(request.base);
+      } catch (err) {
+        const reason = errorMessage(err);
+        this.bury(entry, isBaseError(err) ? 'base' : 'launch', reason);
+        return false;
+      }
+      patchLedgerFile(file, { base });
+    }
     const spawnRequest = {
       id: request.id,
       agent: request.agent,
@@ -292,11 +364,12 @@ export class RunQueue {
         spoolDir: this.deps.dirs.live,
       });
     } catch (err) {
-      this.end(entry.id, {
-        state: 'failed',
-        error: `could not start the run: ${errorMessage(err)}`,
-      });
-      return;
+      this.bury(
+        entry,
+        'launch',
+        `could not start the run: ${errorMessage(err)}`
+      );
+      return false;
     }
     log.info(`Started ${request.id} (${request.key}) as ${request.agent}`);
     this.children.set(entry.id, child);
@@ -304,12 +377,18 @@ export class RunQueue {
       code => this.onExit(entry.id, code),
       err => this.onExit(entry.id, 1, errorMessage(err))
     );
+    return true;
   }
 
-  /** The child is gone: an entry it never ended is failed, which frees its slot. */
+  /**
+   * The child is gone: an entry it never ended is failed, which frees its
+   * slot. A run that failed before it had a branch - an image build, a
+   * malformed agent - is a dead request; one with a branch stays in the
+   * ledger, since its branch, PR and trailer already say what happened.
+   */
   private onExit(id: string, code: number, reason?: string): void {
     this.children.delete(id);
-    const entry = readLedgerEntry(this.deps.dirs, id);
+    let entry = readLedgerEntry(this.deps.dirs, id);
     if (entry && !isTerminalLedgerState(entry.state)) {
       this.end(id, {
         state: 'failed',
@@ -318,6 +397,14 @@ export class RunQueue {
           reason ??
           `the e spawn process exited with code ${code} before ending its run`,
       });
+      entry = readLedgerEntry(this.deps.dirs, id);
+    }
+    if (entry?.state === 'failed' && entry.run === null) {
+      this.bury(
+        entry,
+        'launch',
+        `failed before its run branch existed: ${entry.error ?? `exit code ${entry.exitCode ?? code}`}`
+      );
     }
     // A slot just freed.
     this.fill();

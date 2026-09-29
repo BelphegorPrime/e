@@ -451,7 +451,11 @@ becomes an archive.
 overflow rejection, an unresolvable `base`, a launch failure. Out: `interrupted`,
 exhausted, aborted and verify-red, each of which already has a branch, a PR and a
 trailer - duplicating them would be a second, worse ledger. TTL expiry becomes
-`rename(queue/<key>, dead/<key>)`, so every exit from `queue/` is a rename.
+`rename(queue/<key>, dead/<id>)`, so every exit from `queue/` is a rename. A
+dead file is named by the request id, not the key: one key can die twice (an
+event that expired, was redelivered and expired again), and the id is what
+`e trigger redrive` takes. A launched run that fails before it has a branch
+leaves the ledger the same way, `rename(live/<id>, dead/<id>)`.
 
 It is **not a DLQ** and is deliberately not called one: a claim is one atomic
 rename and a restart marks `interrupted` with no retry, so there is no receive
@@ -468,7 +472,14 @@ so agent, base, prompt template, caps, `match` filters and the base check all co
 from the _current_ declaration. "Fix the trigger, then redrive" is the entire use
 case, and a faithful replay would reproduce the bug that killed it. Refused against
 a deleted or disabled trigger, and refused when the key is already back in
-`queue/`. `dead/` is never consulted for dedup.
+`queue/`. It is also refused while the queue is full: a human act does not jump
+the bound that keeps the queue honest. `overlap` is not asked - a human is
+starting this one. The redriven request keeps its event, so its provenance still
+names the original delivery or tick, and gets a fresh id and `enqueuedAt`, so it
+queues behind what is already waiting and gets a full TTL. The request lands in
+`queue/` by temp + `link` before its dead record is removed, so a refusal loses
+nothing and a pending key is never overwritten. `dead/` is never consulted for
+dedup.
 
 **The tick**, one `serve` interval of 30 s, in fixed order:
 

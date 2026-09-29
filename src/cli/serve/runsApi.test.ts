@@ -15,6 +15,7 @@ import {
 } from '../../sidecars/broker/contract/spool.js';
 import { parseRunRequest, runList, RunsApi } from './runsApi.js';
 import { buildRunIndex } from '../../engine/runs/runIndex.js';
+import { runsDirs, writeDeadRequest } from '../../engine/queue/runsSpool.js';
 
 const runRefs: RunRef[] = [
   {
@@ -257,6 +258,45 @@ test('siblings come from the run spool; a run without one has none', t => {
 
 // The ledger and the queue join the index (ADR-0016 section 6).
 
+test('runList: dead requests show as state dead beside queued, metadata only', () => {
+  const list = runList(
+    [],
+    [],
+    [],
+    [
+      {
+        request: {
+          id: 'trg-01K00000000000000000000009',
+          key: 'fix:45',
+          trigger: 'fix',
+          agent: 'pi',
+          prompt: 'the whole prompt',
+          payload: { secret: 'never listed' },
+          enqueuedAt: '2026-09-29T10:02:00.000Z',
+        },
+        stage: 'base',
+        reason: 'Base error: base "nowhere" does not resolve',
+        diedAt: '2026-09-29T10:02:30.000Z',
+      },
+    ]
+  );
+  assert.deepEqual(list, [
+    {
+      branch: null,
+      state: 'dead',
+      id: 'trg-01K00000000000000000000009',
+      agent: 'pi',
+      trigger: 'fix',
+      key: 'fix:45',
+      enqueuedAt: '2026-09-29T10:02:00.000Z',
+      stage: 'base',
+      reason: 'Base error: base "nowhere" does not resolve',
+      diedAt: '2026-09-29T10:02:30.000Z',
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(list), /never listed|the whole prompt/);
+});
+
 test('runList: queued requests and claims first, then branch runs carrying their ledger state; no payload', () => {
   const index = buildRunIndex(runRefs);
   const list = runList(
@@ -342,4 +382,37 @@ test('runList: queued requests and claims first, then branch runs carrying their
     index.find(run => run.branch === 'e/claudeCode/fix-typos-1')
   );
   assert.doesNotMatch(JSON.stringify(list), /never listed/);
+});
+
+test('RunsApi.index: the dead spool on disk joins the list as state dead', () => {
+  const store = fs.mkdtempSync(path.join(os.tmpdir(), 'e-runs-dead-'));
+  try {
+    const dirs = runsDirs(store);
+    writeDeadRequest(dirs, {
+      request: {
+        id: 'trg-01K00000000000000000000009',
+        key: 'nightly:20260918T0300Z',
+        trigger: 'nightly',
+        agent: 'pi',
+        prompt: 'p',
+        enqueuedAt: '2026-09-18T03:00:10.000Z',
+      },
+      stage: 'expired',
+      reason: 'waited past the queue TTL',
+      diedAt: '2026-09-19T03:00:10.000Z',
+    });
+    const api = new RunsApi({
+      git: new InMemoryGit({ refs: [] }),
+      worktreesDir: store,
+      runs: dirs,
+    });
+    assert.deepEqual(
+      api
+        .index()
+        .map(item => [item.state, 'stage' in item ? item.stage : undefined]),
+      [['dead', 'expired']]
+    );
+  } finally {
+    fs.rmSync(store, { recursive: true, force: true });
+  }
 });

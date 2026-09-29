@@ -24,15 +24,21 @@ export interface Run {
   gateRemovals?: { files: number; lines: number };
 }
 
-/** A triggered request waiting for a slot, or claimed and not yet on a branch. */
+/**
+ * A triggered request waiting for a slot, claimed and not yet on a branch, or
+ * dead: it died before it had one (expired, overflow, base, launch).
+ */
 export interface PendingRun {
   branch: null;
-  state: 'queued' | 'claimed';
+  state: 'queued' | 'claimed' | 'dead';
   id: string;
   agent: string;
   trigger?: string;
   key?: string;
   enqueuedAt?: string;
+  /** Why a dead request died, and when. */
+  reason?: string;
+  diedAt?: string;
 }
 
 interface RunsResponse {

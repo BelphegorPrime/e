@@ -762,6 +762,18 @@ and `GET /api/triggers` show each trigger's next fire, and its last one while
 `serve` remembers it. Keeping `serve` up is the host's job; [Tutorial
 11](./docs/tutorials/11-cron-triggers.md) has a systemd user unit.
 
+### Dead requests
+
+A triggered request that dies before its run has a branch - it waited past
+the queue TTL, the queue was full, its `base` did not resolve, or the run
+failed before cutting its branch - lands in `.e/runs/dead/` instead of being
+lost: no forge retries a delivery on its own. `e trigger dead` lists them
+(metadata only, never the payload), `GET /api/runs` shows them as `dead`,
+and `e trigger redrive <id>` accepts one again against the trigger as it is
+now, so fixing the trigger and redriving works. `dead/` keeps 7 days and 100
+entries (`dead.maxAgeMs`, `dead.maxCount` in `config.json`), dropping the
+oldest first. A run that ended with a branch is never a dead request.
+
 ### Remote A2A agents in the Store
 
 An `agent.json` with `"transport": "a2a"` names an agent hosted elsewhere that
@@ -876,7 +888,9 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | `e spawn <remote-agent> "<prompt>"`            | Ask a Store agent with `"transport": "a2a"` over the Agent2Agent protocol; the answer on stdout, no run (ADR-0015)               |
 | `e spawn --trigger <name> [--event <path>]`    | One-shot: run a Trigger from CI or a timer, its declaration read from base; a non-matching event exits 0 (Tutorial 10)           |
 | `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, A2A (`POST /a2a`), webhooks (BFF port + 2) and the cron tick; stop the background server               |
-| `e trigger list`                               | Each Trigger's source, agent, next cron fire, and last fire when a detached `serve` knows it (Tutorial 11)                       |
+| `e trigger list`                               | Each Trigger's source, agent, next cron fire, and last fire when this Store's `serve` knows it (Tutorial 11)                     |
+| `e trigger dead`                               | Requests that died before a run branch existed: expired, overflow, unresolvable base, launch failure                             |
+| `e trigger redrive <id>`                       | Accept a dead request again against the current trigger; refused while its key is pending                                        |
 | `e export` / `e import <file>`                 | Move the store and gateway configuration between machines as a zip                                                               |
 
 ## Environment variables

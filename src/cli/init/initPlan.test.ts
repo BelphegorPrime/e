@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_LOOP_CAPS,
   DEFAULT_QUEUE_CONFIG,
+  DEFAULT_DEAD_CONFIG,
   DEFAULT_RESOURCE_CAPS,
 } from '../../core/store/config.js';
 import fs from 'node:fs';
@@ -38,6 +39,7 @@ function state(overrides: Partial<InitState> = {}): InitState {
     currentResources: DEFAULT_RESOURCE_CAPS,
     currentLoop: DEFAULT_LOOP_CAPS,
     currentQueue: DEFAULT_QUEUE_CONFIG,
+    currentDead: DEFAULT_DEAD_CONFIG,
     existingEnvContent: undefined,
     runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
@@ -63,6 +65,7 @@ test('planInit: blank or unanswered answers keep the configured current', () => 
     resources: DEFAULT_RESOURCE_CAPS,
     loop: DEFAULT_LOOP_CAPS,
     queue: DEFAULT_QUEUE_CONFIG,
+    dead: DEFAULT_DEAD_CONFIG,
   });
 });
 
@@ -139,6 +142,7 @@ test('planInit: a named git platform is recorded in the config', () => {
     resources: DEFAULT_RESOURCE_CAPS,
     loop: DEFAULT_LOOP_CAPS,
     queue: DEFAULT_QUEUE_CONFIG,
+    dead: DEFAULT_DEAD_CONFIG,
   });
 });
 

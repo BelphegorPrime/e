@@ -19,6 +19,7 @@ import {
   verifyCacheVolume,
   DEFAULT_LOOP_CAPS,
   DEFAULT_QUEUE_CONFIG,
+  DEFAULT_DEAD_CONFIG,
   DEFAULT_RESOURCE_CAPS,
   DEFAULT_VERIFY_TIMEOUT_MS,
   modelsFilePath,
@@ -101,6 +102,7 @@ test('resolveConfig: a missing config yields the built-in defaults', () => {
     resources: DEFAULT_RESOURCE_CAPS,
     loop: DEFAULT_LOOP_CAPS,
     queue: DEFAULT_QUEUE_CONFIG,
+    dead: DEFAULT_DEAD_CONFIG,
   });
 });
 
@@ -115,6 +117,7 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
     resources: DEFAULT_RESOURCE_CAPS,
     loop: DEFAULT_LOOP_CAPS,
     queue: DEFAULT_QUEUE_CONFIG,
+    dead: DEFAULT_DEAD_CONFIG,
   });
 });
 
@@ -177,6 +180,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
         resources: DEFAULT_RESOURCE_CAPS,
         loop: DEFAULT_LOOP_CAPS,
         queue: DEFAULT_QUEUE_CONFIG,
+        dead: DEFAULT_DEAD_CONFIG,
       },
       root
     );
@@ -191,6 +195,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
       resources: DEFAULT_RESOURCE_CAPS,
       loop: DEFAULT_LOOP_CAPS,
       queue: DEFAULT_QUEUE_CONFIG,
+      dead: DEFAULT_DEAD_CONFIG,
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -210,6 +215,7 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
       resources: DEFAULT_RESOURCE_CAPS,
       loop: DEFAULT_LOOP_CAPS,
       queue: DEFAULT_QUEUE_CONFIG,
+      dead: DEFAULT_DEAD_CONFIG,
     });
     assert.ok(!fs.existsSync(configFilePath(root)));
   } finally {
@@ -551,6 +557,18 @@ test('readConfigChain: a repository that keeps a config and declares no gate has
     fs.rmSync(serving, { recursive: true, force: true });
     fs.rmSync(target, { recursive: true, force: true });
   }
+});
+
+test('resolveConfig: the dead block defaults to seven days and 100 entries, per key', () => {
+  assert.deepEqual(resolveConfig({}).dead, DEFAULT_DEAD_CONFIG);
+  assert.deepEqual(DEFAULT_DEAD_CONFIG, {
+    maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+    maxCount: 100,
+  });
+  assert.deepEqual(
+    resolveConfig({ dead: { maxAgeMs: 'forever', maxCount: 10 } }).dead,
+    { maxAgeMs: DEFAULT_DEAD_CONFIG.maxAgeMs, maxCount: 10 }
+  );
 });
 
 test('resolveConfig: the queue block resolves per key; a malformed field keeps its default', () => {

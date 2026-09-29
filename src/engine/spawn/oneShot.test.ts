@@ -12,7 +12,11 @@ import {
   triggerPromptPath,
 } from '../../core/store/paths.js';
 import { EVENT_PAYLOAD_MAX_BYTES } from '../../core/trigger/oneShot.js';
-import { resolveOneShot, type OneShotInput } from './oneShot.js';
+import {
+  resolveOneShot,
+  resolveRunBase,
+  type OneShotInput,
+} from './oneShot.js';
 
 /*
  * The one-shot shape (ADR-0016 section 13): `e spawn --trigger <name>
@@ -483,4 +487,37 @@ test('resolveOneShot: an invalid declaration at base says why', () => {
       /"agent" is required/
     );
   });
+});
+
+test('resolveRunBase: a queued run cuts from the default branch, or its declared base under the base rule', () => {
+  const git = new InMemoryGit({
+    defaultBranchRef: MAIN,
+    refCommits: {
+      [MAIN]: 'main-sha',
+      'refs/remotes/origin/release': 'release-sha',
+      'refs/pull/7/head': 'pr-sha',
+    },
+  });
+  assert.deepEqual(resolveRunBase(git, undefined), {
+    ref: MAIN,
+    sha: 'main-sha',
+    branch: 'main',
+  });
+  assert.deepEqual(resolveRunBase(git, 'release'), {
+    ref: 'refs/remotes/origin/release',
+    sha: 'release-sha',
+    branch: 'release',
+  });
+  assert.throws(
+    () => resolveRunBase(git, 'refs/pull/7/head'),
+    /Base error: .*pull request ref/
+  );
+  assert.throws(
+    () => resolveRunBase(git, 'nowhere'),
+    /Base error: .*does not resolve/
+  );
+  assert.throws(
+    () => resolveRunBase(new InMemoryGit({}), undefined),
+    /Base error: cannot determine the repository's default branch/
+  );
 });

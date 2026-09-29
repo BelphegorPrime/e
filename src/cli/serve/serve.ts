@@ -22,7 +22,9 @@ import { loadTriggers } from '../../core/trigger/load.js';
 import { CronScheduler } from '../../engine/queue/cronScheduler.js';
 import { RunQueue } from '../../engine/queue/runQueue.js';
 import { runsDirs } from '../../engine/queue/runsSpool.js';
+import { HostGit } from '../../ports/git/host.js';
 import { resolveRuntime } from '../../ports/runtime/registry.js';
+import { resolveRunBase } from '../../engine/spawn/oneShot.js';
 import { errorMessage } from '../../shared/utils/errors.js';
 import { a2aAccess } from '../../engine/a2a/access.js';
 import {
@@ -155,12 +157,18 @@ export function registerServeCommand(program: Command): void {
       let scheduler: CronScheduler | undefined;
       try {
         const runtime = resolveRuntime();
+        const git = new HostGit();
+        const config = readConfig(root);
         // The scheduler is the tick's first step, and it enqueues onto the
         // queue it is a step of; the tick only runs once `start()` is called.
         const runQueue = new RunQueue({
           dirs: runs,
-          config: readConfig(root).queue,
+          config: config.queue,
+          dead: config.dead,
           containerRunning: name => runtime.isRunning(name),
+          // The base rule at claim, against the repository serve runs in -
+          // the one its runs' worktrees are cut from.
+          resolveBase: name => resolveRunBase(git, name),
           dueTriggers: now => cron.tick(now),
         });
         const cron = new CronScheduler({
