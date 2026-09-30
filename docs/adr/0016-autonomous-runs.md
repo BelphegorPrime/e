@@ -995,7 +995,7 @@ OmniRoute gets **one endpoint key per run**: minted at start with
 leftover `e-run-*` keys swept at the next start. A key an agent leaks is dead
 once its run is. OmniRoute's API deletes and lists keys by id
 (`docs/research/omniroute-endpoint-keys.md`, #196), so the key is minted named
-`e-run-<run name>` with `expiresAt` at the run cap plus an hour, which covers the image builds
+`e-run-<run>-<ulid>` (a sibling `e-run-<parent branch>-<sib-NNN>`), so runs can be told apart, with `expiresAt` at the run cap plus an hour, which covers the image builds
 before the cap starts counting,, and
 deleted by id after teardown on every way out - green, red, aborted. A delete
 that fails only warns: the expiry already makes the key useless, and the

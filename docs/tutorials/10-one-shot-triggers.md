@@ -122,7 +122,7 @@ never starts a local stack.
 systemd timer, say - where `e-egress` and `omniroute` are up, the run joins
 the egress namespace like a manual run, and an Agent whose provider points at
 the local OmniRoute gets a key of its own: `e` signs in with
-`OMNIROUTE_INITIAL_PASSWORD` from `--env-file`, mints `e-run-<run name>`
+`OMNIROUTE_INITIAL_PASSWORD` from `--env-file`, mints `e-run-<run>-<ulid>`
 before the container starts, and deletes it after teardown, red or aborted
 runs included. A key a crash left behind is swept at the next start. So put
 the stack's password in the `--env-file` there; it stays on the host, and

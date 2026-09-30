@@ -12,6 +12,7 @@ import { planSpawn } from './spawnPlan.js';
 import {
   RUN_KEY_EXPIRY_MARGIN_MS,
   prepareOneShotStack,
+  runKeyName,
   type OneShotStackDeps,
 } from './oneShotStack.js';
 import { fakeOmniRoute, type FakeKey } from './omniRoute.testSupport.js';
@@ -83,7 +84,12 @@ function deps(
 ): { deps: OneShotStackDeps; omni: typeof omni; calls: string[] } {
   const { runtime, calls } = runtimeWith(running);
   return {
-    deps: { runtime, fetchImpl: omni.fetchImpl, now: () => NOW },
+    deps: {
+      runtime,
+      fetchImpl: omni.fetchImpl,
+      now: () => NOW,
+      newId: () => '01K6RUN',
+    },
     omni,
     calls,
   };
@@ -125,7 +131,7 @@ test('prepareOneShotStack: mints a key named after the run, expiring after the c
   );
   assert.equal(d.omni.keys.length, 1);
   const [key] = d.omni.keys;
-  assert.equal(key.name, 'e-run-nightly');
+  assert.equal(key.name, 'e-run-nightly-01K6RUN');
   assert.equal(
     key.expiresAt,
     new Date(
@@ -236,4 +242,35 @@ test('prepareOneShotStack: the admin password stays host-side, the run key reach
   );
   assert.ok(plan.baseEnvWhitelist.includes('OPENAI_API_KEY'));
   assert.doesNotMatch(plan.providerEnvContent ?? '', /pw/);
+});
+
+test('runKeyName: a run key names its run and something unique to it', () => {
+  // Two runs of one trigger, told apart by the id.
+  assert.equal(runKeyName(facts(), 'A1'), 'e-run-nightly-A1');
+  assert.notEqual(runKeyName(facts(), 'A1'), runKeyName(facts(), 'B2'));
+  // Without --name, the agent.
+  assert.equal(
+    runKeyName(facts({ name: undefined }), 'A1'),
+    'e-run-pr-fixer-A1'
+  );
+  // A sibling names its parent run and its sibling id.
+  assert.equal(
+    runKeyName(
+      facts({
+        name: undefined,
+        sibling: {
+          parent: { worktreePath: '/wt', branch: 'e/pr-fixer/nightly-3' },
+          spoolDir: '/spool',
+          id: 'sib-002',
+        },
+      }),
+      'A1'
+    ),
+    'e-run-e/pr-fixer/nightly-3-sib-002'
+  );
+  // Within OmniRoute's 200-character name limit, the prefix kept.
+  const long = runKeyName(facts({ name: 'x'.repeat(300) }), 'A1');
+  assert.ok(
+    long.length <= 200 && long.startsWith('e-run-') && long.endsWith('-A1')
+  );
 });

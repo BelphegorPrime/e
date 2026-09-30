@@ -30,6 +30,7 @@ import { env } from '../../shared/utils/env.js';
 import { errorMessage } from '../../shared/utils/errors.js';
 import { log } from '../../shared/utils/log.js';
 import type { SpawnFacts } from './spawnPlan.js';
+import { newUlid } from '../queue/runsSpool.js';
 import {
   LocalApiKeyError,
   RUN_KEY_PREFIX,
@@ -56,6 +57,8 @@ export interface OneShotStackDeps {
   fetchImpl?: typeof fetch;
   /** Now, for the key's expiry and the sweep. */
   now?: () => Date;
+  /** A fresh unique id for the key's name; a ULID by default. */
+  newId?: () => string;
 }
 
 /** The facts the plan is built from, and what gives the run's key back. */
@@ -70,6 +73,25 @@ export interface PreparedOneShot {
 
 /** The release of a run that minted no key. */
 export const NOTHING_TO_RELEASE = async (): Promise<void> => undefined;
+
+/** OmniRoute's limit on a key's name. */
+const KEY_NAME_MAX = 200;
+
+/**
+ * The run key's name: `e-run-`, the run, and something unique to this one,
+ * so two runs of one trigger, or several siblings of one agent, can be told
+ * apart in OmniRoute's key list. A sibling names its parent run's branch and
+ * its sibling id; any other run its `--name` (a trigger's id) or its agent,
+ * and `id`. The prefix is what the sweep selects on, so it always survives
+ * the length limit, as does the unique tail.
+ */
+export function runKeyName(facts: SpawnFacts, id: string): string {
+  const [run, tail] = facts.sibling
+    ? [facts.sibling.parent.branch, facts.sibling.id]
+    : [facts.name ?? facts.agent.name, id];
+  const room = KEY_NAME_MAX - RUN_KEY_PREFIX.length - tail.length - 1;
+  return `${RUN_KEY_PREFIX}${run.slice(0, Math.max(0, room))}-${tail}`;
+}
 
 /** Whether this host's local stack is up: both fixed-name containers running. */
 export function oneShotStackRunning(
@@ -149,7 +171,7 @@ export async function prepareOneShotStack(
 
   const now = (deps.now ?? (() => new Date()))();
   const capMs = (facts.loop ?? DEFAULT_LOOP_CAPS).totalTimeoutMs;
-  const name = `${RUN_KEY_PREFIX}${facts.name ?? facts.agent.name}`;
+  const name = runKeyName(facts, (deps.newId ?? newUlid)());
   const session = await reach(() =>
     signInLocalStack({
       baseUrl: env.omniRoutedUrl,

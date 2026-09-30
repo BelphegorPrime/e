@@ -1740,7 +1740,8 @@ test('--trigger with a running stack: the run key is minted before the container
       }
     );
     assert.notEqual(code, 0);
-    assert.deepEqual(keysDuringRun, ['e-run-fix']);
+    assert.equal(keysDuringRun.length, 1);
+    assert.match(keysDuringRun[0], /^e-run-fix-[0-9A-Z]{26}$/);
     assert.deepEqual(omni.keys, [], 'deleted after teardown');
     // Used, never started; the run joined the egress namespace.
     assert.deepEqual(runtime.composedUp, []);

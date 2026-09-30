@@ -219,7 +219,7 @@ Where the autonomy machinery runs (ADR-0016). **hosted** is a long-lived `e serv
 _Avoid_: ephemeral (the worktree is ephemeral in both), CI mode (any scheduler drives one-shot)
 
 **Run key**:
-An OmniRoute endpoint key minted for exactly one one-shot Run on a host whose local stack is already running (ADR-0016 section 13): named `e-run-<run name>`, expiring at the run cap plus a margin, handed to the Agent's provider through the run's env and never persisted in a Store, deleted after teardown, and swept at the next start if a crash left it. Minted with `OMNIROUTE_INITIAL_PASSWORD` from `--env-file`, which never reaches a container. A manual Run keeps its long-lived key in `.e/.env` instead.
+An OmniRoute endpoint key minted for exactly one one-shot Run on a host whose local stack is already running (ADR-0016 section 13): named `e-run-<run>-<ulid>` (a sibling: `e-run-<parent branch>-<sib-NNN>`), expiring at the run cap plus a margin, handed to the Agent's provider through the run's env and never persisted in a Store, deleted after teardown, and swept at the next start if a crash left it. Minted with `OMNIROUTE_INITIAL_PASSWORD` from `--env-file`, which never reaches a container. A manual Run keeps its long-lived key in `.e/.env` instead.
 _Avoid_: session key, temporary key
 
 The next terms are the vocabulary of ADR-0017 (proposed; resumable runs):
