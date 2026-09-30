@@ -205,6 +205,35 @@ test('parseAgent: an unrecognised provider protocol throws, listing valid protoc
   );
 });
 
+test('parseAgent: apiKeyEnv and baseUrlEnv must be env var names, which configs reference by name', () => {
+  // A harness config says `${NAME}` (pi) or `env_key = "NAME"` (Codex): a
+  // name that is no env var name would reach the endpoint as literal text.
+  for (const provider of [
+    { apiKeyEnv: 'MY-KEY' },
+    { apiKeyEnv: '1KEY' },
+    { apiKeyEnv: 'sk-live-abc' },
+    { apiKeyEnv: 'K', baseUrlEnv: 'BASE URL' },
+  ]) {
+    assert.throws(
+      () =>
+        parseAgent(
+          {
+            name: 'x',
+            harness: 'pi',
+            provider: {
+              baseUrl: 'https://x',
+              model: 'm',
+              protocol: 'anthropic-messages',
+              ...provider,
+            },
+          },
+          'test.json'
+        ),
+      /test\.json[\s\S]*not an environment variable name/
+    );
+  }
+});
+
 // isKnownTarget is glue over the real store, so it runs against a temp root.
 test('isKnownTarget: a known harness is a target; an unknown name is not', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-agent-'));

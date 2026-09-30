@@ -80,11 +80,20 @@ test('only Claude wires MCP inline today; the others have no renderMcpArgs', () 
 test('harnessCapabilities.mcp declares each harness form: flag (Claude), file (Codex/pi), none (opencode)', () => {
   assert.equal(harnessCapabilities(HARNESSES.claudeCode).mcp, 'flag');
   assert.equal(harnessCapabilities(HARNESSES.codex).mcp, 'file');
-  // pi gets an MCP client from the pi-mcp-adapter extension (installed in its
-  // image), so its file adapter delivers a mcp.json overlay.
+  // pi's built-in MCP support reads mcp.json, so its file adapter delivers
+  // a mcp.json overlay.
   assert.equal(harnessCapabilities(HARNESSES.pi).mcp, 'file');
   // opencode has no MCP delivery wired yet, so it is gated off too.
   assert.equal(harnessCapabilities(HARNESSES.opencode).mcp, 'none');
+});
+
+test('the pi image installs no pi-mcp-adapter: pi reads mcp.json itself', () => {
+  assert.equal(
+    HARNESSES.pi.dockerfile.setupSteps?.some(step =>
+      step.includes('pi-mcp-adapter')
+    ),
+    false
+  );
 });
 
 test('harnessCapabilities.provider reflects the adapter kind (env Claude, file Codex/pi/opencode)', () => {
@@ -135,7 +144,7 @@ test('planMcpDelivery wires pi as a mcp.json overlay next to the baked models.js
   const delivery = planMcpDelivery(HARNESSES.pi, endpoints, '');
   if (delivery.form !== 'file')
     return assert.fail(`expected file, got ${delivery.form}`);
-  // pi-mcp-adapter reads standard MCP JSON: a `mcpServers` map of url entries.
+  // pi reads standard MCP JSON: a `mcpServers` map of url entries.
   const parsed = JSON.parse(delivery.overlay.file.content);
   assert.deepEqual(parsed.mcpServers.everything, {
     url: 'http://everything:3001/mcp',

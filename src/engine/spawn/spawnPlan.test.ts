@@ -351,6 +351,54 @@ test('planSpawn: file harness bakes a derived image and passes an auto model on 
   assert.equal(plan.runtimeModel, 'auto/coding');
 });
 
+test('planSpawn: no file harness bakes or mounts the key value, only its name', () => {
+  // The per-run OmniRoute key (ADR-0016 section 13) must reach no file and no
+  // image layer: every rendered file references it by name.
+  const secret = 'sk-run-9f8e7d6c';
+  const provider = {
+    baseUrl: 'https://gw.example.com/v1',
+    model: 'm',
+    apiKeyEnv: 'GW_KEY',
+  };
+  const remoteMcp = {
+    name: 'hosted',
+    transport: 'remote' as const,
+    url: 'https://mcp.example.com/mcp',
+    headers: { Authorization: 'Bearer ${MCP_TOKEN}' },
+    requiredEnv: ['MCP_TOKEN'],
+  };
+  const cases = [
+    { harness: HARNESSES.pi, protocol: 'anthropic-messages' as const },
+    { harness: HARNESSES.codex, protocol: 'openai-responses' as const },
+    { harness: HARNESSES.opencode, protocol: 'openai-chat' as const },
+  ];
+  for (const { harness, protocol } of cases) {
+    const plan = planSpawn(
+      facts({
+        harness,
+        agent: {
+          name: `a-${harness.name}`,
+          harness: harness.name,
+          provider: { ...provider, protocol },
+        },
+        storeEnv: { GW_KEY: secret, MCP_TOKEN: 'mcp-secret' },
+        mcpServers: harness.name === 'opencode' ? [] : [remoteMcp],
+      })
+    );
+    const files = [
+      ...(plan.agentImagePlan?.files ?? []).map(f => f.content),
+      plan.configOverlay?.file.content ?? '',
+    ];
+    for (const content of files) {
+      assert.doesNotMatch(content, /sk-run-9f8e7d6c|mcp-secret/, harness.name);
+    }
+    assert.ok(
+      files.some(c => c.includes('GW_KEY')),
+      harness.name
+    );
+  }
+});
+
 test('planSpawn: a flag-MCP harness (claude) wires --mcp-config, no overlay', () => {
   const plan = planSpawn(facts({ mcpServers: [containerMcp] }));
   assert.equal(plan.sidecars.length, 1);

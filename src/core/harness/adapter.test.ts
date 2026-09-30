@@ -9,6 +9,7 @@ import {
   piAdapter,
   renderCodexConfig,
   renderCodexMcpServers,
+  codexSecretVars,
   renderOpencodeConfig,
   renderPiMcpServers,
   renderPiModelsJson,
@@ -236,18 +237,107 @@ test('renderCodexMcpServers: an empty selection renders nothing', () => {
   assert.equal(renderCodexMcpServers([]), '');
 });
 
-test('renderCodexMcpServers: renders remote headers verbatim as http_headers', () => {
+test('renderCodexMcpServers: a header without a reference stays a literal http_headers entry', () => {
   const toml = renderCodexMcpServers([
     {
       name: 'hosted',
       url: 'https://mcp.example.com/mcp',
-      headers: { Authorization: 'Bearer TOKEN' },
+      headers: { Authorization: 'Bearer TOKEN', 'X-Client': 'e' },
     },
   ]);
   assert.match(
     toml,
-    /^http_headers = \{ "Authorization" = "Bearer TOKEN" \}$/m
+    /^http_headers = \{ "Authorization" = "Bearer TOKEN", "X-Client" = "e" \}$/m
   );
+  assert.doesNotMatch(toml, /env_http_headers|bearer_token_env_var/);
+});
+
+test('renderCodexMcpServers: header secrets go by name - Bearer ${X} and whole-value ${X}', () => {
+  // Codex never expands ${VAR} in http_headers; it reads these two by name.
+  const toml = renderCodexMcpServers([
+    {
+      name: 'github',
+      url: 'https://mcp.example.com/mcp',
+      headers: {
+        Authorization: 'Bearer ${GITHUB_TOKEN}',
+        'X-Api-Key': '${X_API_KEY}',
+        'X-Client': 'e',
+      },
+    },
+  ]);
+  assert.match(toml, /^bearer_token_env_var = "GITHUB_TOKEN"$/m);
+  assert.match(toml, /^env_http_headers = \{ "X-Api-Key" = "X_API_KEY" \}$/m);
+  assert.match(toml, /^http_headers = \{ "X-Client" = "e" \}$/m);
+  assert.doesNotMatch(toml, /\$\{/);
+});
+
+test('renderCodexMcpServers: a reference Codex cannot take by name is refused, never sent literally', () => {
+  const refused: Record<string, string>[] = [
+    { Authorization: 'Token ${TOKEN}' },
+    { 'X-Pair': '${A}:${B}' },
+    { 'X-Other': 'Bearer ${TOKEN}' },
+  ];
+  for (const headers of refused) {
+    assert.throws(
+      () =>
+        renderCodexMcpServers([
+          { name: 'hosted', url: 'https://mcp.example.com/mcp', headers },
+        ]),
+      /MCP server "hosted".*Codex/
+    );
+  }
+});
+
+test('codexSecretVars: the env names an MCP selection reads its header secrets from', () => {
+  assert.deepEqual(
+    codexSecretVars([
+      {
+        name: 'github',
+        url: 'https://mcp.example.com/mcp',
+        headers: { Authorization: 'Bearer ${GITHUB_TOKEN}', 'X-K': '${X_K}' },
+      },
+      { name: 'plain', url: 'http://plain:3001/mcp' },
+    ]),
+    ['GITHUB_TOKEN', 'X_K']
+  );
+});
+
+test('renderCodexConfig: no shell snapshot, and the key kept out of the agent shell', () => {
+  // Codex writes the whole env to $CODEX_HOME/shell_snapshots by default, and
+  // hands the agent's shell every variable (docs/research/harness-secret-delivery.md).
+  const toml = renderCodexConfig(codexProvider);
+  assert.match(toml, /^\[features\]\nshell_snapshot = false$/m);
+  assert.match(
+    toml,
+    /^\[shell_environment_policy\]\nexclude = \["MY_GATEWAY_KEY"\]$/m
+  );
+});
+
+test('codexAdapter.planConfigOverlay: MCP header secrets join the key in the one exclude list', () => {
+  const overlay = codexAdapter.planConfigOverlay!(
+    renderCodexConfig(codexProvider),
+    [
+      {
+        name: 'github',
+        url: 'https://mcp.example.com/mcp',
+        headers: { Authorization: 'Bearer ${GITHUB_TOKEN}' },
+      },
+    ]
+  );
+  const content = overlay.file.content;
+  assert.match(content, /^exclude = \["MY_GATEWAY_KEY", "GITHUB_TOKEN"\]$/m);
+  assert.equal(content.match(/^\[shell_environment_policy\]$/gm)?.length, 1);
+  assert.equal(content.match(/^\[features\]$/gm)?.length, 1);
+  // A default agent bakes no config: the overlay brings the policy itself.
+  const bare = codexAdapter.planConfigOverlay!('', [
+    {
+      name: 'github',
+      url: 'https://mcp.example.com/mcp',
+      headers: { Authorization: 'Bearer ${GITHUB_TOKEN}' },
+    },
+  ]).file.content;
+  assert.match(bare, /^shell_snapshot = false$/m);
+  assert.match(bare, /^exclude = \["GITHUB_TOKEN"\]$/m);
 });
 
 test('codexAdapter.planConfigOverlay: merges the MCP block onto the baked base config', () => {
@@ -268,6 +358,11 @@ test('codexAdapter.planConfigOverlay: merges the MCP block onto the baked base c
   assert.match(overlay.file.content, /^base_url = /m);
   // ...and the MCP server block is appended.
   assert.match(overlay.file.content, /^\[mcp_servers\.everything\]$/m);
+  // One policy table, still keeping the key out of the shell.
+  assert.equal(
+    overlay.file.content.match(/^\[shell_environment_policy\]$/gm)?.length,
+    1
+  );
   assert.match(
     overlay.file.content,
     /^url = "http:\/\/everything:3001\/mcp"$/m
@@ -356,8 +451,12 @@ test('renderPiModelsJson: renders a single custom provider selecting the endpoin
 test('renderPiModelsJson: references the API key by env var name via ${VAR}, never a value', () => {
   const cfg = JSON.parse(renderPiModelsJson(piProvider, {}));
   // pi interpolates ${VAR} from the process env at request time; the baked file
-  // must carry the name, never a secret.
-  assert.equal(cfg.providers[PI_PROVIDER_ID].apiKey, '');
+  // must carry the name, never a secret - not even one the store holds.
+  assert.equal(cfg.providers[PI_PROVIDER_ID].apiKey, '${MY_GATEWAY_KEY}');
+  const withSecret = renderPiModelsJson(piProvider, {
+    MY_GATEWAY_KEY: 'sk-run-secret',
+  });
+  assert.doesNotMatch(withSecret, /sk-run-secret/);
 });
 
 test('renderPiModelsJson: maps openai-chat to pi openai-completions', () => {
@@ -401,7 +500,7 @@ test('piAdapter: names every model on the run command; Codex only an auto pick',
   );
 });
 
-test('piAdapter: ships MCP delivery via the pi-mcp-adapter (mcp.json overlay)', () => {
+test('piAdapter: ships MCP delivery via its built-in MCP support (mcp.json overlay)', () => {
   // pi's overlay is self-contained: the baked models.json stays as it is and the
   // overlay mounts a sibling mcp.json, so nothing is merged into the provider file.
   assert.equal(typeof piAdapter.planConfigOverlay, 'function');

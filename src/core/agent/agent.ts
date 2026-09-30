@@ -167,6 +167,9 @@ export function parseAgent(raw: unknown, where: string): Agent {
   return agent;
 }
 
+/** An environment variable name, as every harness config spells a reference. */
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 /** Validates a parsed `provider` block into a {@link Provider}, purely. */
 function parseProvider(raw: unknown, where: string): Provider {
   const p = (raw ?? {}) as Partial<Provider>;
@@ -184,6 +187,18 @@ function parseProvider(raw: unknown, where: string): Provider {
     throw new Error(
       `Invalid provider protocol "${p.protocol}" in agent definition at ${where}. Valid protocols: ${PROTOCOLS.join(', ')}.`
     );
+  }
+
+  // Configs reference them by name (`${NAME}`, `env_key`), never by value.
+  for (const [field, name] of [
+    ['apiKeyEnv', p.apiKeyEnv],
+    ['baseUrlEnv', p.baseUrlEnv],
+  ] as const) {
+    if (name !== undefined && !ENV_NAME.test(name)) {
+      throw new Error(
+        `Invalid provider in agent definition at ${where}: ${field} "${name}" is not an environment variable name (letters, digits and _, not starting with a digit).`
+      );
+    }
   }
 
   const provider: Provider = {

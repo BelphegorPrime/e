@@ -175,10 +175,10 @@ export const HARNESSES: Record<string, Harness> = {
       label: 'Pi Coding Agent CLI harness.',
       npmPackage: '@earendil-works/pi-coding-agent',
       npmFlags: ['--ignore-scripts'],
-      setupSteps: [
-        'pi install npm:pi-mcp-adapter',
-        'pi install npm:pi-web-access',
-      ],
+      // No pi-mcp-adapter: pi has read `mcp.json` itself since 0.99.0, and
+      // the adapter stopped reading it in 3.0.0
+      // (docs/research/harness-secret-delivery.md).
+      setupSteps: ['pi install npm:pi-web-access'],
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'pi',
     },
@@ -474,7 +474,7 @@ export function resolveHarness(name: string): Harness {
  *  - `flag` - inline on the command line (Claude Code's `--mcp-config`).
  *  - `file` - rendered into its native config file, delivered as a runtime
  *    overlay via its file adapter (Codex's `config.toml` / `CODEX_HOME`; pi's
- *    `mcp.json` via the pi-mcp-adapter extension).
+ *    `mcp.json`, read by its built-in MCP support).
  *  - `none` - no MCP client at all or no MCP delivery wired yet (opencode);
  *    `--mcp` is rejected with a clear error at spawn.
  */

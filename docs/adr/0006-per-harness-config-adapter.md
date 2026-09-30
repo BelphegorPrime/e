@@ -26,14 +26,18 @@ Delivery is layered onto the build model of ADR-0004:
 
 Two cross-cutting rules:
 
-- **Credentials are referenced by name, not baked, with one exception.**
-  Normally an image references only the env var _name_; the value lives in
-  `.e/.env` (collected interactively by `e init`) and is injected at runtime,
-  extending the credential boundary of ADR-0002. **pi is the exception:** it
-  selects only models declared in `models.json`, so its adapter resolves the key
-  by name and writes the _value_ into that baked file. The value therefore lands
-  in the pi derived image: a deliberate trade-off pi's CLI forces, not the rule
-  for the other harnesses (Claude Code and Codex still reference by name).
+- **Credentials are referenced by name, never baked.** An image references
+  only the env var _name_; the value lives in `.e/.env` (collected
+  interactively by `e init`), or a one-shot run's `--env-file`, and is injected
+  at runtime, extending the credential boundary of ADR-0002. Each harness's own
+  syntax does it: Claude Code reads env only, Codex `env_key`, opencode
+  `{env:NAME}`, pi `"apiKey": "${NAME}"` in `models.json`. pi used to be the
+  exception, with the key's _value_ baked into its derived image; pi resolves
+  `${NAME}` at request time, so that exception is gone (a bare `NAME` would be
+  the literal key). Remote MCP header secrets go by name the same way, and
+  Codex, whose `http_headers` are literal, gets `bearer_token_env_var` and
+  `env_http_headers`, with its shell snapshot off and the secrets excluded from
+  its agent's shell (`docs/research/harness-secret-delivery.md`).
 - **Protocol is validated against a per-harness set.** A provider's `protocol`
   is a specific wire API: `openai-chat` (`/v1/chat/completions`),
   `openai-responses` (`/v1/responses`), or `anthropic-messages`. Each Harness

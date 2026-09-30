@@ -21,7 +21,7 @@ Harness support, as `e` gates it:
 
 | Harness      | MCP delivery                                       |
 | ------------ | -------------------------------------------------- |
-| `pi`         | rendered config file, through `pi-mcp-adapter`     |
+| `pi`         | rendered `mcp.json`, read by pi's built-in MCP     |
 | `claudeCode` | `--mcp-config` flag on the run command             |
 | `codex`      | overlay merged into `config.toml`                  |
 | `opencode`   | none; `--mcp` is rejected before anything is built |

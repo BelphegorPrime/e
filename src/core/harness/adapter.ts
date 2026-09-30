@@ -159,9 +159,9 @@ export interface FileHarnessAdapter {
    * command must name. Every one of those is the harness's own decision - where it
    * reads config, whether it can select an `auto` model from a baked file - so a
    * new file harness is one object with one method, and the derived-image planner
-   * branches on none of it. `storeEnv` is the parsed `.e/.env`, for a file format
-   * that cannot reference a key by name (pi). See {@link planProviderDelivery},
-   * the union's one fork.
+   * branches on none of it. `storeEnv` is the parsed `.e/.env`, for a non-secret
+   * the file bakes by value (a provider's `baseUrlEnv`); a key is always
+   * referenced by name. See {@link planProviderDelivery}, the union's one fork.
    */
   planProviderDelivery(
     provider: Provider,
@@ -175,8 +175,8 @@ export interface FileHarnessAdapter {
    * env - everything the spawn edge needs without knowing where this harness reads
    * its config. Pure - the edge writes the file, formats the mount, and appends
    * the env. **Optional** - its presence is the harness's declared file-MCP
-   * capability; pi ships one via the pi-mcp-adapter extension, delivering
-   * `mcp.json` beside the baked provider file. See {@link planMcpDelivery}.
+   * capability; pi's built-in MCP support reads `mcp.json` beside the baked
+   * provider file. See {@link planMcpDelivery}.
    */
   planConfigOverlay?(
     baseConfig: string,
@@ -249,7 +249,95 @@ export function renderCodexConfig(provider: Provider): string {
     `env_key = ${tomlBasicString(provider.apiKeyEnv)}`,
     `wire_api = "responses"`
   );
-  return lines.join('\n') + '\n';
+  return (
+    lines.join('\n') + '\n\n' + renderCodexSecretPolicy([provider.apiKeyEnv])
+  );
+}
+
+/**
+ * The two Codex settings that keep a secret out of every file and out of the
+ * agent's shell (docs/research/harness-secret-delivery.md): Codex snapshots
+ * the whole env into `$CODEX_HOME/shell_snapshots` by default, and hands the
+ * shell every variable, whose output its rollout records. `exclude` hides the
+ * named vars from the shell only; the provider and the MCP client still read
+ * them. Always the file's last tables, so an overlay can extend the list.
+ */
+function renderCodexSecretPolicy(vars: readonly string[]): string {
+  return (
+    [
+      `[features]`,
+      `shell_snapshot = false`,
+      ``,
+      `[shell_environment_policy]`,
+      `exclude = [${[...new Set(vars)].map(tomlBasicString).join(', ')}]`,
+    ].join('\n') + '\n'
+  );
+}
+
+/** Where {@link renderCodexSecretPolicy} starts in a config `e` rendered. */
+const CODEX_SECRET_POLICY_START = /^\[features\]\nshell_snapshot = false\n/m;
+
+/** The names in a rendered policy's `exclude`, which are env var names. */
+function codexPolicyVars(config: string): string[] {
+  const line = /^exclude = \[(.*)\]$/m.exec(config)?.[1] ?? '';
+  return [...line.matchAll(/"([^"\\]*)"/g)].map(match => match[1]);
+}
+
+/** A header value that is exactly one `${NAME}` reference. */
+const WHOLE_REFERENCE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+/** An `Authorization` value that is `Bearer ${NAME}`. */
+const BEARER_REFERENCE = /^Bearer \$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+
+/** How Codex takes one MCP header: literal, whole value by name, or bearer by name. */
+type CodexHeader =
+  | { kind: 'literal'; value: string }
+  | { kind: 'env'; name: string }
+  | { kind: 'bearer'; name: string };
+
+/**
+ * Classifies a remote MCP header for Codex, whose `http_headers` are literal:
+ * a `${VAR}` there would be sent as the text `${VAR}`. By name Codex takes a
+ * whole value (`env_http_headers`) or `Authorization: Bearer <value>`
+ * (`bearer_token_env_var`), nothing templated around a reference. Such a
+ * header is refused: composing its value into a file is what this avoids.
+ */
+function codexHeader(
+  server: string,
+  header: string,
+  value: string
+): CodexHeader {
+  if (!value.includes('${')) return { kind: 'literal', value };
+  const whole = WHOLE_REFERENCE.exec(value);
+  if (whole) return { kind: 'env', name: whole[1] };
+  const bearer = BEARER_REFERENCE.exec(value);
+  if (bearer && header.toLowerCase() === 'authorization') {
+    return { kind: 'bearer', name: bearer[1] };
+  }
+  throw new Error(
+    `MCP server "${server}": header "${header}" is "${value}", which Codex cannot read by name - it takes a secret only as the whole value ("\${VAR}") or as "Authorization: Bearer \${VAR}". Rewrite the header in its mcp.json.`
+  );
+}
+
+/** Every header of every endpoint, classified for Codex. */
+function codexHeaders(
+  endpoint: McpEndpoint
+): { header: string; as: CodexHeader }[] {
+  return Object.entries(endpoint.headers ?? {}).map(([header, value]) => ({
+    header,
+    as: codexHeader(endpoint.name, header, value),
+  }));
+}
+
+/**
+ * The env var names an MCP selection's header secrets are read from, for the
+ * shell `exclude`: Codex's MCP client reads them, the agent's shell must not.
+ */
+export function codexSecretVars(endpoints: McpEndpoint[]): string[] {
+  return endpoints.flatMap(endpoint =>
+    codexHeaders(endpoint).flatMap(({ as }) =>
+      as.kind === 'literal' ? [] : [as.name]
+    )
+  );
 }
 
 /**
@@ -257,11 +345,10 @@ export function renderCodexConfig(provider: Provider): string {
  * blocks. A `url` denotes a streamable-HTTP server (Codex's only HTTP transport;
  * no `transport`/`type` key and no experimental flag are needed - verified
  * against `config.schema.json`'s `RawMcpServerConfig`) - used for container
- * sidecars reached at `http://<alias>:<port>/mcp`. Any endpoint `headers` are
- * rendered as Codex `http_headers` verbatim; Codex does not expand `${VAR}`, so a
- * secret-bearing remote header is a Codex-native concern (its `env_http_headers`
- * / `bearer_token_env_var`, which reference an env var by name) and out of this
- * slice's container scope. Grounding: `docs/research/harness-cli-facts.md`.
+ * sidecars reached at `http://<alias>:<port>/mcp`. A remote server's headers
+ * go by name wherever they reference a secret (see {@link codexHeader}):
+ * `bearer_token_env_var`, `env_http_headers`, and `http_headers` only for
+ * literal values. Grounding: `docs/research/harness-secret-delivery.md`.
  */
 export function renderCodexMcpServers(endpoints: McpEndpoint[]): string {
   const blocks = endpoints.map(endpoint => {
@@ -269,11 +356,26 @@ export function renderCodexMcpServers(endpoints: McpEndpoint[]): string {
       `[mcp_servers.${tomlBareKey(endpoint.name)}]`,
       `url = ${tomlBasicString(endpoint.url)}`,
     ];
-    if (endpoint.headers && Object.keys(endpoint.headers).length > 0) {
-      const pairs = Object.entries(endpoint.headers).map(
-        ([key, value]) => `${tomlBasicString(key)} = ${tomlBasicString(value)}`
+    const headers = codexHeaders(endpoint);
+    const bearer = headers.find(({ as }) => as.kind === 'bearer');
+    if (bearer?.as.kind === 'bearer') {
+      lines.push(`bearer_token_env_var = ${tomlBasicString(bearer.as.name)}`);
+    }
+    const table = (kind: 'env' | 'literal'): string[] =>
+      headers.flatMap(({ header, as }) =>
+        as.kind === kind
+          ? [
+              `${tomlBasicString(header)} = ${tomlBasicString(as.kind === 'env' ? as.name : as.value)}`,
+            ]
+          : []
       );
-      lines.push(`http_headers = { ${pairs.join(', ')} }`);
+    const byName = table('env');
+    if (byName.length > 0) {
+      lines.push(`env_http_headers = { ${byName.join(', ')} }`);
+    }
+    const literal = table('literal');
+    if (literal.length > 0) {
+      lines.push(`http_headers = { ${literal.join(', ')} }`);
     }
     return lines.join('\n');
   });
@@ -330,8 +432,20 @@ export const codexAdapter: FileHarnessAdapter = {
     baseConfig: string,
     endpoints: McpEndpoint[]
   ): ConfigOverlayDelivery {
-    const block = renderCodexMcpServers(endpoints);
-    const content = (baseConfig ? baseConfig.trimEnd() + '\n\n' : '') + block;
+    // The policy stays the file's last tables, extended by the MCP secrets:
+    // TOML allows each table once, and a default agent bakes none.
+    const start = CODEX_SECRET_POLICY_START.exec(baseConfig)?.index;
+    const provider =
+      start === undefined ? baseConfig : baseConfig.slice(0, start);
+    const vars = [
+      ...(start === undefined ? [] : codexPolicyVars(baseConfig.slice(start))),
+      ...codexSecretVars(endpoints),
+    ];
+    const content =
+      (provider.trim() ? provider.trimEnd() + '\n\n' : '') +
+      renderCodexMcpServers(endpoints) +
+      '\n' +
+      renderCodexSecretPolicy(vars);
     return {
       file: { fileName: CODEX_CONFIG_FILE, content },
       mountTo: `${CODEX_CONFIG_DIR}/${CODEX_CONFIG_FILE}`,
@@ -348,11 +462,11 @@ export const codexAdapter: FileHarnessAdapter = {
 export const PI_PROVIDER_ID = 'e';
 
 /**
- * Renders MCP server endpoints into the standard MCP JSON shape that the
- * `pi-mcp-adapter` extension reads: a top-level `mcpServers` map whose entries
- * carry a `url` (streamable HTTP) and optional `headers`, matching the
- * canonical `mcp.json` format pi's own CLI consumes. Grounding: pi-mcp-adapter
- * `README.md` (MCP file discovery: the pi agent dir `mcp.json`).
+ * Renders MCP server endpoints into the `mcp.json` pi's built-in MCP support
+ * reads from its agent dir: a top-level `mcpServers` map whose entries carry a
+ * `url` (streamable HTTP) and optional `headers`. pi resolves `${NAME}` in a
+ * header value from the process env, so a secret header stays a reference.
+ * Grounding: pi `docs/mcp.md`, `docs/research/harness-secret-delivery.md`.
  */
 export function renderPiMcpServers(endpoints: McpEndpoint[]): string {
   const mcpServers: Record<
@@ -389,13 +503,14 @@ export function piApi(protocol: Protocol): string {
 
 /**
  * Renders a {@link Provider} into a pi `models.json` body: one custom provider
- * (id `e`) carrying the endpoint, the mapped `api`, the API key, and the one model
- * to select. Because pi selects only models **declared** here (unlike Codex),
- * `e` resolves the key by name from the store and writes its **value** into the
- * file - which is then baked into the derived agent image (ADR-0006's exception to
- * the "credentials referenced by name" rule). {@link planProviderDelivery}
- * guarantees a concrete model id even for `auto`. Grounding: pi `docs/models.md`,
- * `docs/providers.md`.
+ * (id `e`) carrying the endpoint, the mapped `api`, a reference to the API key,
+ * and the one model to select (pi selects only models **declared** here). The
+ * key is `${<apiKeyEnv>}`, which pi resolves from the process env at request
+ * time, so the file baked into the derived image holds no secret; a bare name
+ * would be the literal key. `storeEnv` is read for `baseUrlEnv` only, a
+ * non-secret. {@link planProviderDelivery} guarantees a concrete model id even
+ * for `auto`. Grounding: pi `docs/models.md`,
+ * `docs/research/harness-secret-delivery.md`.
  */
 export function renderPiModelsJson(
   provider: Provider,
@@ -404,7 +519,9 @@ export function renderPiModelsJson(
   const baseUrl = provider.baseUrlEnv
     ? storeEnv[provider.baseUrlEnv]
     : provider.baseUrl;
-  const apiKey = storeEnv[provider.apiKeyEnv] || '';
+  // By name, braces included: pi resolves `${NAME}` from the process env at
+  // request time, and takes a bare `NAME` as the literal key.
+  const apiKey = `\${${provider.apiKeyEnv}}`;
 
   const config = {
     providers: {
@@ -431,10 +548,10 @@ const PI_CONFIG_FILE = 'models.json';
 /**
  * pi's adapter. pi is configured through `models.json`, so the provider is
  * rendered into a file baked into the derived agent image; only the API key is
- * delivered at runtime, by name. The `pi-mcp-adapter` extension (installed into
- * the image) gives pi an MCP client; it reads a standard `mcp.json` (`mcpServers`
- * with `url` entries for streamable HTTP) from the same config dir, so `--mcp` is
- * delivered as a read-only overlay mounted at `~/.pi/agent/mcp.json`.
+ * delivered at runtime, by name. pi's built-in MCP support reads a standard
+ * `mcp.json` (`mcpServers` with `url` entries for streamable HTTP) from the same
+ * config dir, so `--mcp` is delivered as a read-only overlay mounted at
+ * `~/.pi/agent/mcp.json`.
  */
 export const piAdapter: FileHarnessAdapter = {
   kind: 'file',
@@ -465,7 +582,7 @@ export const piAdapter: FileHarnessAdapter = {
   ): ConfigOverlayDelivery {
     return {
       file: {
-        // pi-mcp-adapter reads this file for MCP servers; the baked models.json
+        // pi's built-in MCP reads this file; the baked models.json
         // provider config is untouched (the overlay mounts a sibling file).
         fileName: 'mcp.json',
         content: renderPiMcpServers(endpoints),

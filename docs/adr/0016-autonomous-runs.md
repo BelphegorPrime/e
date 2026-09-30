@@ -1006,9 +1006,11 @@ pinned by digest to the first release that takes `expiresAt` on create
 (3.8.51), and on an older one the expiry is set by `PATCH`, or the key is
 deleted and the run refused. The password stays host-side, off the plan's
 whitelist; without it in `--env-file` the run exits 1 naming the variable,
-and nothing prompts. pi, the one harness that bakes its key's value (ADR-0006),
-carries the run key in its derived image and in the Base Store's scratch
-`models.json`: the image outlives the run, the key in it does not. A one-shot run marks its siblings `E_ONE_SHOT=1`, so each
+and nothing prompts. No harness writes the key into a file or an image layer:
+each config `e` renders references it by name (pi `${NAME}`, Codex `env_key`,
+opencode `{env:NAME}`, Claude Code env only), Codex's shell snapshot is off,
+and the key is kept out of its agent's shell
+(`docs/research/harness-secret-delivery.md`). A one-shot run marks its siblings `E_ONE_SHOT=1`, so each
 of them uses the running stack the same way and mints a key of its own.
 
 **Void in one-shot**: the queue and slot accounting, dedup, the `live/` ledger,

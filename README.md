@@ -481,9 +481,8 @@ node -e "const a=require('./dist/harness/adapter');console.log(a.piApi('openai-c
 node -e "const {HARNESSES}=require('./dist/harness/index');console.log(HARNESSES.pi.buildCommand('fix the bug','claude-opus-5'))"
 # → [ 'pi', '-p', 'fix the bug', '--provider', 'e', '--model', 'claude-opus-5' ]
 
-# pi gets MCP through the pi-mcp-adapter package e installs in its image,
-# delivered as a rendered file; opencode has no MCP delivery yet, so --mcp is
-# gated off there:
+# pi gets MCP through its built-in support, which reads a rendered mcp.json;
+# opencode has no MCP delivery yet, so --mcp is gated off there:
 node -e "const {HARNESSES,harnessCapabilities}=require('./dist/harness/index');console.log(harnessCapabilities(HARNESSES.pi).mcp, harnessCapabilities(HARNESSES.opencode).mcp)"
 # → file none
 ```
@@ -576,7 +575,7 @@ commit message, body is the prompt, and the URL is printed on success.
 **e. Inspect the baked config** - proof the provider was delivered:
 
 ```bash
-cat ~/.e/agents/pi-gw/models.json    # the rendered provider (baked API-key value)
+cat ~/.e/agents/pi-gw/models.json    # the rendered provider (the key as ${NAME}, never its value)
 cat ~/.e/agents/pi-gw/Dockerfile      # ENV PI_CODING_AGENT_DIR + COPY models.json
 ```
 
