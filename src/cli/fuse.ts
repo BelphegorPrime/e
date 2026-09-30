@@ -10,6 +10,7 @@ import {
 import type { FusionProfile } from '../core/fusion/profile.js';
 import type { CandidateResult } from '../core/fusion/result.js';
 import { findRoot } from '../core/store/root.js';
+import { readConfig } from '../core/store/config.js';
 import { eBaseDir } from '../core/store/paths.js';
 import { defaultWorktreesDir } from '../engine/runs/worktreesDir.js';
 import {
@@ -143,7 +144,28 @@ export function fuseEventLines(
       return [
         {
           level: 'info',
-          text: `${CANDIDATES_STAGE} ${event.candidate} ${event.agent}: running`,
+          text: `${CANDIDATES_STAGE} ${event.candidate} ${event.agent}: running${event.retryOf ? ` (attempt ${event.attempt}, retry of ${event.retryOf})` : ''}`,
+        },
+      ];
+    case 'retry-scheduled':
+      return [
+        {
+          level: 'info',
+          text: `${CANDIDATES_STAGE} ${event.candidate} ${event.agent}: queued (attempt ${event.attempt}, retry of ${event.retryOf}, not before ${event.notBefore})`,
+        },
+      ];
+    case 'retry-skipped':
+      return [
+        {
+          level: 'info',
+          text: `${CANDIDATES_STAGE} ${event.candidate} ${event.agent}: no retry (${event.why === 'max-attempts' ? `attempt ${event.attempt} was the last allowed` : 'it would not finish before the candidates deadline'})`,
+        },
+      ];
+    case 'budget-exhausted':
+      return [
+        {
+          level: 'warn',
+          text: `${event.budget === 'candidatesMs' ? CANDIDATES_STAGE : '[fusion]'} ${event.budget} (${event.limitMs} ms) exhausted${event.stopped.length > 0 ? `: stopped ${event.stopped.join(', ')}` : ''}`,
         },
       ];
     case 'settled':
@@ -375,8 +397,19 @@ export async function runFuseCommand(
       for (const line of fuseEventLines(event, found.profile)) print(line);
     };
 
+    // The Store's loop caps derive the fusion's default deadlines (ADR-0019
+    // section 9), so a candidate's own caps always fire first.
+    const loop = readConfig(root).loop;
     const fanOut = await (deps.fanOut ?? runFanOut)(
-      { git, storeDir, worktreesDir, launch, passthroughArgs, keepSpool },
+      {
+        git,
+        storeDir,
+        worktreesDir,
+        launch,
+        passthroughArgs,
+        keepSpool,
+        ...(loop ? { loop } : {}),
+      },
       { found, prompt, abort: deps.abort, onEvent }
     );
     const synthesis =

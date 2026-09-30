@@ -91,6 +91,11 @@ directory with `~/.e` as the fallback:
     "candidatesMs": 10800000, // optional, the fan-out phase; default derived (section 9)
     "totalMs": 21600000, // optional, the whole fusion, hard; default derived
   },
+  "retry": {
+    "maxAttempts": 2, // optional, attempts per candidate incl. the first; default 1 = no retry, at most 5
+    "backoffMs": 30000, // optional, before the first retry, doubled per retry; default 30 s
+    "maxBackoffMs": 300000, // optional, the backoff's ceiling; default max(5 min, backoffMs)
+  },
 }
 ```
 
@@ -107,7 +112,9 @@ directory with `~/.e` as the fallback:
   it by name.
 - **Fail before anything is built.** An unknown key, an unknown strategy, a
   missing or remote Agent, fewer than two candidates, `minUsable` above the
-  candidate count, and `candidatesMs >= totalMs` are all load errors, found by
+  candidate count, `candidatesMs >= totalMs`, and a `retry` block with an
+  unknown key, more than 5 attempts or `maxBackoffMs < backoffMs` are all
+  load errors, found by
   a pure validation over the profile and the resolved Agents, before any image,
   worktree or container exists. The provider policy of #180 is a second pure
   check at the same point (section 10).
@@ -291,7 +298,8 @@ host-side git, never from anything the candidate wrote about itself:
   no-op, which all four harnesses report as success (ADR-0016). `failed`: it
   exited non-zero (`aborted:*`, `exhausted:*`, a build or preflight error).
   `timed-out`: the fusion's `candidatesMs` stopped it. `canceled`: a human or
-  `totalMs` did.
+  `totalMs` did; one `totalMs` stopped carries the reason
+  `exhausted:fusion-timeout`, so the two stay apart.
 - **`usage` is optional and never estimated.** No harness reports usage to `e`
   today; the field is `null` for all four. A harness that later exposes a
   structured result (Codex `-o`, Claude Code's JSON result, the fog item of
@@ -325,7 +333,8 @@ host-side git, never from anything the candidate wrote about itself:
 ```
 .e/runs/fusions/<fusion id>/
   fusion.json                 # the record: profile snapshot, prompt, base,
-                              # state, timestamps, candidate and synthesis ids
+                              # state, deadlines, timestamps, every attempt's
+                              # id and the synthesis id
   candidates/<record id>/     # cand-NNN, one per attempt, never reused
     result.json               # the Candidate result
     patch.diff
@@ -472,22 +481,80 @@ remote branch, for a fusion as for any run.
   constraint is that it is counted in a file-backed place every coordinator on
   the host reads, like `.e/runs/live/`, never in one process's memory, and
   that it is a `config.json` key `e init` must carry over (ADR-0016).
+- **The deadlines are enforced by the coordinator** (decided, #178). Both
+  count from the fusion's start and are written into `fusion.json` as
+  `deadlines` (`candidatesMs`, `totalMs`, and the moments `candidatesAt`,
+  `totalAt` they fall on), so the synthesis step and any later reader see the
+  same ones. The coordinator takes the Store's `loop` caps as an input; a
+  caller that passes none gets the built-in `DEFAULT_LOOP_CAPS`. A declared
+  `totalMs` with no declared `candidatesMs` keeps the derived `candidatesMs`,
+  even past it: the whole fusion's deadline is checked first and is hard. The
+  fan-out checks the clock on every turn of its loop and sleeps no longer
+  than the next deadline; at `candidatesMs` every live candidate is killed
+  with `stoppedBy: 'candidates-deadline'` and every one not yet started is
+  collected the same way, both `timed-out`, and the fan-out then closes as
+  in the table. At `totalMs` the same happens with `stoppedBy: 'cancel'` and
+  the reason `exhausted:fusion-timeout`, nothing is pushed, and the fusion
+  ends `exhausted`. A cancel outranks both, and a candidate that exited just
+  before either is recorded as it ended.
+- **The synthesis tells a deadline from a cancel** by the deadline it is
+  handed, not by the abort signal: the fan-out's `totalAt` (or the record's)
+  arms a wait of its own beside the cancel. A synthesis launched past it is
+  never started; one still running when it passes is killed like a cancel -
+  its `synthesis.json` says `canceled: true`, exit 143, reason
+  `exhausted:fusion-timeout` - but the fusion ends `exhausted`, exit `2`,
+  with no PR. The abort signal stays what it was: a human.
 - **Retries are a fusion concern, never a Run's.** ADR-0016 keeps "a non-zero
   harness exit aborts the loop and never retries" inside a Run, and that
   stands. A retry here is a **new candidate run** for the same Agent (a new
   `-N`, a new envelope with `attempt` counted up), off by default, and only for
   a failure classified retryable - never for a candidate that produced
-  commits. Each attempt is its own record (`cand-NNN`, `retryOf` naming the
-  one it replaces), and a retry never extends `candidatesMs`: the default of
-  the next bullet budgets no retries, so a Store that enables them raises it.
-  The classification seam, backoff with jitter and per-provider buckets are
-  #178's to build; this ADR fixes only where they live (the coordinator, not a
-  harness adapter) and that a retry never reruns a successful candidate.
+  commits. Each attempt is its own record (`cand-NNN`, the next id, never
+  reused, `retryOf` naming the one it replaces; the failed attempt keeps its
+  envelope and both are synthesis material), and a retry never extends
+  `candidatesMs`: the default of the next bullet budgets no retries, so a
+  Store that enables them raises it. This ADR fixes where they live (the
+  coordinator, not a harness adapter) and that a retry never reruns a
+  successful candidate; #178 decided the rest:
+  - **The settings are profile keys**, `retry.maxAttempts` (default 1, so no
+    retry unless declared; at most 5), `retry.backoffMs` and
+    `retry.maxBackoffMs` (section 2). A profile, not `config.json`: whether
+    a failure is worth another attempt depends on the candidates a profile
+    names, and a profile is already where the fusion's own limits live.
+  - **The classification is one seam**, `classifyAttempt` in
+    `src/core/fusion/budget.ts`, deterministic over the envelope alone and
+    replaceable by the coordinator's caller. Its default is conservative: an
+    attempt is retryable only when its outcome is `failed`, it left no commits
+    beyond the base, it carries no verify verdict (a gate's answer is an
+    answer), and its reason is either absent - it could not launch, its build
+    failed, its process died before reporting - or `aborted:harness-exit`,
+    the harness process itself dying (a provider outage, a rate limit).
+    Everything else is terminal: `exhausted:*`, `aborted:oom` (the same caps
+    would fail the same way), `aborted:verify-broken`,
+    `aborted:collect-failed`, and anything the fusion itself stopped.
+  - **The backoff is exponential with equal jitter**: before attempt n+1,
+    `d = min(maxBackoffMs, backoffMs x 2^(n-1))`, waited as `d/2` fixed plus
+    a uniform draw over the other `d/2`. A retry whose backoff would end at
+    or past `candidatesMs` (or `totalMs`) is not scheduled at all. A retry
+    waiting out its backoff holds back no other candidate, takes a
+    concurrency slot only once launched, and goes through the build gate like
+    any other.
+  - **Per-provider buckets are not built.** The fixed half of the backoff
+    already keeps two candidates of one provider that failed together from
+    retrying at once, and a bucket shared across fusions is the host-wide
+    bound above, which stays undecided.
 - **Accounting is a seam, not a store.** The coordinator emits one event per
   candidate start, attempt, end and budget exhaustion, with `usage` when known,
   through one interface a later control plane can consume (#188); the fusion
   record is its per-fusion view, not a second accounting store, and its 14-day
-  retention bounds only that view.
+  retention bounds only that view. Concretely (#178) the interface is the
+  coordinator's `onEvent`: `launched` (with `attempt` and `retryOf`),
+  `settled` (the envelope, `usage` included), `retry-scheduled` (the new id,
+  the attempt it retries, the delay), `retry-skipped` (a retryable failure
+  that got no other attempt, `max-attempts` or `candidates-deadline`, only
+  when the profile declares retries) and `budget-exhausted` (`candidatesMs`
+  or `totalMs`, its length, and the attempts it stopped), the last also from
+  the synthesis.
 
 ### 10. Security boundaries
 

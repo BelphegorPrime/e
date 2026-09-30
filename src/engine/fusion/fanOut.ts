@@ -22,15 +22,35 @@
  *   stopped, so no candidate can read a rival off the remote mid-run.
  * - **A cancel** kills every candidate alive, launches none of the rest, and
  *   pushes nothing; each still gets its envelope.
+ * - **Two deadlines** (ADR-0019 section 9), declared or derived from the
+ *   Store's `loop`: at `candidatesMs` every outstanding candidate is stopped
+ *   as `timed-out` and the fan-out closes as usual; at `totalMs` everything
+ *   outstanding is stopped, nothing is pushed, and the fusion is `exhausted`.
+ * - **Retries** are new candidate runs, off unless the profile declares
+ *   them: a failed attempt the classifier calls retryable gets a fresh
+ *   `cand-NNN` after a backoff with jitter, never past `candidatesMs`, and
+ *   its first envelope stays.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { monotonicFactory } from 'ulid';
 import type { HarnessAgent } from '../../core/agent/agent.js';
+import {
+  classifyAttempt,
+  fusionDeadlines,
+  retryDelayMs,
+  retryPolicy,
+  type RetryClassifier,
+} from '../../core/fusion/budget.js';
 import type { FoundFusionProfile } from '../../core/fusion/load.js';
-import { isUsable, type CandidateResult } from '../../core/fusion/result.js';
+import {
+  isUsable,
+  type CandidateEnd,
+  type CandidateResult,
+} from '../../core/fusion/result.js';
 import { HARNESSES } from '../../core/harness/index.js';
+import { DEFAULT_LOOP_CAPS, type LoopCaps } from '../../core/store/config.js';
 import type { Git } from '../../ports/git/index.js';
 import {
   ensureSpool,
@@ -50,12 +70,14 @@ import {
   type ChildLauncher,
 } from '../runs/childRun.js';
 import type { RunBase } from '../runs/runSpawn.js';
+import { Waker, realSleep, type Sleep } from './clock.js';
 import { collectCandidateResult, type SettledCandidate } from './collect.js';
 import {
   pruneFusions,
   reconcileFusions,
   writeFusionRecord,
   type FusionAgentSnapshot,
+  type FusionDeadlineRecord,
   type FusionRecord,
   type FusionState,
 } from './record.js';
@@ -65,6 +87,9 @@ const FUSION_SPOOLS_DIR = '.fusion';
 
 /** Who stops a candidate, as its status says (`canceled by the fusion`). */
 const FUSION_ACTOR = 'the fusion';
+
+/** The reason of a fusion, and of each candidate, that `totalMs` stopped (ADR-0019 section 8). */
+export const FUSION_TIMEOUT_REASON = 'exhausted:fusion-timeout';
 
 /** The exit code of a candidate whose `e spawn` could not even start, as `settleChildRun` records it. */
 const LAUNCH_FAILED_EXIT_CODE = 1;
@@ -99,6 +124,21 @@ export interface FanOutDeps {
   /** See {@link DEFAULT_BUILD_GATE_MS}. */
   buildGateMs?: number;
   now?: () => Date;
+  /**
+   * The loop's wait, between polls and until a backoff or a deadline is
+   * over; a timer by default. Tests advance an injected clock instead.
+   */
+  sleep?: Sleep;
+  /** The jitter source of a retry's backoff; `Math.random` by default. */
+  random?: () => number;
+  /**
+   * The Store's `loop` caps (`config.json`), which the undeclared deadlines
+   * are derived from (ADR-0019 section 9); {@link DEFAULT_LOOP_CAPS} when
+   * absent.
+   */
+  loop?: Pick<LoopCaps, 'totalTimeoutMs'>;
+  /** Which failed attempts are retried; `classifyAttempt` by default. */
+  classifyAttempt?: RetryClassifier;
   newFusionId?: () => string;
   /** Whether a recorded coordinator is still running; for reconciling old records. */
   isAlive?: (pid: number) => boolean;
@@ -116,7 +156,24 @@ export interface FanOutParams {
   onEvent?: (event: FanOutEvent) => void;
 }
 
-/** What the fan-out reports as it goes. */
+/**
+ * A fusion deadline that fired (ADR-0019 section 9's accounting seam):
+ * which budget, its length, and the candidate attempts it stopped - alive or
+ * never started.
+ */
+export interface BudgetExhaustedEvent {
+  kind: 'budget-exhausted';
+  budget: 'candidatesMs' | 'totalMs';
+  limitMs: number;
+  stopped: string[];
+}
+
+/**
+ * What the fan-out reports as it goes: one event per candidate start
+ * (`launched`), end (`settled`), retry decision and budget exhaustion - the
+ * accounting seam of ADR-0019 section 9, which a later control plane can
+ * consume without a store of its own.
+ */
 export type FanOutEvent =
   /**
    * The base is pinned and the record written, before the first launch:
@@ -128,8 +185,39 @@ export type FanOutEvent =
       base: RunBase;
       candidates: { candidate: string; agent: string }[];
     }
-  | { kind: 'launched'; candidate: string; agent: string }
+  | {
+      kind: 'launched';
+      candidate: string;
+      agent: string;
+      /** The fusion-level attempt, 1 for the first. */
+      attempt: number;
+      /** The attempt this one retries. */
+      retryOf?: string;
+    }
   | { kind: 'settled'; candidate: string; result: CandidateResult }
+  | {
+      /** A failed attempt gets another: a new record, launched once `notBefore` has passed. */
+      kind: 'retry-scheduled';
+      candidate: string;
+      agent: string;
+      attempt: number;
+      retryOf: string;
+      delayMs: number;
+      notBefore: string;
+    }
+  | {
+      /**
+       * A retryable attempt that gets no other, because the profile's
+       * `retry.maxAttempts` is spent or the backoff would end past
+       * `candidatesMs`. Only reported when the profile declares retries.
+       */
+      kind: 'retry-skipped';
+      candidate: string;
+      agent: string;
+      attempt: number;
+      why: 'max-attempts' | 'candidates-deadline';
+    }
+  | BudgetExhaustedEvent
   | {
       kind: 'closed';
       usable: number;
@@ -143,12 +231,12 @@ export interface FanOutResult {
   base: RunBase;
   /**
    * `fanning-out` when the fan-out closed and the synthesis may start - the
-   * Fusion run is still live, and its record says so; `failed` or
-   * `canceled` when it ended here.
+   * Fusion run is still live, and its record says so; `failed`, `canceled`
+   * or `exhausted` (its `totalMs` passed, exit code 2) when it ended here.
    */
   state: FusionState;
   reason?: string;
-  /** Every candidate attempt, in launch order. */
+  /** Every candidate attempt, retries included, in the order they were created. */
   candidates: CandidateResult[];
   /** The ones with commits beyond the base, whatever their verdict. */
   usable: CandidateResult[];
@@ -157,20 +245,37 @@ export interface FanOutResult {
   pushWarnings: string[];
   /** The children's spool, with their logs: removed when the fusion ends. */
   spoolDir: string;
+  /** The deadlines the fusion runs with; the synthesis honours `totalAt`. */
+  deadlines?: FusionDeadlineRecord;
 }
 
-/** One candidate the fan-out is driving. */
+/** How the fusion itself stopped an attempt, and what its envelope then says. */
+interface Stop {
+  by: NonNullable<CandidateEnd['stoppedBy']>;
+  /** Who, for the status: `canceled by <actor>`. */
+  actor: string;
+  /** A fusion reason that outranks the run's own. */
+  reason?: string;
+}
+
+/** One candidate attempt the fan-out is driving. */
 interface Slot {
   request: SpawnRequest;
   agent: HarnessAgent;
+  /** The fusion-level attempt, 1 for the first. */
+  attempt: number;
+  /** The record id of the attempt this one retries. */
+  retryOf?: string;
+  /** A retry is not launched before this moment (epoch ms): its backoff. */
+  notBefore?: number;
   /** True once a launch was attempted, whether or not the process started. */
   launched?: boolean;
   handle?: ChildHandle;
   startedAt?: Date;
   /** The code the process exited with, once it has. */
   code?: number;
-  /** True when the fusion killed it. */
-  killed?: boolean;
+  /** Set when the fusion stopped it. */
+  stop?: Stop;
 }
 
 /**
@@ -208,18 +313,39 @@ export async function runFanOut(
   const fusion = deps.newFusionId?.() ?? `fusion-${newUlid()}`;
   const spoolDir = fusionSpoolDir(deps.worktreesDir, fusion);
   ensureSpool(spoolDir);
-  const slots: Slot[] = profile.candidates.map(name => {
-    const request: SpawnRequest = {
+  /** A new attempt's request, its id the next `cand-NNN`: never one used before. */
+  const request = (agentName: string): SpawnRequest => {
+    const next: SpawnRequest = {
       id: nextRequestId(spoolDir, 'cand'),
-      agent: name,
+      agent: agentName,
       prompt,
       requestedAt: now().toISOString(),
     };
-    writeRequest(spoolDir, request);
-    return { request, agent: agents.get(name)! };
-  });
+    writeRequest(spoolDir, next);
+    return next;
+  };
+  /** Every attempt, in the order they were created: the profile's, then the retries. */
+  const slots: Slot[] = profile.candidates.map(name => ({
+    request: request(name),
+    agent: agents.get(name)!,
+    attempt: 1,
+  }));
 
-  const createdAt = now().toISOString();
+  // The deadlines count from here, the fusion's start (ADR-0019 section 9).
+  const started = now();
+  const limits = fusionDeadlines(profile, deps.loop ?? DEFAULT_LOOP_CAPS);
+  const candidatesAt = started.getTime() + limits.candidatesMs;
+  const totalAt = started.getTime() + limits.totalMs;
+  const deadlines: FusionDeadlineRecord = {
+    ...limits,
+    candidatesAt: new Date(candidatesAt).toISOString(),
+    totalAt: new Date(totalAt).toISOString(),
+  };
+  const retry = retryPolicy(profile);
+  const classify = deps.classifyAttempt ?? classifyAttempt;
+  const random = deps.random ?? Math.random;
+
+  const createdAt = started.toISOString();
   let record: FusionRecord = {
     schemaVersion: 1,
     fusion,
@@ -229,6 +355,7 @@ export async function runFanOut(
     prompt,
     base,
     candidates: slots.map(slot => slot.request.id),
+    deadlines,
     coordinator: { pid: process.pid },
     createdAt,
     updatedAt: createdAt,
@@ -249,9 +376,10 @@ export async function runFanOut(
   });
 
   const results = new Map<string, CandidateResult>();
-  const collect = (slot: Slot, stoppedBy?: 'cancel'): void => {
+  const collect = (slot: Slot): CandidateResult => {
     const status = readStatus(spoolDir, slot.request.id);
     const ended = now();
+    const reason = slot.stop?.reason ?? status?.reason;
     const settled: SettledCandidate = {
       fusion,
       candidate: slot.request.id,
@@ -263,10 +391,11 @@ export async function runFanOut(
       ...(slot.launched
         ? { exitCode: status?.exitCode ?? slot.code ?? LAUNCH_FAILED_EXIT_CODE }
         : {}),
-      ...(stoppedBy ? { stoppedBy } : {}),
-      ...(status?.reason !== undefined ? { reason: status.reason } : {}),
+      ...(slot.stop ? { stoppedBy: slot.stop.by } : {}),
+      ...(reason !== undefined ? { reason } : {}),
       ...(status?.verify !== undefined ? { verify: status.verify } : {}),
-      attempt: 1,
+      attempt: slot.attempt,
+      ...(slot.retryOf !== undefined ? { retryOf: slot.retryOf } : {}),
       startedAt: slot.startedAt ?? ended,
       endedAt: ended,
     };
@@ -285,14 +414,68 @@ export async function runFanOut(
     }
     results.set(slot.request.id, result);
     params.onEvent?.({ kind: 'settled', candidate: slot.request.id, result });
+    return result;
   };
 
   const pending = [...slots];
   const alive: Slot[] = [];
   /** Agents whose image a candidate has already built in this fan-out. */
   const built = new Set<string>();
-  let canceling = false;
-  const waker = new Waker();
+  /** Set once a cancel or a deadline has stopped the fan-out: nothing more starts. */
+  let stopping: 'cancel' | 'candidates' | 'total' | undefined;
+  /** A human cancel was seen, before or after a deadline: the fusion is canceled. */
+  let canceled = false;
+  const waker = new Waker(deps.sleep ?? realSleep);
+
+  /**
+   * The one place a failed attempt gets another (ADR-0019 section 9): only
+   * when the classifier calls it retryable, the profile's attempts are not
+   * spent, and the backoff ends before `candidatesMs` - a retry never
+   * extends the fan-out.
+   */
+  const maybeRetry = (slot: Slot, result: CandidateResult): void => {
+    if (stopping || slot.stop || classify(result) !== 'retryable') return;
+    const skip = (why: 'max-attempts' | 'candidates-deadline'): void => {
+      // With retries off, a failure is just a failure: nothing to report.
+      if (retry.maxAttempts <= 1) return;
+      params.onEvent?.({
+        kind: 'retry-skipped',
+        candidate: slot.request.id,
+        agent: slot.agent.name,
+        attempt: slot.attempt,
+        why,
+      });
+    };
+    if (slot.attempt >= retry.maxAttempts) {
+      skip('max-attempts');
+      return;
+    }
+    const delayMs = retryDelayMs(retry, slot.attempt, random);
+    const notBefore = now().getTime() + delayMs;
+    if (notBefore >= candidatesAt || notBefore >= totalAt) {
+      skip('candidates-deadline');
+      return;
+    }
+    const next: Slot = {
+      request: request(slot.request.agent),
+      agent: slot.agent,
+      attempt: slot.attempt + 1,
+      retryOf: slot.request.id,
+      notBefore,
+    };
+    slots.push(next);
+    pending.push(next);
+    save({ candidates: slots.map(s => s.request.id) });
+    params.onEvent?.({
+      kind: 'retry-scheduled',
+      candidate: next.request.id,
+      agent: next.agent.name,
+      attempt: next.attempt,
+      retryOf: slot.request.id,
+      delayMs,
+      notBefore: new Date(notBefore).toISOString(),
+    });
+  };
 
   const launch = (slot: Slot): void => {
     const reuse = built.has(slot.agent.name);
@@ -324,7 +507,7 @@ export async function runFanOut(
         reason: `could not start the e spawn process: ${errorMessage(err)}`,
         now,
       });
-      collect(slot);
+      maybeRetry(slot, collect(slot));
       return;
     }
     slot.handle = handle;
@@ -338,17 +521,65 @@ export async function runFanOut(
       kind: 'launched',
       candidate: slot.request.id,
       agent: slot.agent.name,
+      attempt: slot.attempt,
+      ...(slot.retryOf !== undefined ? { retryOf: slot.retryOf } : {}),
     });
+  };
+
+  /**
+   * Stops everything outstanding: every live attempt the fusion has not
+   * stopped yet is killed, and what never started is collected as stopped.
+   * A budget that fired says so first, naming what it stops, so a renderer
+   * sees why before the settles it causes.
+   */
+  const stopAll = (
+    stop: Stop,
+    budget?: { budget: 'candidatesMs' | 'totalMs'; limitMs: number }
+  ): void => {
+    const live = alive.filter(slot => !slot.stop);
+    const waiting = pending.splice(0);
+    if (budget) {
+      params.onEvent?.({
+        kind: 'budget-exhausted',
+        ...budget,
+        stopped: [...live, ...waiting].map(slot => slot.request.id),
+      });
+    }
+    for (const slot of live) {
+      slot.stop = stop;
+      slot.handle!.kill();
+    }
+    for (const slot of waiting) {
+      slot.stop = stop;
+      collect(slot);
+    }
   };
 
   const pollMs = deps.pollIntervalMs ?? 1000;
   const gateMs = deps.buildGateMs ?? DEFAULT_BUILD_GATE_MS;
+  /**
+   * How long the loop may sleep: a poll while anything is alive, and never
+   * past the next moment something is due - a deadline that has not fired,
+   * the end of a retry's backoff.
+   */
+  const nextWait = (): number => {
+    const t = now().getTime();
+    let wait = alive.length > 0 ? pollMs : Number.POSITIVE_INFINITY;
+    if (!canceled && stopping !== 'total') wait = Math.min(wait, totalAt - t);
+    if (stopping === undefined) wait = Math.min(wait, candidatesAt - t);
+    for (const slot of pending) {
+      if (slot.notBefore !== undefined && slot.notBefore > t) {
+        wait = Math.min(wait, slot.notBefore - t);
+      }
+    }
+    return Math.max(0, wait);
+  };
   const onAbort = (): void => waker.wake();
   params.abort?.addEventListener('abort', onAbort, { once: true });
   try {
     for (;;) {
       // Settle whatever has exited first, so a candidate that finished just
-      // before a cancel is recorded as finished, not as canceled.
+      // before a cancel or a deadline is recorded as finished, not stopped.
       for (const slot of [...alive]) {
         if (slot.code === undefined) continue;
         alive.splice(alive.indexOf(slot), 1);
@@ -356,20 +587,37 @@ export async function runFanOut(
           spoolDir,
           id: slot.request.id,
           code: slot.code,
-          canceling: slot.killed === true,
-          actor: FUSION_ACTOR,
+          canceling: slot.stop !== undefined,
+          actor: slot.stop?.actor ?? FUSION_ACTOR,
           now,
         });
-        collect(slot, slot.killed ? 'cancel' : undefined);
+        maybeRetry(slot, collect(slot));
       }
-      if (params.abort?.aborted && !canceling) {
-        canceling = true;
-        for (const slot of alive) {
-          slot.killed = true;
-          slot.handle!.kill();
-        }
-        // What never started is canceled all the same, and says so.
-        for (const slot of pending.splice(0)) collect(slot, 'cancel');
+      const t = now().getTime();
+      // A cancel outranks a deadline, and the whole outranks the fan-out.
+      if (params.abort?.aborted && !canceled) {
+        canceled = true;
+        stopping = 'cancel';
+        stopAll({ by: 'cancel', actor: FUSION_ACTOR });
+      } else if (!canceled && stopping !== 'total' && t >= totalAt) {
+        stopping = 'total';
+        stopAll(
+          {
+            by: 'cancel',
+            actor: `${FUSION_ACTOR}'s totalMs`,
+            reason: FUSION_TIMEOUT_REASON,
+          },
+          { budget: 'totalMs', limitMs: limits.totalMs }
+        );
+      } else if (stopping === undefined && t >= candidatesAt) {
+        stopping = 'candidates';
+        stopAll(
+          {
+            by: 'candidates-deadline',
+            actor: `${FUSION_ACTOR}'s candidatesMs`,
+          },
+          { budget: 'candidatesMs', limitMs: limits.candidatesMs }
+        );
       }
       // A candidate has built its images once it reports its branch: that is
       // `starting`, after the builds and the worktree (ADR-0005).
@@ -383,19 +631,18 @@ export async function runFanOut(
       }
       // One build at a time: nothing else starts while a live candidate is
       // still building - unless it has been at it past the gate, so one hung
-      // build cannot hold every other candidate back forever.
-      while (
-        !canceling &&
-        !building &&
-        pending.length > 0 &&
-        alive.length < profile.maxConcurrency
-      ) {
-        const slot = pending.shift()!;
+      // build cannot hold every other candidate back forever. A retry waits
+      // out its backoff without holding back the candidates behind it.
+      while (!stopping && !building && alive.length < profile.maxConcurrency) {
+        const at = now().getTime();
+        const ready = pending.findIndex(slot => (slot.notBefore ?? 0) <= at);
+        if (ready < 0) break;
+        const [slot] = pending.splice(ready, 1);
         launch(slot);
         if (slot.handle) building = true;
       }
       if (alive.length === 0 && pending.length === 0) break;
-      await waker.sleep(pollMs);
+      await waker.sleep(nextWait());
     }
   } catch (err) {
     // Whatever broke the loop, no candidate outlives it and the record says
@@ -418,9 +665,14 @@ export async function runFanOut(
   const pushWarnings: string[] = [];
   let state: FusionState = 'fanning-out';
   let reason: string | undefined;
-  if (canceling) {
+  if (canceled) {
     // A canceled fusion pushes nothing, as a canceled run does not (ADR-0015).
     state = 'canceled';
+  } else if (stopping === 'total') {
+    // The whole fusion's deadline: no synthesis, no PR, and the fan-out
+    // never closed, so its branches stay local (ADR-0019 section 9).
+    state = 'exhausted';
+    reason = FUSION_TIMEOUT_REASON;
   } else {
     for (const branchName of new Set(usable.map(result => result.branch!))) {
       try {
@@ -464,6 +716,7 @@ export async function runFanOut(
     pushed,
     pushWarnings,
     spoolDir,
+    deadlines,
   };
 }
 
@@ -498,29 +751,4 @@ function snapshot(
       : null,
     skills: [...(agent.skills ?? [])],
   }));
-}
-
-/**
- * The loop's one wake-up source: a sleep that a child's exit or a cancel
- * ends early. One pending sleep at a time, and each child adds exactly one
- * reaction for its whole life, however long the fan-out polls.
- */
-class Waker {
-  private pending?: () => void;
-
-  wake(): void {
-    this.pending?.();
-  }
-
-  sleep(ms: number): Promise<void> {
-    return new Promise(resolve => {
-      const done = (): void => {
-        clearTimeout(timer);
-        if (this.pending === done) this.pending = undefined;
-        resolve();
-      };
-      const timer = setTimeout(done, ms);
-      this.pending = done;
-    });
-  }
 }

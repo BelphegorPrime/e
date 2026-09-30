@@ -232,8 +232,13 @@ test('fuseEventLines: the pinned base, candidates and synthesizer up front, then
         { candidate: 'cand-002', agent: 'codex' },
       ],
     },
-    { kind: 'launched', candidate: 'cand-001', agent: 'claudeCode' },
-    { kind: 'launched', candidate: 'cand-002', agent: 'codex' },
+    {
+      kind: 'launched',
+      candidate: 'cand-001',
+      agent: 'claudeCode',
+      attempt: 1,
+    },
+    { kind: 'launched', candidate: 'cand-002', agent: 'codex', attempt: 1 },
     { kind: 'settled', candidate: 'cand-001', result: succeeded },
     { kind: 'settled', candidate: 'cand-002', result: failed },
     {
@@ -599,6 +604,8 @@ test('runFuseCommand: a fan-out that fails or is canceled starts no synthesis', 
     for (const [state, code] of [
       ['failed', 1],
       ['canceled', 143],
+      // totalMs fired during the fan-out (#178): no synthesis, no PR.
+      ['exhausted', 2],
     ] as const) {
       const printed: ReportLine[] = [];
       const deps = refusingDeps(printed);
@@ -607,7 +614,9 @@ test('runFuseCommand: a fan-out that fails or is canceled starts no synthesis', 
           state,
           ...(state === 'failed'
             ? { reason: 'aborted:no-usable-candidate' }
-            : {}),
+            : state === 'exhausted'
+              ? { reason: 'exhausted:fusion-timeout' }
+              : {}),
         });
       assert.equal(
         await runFuseCommand('coding', ['go'], { dir: root }, deps),
@@ -761,10 +770,10 @@ test('runFuseCommand: a cancel mid-fan-out kills every child, starts no synthesi
     assert.deepEqual(children.killed, ['cand-001']);
     assert.ok(!children.launches.some(l => l.request.id.startsWith('syn-')));
     const lines = texts(printed);
-    // It had cut its branch, so it says so; the one never launched has none.
+    // Whether it had cut its branch yet depends on how fast the cancel won.
     assert.ok(
-      lines.includes(
-        '[candidates] cand-001 claudeCode: canceled (e/claudeCode/add-retries-1, 0 files +0 -0)'
+      lines.some(line =>
+        line.startsWith('[candidates] cand-001 claudeCode: canceled')
       ),
       lines.join('\n')
     );
@@ -792,4 +801,96 @@ test('registerFuseCommand: e fuse <profile> [prompt...] with the flags a candida
     fuse.options.map(o => o.long),
     ['--runtime', '--env-file', '--dir', '--keep-worktree']
   );
+});
+
+test('fuseEventLines: retries and exhausted budgets are said in their stage', () => {
+  const lines = (event: FuseEvent) =>
+    fuseEventLines(event, {
+      name: 'coding',
+      synthesizer: 'claudeCode',
+      maxConcurrency: 2,
+      minUsable: 1,
+    }).map(line => line.text);
+  assert.deepEqual(
+    lines({
+      kind: 'launched',
+      candidate: 'cand-003',
+      agent: 'codex',
+      attempt: 2,
+      retryOf: 'cand-002',
+    }),
+    ['[candidates] cand-003 codex: running (attempt 2, retry of cand-002)']
+  );
+  assert.deepEqual(
+    lines({
+      kind: 'retry-scheduled',
+      candidate: 'cand-003',
+      agent: 'codex',
+      attempt: 2,
+      retryOf: 'cand-002',
+      delayMs: 30000,
+      notBefore: '2026-09-30T10:00:30.000Z',
+    }),
+    [
+      '[candidates] cand-003 codex: queued (attempt 2, retry of cand-002, not before 2026-09-30T10:00:30.000Z)',
+    ]
+  );
+  assert.deepEqual(
+    lines({
+      kind: 'retry-skipped',
+      candidate: 'cand-002',
+      agent: 'codex',
+      attempt: 3,
+      why: 'max-attempts',
+    }),
+    ['[candidates] cand-002 codex: no retry (attempt 3 was the last allowed)']
+  );
+  assert.deepEqual(
+    lines({
+      kind: 'retry-skipped',
+      candidate: 'cand-002',
+      agent: 'codex',
+      attempt: 1,
+      why: 'candidates-deadline',
+    }),
+    [
+      '[candidates] cand-002 codex: no retry (it would not finish before the candidates deadline)',
+    ]
+  );
+  assert.deepEqual(
+    lines({
+      kind: 'budget-exhausted',
+      budget: 'candidatesMs',
+      limitMs: 1000,
+      stopped: ['cand-001'],
+    }),
+    ['[candidates] candidatesMs (1000 ms) exhausted: stopped cand-001']
+  );
+  assert.deepEqual(
+    lines({
+      kind: 'budget-exhausted',
+      budget: 'totalMs',
+      limitMs: 5000,
+      stopped: [],
+    }),
+    ['[fusion] totalMs (5000 ms) exhausted']
+  );
+});
+
+test("runFuseCommand: the Store's loop caps reach the fan-out, which derives its deadlines from them", async () => {
+  await withStore(async root => {
+    fs.writeFileSync(
+      path.join(root, '.e', 'config.json'),
+      JSON.stringify({ loop: { totalTimeoutMs: 600000 } })
+    );
+    let loop: unknown;
+    const printed: ReportLine[] = [];
+    const deps = refusingDeps(printed);
+    deps.fanOut = async d => {
+      loop = d.loop;
+      return fanOut({ state: 'canceled' });
+    };
+    await runFuseCommand('coding', ['go'], { dir: root }, deps);
+    assert.equal((loop as { totalTimeoutMs: number }).totalTimeoutMs, 600000);
+  });
 });

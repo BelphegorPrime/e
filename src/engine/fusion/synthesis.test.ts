@@ -15,12 +15,18 @@ import type {
   ChildLaunch,
   ChildLauncher,
 } from '../runs/childRun.js';
+import type { Sleep } from './clock.js';
 import { runFanOut, type FanOutResult } from './fanOut.js';
-import { readFusionRecord, readSynthesisRecord } from './record.js';
+import {
+  readFusionRecord,
+  readSynthesisRecord,
+  writeFusionRecord,
+} from './record.js';
 import {
   runSynthesis,
   synthesisPrompt,
   type SynthesisDeps,
+  type SynthesisEvent,
 } from './synthesis.js';
 
 /*
@@ -482,6 +488,124 @@ test('runSynthesis: a cancel that lands after the synthesis finished cancels not
       assert.equal(result.state, 'completed');
       assert.equal(result.exitCode, 0);
       assert.equal(result.pullRequestUrl, 'https://github.com/o/r/pull/9');
+    }
+  );
+});
+
+// --- the fusion's totalMs (ADR-0019 sections 8, 9) ----------------------------
+
+test('runSynthesis: a totalMs that passed before the launch starts nothing, and the fusion is exhausted', async () => {
+  await withFusion(
+    { 'cand-001': { branch: 'e/claude/add-retries-1' }, 'cand-002': {} },
+    async ({ deps, fanOut, launches, storeDir }) => {
+      const events: SynthesisEvent[] = [];
+      const late = new Date(Date.parse(fanOut.deadlines!.totalAt) + 1);
+      const result = await runSynthesis(
+        { ...deps, now: () => late },
+        { fanOut, onEvent: event => events.push(event) }
+      );
+      assert.deepEqual(result, {
+        fusion: FUSION,
+        state: 'exhausted',
+        exitCode: 2,
+        pushed: false,
+        reason: 'exhausted:fusion-timeout',
+      });
+      assert.equal(
+        launches.some(l => l.request.id.startsWith('syn-')),
+        false
+      );
+      assert.deepEqual(events, [
+        {
+          kind: 'budget-exhausted',
+          budget: 'totalMs',
+          limitMs: fanOut.deadlines!.totalMs,
+          stopped: [],
+        },
+      ]);
+      const record = readFusionRecord(storeDir, FUSION)!;
+      assert.equal(record.state, 'exhausted');
+      assert.equal(record.reason, 'exhausted:fusion-timeout');
+      assert.equal(fs.existsSync(fanOut.spoolDir), false);
+    }
+  );
+});
+
+test('runSynthesis: a totalMs that passes mid-synthesis stops it: exhausted, exit 2, never canceled', async () => {
+  await withFusion(
+    {
+      'cand-001': { branch: 'e/claude/add-retries-1' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+      'syn-001': { branch: 'e/reviewer/add-retries-1', hang: true },
+    },
+    async ({ deps, fanOut, killed, storeDir }) => {
+      let t = Date.parse('2026-09-30T12:00:00.000Z');
+      const now = () => new Date(t);
+      // The injected clock jumps by whatever the deadline's wait asks for.
+      const sleep: Sleep = async ms => {
+        t += ms;
+        await new Promise(resolve => setImmediate(resolve));
+      };
+      const events: SynthesisEvent[] = [];
+      const result = await runSynthesis(
+        { ...deps, now, sleep },
+        {
+          fanOut: {
+            ...fanOut,
+            deadlines: {
+              ...fanOut.deadlines!,
+              totalAt: new Date(t + 5_000).toISOString(),
+            },
+          },
+          onEvent: event => events.push(event),
+        }
+      );
+      assert.deepEqual(killed, ['syn-001']);
+      assert.equal(result.state, 'exhausted');
+      assert.equal(result.exitCode, 2);
+      assert.equal(result.reason, 'exhausted:fusion-timeout');
+      assert.equal(result.pushed, false);
+      assert.deepEqual(
+        events.find(e => e.kind === 'budget-exhausted'),
+        {
+          kind: 'budget-exhausted',
+          budget: 'totalMs',
+          limitMs: fanOut.deadlines!.totalMs,
+          stopped: ['syn-001'],
+        }
+      );
+      const record = readFusionRecord(storeDir, FUSION)!;
+      assert.equal(record.state, 'exhausted');
+      assert.equal(record.reason, 'exhausted:fusion-timeout');
+      const synthesis = readSynthesisRecord(storeDir, FUSION)!;
+      // To the run itself it was a cancel from outside (ADR-0019 section 9).
+      assert.equal(synthesis.canceled, true);
+      assert.equal(synthesis.exitCode, 143);
+      assert.equal(synthesis.reason, 'exhausted:fusion-timeout');
+    }
+  );
+});
+
+test('runSynthesis: a fan-out result without deadlines runs without one', async () => {
+  await withFusion(
+    {
+      'cand-001': { branch: 'e/claude/add-retries-1' },
+      'cand-002': {},
+      'syn-001': { branch: 'e/reviewer/add-retries-1' },
+    },
+    async ({ deps, fanOut, storeDir }) => {
+      // A record from before deadlines existed, and a hand-made result.
+      const stored = readFusionRecord(storeDir, FUSION)!;
+      delete stored.deadlines;
+      writeFusionRecord(storeDir, stored);
+      const bare: FanOutResult = { ...fanOut };
+      delete bare.deadlines;
+      const result = await runSynthesis(
+        { ...deps, now: () => new Date('2099-01-01T00:00:00.000Z') },
+        { fanOut: bare }
+      );
+      assert.equal(result.state, 'completed');
+      assert.equal(result.exitCode, 0);
     }
   );
 });

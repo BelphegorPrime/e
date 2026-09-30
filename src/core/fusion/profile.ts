@@ -43,7 +43,42 @@ export type FusionTimeouts = Partial<
  * The longest deadline a timer can hold: Node's `setTimeout` fires a larger
  * delay after 1 ms, so a generous typo would cancel a fusion at once.
  */
-const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+/**
+ * The fusion's retries of a failed candidate (ADR-0019 section 9): a retry is
+ * a new Candidate run of the same Agent, never a rerun inside a Run, and only
+ * for a failure classified retryable (`classifyAttempt`). `maxAttempts`
+ * counts the first attempt, so 1 is no retry; the delay before attempt n+1
+ * is `min(maxBackoffMs, backoffMs x 2^(n-1))`, half of it fixed and half
+ * jitter. A retry never extends `candidatesMs`.
+ */
+export const FUSION_RETRY_KEYS = [
+  'maxAttempts',
+  'backoffMs',
+  'maxBackoffMs',
+] as const;
+export interface FusionRetry {
+  /** Attempts per candidate, the first included: 1 means no retry. */
+  maxAttempts: number;
+  /** The backoff before the first retry, doubled for each one after. */
+  backoffMs: number;
+  /** The most any one backoff grows to. */
+  maxBackoffMs: number;
+}
+
+/** Retries when a profile declares none: off. */
+export const DEFAULT_FUSION_RETRY: FusionRetry = {
+  maxAttempts: 1,
+  backoffMs: 30 * 1000,
+  maxBackoffMs: 5 * 60 * 1000,
+};
+
+/**
+ * The most attempts a candidate may get: a provider that fails five times in
+ * a row is down, and more attempts only spend the fan-out's deadline.
+ */
+export const MAX_FUSION_ATTEMPTS = 5;
 
 /** A parsed, valid profile, defaults resolved. */
 export interface FusionProfile {
@@ -60,6 +95,8 @@ export interface FusionProfile {
   minUsable: number;
   /** Absent when neither deadline is declared; their defaults are derived at run time. */
   timeouts?: FusionTimeouts;
+  /** Absent when not declared: no retries ({@link DEFAULT_FUSION_RETRY}). Resolved when present. */
+  retry?: FusionRetry;
 }
 
 /**
@@ -85,6 +122,7 @@ const KNOWN_KEYS = new Set([
   'maxConcurrency',
   'minUsable',
   'timeouts',
+  'retry',
 ]);
 
 /**
@@ -198,6 +236,8 @@ export function parseFusionProfile(
   };
   const timeouts = parseTimeouts(p.timeouts, name, where);
   if (timeouts) profile.timeouts = timeouts;
+  const retry = parseRetry(p.retry, name, where);
+  if (retry) profile.retry = retry;
   return profile;
 }
 
@@ -316,4 +356,56 @@ function parseTimeouts(
     );
   }
   return Object.keys(timeouts).length > 0 ? timeouts : undefined;
+}
+
+/**
+ * `retry`: the attempts per candidate and the backoff between them, resolved
+ * over {@link DEFAULT_FUSION_RETRY}. An undeclared `maxBackoffMs` grows with
+ * a declared `backoffMs`, so declaring one never makes the other invalid.
+ */
+function parseRetry(
+  raw: unknown,
+  name: string,
+  where: string
+): FusionRetry | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    invalid(name, where, '"retry" must be an object');
+  }
+  type Key = (typeof FUSION_RETRY_KEYS)[number];
+  const declared: Partial<FusionRetry> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!FUSION_RETRY_KEYS.includes(key as Key)) {
+      invalid(name, where, `unknown retry key "${key}"`);
+    }
+    const n = positiveInteger(value, `"retry.${key}"`, name, where);
+    if (n > MAX_TIMEOUT_MS) {
+      invalid(
+        name,
+        where,
+        `"retry.${key}" must be at most ${MAX_TIMEOUT_MS} (about 24.8 days)`
+      );
+    }
+    declared[key as Key] = n;
+  }
+  const maxAttempts = declared.maxAttempts ?? DEFAULT_FUSION_RETRY.maxAttempts;
+  if (maxAttempts > MAX_FUSION_ATTEMPTS) {
+    invalid(
+      name,
+      where,
+      `"retry.maxAttempts" must be at most ${MAX_FUSION_ATTEMPTS}`
+    );
+  }
+  const backoffMs = declared.backoffMs ?? DEFAULT_FUSION_RETRY.backoffMs;
+  const maxBackoffMs =
+    declared.maxBackoffMs ??
+    Math.max(DEFAULT_FUSION_RETRY.maxBackoffMs, backoffMs);
+  if (maxBackoffMs < backoffMs) {
+    invalid(
+      name,
+      where,
+      '"retry.maxBackoffMs" must not be less than "retry.backoffMs"'
+    );
+  }
+  return { maxAttempts, backoffMs, maxBackoffMs };
 }

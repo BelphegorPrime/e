@@ -17,6 +17,10 @@
  *   material is data the synthesizer reads, and is told to distrust.
  * - **The synthesizer is not a judge**: nothing it says about the candidates
  *   is parsed, and its choice changes no exit code.
+ * - **The fusion's `totalMs` still holds.** A synthesis still running when it
+ *   passes is stopped like a cancel, but the fusion ends `exhausted`
+ *   (`exhausted:fusion-timeout`, exit 2), never `canceled`: a deadline is
+ *   not a human (ADR-0019 sections 8, 9).
  */
 
 import fs from 'node:fs';
@@ -52,8 +56,14 @@ import {
   type ChildHandle,
   type ChildLauncher,
 } from '../runs/childRun.js';
-import { CANCELED_EXIT_CODE } from '../runs/runSpawn.js';
-import { removeFusionSpool, type FanOutResult } from './fanOut.js';
+import { CANCELED_EXIT_CODE, EXHAUSTED_EXIT_CODE } from '../runs/runSpawn.js';
+import { realSleep, untilTime, type Sleep } from './clock.js';
+import {
+  FUSION_TIMEOUT_REASON,
+  removeFusionSpool,
+  type BudgetExhaustedEvent,
+  type FanOutResult,
+} from './fanOut.js';
 import {
   candidateDirFor,
   readFusionRecord,
@@ -82,6 +92,8 @@ export interface SynthesisDeps {
   /** Keep the spool, the material and the logs after the fusion ends (`--keep-worktree`). */
   keepSpool?: boolean;
   now?: () => Date;
+  /** The wait until the fusion's `totalMs`; a timer by default. Tests advance an injected clock instead. */
+  sleep?: Sleep;
 }
 
 /** What one synthesis is asked. */
@@ -95,14 +107,22 @@ export interface SynthesisParams {
 /** What the synthesis reports as it goes. */
 export type SynthesisEvent =
   | { kind: 'synthesis-launched'; id: string; agent: string }
-  | { kind: 'synthesis-settled'; id: string; exitCode: number };
+  | { kind: 'synthesis-settled'; id: string; exitCode: number }
+  /** The fusion's `totalMs` passed before or during the synthesis: always `totalMs` here. */
+  | BudgetExhaustedEvent;
 
 /** How the Fusion run ended. */
 export interface SynthesisResult {
   fusion: string;
-  /** `completed` whatever the synthesis's verdict, `canceled` on a cancel. */
+  /**
+   * `completed` whatever the synthesis's verdict, `canceled` on a cancel,
+   * `exhausted` when the fusion's `totalMs` stopped it.
+   */
   state: FusionState;
-  /** The synthesis run's Verdict (ADR-0016), or 143: the fusion's exit code. */
+  /**
+   * The fusion's exit code: the synthesis run's Verdict (ADR-0016), 143 for a
+   * cancel, 2 for the fusion's `totalMs`.
+   */
   exitCode: number;
   branch?: string;
   pushed: boolean;
@@ -179,6 +199,31 @@ export async function runSynthesis(
       pushed: false,
     };
   }
+  // The whole fusion's deadline, counted from its start (ADR-0019 section
+  // 9); a fan-out result made without one has none.
+  const deadlines = fanOut.deadlines ?? record.deadlines;
+  const totalAt =
+    deadlines === undefined ? undefined : Date.parse(deadlines.totalAt);
+  const exhausted = (stopped: string[]): void => {
+    params.onEvent?.({
+      kind: 'budget-exhausted',
+      budget: 'totalMs',
+      limitMs: deadlines!.totalMs,
+      stopped,
+    });
+  };
+  // A deadline that passed before the launch starts nothing either.
+  if (totalAt !== undefined && now().getTime() >= totalAt) {
+    exhausted([]);
+    end('exhausted', { reason: FUSION_TIMEOUT_REASON });
+    return {
+      fusion,
+      state: 'exhausted',
+      exitCode: EXHAUSTED_EXIT_CODE,
+      pushed: false,
+      reason: FUSION_TIMEOUT_REASON,
+    };
+  }
 
   // The record's synthesizer: the one the summary and the PR block name.
   const agent = record.profile.synthesizer;
@@ -188,6 +233,8 @@ export async function runSynthesis(
     status: SiblingStatusPatch | undefined;
     exitCode: number;
     killed: boolean;
+    /** Set when the fusion's `totalMs` was what killed it. */
+    timedOut: boolean;
     startedAt: Date;
     id: string;
   };
@@ -206,6 +253,7 @@ export async function runSynthesis(
     const startedAt = now();
     let code: number;
     let killed = false;
+    let timedOut = false;
     try {
       handle = startChildRun({
         spoolDir,
@@ -237,7 +285,15 @@ export async function runSynthesis(
     }
     if (handle) {
       params.onEvent?.({ kind: 'synthesis-launched', id: request.id, agent });
-      ({ code, killed } = await untilExitOrCancel(handle, params.abort));
+      const ended = await untilExitCancelOrDeadline(handle, {
+        abort: params.abort,
+        totalAt,
+        clock: { now, sleep: deps.sleep ?? realSleep },
+      });
+      code = ended.code;
+      killed = ended.killedBy !== undefined;
+      timedOut = ended.killedBy === 'deadline';
+      if (timedOut) exhausted([request.id]);
       settleChildRun({
         spoolDir,
         id: request.id,
@@ -245,7 +301,7 @@ export async function runSynthesis(
         // Only a kill that reached a live child is a cancel: a synthesis
         // that had finished, pushed and opened its PR stays finished.
         canceling: killed,
-        actor: FUSION_ACTOR,
+        actor: timedOut ? `${FUSION_ACTOR}'s totalMs` : FUSION_ACTOR,
         now,
       });
     }
@@ -254,6 +310,7 @@ export async function runSynthesis(
       status,
       exitCode: killed ? CANCELED_EXIT_CODE : (status?.exitCode ?? code!),
       killed,
+      timedOut,
       startedAt,
       id: request.id,
     };
@@ -263,6 +320,7 @@ export async function runSynthesis(
       exitCode: outcome.exitCode,
     });
     const { status: st } = outcome;
+    const reason = timedOut ? FUSION_TIMEOUT_REASON : st?.reason;
     writeSynthesisRecord(deps.storeDir, {
       schemaVersion: 1,
       fusion,
@@ -270,7 +328,7 @@ export async function runSynthesis(
       agent,
       ...(st?.branch !== undefined ? { branch: st.branch } : {}),
       exitCode: outcome.exitCode,
-      ...(st?.reason !== undefined ? { reason: st.reason } : {}),
+      ...(reason !== undefined ? { reason } : {}),
       ...(st?.verify !== undefined ? { verify: st.verify } : {}),
       // Why a synthesis that never reported failed: the log goes with the spool.
       ...(st?.error !== undefined ? { error: st.error } : {}),
@@ -293,18 +351,23 @@ export async function runSynthesis(
   }
 
   const { status } = outcome;
-  const state: FusionState = outcome.killed ? 'canceled' : 'completed';
-  end(state, status?.reason !== undefined ? { reason: status.reason } : {});
+  const state: FusionState = outcome.timedOut
+    ? 'exhausted'
+    : outcome.killed
+      ? 'canceled'
+      : 'completed';
+  const reason = outcome.timedOut ? FUSION_TIMEOUT_REASON : status?.reason;
+  end(state, reason !== undefined ? { reason } : {});
   return {
     fusion,
     state,
-    exitCode: outcome.exitCode,
+    exitCode: outcome.timedOut ? EXHAUSTED_EXIT_CODE : outcome.exitCode,
     ...(status?.branch !== undefined ? { branch: status.branch } : {}),
     pushed: status?.pushed === true,
     ...(status?.pullRequestUrl !== undefined
       ? { pullRequestUrl: status.pullRequestUrl }
       : {}),
-    ...(status?.reason !== undefined ? { reason: status.reason } : {}),
+    ...(reason !== undefined ? { reason } : {}),
   };
 }
 
@@ -346,28 +409,42 @@ function buildMaterial(
 }
 
 /**
- * The child's exit code, and whether a cancel killed it: on an abort the
- * child is killed and its exit awaited - unless it had already exited, in
- * which case nothing was canceled.
+ * The child's exit code, and what killed it, if anything: on a cancel or
+ * when `totalAt` passes, the child is killed and its exit awaited - unless it
+ * had already exited, in which case nothing was stopped. The deadline's wait
+ * ends with the child, so no timer outlives the synthesis.
  */
-async function untilExitOrCancel(
+async function untilExitCancelOrDeadline(
   handle: ChildHandle,
-  abort: AbortSignal | undefined
-): Promise<{ code: number; killed: boolean }> {
+  opts: {
+    abort: AbortSignal | undefined;
+    totalAt: number | undefined;
+    clock: { now: () => Date; sleep: Sleep };
+  }
+): Promise<{ code: number; killedBy?: 'cancel' | 'deadline' }> {
+  const { abort, totalAt } = opts;
   let exited = false;
-  let killed = false;
-  const kill = (): void => {
-    if (exited) return;
-    killed = true;
+  let killedBy: 'cancel' | 'deadline' | undefined;
+  const kill = (by: 'cancel' | 'deadline'): void => {
+    if (exited || killedBy !== undefined) return;
+    killedBy = by;
     handle.kill();
   };
-  if (abort?.aborted) kill();
-  abort?.addEventListener('abort', kill, { once: true });
+  const onAbort = (): void => kill('cancel');
+  if (abort?.aborted) onAbort();
+  abort?.addEventListener('abort', onAbort, { once: true });
+  const stopWaiting = new AbortController();
+  if (totalAt !== undefined) {
+    void untilTime(totalAt, opts.clock, stopWaiting.signal).then(reached => {
+      if (reached) kill('deadline');
+    });
+  }
   try {
     const code = await handle.exited;
     exited = true;
-    return { code, killed };
+    return { code, ...(killedBy !== undefined ? { killedBy } : {}) };
   } finally {
-    abort?.removeEventListener('abort', kill);
+    stopWaiting.abort();
+    abort?.removeEventListener('abort', onAbort);
   }
 }
