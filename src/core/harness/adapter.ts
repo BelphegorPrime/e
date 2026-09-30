@@ -292,11 +292,12 @@ function tomlBareKey(name: string): string {
 /**
  * Where Codex reads its config in the image: `config.toml` under a config dir
  * relocated by `CODEX_HOME`, a fixed path in the non-root runtime user's home and
- * outside `/workspace`. Private to the adapter - both of its deliveries spell the
- * baked file's home from here, and nothing else needs to know it.
+ * outside `/workspace`. Both of the adapter's deliveries spell the baked file's
+ * home from here; the harness registry reads it too, because Codex keeps its
+ * sessions under the same dir (`sessions/`, ADR-0017).
  */
 const CODEX_CONFIG_DIR_ENV = 'CODEX_HOME';
-const CODEX_CONFIG_DIR = `${NODE_HOME}/.codex`;
+export const CODEX_CONFIG_DIR = `${NODE_HOME}/.codex`;
 const CODEX_CONFIG_FILE = 'config.toml';
 
 /**

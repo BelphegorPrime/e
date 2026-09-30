@@ -7,6 +7,7 @@ import type {
 } from './adapter.js';
 import type { McpEndpoint } from '../mcp/index.js';
 import {
+  CODEX_CONFIG_DIR,
   claudeCodeAdapter,
   codexAdapter,
   opencodeAdapter,
@@ -120,6 +121,31 @@ const CLAUDE_WORKSPACE_ISOLATION = [
   '--strict-mcp-config',
   '--settings',
   JSON.stringify({ disableAllHooks: true }),
+] as const;
+
+/**
+ * The unattended posture of every non-interactive Codex invocation, a fresh
+ * `codex exec` and an `exec resume` alike (ADR-0017: the resumed session does
+ * not inherit it from its rollout).
+ */
+const CODEX_EXEC_POSTURE = [
+  // `codex exec` defaults to a READ-ONLY sandbox (its approval policy is
+  // already `never`), so without this the run cannot write /workspace and
+  // exits 0 regardless. The container is the isolation boundary
+  // (ADR-0002/0011), the posture this flag assumes; it also implies
+  // `--skip-git-repo-check` and keeps exec's headless `never` policy.
+  // Grounding: `docs/research/harness-unattended-flags.md`.
+  '--dangerously-bypass-approvals-and-sandbox',
+  // `.rules` (execpolicy) files are read from `/workspace` as well as from
+  // CODEX_HOME. A project's can only restrict what the run may do, so the
+  // exposure is sabotage rather than execution; `e` ships none of its own,
+  // so ignoring both layers costs nothing today - the day `e` delivers a
+  // `.rules` file through the Store overlay, this flag has to go (#153). What this cannot reach is the project's
+  // `.codex/config.toml`, which is loaded with no trust gate and can start
+  // MCP servers - no flag suppresses it at 0.147.0. Its hooks are gated,
+  // and stay gated: `--dangerously-bypass-hook-trust` is never passed.
+  // See `docs/security/attack-surface.md`.
+  '--ignore-rules',
 ] as const;
 
 /** Available coding harnesses, keyed by name. */
@@ -282,6 +308,9 @@ export const HARNESSES: Record<string, Harness> = {
     dockerfile: {
       label: 'OpenAI Codex CLI harness.',
       npmPackage: '@openai/codex',
+      // CODEX_HOME exists before the session mount lands inside it
+      // (`sessionDir` below), so the build's final chown hands it to `node`.
+      setupSteps: [`mkdir -p ${CODEX_CONFIG_DIR}`],
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'codex',
     },
@@ -297,23 +326,7 @@ export const HARNESSES: Record<string, Harness> = {
     buildCommand: (prompt: string, model?: string) => [
       'codex',
       'exec',
-      // `codex exec` defaults to a READ-ONLY sandbox (its approval policy is
-      // already `never`), so without this the run cannot write /workspace and
-      // exits 0 regardless. The container is the isolation boundary
-      // (ADR-0002/0011), the posture this flag assumes; it also implies
-      // `--skip-git-repo-check` and keeps exec's headless `never` policy.
-      // Grounding: `docs/research/harness-unattended-flags.md`.
-      '--dangerously-bypass-approvals-and-sandbox',
-      // `.rules` (execpolicy) files are read from `/workspace` as well as from
-      // CODEX_HOME. A project's can only restrict what the run may do, so the
-      // exposure is sabotage rather than execution; `e` ships none of its own,
-      // so ignoring both layers costs nothing today - the day `e` delivers a
-      // `.rules` file through the Store overlay, this flag has to go (#153). What this cannot reach is the project's
-      // `.codex/config.toml`, which is loaded with no trust gate and can start
-      // MCP servers - no flag suppresses it at 0.147.0. Its hooks are gated,
-      // and stay gated: `--dangerously-bypass-hook-trust` is never passed.
-      // See `docs/security/attack-surface.md`.
-      '--ignore-rules',
+      ...CODEX_EXEC_POSTURE,
       ...(model ? ['-m', model] : []),
       prompt,
     ],
@@ -321,6 +334,42 @@ export const HARNESSES: Record<string, Harness> = {
       model ? ['codex', '-m', model] : ['codex'],
     // Codex reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
+    // Codex's own session store (ADR-0017): every thread is a rollout at
+    // `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<thread id>.jsonl`, and
+    // this dir alone is enough to resume - measured on 0.159.0 against a stub
+    // endpoint, a fresh CODEX_HOME holding only `config.toml` and `sessions/`
+    // continued the thread with its full history (the `*.sqlite` state is
+    // rebuilt). A subdir, so the mount never shadows the baked `config.toml`;
+    // the image creates `~/.codex` node-owned (above), or Docker would create
+    // it root-owned for the mount and Codex would die on start (EACCES).
+    // The rollout is appended as items happen: a run SIGKILLed mid-turn keeps
+    // its prompt, tool calls and their outputs, and resumes with them.
+    sessionDir: `${CODEX_CONFIG_DIR}/sessions`,
+    // `--last` picks the newest session whose cwd is the current one (always
+    // /workspace here); a cwd with none silently starts a fresh thread. The
+    // posture is NOT inherited from the rollout: `exec resume` without the
+    // bypass runs read-only and exits 0 (measured), so it carries the same
+    // flags as `buildCommand`. The TUI's `--last` skips `codex exec` sessions
+    // (every Run's) unless `--include-non-interactive` is given - it would
+    // open a new thread - and keeps `buildInteractiveCommand`'s posture.
+    resumeCommand: (prompt: string | undefined, model?: string) =>
+      prompt === undefined
+        ? [
+            'codex',
+            'resume',
+            '--last',
+            '--include-non-interactive',
+            ...(model ? ['-m', model] : []),
+          ]
+        : [
+            'codex',
+            'exec',
+            'resume',
+            '--last',
+            ...CODEX_EXEC_POSTURE,
+            ...(model ? ['-m', model] : []),
+            prompt,
+          ],
   },
   opencode: {
     name: 'opencode',
