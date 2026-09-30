@@ -8,6 +8,7 @@ import {
   dockerComposePath,
   bootstrapScriptPath,
   triggersBaseDir,
+  fusionsBaseDir,
 } from '../../core/store/paths.js';
 import { findRoot } from '../../core/store/root.js';
 import { log } from '../../shared/utils/log.js';
@@ -98,13 +99,16 @@ export async function exportConfiguration(
         }
       }
 
-      // Triggers travel with the store (ADR-0016): a trigger is a declaration
-      // a human edits, not machine state, and a store without them cannot
-      // fire. Note the wider gap this does not close - `agents/`, `mcp/` and
-      // `skills/` are still absent from the archive.
-      const triggers = triggersBaseDir(root);
-      if (fs.existsSync(triggers)) {
-        archive.directory(triggers, 'triggers');
+      // Triggers (ADR-0016) and fusion profiles (ADR-0019) travel with the
+      // store: each is a declaration a human edits, not machine state. Note
+      // the wider gap this does not close - `agents/`, `mcp/` and `skills/`
+      // are still absent from the archive, so a profile arrives naming
+      // Agents the target store may not have, and says so when it loads.
+      for (const [dir, arcPath] of [
+        [triggersBaseDir(root), 'triggers'],
+        [fusionsBaseDir(root), 'fusions'],
+      ] as const) {
+        if (fs.existsSync(dir)) archive.directory(dir, arcPath);
       }
 
       // Add volume data

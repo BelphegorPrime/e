@@ -8,6 +8,7 @@ import {
   dockerComposePath,
   bootstrapScriptPath,
   triggersBaseDir,
+  fusionsBaseDir,
 } from '../../core/store/paths.js';
 import { log } from '../../shared/utils/log.js';
 import type { ContainerRunner } from '../../ports/runtime/index.js';
@@ -100,13 +101,18 @@ export async function importConfiguration(
       }
     }
 
-    // Triggers travel as a directory, not as a named file (ADR-0016): a
-    // trigger is a directory of its own, and how many there are is not known
-    // until the archive is open.
-    const triggersInArchive = path.join(tempDir, 'triggers');
-    if (fs.existsSync(triggersInArchive)) {
-      log.info('Restoring triggers...');
-      fs.cpSync(triggersInArchive, triggersBaseDir(root), { recursive: true });
+    // Triggers (ADR-0016) and fusion profiles (ADR-0019) travel as
+    // directories, not as named files: each is a directory of its own, and
+    // how many there are is not known until the archive is open.
+    for (const [arcPath, target] of [
+      ['triggers', triggersBaseDir(root)],
+      ['fusions', fusionsBaseDir(root)],
+    ] as const) {
+      const inArchive = path.join(tempDir, arcPath);
+      if (fs.existsSync(inArchive)) {
+        log.info(`Restoring ${arcPath}...`);
+        fs.cpSync(inArchive, target, { recursive: true });
+      }
     }
 
     // Restore volume data

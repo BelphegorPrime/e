@@ -213,7 +213,7 @@ function parseProvider(raw: unknown, where: string): Provider {
 }
 
 /** Lists the persisted agent names under the store's `agents/` directory. */
-function listAgentNames(root?: string): string[] {
+export function listAgentNames(root?: string): string[] {
   const dir = agentsBaseDir(root);
 
   if (!fs.existsSync(dir)) {

@@ -59,6 +59,21 @@ export function triggerPromptPath(name: string, root?: string): string {
   return path.join(triggerDir(name, root), 'prompt.md');
 }
 
+/** Base directory that holds the Fusion profiles (ADR-0019), under `root`. */
+export function fusionsBaseDir(root?: string): string {
+  return path.join(eBaseDir(root), 'fusions');
+}
+
+/** Directory of a single Fusion profile; its name is the profile's id. */
+export function fusionDir(name: string, root?: string): string {
+  return path.join(fusionsBaseDir(root), name);
+}
+
+/** Absolute path to a Fusion profile's `fusion.json`. */
+export function fusionConfigPath(name: string, root?: string): string {
+  return path.join(fusionDir(name, root), 'fusion.json');
+}
+
 /** Base directory that holds the Skill definitions, under `root`. */
 export function skillsBaseDir(root?: string): string {
   return path.join(eBaseDir(root), 'skills');

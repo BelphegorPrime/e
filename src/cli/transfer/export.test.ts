@@ -94,7 +94,7 @@ test(
 );
 
 test(
-  'export carries the triggers directory, so a trigger travels with the store',
+  'export carries the triggers and fusions directories, so both declarations travel with the store',
   { skip: process.platform === 'win32' && 'sh shim on PATH' },
   () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-export-'));
@@ -114,6 +114,11 @@ test(
       fs.writeFileSync(
         path.join(store, 'triggers', 'nightly', 'prompt.md'),
         'Run it.\n'
+      );
+      fs.mkdirSync(path.join(store, 'fusions', 'coding'), { recursive: true });
+      fs.writeFileSync(
+        path.join(store, 'fusions', 'coding', 'fusion.json'),
+        '{"candidates":["a","b"],"synthesizer":"a"}\n'
       );
       fs.writeFileSync(path.join(binDir, 'docker'), '#!/bin/sh\nexit 0\n', {
         mode: 0o755,
@@ -138,6 +143,10 @@ test(
         '{"agent":"a"}\n'
       );
       assert.equal(zip.readAsText('triggers/nightly/prompt.md'), 'Run it.\n');
+      assert.equal(
+        zip.readAsText('fusions/coding/fusion.json'),
+        '{"candidates":["a","b"],"synthesizer":"a"}\n'
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

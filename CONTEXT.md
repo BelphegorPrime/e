@@ -175,6 +175,7 @@ The `.e` directory holding e's on-disk state - **also called "eBaseDir" because 
 - Agent definitions under `agents/<name>/` (each holding agent's `agent.json` plus any rendered `models.json`/`Dockerfile`)
 - MCP server definitions under `mcp/`
 - Skills under `skills/`
+- Triggers under `triggers/<name>/` (ADR-0016) and Fusion profiles under `fusions/<name>/fusion.json` (ADR-0019), both declarations that travel with `e export`
 - Host-only orchestration settings in `config.json` (the favorite/default harness, the git platform for PR/MR creation - never injected into containers, unlike `.env`)
 - The shared `.env`
 - `model-ids.json` (a cached model registry, currently unused by the run paths)

@@ -165,7 +165,7 @@ test('importConfiguration: existing volume restores with wipe but no create', as
   }
 });
 
-test('importConfiguration: the triggers directory is restored, files and all', async () => {
+test('importConfiguration: the triggers and fusions directories are restored, files and all', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e-import-'));
   const zipPath = path.join(root, 'import.zip');
   fs.mkdirSync(path.join(root, '.e'), { recursive: true });
@@ -175,6 +175,10 @@ test('importConfiguration: the triggers directory is restored, files and all', a
   fs.writeFileSync(path.join(staged, 'prompt.md'), 'Run it.\n');
   const zip = new AdmZip();
   zip.addLocalFolder(path.join(root, 'staged'), 'triggers');
+  const fusion = path.join(root, 'staged-fusions', 'coding');
+  fs.mkdirSync(fusion, { recursive: true });
+  fs.writeFileSync(path.join(fusion, 'fusion.json'), '{"candidates":[]}\n');
+  zip.addLocalFolder(path.join(root, 'staged-fusions'), 'fusions');
   zip.writeZip(zipPath);
   try {
     await importConfiguration({
@@ -190,6 +194,13 @@ test('importConfiguration: the triggers directory is restored, files and all', a
     assert.equal(
       fs.readFileSync(path.join(restored, 'prompt.md'), 'utf8'),
       'Run it.\n'
+    );
+    assert.equal(
+      fs.readFileSync(
+        path.join(root, '.e', 'fusions', 'coding', 'fusion.json'),
+        'utf8'
+      ),
+      '{"candidates":[]}\n'
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
