@@ -482,9 +482,9 @@ node -e "const {HARNESSES}=require('./dist/harness/index');console.log(HARNESSES
 # → [ 'pi', '-p', 'fix the bug', '--provider', 'e', '--model', 'claude-opus-5' ]
 
 # pi gets MCP through its built-in support, which reads a rendered mcp.json;
-# opencode has no MCP delivery yet, so --mcp is gated off there:
+# opencode through a config file of its own, named by OPENCODE_CONFIG:
 node -e "const {HARNESSES,harnessCapabilities}=require('./dist/harness/index');console.log(harnessCapabilities(HARNESSES.pi).mcp, harnessCapabilities(HARNESSES.opencode).mcp)"
-# → file none
+# → file file
 ```
 
 ### 3. UI smoke test (headless Chrome, no container)
@@ -579,12 +579,12 @@ cat ~/.e/agents/pi-gw/models.json    # the rendered provider (the key as ${NAME}
 cat ~/.e/agents/pi-gw/Dockerfile      # ENV PI_CODING_AGENT_DIR + COPY models.json
 ```
 
-**f. Confirm MCP is gated for a harness without MCP delivery** (fast; needs
-only the store, not a container; pi itself accepts `--mcp`):
+**f. Confirm a header secret stays a reference** (no container): opencode
+substitutes only `{env:NAME}`, so `e` rewrites `${NAME}`:
 
 ```bash
-e spawn opencode --mcp everything "hi"
-# → Harness "opencode" has no MCP client, so it cannot use --mcp.
+node -e "const {renderOpencodeMcp}=require('./dist/core/harness/adapter.js');console.log(renderOpencodeMcp([{name:'gh',url:'https://mcp.example.com/mcp',headers:{Authorization:'Bearer \${GITHUB_TOKEN}'}}]))"
+# → ... "Authorization": "Bearer {env:GITHUB_TOKEN}" ...
 ```
 
 > **pi + `auto` model note:** pi selects only models declared in its
@@ -882,7 +882,7 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt (one-shot)                                                                                 |
 | `e spawn <agent-or-harness>`                   | Start the harness TUI (no prompt means interactive)                                                                              |
 | `e spawn … --skill <name>`                     | Add a Skill for this run                                                                                                         |
-| `e spawn … --mcp <name>`                       | Wire an MCP server (rejected for opencode, which has no MCP delivery yet)                                                        |
+| `e spawn … --mcp <name>`                       | Wire an MCP server                                                                                                               |
 | `e spawn … --no-rebuild`                       | Build only what is missing or off the pin; by default every spawn rebuilds from the layer cache (`--rebuild` is a no-op)         |
 | `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                                                                                   |
 | `e spawn … --runtime <name>`                   | Pick the container engine (`docker`, `podman`, `nerdctl`, `finch`); default `$E_RUNTIME`, else the first one on `PATH`           |

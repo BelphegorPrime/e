@@ -474,9 +474,10 @@ export function resolveHarness(name: string): Harness {
  *  - `flag` - inline on the command line (Claude Code's `--mcp-config`).
  *  - `file` - rendered into its native config file, delivered as a runtime
  *    overlay via its file adapter (Codex's `config.toml` / `CODEX_HOME`; pi's
- *    `mcp.json`, read by its built-in MCP support).
- *  - `none` - no MCP client at all or no MCP delivery wired yet (opencode);
- *    `--mcp` is rejected with a clear error at spawn.
+ *    `mcp.json`, read by its built-in MCP support; opencode's own config file
+ *    named by `OPENCODE_CONFIG`).
+ *  - `none` - no MCP client at all or no MCP delivery wired yet (no shipped
+ *    harness today); `--mcp` is rejected with a clear error at spawn.
  */
 export type McpDeliveryForm = 'flag' | 'file' | 'none';
 
@@ -509,8 +510,7 @@ function mcpWiring(harness: Harness): McpWiring {
   if (harness.renderMcpArgs) {
     return { form: 'flag', renderArgs: harness.renderMcpArgs.bind(harness) };
   }
-  // A file adapter delivers MCP only if it plans an overlay; opencode's plans
-  // none yet, so it stays `none`.
+  // A file adapter delivers MCP only if it plans an overlay.
   const adapter = harness.adapter;
   if (adapter?.kind === 'file' && adapter.planConfigOverlay) {
     return {

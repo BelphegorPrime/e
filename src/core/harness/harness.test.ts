@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { opencodeAdapter } from './adapter.js';
 import {
   HARNESSES,
   harnessCapabilities,
@@ -14,6 +15,12 @@ import { SESSION_PARENT_LABEL } from './renderDockerfile.js';
 import type { McpEndpoint } from '../mcp/index.js';
 
 const claude = HARNESSES.claudeCode;
+
+/** A file harness whose adapter plans no MCP overlay: every shipped one has one now. */
+const noMcpHarness = {
+  ...HARNESSES.opencode,
+  adapter: { ...opencodeAdapter, planConfigOverlay: undefined },
+};
 
 test('claude renderMcpArgs emits inline --mcp-config with an http server per endpoint', () => {
   const endpoints: McpEndpoint[] = [
@@ -77,14 +84,16 @@ test('only Claude wires MCP inline today; the others have no renderMcpArgs', () 
   assert.equal(HARNESSES.pi.renderMcpArgs, undefined);
 });
 
-test('harnessCapabilities.mcp declares each harness form: flag (Claude), file (Codex/pi), none (opencode)', () => {
+test('harnessCapabilities.mcp declares each harness form: flag (Claude), file (Codex/pi/opencode), none without wiring', () => {
   assert.equal(harnessCapabilities(HARNESSES.claudeCode).mcp, 'flag');
   assert.equal(harnessCapabilities(HARNESSES.codex).mcp, 'file');
   // pi's built-in MCP support reads mcp.json, so its file adapter delivers
   // a mcp.json overlay.
   assert.equal(harnessCapabilities(HARNESSES.pi).mcp, 'file');
-  // opencode has no MCP delivery wired yet, so it is gated off too.
-  assert.equal(harnessCapabilities(HARNESSES.opencode).mcp, 'none');
+  // opencode reads a config overlay named by OPENCODE_CONFIG (#207).
+  assert.equal(harnessCapabilities(HARNESSES.opencode).mcp, 'file');
+  // A file adapter that plans no overlay has no MCP delivery: gated off.
+  assert.equal(harnessCapabilities(noMcpHarness).mcp, 'none');
 });
 
 test('the pi image installs no pi-mcp-adapter: pi reads mcp.json itself', () => {
@@ -153,8 +162,8 @@ test('planMcpDelivery wires pi as a mcp.json overlay next to the baked models.js
   assert.equal(delivery.overlay.mountTo, '/home/node/.pi/agent/mcp.json');
 });
 
-test('planMcpDelivery reports no delivery for a harness without MCP wiring (opencode)', () => {
-  assert.deepEqual(planMcpDelivery(HARNESSES.opencode, [], ''), {
+test('planMcpDelivery reports no delivery for a harness without MCP wiring', () => {
+  assert.deepEqual(planMcpDelivery(noMcpHarness, [], ''), {
     form: 'none',
   });
 });

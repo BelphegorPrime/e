@@ -107,7 +107,7 @@ The commands an agent (or user) actually uses:
 | `e spawn <agent-or-harness> "<prompt>"`     | Run an agent/harness against a prompt (one-shot)      |
 | `e spawn <agent-or-harness>`                | Start the harness TUI (no prompt means interactive)   |
 | `e spawn <agent-or-harness> --skill <name>` | Add a Skill for this run                              |
-| `e spawn <agent-or-harness> --mcp <name>`   | Wire an MCP server (rejected for opencode)            |
+| `e spawn <agent-or-harness> --mcp <name>`   | Wire an MCP server                                    |
 | `e init`                                    | Write the store (`~/.e`); usually done on the host    |
 | `e serve`                                   | Local web UI / BFF, and `e`'s A2A endpoint (ADR-0015) |
 | `e --help`                                  | The full CLI                                          |

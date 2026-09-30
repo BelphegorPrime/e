@@ -9,6 +9,7 @@ import {
   planSpawn,
   type SpawnFacts,
 } from './spawnPlan.js';
+import { opencodeAdapter } from '../../core/harness/adapter.js';
 import { HARNESSES } from '../../core/harness/index.js';
 import { GLOBAL_BASE_URL_ENV } from '../../core/harness/renderEnvTemplate.js';
 import type { McpServer } from '../../core/mcp/index.js';
@@ -261,9 +262,13 @@ test('validateSpawn: accepts a provider on opencode (its file adapter delivers i
   assert.doesNotThrow(() => validateSpawn(f));
 });
 
-test('validateSpawn: rejects --mcp against a harness with no MCP wiring (opencode)', () => {
+test('validateSpawn: rejects --mcp against a harness with no MCP wiring', () => {
+  const noMcp = {
+    ...HARNESSES.opencode,
+    adapter: { ...opencodeAdapter, planConfigOverlay: undefined },
+  };
   const f = facts({
-    harness: HARNESSES.opencode,
+    harness: noMcp,
     agent: { name: 'opencode', harness: 'opencode' },
     mcpServers: [containerMcp],
   });
@@ -382,7 +387,7 @@ test('planSpawn: no file harness bakes or mounts the key value, only its name', 
           provider: { ...provider, protocol },
         },
         storeEnv: { GW_KEY: secret, MCP_TOKEN: 'mcp-secret' },
-        mcpServers: harness.name === 'opencode' ? [] : [remoteMcp],
+        mcpServers: [remoteMcp],
       })
     );
     const files = [

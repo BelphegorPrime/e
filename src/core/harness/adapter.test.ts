@@ -4,6 +4,7 @@ import {
   claudeCodeAdapter,
   codexAdapter,
   opencodeAdapter,
+  renderOpencodeMcp,
   opencodeNpm,
   OPENCODE_PROVIDER_ID,
   piAdapter,
@@ -592,8 +593,8 @@ test('opencodeAdapter: bakes config under OPENCODE_CONFIG_DIR outside /workspace
   assert.equal(bakedConfig.configDir, '/home/node/.config/opencode');
 });
 
-test('opencodeAdapter: plans no MCP overlay yet, so --mcp stays gated', () => {
-  assert.equal(opencodeAdapter.planConfigOverlay, undefined);
+test('opencodeAdapter: plans an MCP overlay, so --mcp is delivered', () => {
+  assert.equal(typeof opencodeAdapter.planConfigOverlay, 'function');
 });
 
 test('a file harness is one object: `kind` plus one delivery method', () => {
@@ -667,4 +668,47 @@ test('piModelsJsonDrift: an old render with the key value is re-rendered; a hand
   // Not JSON: a hand edit e cannot read, left alone.
   assert.equal(piModelsJsonDrift('{ nope', rendered), undefined);
   assert.equal(piAdapter.bakedConfigDrift, piModelsJsonDrift);
+});
+
+test('renderOpencodeMcp: remote servers with header secrets as {env:VAR}, and no OAuth', () => {
+  const cfg = JSON.parse(
+    renderOpencodeMcp([
+      { name: 'everything', url: 'http://everything:3001/mcp' },
+      {
+        name: 'github',
+        url: 'https://mcp.example.com/mcp',
+        headers: {
+          Authorization: 'Bearer ${GITHUB_TOKEN}',
+          'X-Pair': '${A}:${B}',
+          'X-Client': 'e',
+        },
+      },
+    ])
+  );
+  assert.deepEqual(cfg.mcp.everything, {
+    type: 'remote',
+    url: 'http://everything:3001/mcp',
+    enabled: true,
+    oauth: false,
+  });
+  // opencode sends ${VAR} literally and substitutes only {env:VAR}.
+  assert.deepEqual(cfg.mcp.github.headers, {
+    Authorization: 'Bearer {env:GITHUB_TOKEN}',
+    'X-Pair': '{env:A}:{env:B}',
+    'X-Client': 'e',
+  });
+  assert.equal(cfg.mcp.github.oauth, false);
+  assert.equal(cfg.$schema, 'https://opencode.ai/config.json');
+});
+
+test('opencodeAdapter.planConfigOverlay: its own file, named by OPENCODE_CONFIG, the baked provider untouched', () => {
+  const overlay = opencodeAdapter.planConfigOverlay!('{"model":"e/x"}', [
+    { name: 'everything', url: 'http://everything:3001/mcp' },
+  ]);
+  assert.equal(overlay.file.fileName, 'opencode-mcp.json');
+  assert.equal(overlay.mountTo, '/run/e/opencode-mcp.json');
+  assert.deepEqual(overlay.env, [
+    { name: 'OPENCODE_CONFIG', value: '/run/e/opencode-mcp.json' },
+  ]);
+  assert.doesNotMatch(overlay.file.content, /"model"/);
 });

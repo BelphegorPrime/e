@@ -362,7 +362,7 @@ function hasTerminalForTui(
  * resolution and any build. Throws with a clear message on the first problem:
  *  - a provider protocol the harness does not speak;
  *  - a provider on a harness with no config adapter;
- *  - `--mcp` against a harness with no MCP client (opencode);
+ *  - `--mcp` against a harness with no MCP delivery;
  *  - baked or `--skill` skills against a harness that supports none;
  *  - a `-e` that names a role-contract variable (`E_ROLE`, `E_BROKER_URL`);
  *  - no prompt and no terminal (nothing to run one-shot, nothing to attach a TUI to).

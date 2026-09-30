@@ -727,11 +727,61 @@ const OPENCODE_CONFIG_DIR = `${NODE_HOME}/.config/opencode`;
 const OPENCODE_CONFIG_FILE = 'opencode.json';
 
 /**
+ * Where opencode's MCP overlay mounts: a file of its own, outside `/workspace`
+ * and outside the baked config dir, named by `OPENCODE_CONFIG`. opencode
+ * deep-merges it after the global config and before the project's and the
+ * config dir's, so the baked provider stays exactly as it baked and nothing is
+ * mounted into a dir opencode writes to at runtime.
+ */
+const OPENCODE_CONFIG_ENV = 'OPENCODE_CONFIG';
+const OPENCODE_MCP_FILE = 'opencode-mcp.json';
+const OPENCODE_MCP_PATH = `/run/e/${OPENCODE_MCP_FILE}`;
+
+/**
+ * Renders MCP endpoints into an opencode config holding only `mcp`: each a
+ * `remote` (streamable HTTP) server, enabled, with OAuth off - a headless run
+ * has nobody to finish a flow, and a server that authenticates by header
+ * needs none. opencode substitutes only `{env:VAR}` (textually, before it
+ * parses the file) and sends `${VAR}` as written, so every `${VAR}` in a
+ * header becomes `{env:VAR}`: the secret stays a reference, never a value.
+ * An unset var becomes `""` in opencode; e's `requiredEnv` fails loud first.
+ * Grounding: `docs/research/harness-secret-delivery.md`.
+ */
+export function renderOpencodeMcp(endpoints: McpEndpoint[]): string {
+  const mcp: Record<string, Record<string, unknown>> = {};
+  for (const endpoint of endpoints) {
+    mcp[endpoint.name] = {
+      type: 'remote',
+      url: endpoint.url,
+      enabled: true,
+      oauth: false,
+      ...(endpoint.headers && Object.keys(endpoint.headers).length > 0
+        ? {
+            headers: Object.fromEntries(
+              Object.entries(endpoint.headers).map(([header, value]) => [
+                header,
+                value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, '{env:$1}'),
+              ])
+            ),
+          }
+        : {}),
+    };
+  }
+  return (
+    JSON.stringify(
+      { $schema: 'https://opencode.ai/config.json', mcp },
+      null,
+      2
+    ) + '\n'
+  );
+}
+
+/**
  * opencode's adapter. opencode is configured through `opencode.json`, so the
  * provider is rendered into a file baked into the derived agent image; only the
  * API key is delivered at runtime, by name. The model is always named on the run
  * command (`-m e/<model>`) as well, so the pick never depends on config merge
- * order. No MCP overlay yet: `--mcp` stays gated off.
+ * order. `--mcp` is delivered as its own config file, {@link renderOpencodeMcp}.
  */
 export const opencodeAdapter: FileHarnessAdapter = {
   kind: 'file',
@@ -750,6 +800,19 @@ export const opencodeAdapter: FileHarnessAdapter = {
       },
       runtimeEnv: [{ name: provider.apiKeyEnv, fromEnv: provider.apiKeyEnv }],
       runtimeModel: `${OPENCODE_PROVIDER_ID}/${provider.model}`,
+    };
+  },
+  planConfigOverlay(
+    _baseConfig: string,
+    endpoints: McpEndpoint[]
+  ): ConfigOverlayDelivery {
+    return {
+      file: {
+        fileName: OPENCODE_MCP_FILE,
+        content: renderOpencodeMcp(endpoints),
+      },
+      mountTo: OPENCODE_MCP_PATH,
+      env: [{ name: OPENCODE_CONFIG_ENV, value: OPENCODE_MCP_PATH }],
     };
   },
 };

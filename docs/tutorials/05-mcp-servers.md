@@ -19,12 +19,12 @@ Each MCP server is a directory `~/.e/mcp/<name>/` with an `mcp.json`. Its
 
 Harness support, as `e` gates it:
 
-| Harness      | MCP delivery                                       |
-| ------------ | -------------------------------------------------- |
-| `pi`         | rendered `mcp.json`, read by pi's built-in MCP     |
-| `claudeCode` | `--mcp-config` flag on the run command             |
-| `codex`      | overlay merged into `config.toml`                  |
-| `opencode`   | none; `--mcp` is rejected before anything is built |
+| Harness      | MCP delivery                                    |
+| ------------ | ----------------------------------------------- |
+| `pi`         | rendered `mcp.json`, read by pi's built-in MCP  |
+| `claudeCode` | `--mcp-config` flag on the run command          |
+| `codex`      | overlay merged into `config.toml`               |
+| `opencode`   | its own config file, named by `OPENCODE_CONFIG` |
 
 ## Step 1: the shipped `everything` server
 

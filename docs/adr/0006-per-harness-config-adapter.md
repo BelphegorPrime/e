@@ -114,7 +114,8 @@ flowchart LR
   branch's diff. Every harness supports this via a config-dir env var
   (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR`,
   `PI_CODING_AGENT_DIR`). All four have an adapter wired; opencode's bakes
-  `opencode.json` under `OPENCODE_CONFIG_DIR` but plans no MCP overlay yet.
+  `opencode.json` under `OPENCODE_CONFIG_DIR` and delivers `--mcp` as a file
+  of its own named by `OPENCODE_CONFIG`, header secrets as `{env:NAME}`.
 - Not every capability is universal: pi ships no MCP client, so `e`
   capability-gates `--mcp` per harness; MCP delivery form also differs (Claude
   takes it inline via a flag; Codex and opencode need a rendered file). See
