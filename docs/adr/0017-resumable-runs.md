@@ -77,11 +77,39 @@ the harness's session directory:
 
 Both present is the `resume` capability in `harnessCapabilities`; `e resume`
 on any other harness fails fast, naming the ones that can, the way `--mcp` is
-gated for opencode. **pi only** for now. The candidates for the others,
-unverified against their pins and therefore not wired: Claude Code
-`--resume <id>` / `--continue`, Codex `exec resume --last`, opencode
-`--continue`. Each gets its `sessionDir` and `resumeCommand` in its own change,
-verified against its pinned version.
+gated for opencode. Every shipped harness has it, each measured against its
+pinned version with a stub endpoint, a SIGKILL mid-turn included:
+
+| Harness             | `sessionDir`                                      | One-shot resume                                              | TUI resume                                       |
+| ------------------- | ------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| pi 0.99.0           | `~/.pi/agent/sessions`                            | `pi --no-approve --continue -p <prompt>`                     | `pi --continue`                                  |
+| Claude Code 2.1.284 | `~/.claude/projects`                              | `claude --continue -p <prompt>` + the #153 flags             | `claude --continue` + the #153 flags (see below) |
+| Codex 0.159.0       | `~/.codex/sessions`                               | `codex exec resume --last` + the bypass and `--ignore-rules` | `codex resume --last --include-non-interactive`  |
+| opencode 1.18.33    | `~/.local/share/opencode-session` (`OPENCODE_DB`) | `opencode run --auto --continue <prompt>`                    | `opencode --continue`                            |
+
+Each resumes the newest session for the cwd, always `/workspace`, and each
+writes its session as it goes, so a killed container is resumable up to the
+turn in flight. What each needed beyond a flag:
+
+- **The posture is restated, never inherited.** A resumed `codex exec` does
+  not take the sandbox bypass from its rollout: without the flag it runs
+  read-only and exits 0 having written nothing (ADR-0016's bug again). Every
+  `resumeCommand` repeats its `buildCommand`'s unattended and #153 flags.
+- **The mount holds the conversation, not the credentials.** Claude's
+  `projects/` holds no settings, no `~/.claude.json` and no skills. opencode's
+  default db shares its data dir with `auth.json` and `mcp-auth.json`, so
+  `sessionEnv` sets `OPENCODE_DB` into a dir of its own, and only while the
+  session is mounted.
+- **The mount's parent must exist in the image.** An engine creates a
+  missing parent root-owned, and Codex (`~/.codex`) and opencode
+  (`~/.local/share`) then die on start. Their Dockerfiles create it
+  (`dockerfile.sessionParent`) and say so in a label; a Store Dockerfile
+  from before, which `e init` never rewrites, lacks it, so such a run keeps no
+  session with a warning naming `e init --force`, and a resume is refused.
+- **Claude's TUI resume finds only a session the TUI wrote.** 2.1.284 hides a
+  `-p` session from an interactive `--continue`, which exits 1 with "No
+  conversation found to continue"; a one-shot resume of it works. Known limit:
+  resuming a one-shot Claude Run needs a follow-up prompt.
 
 ### 4. The worktree is the branch's own
 
@@ -147,7 +175,8 @@ server held in memory is gone. Known limit, documented.
 - `runSpawn` gains a resume mode (existing branch, `resumeCommand`, the carried
   wall clock) and a session mount; a Run of a harness without the capability
   is unchanged.
-- The other three harnesses cannot be resumed until each is verified.
+- Every shipped harness can be resumed; a new one needs its own
+  measurement before it declares the capability.
 - Known limits: resuming a Run whose PR is already open tries to open it
   again, which the platform refuses, so the report carries a PR warning; the
   wall clock is recorded when the invocation ends, so a host process killed

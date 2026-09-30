@@ -738,6 +738,15 @@ export async function runSpawn(
       ...params.runOptions,
       name: run.name,
       networks: joinedNetworks,
+      // What points the harness at its mounted session, only while mounted.
+      ...(sessionMounts.length > 0 && params.harness.sessionEnv
+        ? {
+            env: [
+              ...(params.runOptions.env ?? []),
+              ...params.harness.sessionEnv.map(e => `${e.name}=${e.value}`),
+            ],
+          }
+        : {}),
       volumes: [
         { host: worktreePath, container: '/workspace' },
         ...artifactMounts,

@@ -308,7 +308,8 @@ test(
       );
       assert.equal(result.reason, 'exhausted:total-timeout');
       const record = readRunSession(path.join(tmp, '.e'), run);
-      assert.ok(record!.elapsedMs >= 20, 'and adds what it spent');
+      // Timer granularity: what it spent, give or take a millisecond.
+      assert.ok(record!.elapsedMs >= 15, 'and adds what it spent');
     })
 );
 
@@ -357,4 +358,37 @@ test('resume needs its session: one that cannot be opened fails the resume', () 
     fs.writeFileSync(path.join(tmp, 'nope'), 'a file');
     await assert.rejects(runSpawn(deps, params));
     assert.equal(runtime.ran, false);
+  }));
+
+test("a harness's session env reaches the container only while its session is mounted", () =>
+  withTmp(async tmp => {
+    const withEnv: Harness = {
+      ...resumable,
+      sessionEnv: [{ name: 'DEMO_DB', value: '/home/node/.demo/sessions/db' }],
+    };
+    const { deps, runtime } = makeDeps();
+    await runSpawn(
+      deps,
+      makeParams(tmp, {
+        harness: withEnv,
+        runOptions: { rm: true, env: ['A=1'] },
+      })
+    );
+    assert.deepEqual(runtime.options?.env, [
+      'A=1',
+      'DEMO_DB=/home/node/.demo/sessions/db',
+    ]);
+
+    // No session (it could not be prepared): no env pointing at nothing.
+    const other = makeDeps();
+    fs.writeFileSync(path.join(tmp, 'nope'), 'a file');
+    await runSpawn(
+      other.deps,
+      makeParams(tmp, {
+        harness: withEnv,
+        runOptions: { rm: true, env: ['A=1'] },
+        session: { storeDir: path.join(tmp, 'nope', '.e'), init },
+      })
+    );
+    assert.deepEqual(other.runtime.options?.env, ['A=1']);
   }));

@@ -31,6 +31,7 @@ import {
   skillDir,
 } from '../../core/store/paths.js';
 import { isInitialized } from '../../core/store/config.js';
+import { sessionImageReady } from '../../core/harness/index.js';
 import {
   checkPin,
   harnessPin,
@@ -263,6 +264,31 @@ async function executeSpawnWith(
   // A run's worktree is removed as soon as the container returns.
   const imageTag = buildImages(facts, plan, runtime, scratch);
 
+  // An image from a Dockerfile older than the session mount (ADR-0017) would
+  // get the mount's parent root-owned from the engine and the harness would
+  // die on start: such a run keeps no session, and a resume cannot use it.
+  let session = plan.session;
+  if (
+    session &&
+    !sessionImageReady(
+      facts.harness,
+      runtime.imageLabels(facts.harness.imageTag) ?? {}
+    )
+  ) {
+    const hint = `run \`e init --force\`${facts.dirOpt ? ` --dir ${facts.dirOpt}` : ''} to rewrite .e/harnesses/${facts.harness.name}/Dockerfile`;
+    if (facts.resume) {
+      return {
+        ran: false,
+        exitCode: 1,
+        error: `Cannot resume ${facts.resume.branch}: the ${facts.harness.name} image predates session mounts; ${hint}.`,
+      };
+    }
+    log.warn(
+      `This run keeps no session (e resume cannot continue it): the ${facts.harness.name} image predates session mounts; ${hint}.`
+    );
+    session = undefined;
+  }
+
   // Materialize every rendered file into scratch and wire the resulting paths.
   // The base `.e/.env` comes first, filtered to the run's declared keys (Zone 2:
   // the provider's and MCP servers' env refs plus the template's global base
@@ -383,8 +409,8 @@ async function executeSpawnWith(
       provenance: facts.provenance,
       ledger,
       session:
-        plan.session && facts.sessionStoreDir !== undefined
-          ? { storeDir: facts.sessionStoreDir, init: plan.session }
+        session && facts.sessionStoreDir !== undefined
+          ? { storeDir: facts.sessionStoreDir, init: session }
           : undefined,
       resume: facts.resume,
       role: facts.role,

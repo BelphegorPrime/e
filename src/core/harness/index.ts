@@ -1,4 +1,8 @@
-import { NODE_HOME, type DockerfileParams } from './renderDockerfile.js';
+import {
+  NODE_HOME,
+  SESSION_PARENT_LABEL,
+  type DockerfileParams,
+} from './renderDockerfile.js';
 import type { EnvHarnessSection } from './renderEnvTemplate.js';
 import type {
   Protocol,
@@ -90,6 +94,13 @@ export interface Harness {
    * means `e resume` is refused for this harness.
    */
   resumeCommand?(prompt: string | undefined, model?: string): string[];
+  /**
+   * Env the container needs so the harness keeps its session in
+   * {@link sessionDir} (ADR-0017), for a harness whose default store is not
+   * a dir of its own (opencode's db shares its data dir with `auth.json`).
+   * Set only while the session is mounted.
+   */
+  sessionEnv?: readonly { name: string; value: string }[];
 }
 
 /**
@@ -147,6 +158,13 @@ const CODEX_EXEC_POSTURE = [
   // See `docs/security/attack-surface.md`.
   '--ignore-rules',
 ] as const;
+
+/**
+ * opencode's session dir (ADR-0017): a dir of its own under the data home,
+ * where `OPENCODE_DB` puts the db - outside `~/.local/share/opencode`, which
+ * holds its credential files.
+ */
+const OPENCODE_SESSION_DIR = `${NODE_HOME}/.local/share/opencode-session`;
 
 /** Available coding harnesses, keyed by name. */
 export const HARNESSES: Record<string, Harness> = {
@@ -310,7 +328,7 @@ export const HARNESSES: Record<string, Harness> = {
       npmPackage: '@openai/codex',
       // CODEX_HOME exists before the session mount lands inside it
       // (`sessionDir` below), so the build's final chown hands it to `node`.
-      setupSteps: [`mkdir -p ${CODEX_CONFIG_DIR}`],
+      sessionParent: CODEX_CONFIG_DIR,
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'codex',
     },
@@ -379,6 +397,9 @@ export const HARNESSES: Record<string, Harness> = {
       npmPackage: 'opencode-ai',
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'opencode',
+      // The data home exists before the session mount lands inside it, or
+      // the engine creates it root-owned and opencode cannot write its log.
+      sessionParent: `${NODE_HOME}/.local/share`,
     },
     // renovate: datasource=npm depName=opencode-ai
     version: '1.18.33',
@@ -403,6 +424,31 @@ export const HARNESSES: Record<string, Harness> = {
       model ? ['opencode', '-m', model] : ['opencode'],
     // opencode reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
+    // Measured on 1.18.33 against a stub endpoint (ADR-0017): sessions live
+    // in one SQLite db, `<data dir>/opencode/opencode.db` (WAL), whose data
+    // dir also holds `auth.json` and `mcp-auth.json`. `OPENCODE_DB` moves the
+    // db alone, so the mount is a dir of its own and holds the conversation,
+    // never the credential files. Written as it happens: a run SIGKILLed
+    // mid-stream resumed with its prompt (the partial answer is lost).
+    sessionDir: OPENCODE_SESSION_DIR,
+    sessionEnv: [
+      { name: 'OPENCODE_DB', value: `${OPENCODE_SESSION_DIR}/opencode.db` },
+    ],
+    // `--continue` takes the newest root session for the project and cwd -
+    // the gitdir is on the host, so `global` and /workspace here. A cwd with
+    // none silently starts a new one. The posture is `buildCommand`'s:
+    // `--auto`, the model by flag, never `--share`.
+    resumeCommand: (prompt: string | undefined, model?: string) =>
+      prompt === undefined
+        ? ['opencode', '--continue', ...(model ? ['-m', model] : [])]
+        : [
+            'opencode',
+            'run',
+            '--auto',
+            '--continue',
+            ...(model ? ['-m', model] : []),
+            prompt,
+          ],
   },
 };
 
@@ -505,6 +551,21 @@ export function harnessCapabilities(harness: Harness): HarnessCapabilities {
     resume:
       harness.sessionDir !== undefined && harness.resumeCommand !== undefined,
   };
+}
+
+/**
+ * Whether an image can take the harness's session mount (ADR-0017): a
+ * harness whose mount lands inside a dir the image must create
+ * (`dockerfile.sessionParent`) needs an image built from a Dockerfile that
+ * does, which says so in its labels. One built before (a Store Dockerfile
+ * `e init` never rewrites) would get that dir root-owned from the engine.
+ */
+export function sessionImageReady(
+  harness: Harness,
+  labels: Readonly<Record<string, string>>
+): boolean {
+  const parent = harness.dockerfile.sessionParent;
+  return parent === undefined || labels[SESSION_PARENT_LABEL] === parent;
 }
 
 /** The harnesses `e resume` can continue, for the message that refuses the others. */

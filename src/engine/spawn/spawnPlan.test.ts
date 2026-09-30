@@ -677,9 +677,13 @@ test('planSpawn: a Run of a resumable harness plans a session with what the reco
   });
 });
 
+/** A harness with no resume capability: every shipped one has it now. */
+const noResume = { ...HARNESSES.claudeCode, resumeCommand: undefined };
+
 test('planSpawn: no session for a harness that cannot resume, a sibling, or a Store-less run', () => {
   assert.equal(
-    planSpawn(facts({ sessionStoreDir: '/root/.e' })).session,
+    planSpawn(facts({ harness: noResume, sessionStoreDir: '/root/.e' }))
+      .session,
     undefined
   );
   const pi = { agent: { name: 'pi', harness: 'pi' }, harness: HARNESSES.pi };
@@ -699,8 +703,8 @@ test('validateSpawn: resume is refused on a harness that cannot, naming the ones
     elapsedMs: 0,
   };
   assert.throws(
-    () => validateSpawn(facts({ resume })),
-    /Harness "claudeCode" cannot resume a session:.*e resume supports: pi/
+    () => validateSpawn(facts({ harness: noResume, resume })),
+    /Harness "claudeCode" cannot resume a session:.*e resume supports: pi, claudeCode, codex, opencode/
   );
   const pi = { agent: { name: 'pi', harness: 'pi' }, harness: HARNESSES.pi };
   assert.throws(

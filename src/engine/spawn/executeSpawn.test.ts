@@ -1031,3 +1031,90 @@ test('resume: the session and the resumed branch reach the orchestrator (ADR-001
     );
   });
 });
+
+test('session guard: an image older than the session mount runs without a session, and refuses a resume', async () => {
+  await withDemoStore(async root => {
+    const needsParent: Harness = {
+      ...harness,
+      dockerfile: { ...harness.dockerfile, sessionParent: '/home/node/.demo' },
+      sessionDir: '/home/node/.demo/sessions',
+      resumeCommand: prompt => ['demo', '--continue', '-p', prompt ?? ''],
+    };
+    const init = {
+      agent: 'demo',
+      harness: 'demo',
+      harnessVersion: '1.0.0',
+      mcp: [],
+      skills: [],
+    };
+    const worktreesDir = path.join(root, 'wt');
+    // Built from a Dockerfile before sessionParent: pinned, but no label.
+    const runtime = new RecordingRuntime();
+    const pinned = {
+      [PIN_LABELS.package]: 'demo',
+      [PIN_LABELS.version]: '1.0.0',
+      [PIN_LABELS.skillsCli]: SKILLS_CLI_VERSION,
+    };
+    runtime.images.set(harness.imageTag, pinned);
+    const fresh = await executeSpawn(
+      facts({
+        root,
+        harness: needsParent,
+        worktreesDir,
+        sessionStoreDir: path.join(root, '.e'),
+      }),
+      { ...emptyPlan, session: init },
+      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+    );
+    assert.equal(fresh.exitCode, 0);
+    assert.ok(
+      !runtime.options?.volumes?.some(
+        v => v.container === '/home/node/.demo/sessions'
+      ),
+      'no session mount'
+    );
+
+    const resumed = await executeSpawn(
+      facts({
+        root,
+        harness: needsParent,
+        worktreesDir,
+        sessionStoreDir: path.join(root, '.e'),
+        resume: {
+          branch: 'e/demo/x-1',
+          base: { sha: 's', branch: 'main' },
+          elapsedMs: 0,
+        },
+      }),
+      { ...emptyPlan, session: init },
+      {
+        git: new InMemoryGit({ branches: ['e/demo/x-1'] }),
+        runtime,
+        scratch: new RunScratch(),
+      }
+    );
+    assert.equal(resumed.ran, false);
+    assert.match(resumed.error!, /predates session mounts.*e init --force/);
+
+    // With the label, the session is mounted.
+    runtime.images.set(harness.imageTag, {
+      ...pinned,
+      'e.harness.session-parent': '/home/node/.demo',
+    });
+    await executeSpawn(
+      facts({
+        root,
+        harness: needsParent,
+        worktreesDir,
+        sessionStoreDir: path.join(root, '.e'),
+      }),
+      { ...emptyPlan, session: init },
+      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+    );
+    assert.ok(
+      runtime.options?.volumes?.some(
+        v => v.container === '/home/node/.demo/sessions'
+      )
+    );
+  });
+});

@@ -90,3 +90,10 @@ test('the codex image creates CODEX_HOME before the chown, so the session mount 
 test('harnessCapabilities.resume is true for codex', () => {
   assert.equal(harnessCapabilities(codex).resume, true);
 });
+
+test("codex's image says in a label that it created CODEX_HOME for the mount", () => {
+  assert.match(
+    renderDockerfile(HARNESSES.codex.dockerfile),
+    /e\.harness\.session-parent="\/home\/node\/\.codex"/
+  );
+});

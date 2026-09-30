@@ -45,7 +45,19 @@ export interface DockerfileParams {
    * before installing skills. Each step is a separate `RUN` line. Default: [].
    */
   setupSteps?: string[];
+  /**
+   * The runtime user's dir the harness's session mount lands inside
+   * (ADR-0017), created in the image so the final chown hands it to the
+   * runtime user - an engine creates a missing mount parent root-owned, and
+   * a harness that writes there then dies on start (EACCES). Carried out as
+   * the {@link SESSION_PARENT_LABEL} label, so a spawn can tell an image
+   * built from an older Dockerfile, which lacks it. Default: none needed.
+   */
+  sessionParent?: string;
 }
+
+/** The label naming the session mount's parent the image created (ADR-0017). */
+export const SESSION_PARENT_LABEL = 'e.harness.session-parent';
 
 /**
  * Shared Dockerfile template. Logic-less (Mustache); defaults are resolved in
@@ -103,10 +115,11 @@ function argRef(name: string): string {
  * The `LABEL` that carries the pin back out of the image, each label the value
  * of its build arg, so what the host reads is what the build was given.
  */
-function renderLabelLine(): string {
+function renderLabelLine(sessionParent?: string): string {
   const pairs = (['package', 'version', 'skillsCli'] as const).map(
     key => `${PIN_LABELS[key]}="${argRef(PIN_BUILD_ARGS[key])}"`
   );
+  if (sessionParent) pairs.push(`${SESSION_PARENT_LABEL}="${sessionParent}"`);
   return `LABEL ${pairs.join(' ')}`;
 }
 
@@ -142,7 +155,10 @@ export function renderDockerfile(p: DockerfileParams): string {
     label: p.label,
     flags: p.npmFlags ?? [],
     npmPackage: p.npmPackage,
-    setupSteps: (p.setupSteps ?? []).map(step => `RUN ${step}`),
+    setupSteps: [
+      ...(p.setupSteps ?? []),
+      ...(p.sessionParent ? [`mkdir -p ${p.sessionParent}`] : []),
+    ].map(step => `RUN ${step}`),
     skillsBlock,
     workdir: p.workdir ?? '/workspace',
     homeLine: nonRoot ? `ENV HOME=${NODE_HOME}\n` : '',
@@ -152,6 +168,6 @@ export function renderDockerfile(p: DockerfileParams): string {
     argVersion: PIN_BUILD_ARGS.version,
     argSkillsCli: PIN_BUILD_ARGS.skillsCli,
     versionRef: argRef(PIN_BUILD_ARGS.version),
-    labelLine: renderLabelLine(),
+    labelLine: renderLabelLine(p.sessionParent),
   });
 }

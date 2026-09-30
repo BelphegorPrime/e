@@ -8,7 +8,9 @@ import {
   envHarnessSections,
   requiredEnvKeys,
   resumableHarnessNames,
+  sessionImageReady,
 } from './index.js';
+import { SESSION_PARENT_LABEL } from './renderDockerfile.js';
 import type { McpEndpoint } from '../mcp/index.js';
 
 const claude = HARNESSES.claudeCode;
@@ -405,10 +407,9 @@ test('pi keeps its sessions at its own default for /workspace, outside it (ADR-0
   assert.ok(!HARNESSES.pi.sessionDir!.startsWith('/workspace'));
 });
 
-test('harnessCapabilities.resume needs both a sessionDir and a resumeCommand: pi only today', () => {
-  assert.equal(harnessCapabilities(HARNESSES.pi).resume, true);
-  for (const name of ['claudeCode', 'codex', 'opencode']) {
-    assert.equal(harnessCapabilities(HARNESSES[name]).resume, false, name);
+test('harnessCapabilities.resume needs both a sessionDir and a resumeCommand: every shipped harness', () => {
+  for (const name of Object.keys(HARNESSES)) {
+    assert.equal(harnessCapabilities(HARNESSES[name]).resume, true, name);
   }
   assert.equal(
     harnessCapabilities({ ...HARNESSES.pi, sessionDir: undefined }).resume,
@@ -418,7 +419,32 @@ test('harnessCapabilities.resume needs both a sessionDir and a resumeCommand: pi
     harnessCapabilities({ ...HARNESSES.pi, resumeCommand: undefined }).resume,
     false
   );
-  assert.deepEqual(resumableHarnessNames(), ['pi']);
+  assert.deepEqual(resumableHarnessNames(), [
+    'pi',
+    'claudeCode',
+    'codex',
+    'opencode',
+  ]);
+});
+
+test('sessionImageReady: a mount inside a dir the image creates needs an image that says it did', () => {
+  // pi and Claude mount into dirs every image of theirs already has.
+  assert.equal(sessionImageReady(HARNESSES.pi, {}), true);
+  assert.equal(sessionImageReady(HARNESSES.claudeCode, {}), true);
+  // An image from a Dockerfile older than the session mount has no label.
+  assert.equal(sessionImageReady(HARNESSES.codex, {}), false);
+  assert.equal(
+    sessionImageReady(HARNESSES.codex, {
+      [SESSION_PARENT_LABEL]: '/home/node/.codex',
+    }),
+    true
+  );
+  assert.equal(
+    sessionImageReady(HARNESSES.opencode, {
+      [SESSION_PARENT_LABEL]: '/home/node/.local/share',
+    }),
+    true
+  );
 });
 
 test('resolveHarness returns the registered harness by name', () => {

@@ -156,16 +156,23 @@ test('resolveResume: a branch that is not a run branch fails fast', async () => 
 });
 
 test('resolveResume: a harness without resumeCommand fails fast, naming the ones that can', async () => {
-  await withStore(async root => {
-    assert.throws(
-      () =>
-        preflight(root, {
-          branch: 'e/claudeCode/x-1',
-          git: new InMemoryGit({ branches: ['e/claudeCode/x-1'] }),
-        }),
-      /Harness "claudeCode" cannot resume a session: .*e resume supports: pi/
-    );
-  });
+  // Every shipped harness can resume, so one is made unable for the test.
+  const saved = HARNESSES.claudeCode.resumeCommand;
+  HARNESSES.claudeCode.resumeCommand = undefined;
+  try {
+    await withStore(async root => {
+      assert.throws(
+        () =>
+          preflight(root, {
+            branch: 'e/claudeCode/x-1',
+            git: new InMemoryGit({ branches: ['e/claudeCode/x-1'] }),
+          }),
+        /Harness "claudeCode" cannot resume a session: .*e resume supports: pi, codex, opencode/
+      );
+    });
+  } finally {
+    HARNESSES.claudeCode.resumeCommand = saved;
+  }
 });
 
 test('resolveResume: a run branch that does not exist, locally or on origin, is refused', async () => {

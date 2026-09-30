@@ -218,10 +218,10 @@ One of the concurrent Runs `e serve` may start from the queue (default 2), count
 Where the autonomy machinery runs (ADR-0016). **hosted** is a long-lived `e serve` owning the scheduler, the webhook listener (its own port at BFF+2, HMAC-only), the queue and the ledger. **one-shot** is a single `e spawn --trigger <name> [--event <path>]` driven by an outer scheduler - a CI job, a systemd timer, a k8s CronJob - which owns scheduling, dedup and concurrency instead; the Loop, Verify and the Caps are identical because they live in `runSpawn`. Both read the same Trigger declaration, and a triggered Run's repository settings, from the Base Store rather than the working tree.
 _Avoid_: ephemeral (the worktree is ephemeral in both), CI mode (any scheduler drives one-shot)
 
-The next terms are the vocabulary of ADR-0017 (proposed; resumable runs, pi only):
+The next terms are the vocabulary of ADR-0017 (proposed; resumable runs):
 
 **Session**:
-A harness's own conversation of a Run - its turns, tool calls and tool output - kept on the host so it outlives the `--rm` container: `.e/runs/sessions/<run name>/` in the checkout's Store (`src/engine/runs/runSession.ts`), holding `session.json` (the **session record**: agent, harness and version, provider, the Run's base, its MCP servers and per-run skills, the wall clock spent) and `harness/`, bind-mounted at the harness's `sessionDir`. Outside the worktree and the branch, 0700, git-ignored, never exported, pruned 14 days after its last use. Kept for every Run of a harness that declares `sessionDir` and `resumeCommand` (pi), never for a Sibling run.
+A harness's own conversation of a Run - its turns, tool calls and tool output - kept on the host so it outlives the `--rm` container: `.e/runs/sessions/<run name>/` in the checkout's Store (`src/engine/runs/runSession.ts`), holding `session.json` (the **session record**: agent, harness and version, provider, the Run's base, its MCP servers and per-run skills, the wall clock spent) and `harness/`, bind-mounted at the harness's `sessionDir`. Outside the worktree and the branch, 0700, git-ignored, never exported, pruned 14 days after its last use. Kept for every Run of a harness that declares `sessionDir` and `resumeCommand` (all four), never for a Sibling run, and never on an image built from a Dockerfile older than the mount it needs (`sessionImageReady`).
 _Avoid_: transcript (the harness's file inside it), history, context
 
 **Resume**:
