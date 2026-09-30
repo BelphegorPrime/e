@@ -241,6 +241,40 @@ export const HARNESSES: Record<string, Harness> = {
     },
     // Claude Code reads Agent Skills from `~/.claude/skills` (not `.agents/`).
     skillsDir: `${NODE_HOME}/.claude/skills`,
+    // Measured on 2.1.284 against a stub endpoint (ADR-0017): a run in
+    // /workspace keeps its transcript at
+    // `<config home>/projects/-workspace/<session id>.jsonl`, beside only the
+    // project's (empty) auto-memory dir; the config home is `~/.claude`
+    // unless CLAUDE_CONFIG_DIR moves it, which `e` never sets. Credentials,
+    // `settings.json`, `~/.claude.json` and the skills dir all live outside
+    // `projects/`, so the mount carries the conversation and no secret the
+    // Run was not already given. Every entry is appended as it happens: a
+    // container SIGKILLed mid-turn continued with all it had recorded.
+    sessionDir: `${NODE_HOME}/.claude/projects`,
+    // `--continue` opens the most recent session for the working directory,
+    // always /workspace, and appends to that same file. A resumed run keeps
+    // everything #153 requires (verified to combine with `--mcp-config`,
+    // appended by the spawn edge as for `buildCommand`); the model, as there,
+    // comes from the env adapter. The TUI form finds only a session the TUI
+    // wrote: 2.1.284 hides a `-p` session (entrypoint `sdk-cli`) from an
+    // interactive `--continue`, which then exits 1 with "No conversation
+    // found to continue".
+    resumeCommand: (prompt: string | undefined) =>
+      prompt === undefined
+        ? [
+            'claude',
+            '--continue',
+            '--dangerously-skip-permissions',
+            ...CLAUDE_WORKSPACE_ISOLATION,
+          ]
+        : [
+            'claude',
+            '--continue',
+            '-p',
+            prompt,
+            '--dangerously-skip-permissions',
+            ...CLAUDE_WORKSPACE_ISOLATION,
+          ],
   },
   codex: {
     name: 'codex',
