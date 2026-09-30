@@ -556,6 +556,35 @@ test('spawnChildProcess: a launch with a cwd starts the child there', async () =
   }
 });
 
+test('spawnChildProcess: a detached child leads a process group of its own, out of reach of the terminal', async t => {
+  if (process.platform !== 'linux') {
+    t.skip('reads /proc');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-sibling-proc-'));
+  // Exits 0 when its process group is its own pid, 4 when it shares ours.
+  const leadsItsGroup = scripted(
+    "const s = require('fs').readFileSync('/proc/self/stat', 'utf8'); const pgrp = Number(s.slice(s.lastIndexOf(')') + 2).split(' ')[2]); process.exit(pgrp === process.pid ? 0 : 4)"
+  );
+  const launch = (id: string) => ({
+    request: someRequest,
+    args: [],
+    env: process.env,
+    logFile: path.join(dir, `${id}.log`),
+    spoolDir: dir,
+  });
+  try {
+    const detached = spawnChildProcess(launch('detached'), leadsItsGroup, {
+      detached: true,
+    });
+    assert.equal(await detached.exited, 0);
+    const attached = spawnChildProcess(launch('attached'), leadsItsGroup);
+    assert.equal(await attached.exited, 4, 'the default shares the group');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('spawnChildProcess: kill ends a running sibling (exit code 1); a missing executable is exit code 1', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-sibling-proc-'));
   try {

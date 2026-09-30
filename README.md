@@ -669,6 +669,10 @@ e spawn smart-claude --no-rebuild "hello"
 e resume e/pi/fix-the-flaky-test-1 "The test still flakes on CI; look at the retry"
 e resume e/pi/fix-the-flaky-test-1            # no prompt: reopen the session in the TUI
 
+# One task, several Agents, one result: every candidate of a fusion profile
+# (.e/fusions/<name>/fusion.json) runs it, then a synthesizer combines them (ADR-0019)
+e fuse coding-fusion "Add retries with backoff to the HTTP client"
+
 # Browser UI + terminal: start it in the repo you want runs to happen in
 e serve --detached && open http://127.0.0.1:8080   # `e serve stop` ends it
 
@@ -702,6 +706,74 @@ Every sibling record also carries `taskState`, the lifecycle in the
 Agent2Agent (A2A) vocabulary (`submitted`, `working`, `input-required`,
 `completed`, `canceled`, `failed`, `rejected`, ADR-0015); the agent can block
 on it with `--watch` instead of polling, and cancel a sibling with `--cancel`.
+
+### Fusion runs (`e fuse`)
+
+A **fusion** runs one task with several independently configured Agents and
+combines what they produced into one result (ADR-0019). It is declared as a
+Fusion profile in the Store, which names Agents only, never a provider or a
+key:
+
+```jsonc
+// .e/fusions/coding-fusion/fusion.json
+{
+  "candidates": ["claude", "codex", "pi-local"], // 2 or more Agent names, repeats allowed
+  "synthesizer": "claude-reviewer", // the Agent that combines them
+  "maxConcurrency": 3, // optional, default min(candidates, 3)
+  "minUsable": 1, // optional: candidates with commits the synthesis needs
+  "timeouts": { "candidatesMs": 10800000, "totalMs": 21600000 }, // optional
+}
+```
+
+```bash
+e fuse coding-fusion "Add retries with backoff to the HTTP client"
+e fuse coding-fusion --runtime podman --keep-worktree "Fix the flaky test"
+```
+
+`e fuse` validates the profile before anything is built, pins the checkout's
+`HEAD` once, and runs every candidate as an ordinary headless `e spawn` from
+that base, each on its own branch. When they have all ended it pushes the
+usable candidate branches and starts one **synthesis run** of the synthesizer
+from the same base, with every candidate's result and patch mounted read-only;
+that run is gated by verify, pushed, and the fusion's only PR. A prompt is
+required: a fusion never opens a TUI. The output is plain lines, one per state
+change, tagged with the stage, so a CI log reads like the terminal:
+
+```text
+Fusion fusion-01K... (profile coding-fusion)
+Pinned base: main @ 3f1c...
+Candidates: claude, codex, pi-local (at most 3 at a time; the synthesis needs 1 usable)
+Synthesizer: claude-reviewer
+[candidates] cand-001 claude: queued
+[candidates] cand-002 codex: queued
+[candidates] cand-003 pi-local: queued
+[candidates] cand-001 claude: running
+[candidates] cand-002 codex: running
+[candidates] cand-003 pi-local: running
+[candidates] cand-001 claude: succeeded (e/claude/add-retries-1, 2 files +41 -3, verify green)
+[candidates] cand-002 codex: empty
+[candidates] cand-003 pi-local: failed (exit 1, aborted:harness-exit)
+[candidates] closed: 1 usable; pushed e/claude/add-retries-1
+[synthesis] syn-001 claude-reviewer: running
+[synthesis] syn-001 claude-reviewer: succeeded
+
+Candidates: 1 succeeded, 1 empty, 1 failed (1 of 3 usable).
+Synthesis succeeded.
+Pushed to origin. Open a PR or merge when you like.
+Pull request: https://github.com/you/repo/pull/42
+Fusion record: .e/runs/fusions/fusion-01K...
+
+Run branch: e/claude-reviewer/add-retries-1
+```
+
+A candidate ends `succeeded`, `empty` (exited 0 without commits), `failed`,
+`timed-out` or `canceled`. The exit code is the synthesis run's Verdict (`0`,
+`1` aborted, `2` exhausted); `1` when fewer than `minUsable` candidates
+produced commits (no synthesis runs), `2` when the fusion's `totalMs` fired,
+and `143` on Ctrl-C or SIGTERM, which cancels every run still going, pushes
+nothing more, and lets each tear down. The record of each fusion, with every
+Candidate result and patch, stays in `.e/runs/fusions/<id>/` for 14 days;
+`--keep-worktree` also keeps the runs' logs in the fusion's spool.
 
 ### `e` as an A2A agent
 
@@ -876,27 +948,28 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 
 ## Cheat sheet
 
-| Command                                        | What it does                                                                                                                     |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config. Also asks for the git platform (PR/MR on successful runs) |
-| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt (one-shot)                                                                                 |
-| `e spawn <agent-or-harness>`                   | Start the harness TUI (no prompt means interactive)                                                                              |
-| `e spawn … --skill <name>`                     | Add a Skill for this run                                                                                                         |
-| `e spawn … --mcp <name>`                       | Wire an MCP server                                                                                                               |
-| `e spawn … --no-rebuild`                       | Build only what is missing or off the pin; by default every spawn rebuilds from the layer cache (`--rebuild` is a no-op)         |
-| `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                                                                                   |
-| `e spawn … --runtime <name>`                   | Pick the container engine (`docker`, `podman`, `nerdctl`, `finch`); default `$E_RUNTIME`, else the first one on `PATH`           |
-| `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                  |
-| `e spawn … --keep-worktree`                    | Leave the run's worktree in place for inspection                                                                                 |
-| `e spawn … --skill spawn-brother`              | Let the agent request sibling runs; the host merges each back into its worktree (ADR-0013)                                       |
-| `e resume <run-branch> ["<prompt>"]`           | Continue a run's harness session on its own branch; sessions live 14 days in `.e/runs/sessions/` (ADR-0017)                      |
-| `e spawn <remote-agent> "<prompt>"`            | Ask a Store agent with `"transport": "a2a"` over the Agent2Agent protocol; the answer on stdout, no run (ADR-0015)               |
-| `e spawn --trigger <name> [--event <path>]`    | One-shot: run a Trigger from CI or a timer, its declaration read from base; a non-matching event exits 0 (Tutorial 10)           |
-| `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, A2A (`POST /a2a`), webhooks (BFF port + 2) and the cron tick; stop the background server               |
-| `e trigger list`                               | Each Trigger's source, agent, next cron fire, and last fire when this Store's `serve` knows it (Tutorial 11)                     |
-| `e trigger dead`                               | Requests that died before a run branch existed: expired, overflow, unresolvable base, launch failure                             |
-| `e trigger redrive <id>`                       | Accept a dead request again against the current trigger; refused while its key is pending                                        |
-| `e export` / `e import <file>`                 | Move the store and gateway configuration between machines as a zip                                                               |
+| Command                                        | What it does                                                                                                                            |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `e init`                                       | Write the store (`~/.e`): Dockerfiles, default agents, `.env`, config. Also asks for the git platform (PR/MR on successful runs)        |
+| `e spawn <agent-or-harness> "<prompt>"`        | Run an agent/harness against a prompt (one-shot)                                                                                        |
+| `e spawn <agent-or-harness>`                   | Start the harness TUI (no prompt means interactive)                                                                                     |
+| `e spawn … --skill <name>`                     | Add a Skill for this run                                                                                                                |
+| `e spawn … --mcp <name>`                       | Wire an MCP server                                                                                                                      |
+| `e spawn … --no-rebuild`                       | Build only what is missing or off the pin; by default every spawn rebuilds from the layer cache (`--rebuild` is a no-op)                |
+| `e init --dir <path>` / `e spawn --dir <path>` | Use `<path>/.e` as the store instead of `~/.e`                                                                                          |
+| `e spawn … --runtime <name>`                   | Pick the container engine (`docker`, `podman`, `nerdctl`, `finch`); default `$E_RUNTIME`, else the first one on `PATH`                  |
+| `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                         |
+| `e spawn … --keep-worktree`                    | Leave the run's worktree in place for inspection                                                                                        |
+| `e spawn … --skill spawn-brother`              | Let the agent request sibling runs; the host merges each back into its worktree (ADR-0013)                                              |
+| `e resume <run-branch> ["<prompt>"]`           | Continue a run's harness session on its own branch; sessions live 14 days in `.e/runs/sessions/` (ADR-0017)                             |
+| `e fuse <profile> "<prompt>"`                  | Run the task with every candidate Agent of `.e/fusions/<profile>/fusion.json`, then one synthesis run whose PR is the result (ADR-0019) |
+| `e spawn <remote-agent> "<prompt>"`            | Ask a Store agent with `"transport": "a2a"` over the Agent2Agent protocol; the answer on stdout, no run (ADR-0015)                      |
+| `e spawn --trigger <name> [--event <path>]`    | One-shot: run a Trigger from CI or a timer, its declaration read from base; a non-matching event exits 0 (Tutorial 10)                  |
+| `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, A2A (`POST /a2a`), webhooks (BFF port + 2) and the cron tick; stop the background server                      |
+| `e trigger list`                               | Each Trigger's source, agent, next cron fire, and last fire when this Store's `serve` knows it (Tutorial 11)                            |
+| `e trigger dead`                               | Requests that died before a run branch existed: expired, overflow, unresolvable base, launch failure                                    |
+| `e trigger redrive <id>`                       | Accept a dead request again against the current trigger; refused while its key is pending                                               |
+| `e export` / `e import <file>`                 | Move the store and gateway configuration between machines as a zip                                                                      |
 
 ## Environment variables
 

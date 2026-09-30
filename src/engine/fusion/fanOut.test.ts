@@ -270,9 +270,20 @@ test('runFanOut: every candidate runs the same prompt from the same pinned base,
       path.join(dirs.worktreesDir, '.fusion', FUSION)
     );
     assert.equal(fs.existsSync(result.spoolDir), true);
+    // Announced before the first launch: the pinned base, every candidate queued.
+    assert.deepEqual(events[0], {
+      kind: 'prepared',
+      fusion: FUSION,
+      base: result.base,
+      candidates: [
+        { candidate: 'cand-001', agent: 'claude' },
+        { candidate: 'cand-002', agent: 'codex' },
+      ],
+    });
     assert.deepEqual(
       events.map(e => `${e.kind}:${'candidate' in e ? e.candidate : ''}`),
       [
+        'prepared:',
         'launched:cand-001',
         'launched:cand-002',
         'settled:cand-001',

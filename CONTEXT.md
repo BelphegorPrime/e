@@ -247,7 +247,7 @@ _Avoid_: ensemble, model merge, mixture (each suggests combining weights or logi
 A named Store entity at `fusions/<name>/fusion.json` declaring the candidate Agents (two or more, by name, repeats allowed), the synthesizer Agent, the `strategy` (only `parallel-synthesize` in v1), `maxConcurrency`, `minUsable` and the fusion's own `timeouts`. References Agents, never copies a provider or a key; harness agents only.
 
 **Fusion run**:
-One execution of a Fusion profile against one prompt, `fusion-<ulid>`, driven by `e fuse` (ADR-0019): a host-side record at `.e/runs/fusions/<id>/` (0700, git-ignored, pruned after 14 days) grouping its Candidate runs and its Synthesis run, with states `prepared` -> `fanning-out` -> `synthesizing` -> `completed` | `failed` | `canceled` | `exhausted` | `interrupted`. Not a Run: it has no branch, worktree or container, and it counts toward no sibling depth.
+One execution of a Fusion profile against one prompt, `fusion-<ulid>`, driven by `e fuse <profile> "<prompt>"` (`src/cli/fuse.ts`, ADR-0019; exit code the Synthesis run's Verdict, `1` without one, `2` on `totalMs`, `143` on a cancel): a host-side record at `.e/runs/fusions/<id>/` (0700, git-ignored, pruned after 14 days) grouping its Candidate runs and its Synthesis run, with states `prepared` -> `fanning-out` -> `synthesizing` -> `completed` | `failed` | `canceled` | `exhausted` | `interrupted`. Not a Run: it has no branch, worktree or container, and it counts toward no sibling depth.
 _Avoid_: calling it a Run, fusion job
 
 **Candidate run**:

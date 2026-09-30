@@ -118,6 +118,16 @@ export interface FanOutParams {
 
 /** What the fan-out reports as it goes. */
 export type FanOutEvent =
+  /**
+   * The base is pinned and the record written, before the first launch:
+   * every candidate attempt as it is queued, in launch order.
+   */
+  | {
+      kind: 'prepared';
+      fusion: string;
+      base: RunBase;
+      candidates: { candidate: string; agent: string }[];
+    }
   | { kind: 'launched'; candidate: string; agent: string }
   | { kind: 'settled'; candidate: string; result: CandidateResult }
   | {
@@ -228,6 +238,15 @@ export async function runFanOut(
     writeFusionRecord(deps.storeDir, record);
   };
   save({});
+  params.onEvent?.({
+    kind: 'prepared',
+    fusion,
+    base,
+    candidates: slots.map(slot => ({
+      candidate: slot.request.id,
+      agent: slot.agent.name,
+    })),
+  });
 
   const results = new Map<string, CandidateResult>();
   const collect = (slot: Slot, stoppedBy?: 'cancel'): void => {

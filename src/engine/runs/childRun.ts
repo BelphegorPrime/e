@@ -77,10 +77,16 @@ export function childCliArgs(
  * that dies before reporting can still say why. `invocation` is how to run
  * this CLI again (checked by {@link assertCliEntry} by default); tests pass a
  * scripted one.
+ *
+ * `detached` starts the child in a process group of its own, so a Ctrl-C at
+ * the parent's terminal reaches only the parent, which then cancels the child
+ * through {@link ChildHandle.kill} - the one way a child is told to stop and
+ * tear down (`e fuse`, ADR-0019 section 9).
  */
 export function spawnChildProcess(
   launch: ChildLaunch,
-  invocation: SelfInvocation = checkedSelfInvocation()
+  invocation: SelfInvocation = checkedSelfInvocation(),
+  options: { detached?: boolean } = {}
 ): ChildHandle {
   fs.mkdirSync(path.dirname(launch.logFile), { recursive: true });
   const out = fs.openSync(launch.logFile, 'a');
@@ -93,6 +99,7 @@ export function spawnChildProcess(
         cwd: launch.cwd ?? process.cwd(),
         env: launch.env,
         stdio: ['ignore', out, out],
+        ...(options.detached ? { detached: true } : {}),
       }
     );
   } catch (err) {
