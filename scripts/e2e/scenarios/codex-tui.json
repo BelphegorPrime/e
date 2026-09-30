@@ -1,0 +1,10 @@
+{
+  "about": "Model side of the Codex TUI round trip; pair with codex-tui.keys.json. Run: run <sb> --script scripts/e2e/scenarios/codex-tui.json --tui scripts/e2e/scenarios/codex-tui.keys.json -- spawn e2e-codex",
+  "turns": [
+    {
+      "tool": "exec_command",
+      "args": { "cmd": "echo codextui > codextui.txt" }
+    },
+    { "text": "wrote codextui.txt" }
+  ]
+}

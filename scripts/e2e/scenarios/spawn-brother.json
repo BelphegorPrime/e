@@ -1,0 +1,33 @@
+{
+  "about": "Parent asks the runtime-broker for one sibling, waits for it, reads its report. Run: spawn e2e-pi --skill spawn-brother \"PARENT: delegate sib.txt to a sibling\"",
+  "turns": [
+    {
+      "task": "PARENT",
+      "tool": "bash",
+      "args": {
+        "command": "node ~/.agents/skills/spawn-brother/spawn-brother.mjs e2e-pi \"SIBLING: write sib.txt\""
+      }
+    },
+    {
+      "task": "SIBLING",
+      "tool": "bash",
+      "args": { "command": "echo sib > sib.txt" }
+    },
+    { "task": "SIBLING", "text": "sibling done" },
+    {
+      "task": "PARENT",
+      "tool": "bash",
+      "args": {
+        "command": "node ~/.agents/skills/spawn-brother/spawn-brother.mjs --watch"
+      }
+    },
+    {
+      "task": "PARENT",
+      "tool": "bash",
+      "args": {
+        "command": "node ~/.agents/skills/spawn-brother/spawn-brother.mjs --status; ls; cat e-runs/*/report.md"
+      }
+    },
+    { "task": "PARENT", "text": "parent done" }
+  ]
+}

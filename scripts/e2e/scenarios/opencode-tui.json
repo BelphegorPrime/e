@@ -1,0 +1,13 @@
+{
+  "about": "Model side of the opencode TUI round trip; pair with opencode-tui.keys.json. opencode's title request (no tools) gets the stub's aux answer and uses no turn. Run: run <sb> --script scripts/e2e/scenarios/opencode-tui.json --tui scripts/e2e/scenarios/opencode-tui.keys.json -- spawn e2e-opencode",
+  "turns": [
+    {
+      "tool": "bash",
+      "args": {
+        "command": "echo octui > octui.txt",
+        "description": "write file"
+      }
+    },
+    { "text": "wrote octui.txt" }
+  ]
+}

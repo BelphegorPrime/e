@@ -1,0 +1,11 @@
+{
+  "about": "Drives opencode's TUI: wait for the prompt box, submit a task, wait for the answer, quit with one ctrl-c. Pair with opencode-tui.json.",
+  "steps": [
+    { "wait": "Ask anything", "stable": 3, "timeout": 600 },
+    { "send": "write octui.txt", "key": "enter" },
+    { "wait": "wrote octui\\.txt", "stable": 2, "timeout": 60 },
+    { "snapshot": "answered" },
+    { "key": "ctrl-c" },
+    { "exit": 30 }
+  ]
+}

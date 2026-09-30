@@ -16,6 +16,8 @@ export default tseslint.config(
       // Local e state and packaged binaries are not source.
       '.e/',
       'command/',
+      // e2e tracer sandboxes: a Store, a repo and run worktrees per sandbox.
+      '.e2e/',
       // Agent worktrees are whole checkouts nested inside this one; linting
       // them lints the repo three more times and reports their errors as ours.
       '.claude/worktrees/',

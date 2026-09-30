@@ -448,7 +448,7 @@ cannot be started.
 
 ## Test
 
-Four levels, cheapest first.
+Five levels, cheapest first.
 
 ### 1. Unit tests
 
@@ -592,6 +592,24 @@ node -e "const {renderOpencodeMcp}=require('./dist/core/harness/adapter.js');con
 > (`--provider e --model auto`); pi resolves `auto` at run start against the
 > endpoint's model list. Codex instead carries `-m auto` on the run command with
 > a model-agnostic baked config (ADR-0007).
+
+### 5. Traced end-to-end run (sandbox, scripted model)
+
+```bash
+npm run e2e -- new demo
+npm run e2e -- run demo --script scripts/e2e/scenarios/spawn-brother.json \
+  -- spawn e2e-pi "PARENT: delegate sib.txt to a sibling" --skill spawn-brother
+```
+
+Runs the built CLI in a throwaway sandbox under `.e2e/` (own Store, repo, bare
+origin and worktrees dir; the user's `~/.e` and local stack stay untouched)
+against a scripted model endpoint, and writes a trace per step: `e`'s output,
+every engine event, each container's inspect and logs, every model request and
+reply, the broker spools, the Store's run records, git before and after, and
+leaks. Deterministic and seconds per run once the images are cached;
+`new --model live` swaps the script for a recording proxy to the local
+OmniRoute, and `run --tui <keys.json>` drives an interactive command (a
+harness TUI) through a pseudo-terminal with screen snapshots. See [docs/agents/e2e.md](./docs/agents/e2e.md).
 
 ## Skills
 

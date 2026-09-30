@@ -1,0 +1,13 @@
+{
+  "about": "Model side of the Claude Code TUI round trip; pair with claude-tui.keys.json. Run: run <sb> --script scripts/e2e/scenarios/claude-tui.json --tui scripts/e2e/scenarios/claude-tui.keys.json -- spawn e2e-claude",
+  "turns": [
+    {
+      "tool": "Bash",
+      "args": {
+        "command": "echo claudetui > claudetui.txt",
+        "description": "write file"
+      }
+    },
+    { "text": "wrote claudetui.txt" }
+  ]
+}

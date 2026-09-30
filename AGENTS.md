@@ -100,6 +100,12 @@ node ~/.agents/skills/spawn-brother/spawn-brother.mjs --cancel <id>  # stop a si
   `requested`, fall back to writing the follow-up task down in `/workspace`
   and exiting 0 (see `docs/agents/e.md`, Recursive spawning).
 
+### Traced e2e runs
+
+Testing, verifying or reproducing an `e` feature for real (built CLI, real
+containers, scripted model, git, a driven TUI): `node scripts/e2e/e2e.mjs`, see
+`docs/agents/e2e.md`.
+
 ### Common things
 
 - if you want to execute commands be aware that `&amp;` should be replaced with `&`

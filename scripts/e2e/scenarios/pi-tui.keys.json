@@ -1,0 +1,27 @@
+{
+  "about": "Drives pi's TUI: wait on its status line (always on screen; the header scrolls away behind update notices) until its startup settled (it refuses input while it downloads fd/ripgrep), submit a task, wait for the answer, quit with ctrl-d. Pair with pi-tui.json.",
+  "steps": [
+    {
+      "wait": "\\(auto\\)",
+      "stable": 3,
+      "timeout": 300
+    },
+    {
+      "send": "write tui.txt",
+      "key": "enter"
+    },
+    {
+      "wait": "wrote tui\\.txt",
+      "timeout": 60
+    },
+    {
+      "snapshot": "answered"
+    },
+    {
+      "key": "ctrl-d"
+    },
+    {
+      "exit": 60
+    }
+  ]
+}

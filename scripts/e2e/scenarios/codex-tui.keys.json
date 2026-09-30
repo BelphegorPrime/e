@@ -1,0 +1,42 @@
+{
+  "about": "Drives Codex's TUI: open the untrusted /workspace restricted, submit a task, approve the command, wait for the answer, quit with one ctrl-c (a second one would reach e while it captures the run). Pair with codex-tui.json.",
+  "steps": [
+    {
+      "wait": "Open restricted",
+      "stable": 2,
+      "timeout": 600
+    },
+    {
+      "key": "enter"
+    },
+    {
+      "wait": "Ask Codex",
+      "stable": 3,
+      "timeout": 60
+    },
+    {
+      "send": "write codextui.txt",
+      "key": "enter"
+    },
+    {
+      "wait": "Yes, proceed",
+      "timeout": 60
+    },
+    {
+      "send": "y"
+    },
+    {
+      "wait": "wrote codextui\\.txt\\s[\\s\\S]*Worked for",
+      "timeout": 60
+    },
+    {
+      "snapshot": "answered"
+    },
+    {
+      "key": "ctrl-c"
+    },
+    {
+      "exit": 30
+    }
+  ]
+}

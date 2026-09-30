@@ -1,0 +1,21 @@
+{
+  "about": "Drives Claude Code's TUI through its first-start dialogs (every run container is fresh): theme, security notes, folder trust and the bypass-permissions warning, whose defaults all exit - a human's call, made here on purpose. Then a task, the answer, /exit. Pair with claude-tui.json.",
+  "steps": [
+    { "wait": "Dark mode", "stable": 3, "timeout": 600 },
+    { "key": "enter" },
+    { "wait": "Press Enter to continue", "stable": 1, "timeout": 30 },
+    { "key": "enter" },
+    { "wait": "trust this folder", "stable": 1, "timeout": 30 },
+    { "key": "down" },
+    { "key": "enter" },
+    { "wait": "Bypass Permissions mode", "stable": 1, "timeout": 30 },
+    { "key": "down" },
+    { "key": "enter" },
+    { "wait": "bypass permissions on", "stable": 3, "timeout": 60 },
+    { "send": "write claudetui.txt", "key": "enter" },
+    { "wait": "wrote claudetui\\.txt", "stable": 2, "timeout": 60 },
+    { "snapshot": "answered" },
+    { "send": "/exit", "key": "enter" },
+    { "exit": 60 }
+  ]
+}

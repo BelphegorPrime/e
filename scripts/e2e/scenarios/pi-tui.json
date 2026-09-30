@@ -1,0 +1,7 @@
+{
+  "about": "Model side of the pi TUI round trip; pair with pi-tui.keys.json. Run: run <sb> --script scripts/e2e/scenarios/pi-tui.json --tui scripts/e2e/scenarios/pi-tui.keys.json -- spawn e2e-pi",
+  "turns": [
+    { "tool": "bash", "args": { "command": "echo tui > tui.txt" } },
+    { "text": "wrote tui.txt" }
+  ]
+}
