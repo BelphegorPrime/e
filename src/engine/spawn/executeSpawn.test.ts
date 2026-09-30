@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
@@ -26,6 +26,9 @@ import {
 import { executeSpawn, siblingPassthroughArgs } from './executeSpawn.js';
 import { planSpawn, type SpawnFacts, type SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../../core/harness/index.js';
+import { piAdapter } from '../../core/harness/adapter.js';
+import { agentDir } from '../../core/store/paths.js';
+import { log } from '../../shared/utils/log.js';
 import type { HarnessAgent } from '../../core/agent/index.js';
 import { defaultBrokerPlan } from '../sidecarPlan.js';
 import {
@@ -1119,5 +1122,91 @@ test('session guard: an image older than the session mount runs without a sessio
         v => v.container === '/home/node/.demo/sessions'
       )
     );
+  });
+});
+
+// #203: a Store rendered before keys went by name keeps a pi models.json with
+// the key's value, which every rebuild bakes again.
+
+/** A demo harness with pi's file adapter, planning one baked models.json. */
+function piLikeRun(root: string): { facts: SpawnFacts; plan: SpawnPlan } {
+  const provider = {
+    baseUrl: 'https://gw.example.com/v1',
+    model: 'm',
+    protocol: 'anthropic-messages' as const,
+    apiKeyEnv: 'GW_KEY',
+  };
+  const delivery = piAdapter.planProviderDelivery(provider, {});
+  return {
+    facts: facts({
+      root,
+      harness: { ...harness, adapter: piAdapter },
+      agent: { name: 'pi-gw', harness: 'demo', provider },
+    }),
+    plan: {
+      ...emptyPlan,
+      delivery,
+      agentImagePlan: {
+        imageTag: 'e-agent-pi-gw',
+        files: [delivery.bakedConfig.file],
+        skillNames: [],
+      },
+    },
+  };
+}
+
+test('an old pi models.json holding the key value is re-rendered by name, and the value is never logged', async () => {
+  await withDemoStore(async root => {
+    const run = piLikeRun(root);
+    const file = path.join(agentDir('pi-gw', root), 'models.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const rendered = run.plan.agentImagePlan!.files[0].content;
+    fs.writeFileSync(file, rendered.replace('${GW_KEY}', 'sk-old-literal'));
+    const lines: string[] = [];
+    for (const level of ['info', 'warn', 'success'] as const) {
+      mock.method(log, level, (msg: string) => lines.push(msg));
+    }
+    try {
+      await executeSpawn(run.facts, run.plan, {
+        git: new InMemoryGit(),
+        runtime: new RecordingRuntime(),
+        scratch: new RunScratch(),
+      });
+    } finally {
+      mock.restoreAll();
+    }
+    assert.equal(fs.readFileSync(file, 'utf8'), rendered);
+    assert.ok(!fs.existsSync(`${file}.bak`), 'no copy of the old key');
+    assert.ok(lines.some(line => /re-rendered .*models\.json/.test(line)));
+    assert.ok(lines.every(line => !line.includes('sk-old-literal')));
+  });
+});
+
+test('a hand-edited pi models.json with a literal key is kept and warned about, without a diff', async () => {
+  await withDemoStore(async root => {
+    const run = piLikeRun(root);
+    const file = path.join(agentDir('pi-gw', root), 'models.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const edited = JSON.parse(run.plan.agentImagePlan!.files[0].content);
+    edited.providers.e.apiKey = 'sk-hand-literal';
+    edited.providers.e.models.push({ id: 'extra' });
+    const content = JSON.stringify(edited);
+    fs.writeFileSync(file, content);
+    const lines: string[] = [];
+    for (const level of ['info', 'warn', 'success'] as const) {
+      mock.method(log, level, (msg: string) => lines.push(msg));
+    }
+    try {
+      await executeSpawn(run.facts, run.plan, {
+        git: new InMemoryGit(),
+        runtime: new RecordingRuntime(),
+        scratch: new RunScratch(),
+      });
+    } finally {
+      mock.restoreAll();
+    }
+    assert.equal(fs.readFileSync(file, 'utf8'), content);
+    assert.ok(lines.some(line => /literal API key/.test(line)));
+    assert.ok(lines.every(line => !line.includes('sk-hand-literal')));
   });
 });

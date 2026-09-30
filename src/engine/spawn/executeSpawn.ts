@@ -136,7 +136,9 @@ function buildImages(
     const dir = agentDir(facts.agent.name, root);
     for (const file of agentImagePlan.files) {
       const filePath = path.join(dir, file.fileName);
-      writeIfAbsent(dir, filePath, file.content);
+      if (!replaceStaleBakedConfig(facts, plan, filePath, file)) {
+        writeIfAbsent(dir, filePath, file.content);
+      }
     }
     tag = agentImagePlan.imageTag;
     // The derived image inherits the base's labels and is otherwise never
@@ -188,6 +190,50 @@ function buildImages(
     }
   }
   return tag;
+}
+
+/**
+ * The one exception to "a rendered file is never clobbered" (#203): a baked
+ * provider config from before keys went by name, which holds the key's
+ * value and would bake it into every rebuild. The adapter says whether the
+ * file on disk is that old render (replaced, no `.bak`, which would be one
+ * more copy of the key) or a hand edit still holding a literal key (kept and
+ * warned about). Either way no diff is printed: it would print the key.
+ * Returns true when it handled the file.
+ */
+function replaceStaleBakedConfig(
+  facts: SpawnFacts,
+  plan: SpawnPlan,
+  filePath: string,
+  file: { fileName: string; content: string }
+): boolean {
+  const adapter = facts.harness.adapter;
+  if (
+    adapter?.kind !== 'file' ||
+    !adapter.bakedConfigDrift ||
+    plan.delivery?.bakedConfig?.file.fileName !== file.fileName ||
+    !fs.existsSync(filePath)
+  ) {
+    return false;
+  }
+  const drift = adapter.bakedConfigDrift(
+    fs.readFileSync(filePath, 'utf8'),
+    file.content
+  );
+  if (drift === 'rerender') {
+    fs.writeFileSync(filePath, file.content);
+    log.warn(
+      `re-rendered ${filePath}: it held the API key's value, which every build baked into the agent image; it now references the key by name`
+    );
+    return true;
+  }
+  if (drift === 'literal-key') {
+    log.warn(
+      `${filePath} holds a literal API key, which is baked into the agent image (kept, not overwritten): write the key as "\${${facts.agent.provider?.apiKeyEnv ?? 'NAME'}}" there`
+    );
+    return true;
+  }
+  return false;
 }
 
 /**

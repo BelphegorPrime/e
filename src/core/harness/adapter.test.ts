@@ -13,6 +13,7 @@ import {
   renderOpencodeConfig,
   renderPiMcpServers,
   renderPiModelsJson,
+  piModelsJsonDrift,
   piApi,
   PI_PROVIDER_ID,
   validateProviderProtocol,
@@ -640,4 +641,30 @@ test('a file harness is one object: `kind` plus one delivery method', () => {
     dockerfile?.content ?? '',
     /^COPY toy\.json \/home\/node\/\.toy\/toy\.json$/m
   );
+});
+
+test('piModelsJsonDrift: an old render with the key value is re-rendered; a hand edit with one only warned about', () => {
+  const rendered = renderPiModelsJson(piProvider, {});
+  // What e rendered before: the same file, the value where the reference is.
+  const legacy = rendered.replace('${MY_GATEWAY_KEY}', 'sk-old-literal');
+  assert.equal(piModelsJsonDrift(legacy, rendered), 'rerender');
+  // An empty key was rendered too, when the store had none.
+  assert.equal(
+    piModelsJsonDrift(rendered.replace('${MY_GATEWAY_KEY}', ''), rendered),
+    'rerender'
+  );
+  // Current, or a reference of the user's own: nothing to do.
+  assert.equal(piModelsJsonDrift(rendered, rendered), undefined);
+  const otherRef = rendered.replace('${MY_GATEWAY_KEY}', '${OTHER}');
+  assert.equal(piModelsJsonDrift(otherRef, rendered), undefined);
+  // Hand-edited elsewhere, still a literal key: kept, but said.
+  const edited = JSON.parse(legacy);
+  edited.providers.e.models.push({ id: 'extra' });
+  assert.equal(
+    piModelsJsonDrift(JSON.stringify(edited), rendered),
+    'literal-key'
+  );
+  // Not JSON: a hand edit e cannot read, left alone.
+  assert.equal(piModelsJsonDrift('{ nope', rendered), undefined);
+  assert.equal(piAdapter.bakedConfigDrift, piModelsJsonDrift);
 });

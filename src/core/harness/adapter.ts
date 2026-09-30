@@ -8,6 +8,7 @@
  * agent image (ADR-0004), with only the API key delivered at runtime.
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import type { McpEndpoint } from '../mcp/index.js';
 import { NODE_HOME } from './renderDockerfile.js';
 import { log } from '../../shared/utils/log.js';
@@ -190,7 +191,22 @@ export interface FileHarnessAdapter {
    * carry) out of its shell and its shell snapshot.
    */
   overlayEveryRun?: true;
+  /**
+   * How a baked config already on disk stands against the one rendered now,
+   * for a format that once carried a secret's value (#203): `rerender` - it
+   * is what `e` rendered before, the value where the reference now is, so it
+   * is replaced; `literal-key` - a hand edit that still holds a key's value,
+   * kept and warned about; undefined - nothing to say. Absent: the file is
+   * written if absent, as always.
+   */
+  bakedConfigDrift?(
+    existing: string,
+    rendered: string
+  ): BakedConfigDrift | undefined;
 }
+
+/** See {@link FileHarnessAdapter.bakedConfigDrift}. */
+export type BakedConfigDrift = 'rerender' | 'literal-key';
 
 /**
  * A harness's config adapter. Each harness ingests configuration through its own
@@ -546,6 +562,42 @@ export function renderPiModelsJson(
   return JSON.stringify(config, null, 2) + '\n';
 }
 
+/** A pi `apiKey` that references the env by name rather than holding a value. */
+const PI_KEY_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+
+/**
+ * {@link FileHarnessAdapter.bakedConfigDrift} for pi's `models.json`: before
+ * keys went by name, `e` wrote the key's **value** as `apiKey`, and a Store
+ * keeps that file because a rendered file is never clobbered. One that equals
+ * today's render but for `apiKey` is that old render, and is re-rendered; one
+ * that differs elsewhere and still holds a literal key is a hand edit to warn
+ * about. A file that is not JSON is left alone.
+ */
+export function piModelsJsonDrift(
+  existing: string,
+  rendered: string
+): BakedConfigDrift | undefined {
+  type Shape = { providers?: Record<string, { apiKey?: unknown }> };
+  let old: Shape;
+  let now: Shape;
+  try {
+    old = JSON.parse(existing) as Shape;
+    now = JSON.parse(rendered) as Shape;
+  } catch {
+    return undefined;
+  }
+  const key = old.providers?.[PI_PROVIDER_ID]?.apiKey;
+  if (typeof key === 'string' && PI_KEY_REFERENCE.test(key)) return undefined;
+  const withoutKey = (shape: Shape): unknown => {
+    const copy = structuredClone(shape);
+    const provider = copy.providers?.[PI_PROVIDER_ID];
+    if (provider) delete provider.apiKey;
+    return copy;
+  };
+  if (isDeepStrictEqual(withoutKey(old), withoutKey(now))) return 'rerender';
+  return typeof key === 'string' && key !== '' ? 'literal-key' : undefined;
+}
+
 /**
  * Where pi reads its config in the image: `models.json` under a config dir
  * relocated by `PI_CODING_AGENT_DIR`, in the non-root runtime user's home and
@@ -565,6 +617,7 @@ const PI_CONFIG_FILE = 'models.json';
  */
 export const piAdapter: FileHarnessAdapter = {
   kind: 'file',
+  bakedConfigDrift: piModelsJsonDrift,
   planProviderDelivery(
     provider: Provider,
     storeEnv: Record<string, string>
