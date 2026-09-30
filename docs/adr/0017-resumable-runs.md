@@ -59,6 +59,8 @@ the harness's session directory:
 - **Not for a Sibling run.** A sibling's delivery is the merge-back into its
   parent (ADR-0013); resuming it as a Run of its own would push it and open a
   PR the parent never asked for. The parent is what gets resumed.
+  **Amended by [ADR-0019](./0019-fusion-runs.md) (proposed):** nor for a
+  Candidate run of a fusion, for the same reason; the synthesis run keeps one.
 - **Created 0700, record 0600**, owned by the host user. The container writes
   into it as its runtime user, under the same uid assumption the worktree bind
   mount already makes.

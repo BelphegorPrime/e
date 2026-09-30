@@ -78,6 +78,10 @@ and the parent's judgement covers the merged whole, the same argument ADR-0016
 makes for verify. Not a run with nothing committed: there is no diff to judge,
 and a refusal that left the worktree clean is already visible as that.
 
+**Amended by [ADR-0019](./0019-fusion-runs.md) (proposed):** not a Candidate
+run of a fusion either, which is excluded as a sibling is; the synthesis run,
+whose diff becomes the PR, is judged like any run of the user's own.
+
 ### 5. Where it is recorded
 
 - `RunSpawnResult.judge`, and one line of the CLI run report.

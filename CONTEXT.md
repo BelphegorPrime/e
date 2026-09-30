@@ -236,6 +236,31 @@ _Avoid_: transcript (the harness's file inside it), history, context
 `e resume <run-branch> ["<prompt>"]` (`src/cli/resume.ts`): a new invocation of an earlier Run that continues its Session on the Run's own branch - the kept worktree if it is still on disk, else the branch checked out again (`Git.checkoutWorktree`) - through the harness's `resumeCommand`, with the recorded agent, MCP servers (started again, empty) and skills. The wall clock carries over (`loop.totalTimeoutMs` bounds the Run, not one invocation); the attempt count does not. Refused for a non-run branch, a harness without the capability, a missing Session, a Session another harness wrote, a spent wall clock, a Run still running or with siblings in flight. A human act, so its commits carry no Provenance.
 _Avoid_: retry (a retry starts a new Run with no memory), restart
 
+The next terms are the vocabulary of ADR-0019 (proposed; fusion runs, #172-#180):
+
+**Fusion**:
+Executing one task with several independently configured Agents and combining what they produced into one result (ADR-0019). Output-level, never weight-level: candidates are combined through their commits, diffs and exit status by another Agent that reads them, since `e` holds endpoints, not models.
+_Avoid_: ensemble, model merge, mixture (each suggests combining weights or logits)
+
+**Fusion profile**:
+A named Store entity at `fusions/<name>/fusion.json` declaring the candidate Agents (two or more, by name, repeats allowed), the synthesizer Agent, the `strategy` (only `parallel-synthesize` in v1), `maxConcurrency`, `minUsable` and the fusion's own `timeouts`. References Agents, never copies a provider or a key; harness agents only.
+
+**Fusion run**:
+One execution of a Fusion profile against one prompt, `fusion-<ulid>`, driven by `e fuse` (ADR-0019): a host-side record at `.e/runs/fusions/<id>/` (0700, git-ignored, pruned after 14 days) grouping its Candidate runs and its Synthesis run, with states `prepared` -> `fanning-out` -> `synthesizing` -> `completed` | `failed` | `canceled` | `exhausted` | `interrupted`. Not a Run: it has no branch, worktree or container, and it counts toward no sibling depth.
+_Avoid_: calling it a Run, fusion job
+
+**Candidate run**:
+An ordinary Run of one candidate Agent of a Fusion run, cut from the fusion's pinned base sha and reporting into the fusion's spool. Neither pushes nor opens a PR itself: the coordinator pushes every usable candidate branch once the fan-out has closed. Keeps no Session and is not judged. **Usable** when its branch has commits beyond the base, whatever its verdict.
+_Avoid_: sibling (a sibling branches from a moving parent and comes back by merge-back; a candidate is never merged)
+
+**Candidate result**:
+The provider- and harness-neutral envelope (`result.json`, versioned by `schemaVersion`; fields in ADR-0019 section 5) the host writes for each settled Candidate run, from the spool record and host-side git only, beside the candidate's patch and the tip content of its changed files. Its `outcome` separates `succeeded` from `empty` (exit 0, no commits: a refusal). Never carries `gateRemovals` or a judge's answers, because an agent reads it, and never an estimated `usage`.
+_Avoid_: report (the sibling report of ADR-0013), verdict (the Run's)
+
+**Synthesis run**:
+The ordinary Run of a Fusion run's synthesizer Agent, cut from the same pinned base, given every Candidate result and patch read-only at `/run/e/fusion/` as untrusted material, gated by Verify, pushed, and the fusion's only PR. It may adopt one candidate, combine several or write afresh; the host never merges a candidate branch. Its Verdict is the fusion's.
+_Avoid_: judge (ADR-0018 grades a run and changes nothing; the synthesizer produces the deliverable)
+
 ## Additional Implementation Concepts
 
 **Mount**:
