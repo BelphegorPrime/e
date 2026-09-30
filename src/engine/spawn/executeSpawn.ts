@@ -40,6 +40,8 @@ import {
   unpinnedAfterBuildMessage,
 } from '../../core/harness/pin.js';
 import { log } from '../../shared/utils/log.js';
+import { GLOBAL_BASE_URL_ENV } from '../../core/harness/renderEnvTemplate.js';
+import { secretsToRedact } from '../runs/redactSession.js';
 import { errorMessage } from '../../shared/utils/errors.js';
 import { openRunLedger, type RunLedger } from '../queue/ledger.js';
 import { Env } from '../../shared/utils/env.js';
@@ -234,6 +236,33 @@ function replaceStaleBakedConfig(
     return true;
   }
   return false;
+}
+
+/**
+ * Every secret value this run hands its container, for masking in the
+ * session it keeps (#205): the Store env values the plan lets through and
+ * the harness's own keys, the user's `--env-file` and `-e` values. Base URLs
+ * are no secret and stay. Short values are dropped by `secretsToRedact`.
+ */
+export function sessionSecrets(facts: SpawnFacts, plan: SpawnPlan): string[] {
+  const notSecret = new Set<string>([
+    ...GLOBAL_BASE_URL_ENV,
+    ...(facts.agent.provider?.baseUrlEnv
+      ? [facts.agent.provider.baseUrlEnv]
+      : []),
+  ]);
+  const names = [...plan.baseEnvWhitelist, ...facts.harness.requiredEnv];
+  const userFile =
+    facts.userEnvFile !== undefined && fs.existsSync(facts.userEnvFile)
+      ? Object.values(parseDotenv(fs.readFileSync(facts.userEnvFile, 'utf8')))
+      : [];
+  return secretsToRedact([
+    ...names.filter(name => !notSecret.has(name)).map(n => facts.storeEnv[n]),
+    ...userFile,
+    ...facts.env.map(entry =>
+      entry.includes('=') ? entry.slice(entry.indexOf('=') + 1) : undefined
+    ),
+  ]);
 }
 
 /**
@@ -456,7 +485,11 @@ async function executeSpawnWith(
       ledger,
       session:
         session && facts.sessionStoreDir !== undefined
-          ? { storeDir: facts.sessionStoreDir, init: session }
+          ? {
+              storeDir: facts.sessionStoreDir,
+              init: session,
+              redact: sessionSecrets(facts, plan),
+            }
           : undefined,
       resume: facts.resume,
       role: facts.role,

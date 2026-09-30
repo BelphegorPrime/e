@@ -23,7 +23,11 @@ import {
   runsDirs,
   writeLedgerEntry,
 } from '../queue/runsSpool.js';
-import { executeSpawn, siblingPassthroughArgs } from './executeSpawn.js';
+import {
+  executeSpawn,
+  sessionSecrets,
+  siblingPassthroughArgs,
+} from './executeSpawn.js';
 import { planSpawn, type SpawnFacts, type SpawnPlan } from './spawnPlan.js';
 import type { Harness } from '../../core/harness/index.js';
 import { piAdapter } from '../../core/harness/adapter.js';
@@ -1209,4 +1213,59 @@ test('a hand-edited pi models.json with a literal key is kept and warned about, 
     assert.ok(lines.some(line => /literal API key/.test(line)));
     assert.ok(lines.every(line => !line.includes('sk-hand-literal')));
   });
+});
+
+test('sessionSecrets: what the run hands its container, base URLs aside (#205)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-secrets-'));
+  try {
+    const userEnvFile = path.join(dir, 'user.env');
+    fs.writeFileSync(userEnvFile, 'USER_TOKEN=user-token-value\nDEBUG=1\n');
+    const secrets = sessionSecrets(
+      facts({
+        harness: { ...harness, requiredEnv: ['HARNESS_KEY'] },
+        agent: {
+          name: 'demo',
+          harness: 'demo',
+          provider: {
+            baseUrl: 'https://gw',
+            baseUrlEnv: 'GW_URL',
+            model: 'm',
+            protocol: 'anthropic-messages',
+            apiKeyEnv: 'GW_KEY',
+          },
+        },
+        storeEnv: {
+          GW_KEY: 'provider-key-value',
+          GW_URL: 'https://gw.example.com/v1',
+          ANTHROPIC_BASE_URL: 'https://api.example.com',
+          HARNESS_KEY: 'harness-key-value',
+          UNRELATED: 'never-delivered-value',
+          MCP_TOKEN: 'mcp-token-value',
+        },
+        userEnvFile,
+        env: ['X_SECRET=dash-e-secret', 'FLAG'],
+      }),
+      {
+        ...emptyPlan,
+        baseEnvWhitelist: [
+          'GW_KEY',
+          'GW_URL',
+          'ANTHROPIC_BASE_URL',
+          'MCP_TOKEN',
+        ],
+      }
+    );
+    assert.deepEqual(
+      new Set(secrets),
+      new Set([
+        'provider-key-value',
+        'mcp-token-value',
+        'harness-key-value',
+        'user-token-value',
+        'dash-e-secret',
+      ])
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

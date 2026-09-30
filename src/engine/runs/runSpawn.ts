@@ -23,6 +23,7 @@ import {
   verifyContainerFor,
   type RunName,
 } from '../../core/identity/runName.js';
+import { redactSessionDir } from './redactSession.js';
 import {
   addSessionElapsed,
   openRunSession,
@@ -267,7 +268,15 @@ export interface RunSpawnParams {
    * A session that cannot be prepared costs a fresh Run its session, never
    * the Run - and fails a resume, which has nothing without it.
    */
-  session?: { storeDir: string; init: RunSessionInit };
+  session?: {
+    storeDir: string;
+    init: RunSessionInit;
+    /**
+     * The secret values this Run was given, masked in the transcript when the
+     * Run ends, before the session is kept (#205): the agent's shell saw them.
+     */
+    redact?: readonly string[];
+  };
   /** Continue this earlier Run on its own branch (ADR-0017); needs {@link session}. */
   resume?: ResumeRun;
   /** Fan-out bound for a run with a broker (`config.json` `maxSiblings`; default 3). */
@@ -1202,6 +1211,19 @@ export async function runSpawn(
     throw err;
   } finally {
     if (loopTimer) clearTimeout(loopTimer);
+    // What the agent's shell saw stays out of what the Store keeps (#205):
+    // the container has exited, so nothing writes the transcript any more.
+    if (session && params.session?.redact?.length) {
+      const masked = redactSessionDir(
+        session.transcriptDir,
+        params.session.redact
+      );
+      if (masked > 0) {
+        log.info(
+          `Masked ${masked} secret value(s) the agent printed in its session.`
+        );
+      }
+    }
     // The wall clock this invocation spent goes on the session's account, so
     // a resume sees what is left (ADR-0017). An interactive run has no budget.
     if (

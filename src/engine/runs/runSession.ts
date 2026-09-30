@@ -12,7 +12,8 @@
  * inside `/workspace` and never in a branch; `sessions/` carries its own
  * `.gitignore` for a Store that is partly committed. Directories are 0700 and
  * the record 0600: a transcript holds tool output, and tool output can hold
- * the secrets the Run was given. A session is kept for
+ * the secrets the Run was given, which `redactSession.ts` masks when the Run
+ * ends (#205). A session is kept for
  * {@link SESSION_RETENTION_MS} after its last use, and pruned when the next
  * one is prepared in the same Store.
  */

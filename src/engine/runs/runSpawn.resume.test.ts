@@ -143,6 +143,39 @@ test('a Run of a resumable harness mounts its host session dir at the harness se
     ]);
   }));
 
+test('the secrets a Run was given are masked in its session when it ends (#205)', () =>
+  withTmp(async tmp => {
+    const { deps, runtime } = makeDeps();
+    const secret = 'sk-run-9f8e7d6c5b4a';
+    // The agent runs `env`, and its harness records the tool output.
+    runtime.onRun = options => {
+      const mount = options.volumes?.find(
+        v => v.container === '/home/node/.demo/sessions'
+      );
+      fs.writeFileSync(
+        path.join(mount!.host, 'transcript.jsonl'),
+        JSON.stringify({ tool: 'bash', output: `KEY=${secret}` }) + '\n'
+      );
+    };
+    const result = await runSpawn(
+      deps,
+      makeParams(tmp, {
+        session: { storeDir: path.join(tmp, '.e'), init, redact: [secret] },
+      })
+    );
+    const transcript = path.join(
+      runSessionDirFor(
+        path.join(tmp, '.e'),
+        fromBranch(result.branch!) as RunName
+      ),
+      'harness',
+      'transcript.jsonl'
+    );
+    const kept = fs.readFileSync(transcript, 'utf8');
+    assert.ok(!kept.includes(secret));
+    assert.equal(JSON.parse(kept).output, `KEY=${'*'.repeat(secret.length)}`);
+  }));
+
 test('the wall clock a non-interactive Run spent is added to its session record', () =>
   withTmp(async tmp => {
     const { deps, runtime } = makeDeps();

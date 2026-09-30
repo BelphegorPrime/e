@@ -136,7 +136,17 @@ output, and tool output can carry env values - the provider key the run was
 given, for one. The transcript is stored in the Store with the modes above,
 mounted only into later containers of **the same Run** (which had the same
 secrets already), never into a sibling, never exported (`e export` does not
-include `runs/`), never pushed. Retention is bounded: a session whose record
+include `runs/`), never pushed. **The values are masked when the Run ends**
+(#205): the host knows every secret it handed the container - the Store env
+values the plan let through, the harness's keys, `--env-file` and `-e` - and
+replaces each (8 characters or more) with `*` of the same length throughout
+the session dir before it is kept. JSONL transcripts keep their shape; a
+SQLite session (opencode) is masked through SQL with `secure_delete` on and
+its WAL checkpointed, then swept byte by byte like any file. pi and opencode
+cannot hide the key from the agent's shell, Claude Code and Codex can
+(`docs/research/harness-secret-delivery.md`), so this is the one guard that
+holds for all four. It masks only the exact values: an encoded or split copy
+survives. Retention is bounded: a session whose record
 was last updated more than **14 days** ago is deleted whenever a new session is
 prepared in the same Store. Deleting one by hand is removing its directory;
 nothing else refers to it. `docs/security/attack-surface.md` Zone 2 records
