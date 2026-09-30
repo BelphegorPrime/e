@@ -15,6 +15,7 @@ import { eBaseDir } from '../core/store/paths.js';
 import { defaultWorktreesDir } from '../engine/runs/worktreesDir.js';
 import {
   spawnChildProcess,
+  type ChildHandle,
   type ChildLauncher,
 } from '../engine/runs/childRun.js';
 import {
@@ -158,7 +159,7 @@ export function fuseEventLines(
       return [
         {
           level: 'info',
-          text: `${CANDIDATES_STAGE} ${event.candidate} ${event.agent}: no retry (${event.why === 'max-attempts' ? `attempt ${event.attempt} was the last allowed` : 'it would not finish before the candidates deadline'})`,
+          text: `${CANDIDATES_STAGE} ${event.candidate} ${event.agent}: no retry (${event.why === 'max-attempts' ? `attempt ${event.attempt} was the last allowed` : "it could not start before the fusion's deadline"})`,
         },
       ];
     case 'budget-exhausted':
@@ -357,6 +358,47 @@ const detachedLauncher: ChildLauncher = launch =>
   spawnChildProcess(launch, undefined, { detached: true });
 
 /**
+ * How long `e fuse` waits for its children after a cancel before it kills
+ * them outright: past each child's own grace, so a child that tears down in
+ * time is never cut short (every `e spawn` exits by {@link CANCEL_GRACE_MS}).
+ */
+export const FUSE_CANCEL_GRACE_MS = CANCEL_GRACE_MS + 30_000;
+
+/** What {@link fuseCancelHandling} works on; the action gives it the process, tests fakes. */
+export interface FuseCancelDeps {
+  cancel: AbortController;
+  /** The children alive right now. */
+  live: () => Iterable<ChildHandle>;
+  exit: (code: number) => void;
+  setTimer: (fn: () => void, ms: number) => void;
+  warn: (text: string) => void;
+}
+
+/**
+ * The signal handler of `e fuse` (ADR-0019 section 9). The first SIGINT or
+ * SIGTERM cancels: every child gets SIGTERM and tears down, nothing more is
+ * pushed. Every later one is acknowledged and waited out, never taken as
+ * leave to exit: the children run in process groups of their own, so a
+ * coordinator that went away would leave them running - pushing, opening a
+ * PR. Only when the grace is spent are the children killed outright, and
+ * then the coordinator exits 143.
+ */
+export function fuseCancelHandling(deps: FuseCancelDeps): () => void {
+  return () => {
+    if (deps.cancel.signal.aborted) {
+      deps.warn('Still canceling: waiting for the runs to tear down.');
+      return;
+    }
+    deps.warn('Canceling the fusion...');
+    deps.cancel.abort();
+    deps.setTimer(() => {
+      for (const child of deps.live()) child.kill('SIGKILL');
+      deps.exit(CANCELED_EXIT_CODE);
+    }, FUSE_CANCEL_GRACE_MS);
+  };
+}
+
+/**
  * The whole `e fuse`: refusals first (a nested fusion, a missing prompt, an
  * invalid profile, no repository, no runtime), then the fan-out, then the
  * synthesis when the fan-out closed with enough usable candidates. Returns
@@ -463,19 +505,27 @@ export function registerFuseCommand(program: Command): void {
         // down, nothing more is pushed, exit 143 (ADR-0019 section 9). Should
         // that hang, the fallback still exits.
         const cancel = new AbortController();
-        const onCancel = (): void => {
-          if (cancel.signal.aborted) return;
-          log.warn('Canceling the fusion...');
-          cancel.abort();
-          setTimeout(
-            () => process.exit(CANCELED_EXIT_CODE),
-            CANCEL_GRACE_MS
-          ).unref();
+        const live = new Set<ChildHandle>();
+        const launch: ChildLauncher = l => {
+          const child = detachedLauncher(l);
+          live.add(child);
+          void child.exited.then(() => live.delete(child));
+          return child;
         };
-        process.once('SIGTERM', onCancel);
-        process.once('SIGINT', onCancel);
+        const onSignal = fuseCancelHandling({
+          cancel,
+          live: () => live,
+          exit: code => process.exit(code),
+          setTimer: (fn, ms) => setTimeout(fn, ms).unref(),
+          warn: text => log.warn(text),
+        });
+        process.on('SIGTERM', onSignal);
+        process.on('SIGINT', onSignal);
         process.exit(
-          await runFuseCommand(profile, prompt, opts, { abort: cancel.signal })
+          await runFuseCommand(profile, prompt, opts, {
+            abort: cancel.signal,
+            launch,
+          })
         );
       }
     );

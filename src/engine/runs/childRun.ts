@@ -35,8 +35,12 @@ import { spawnArgs } from '../../shared/spawnArgs.js';
 export interface ChildHandle {
   /** Resolves with the exit code once the process is gone (1 when it failed to start or was killed). */
   exited: Promise<number>;
-  /** Asks the process to stop (a cancel, or a child that never became ready). */
-  kill(): void;
+  /**
+   * Asks the process to stop (a cancel, or a child that never became ready):
+   * SIGTERM, on which a child tears down. `SIGKILL` is the last resort of a
+   * caller whose own grace ran out.
+   */
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
 }
 
 /** What a launcher gets: the request, the CLI arguments, the environment carrying the markers, and where to log. */
@@ -99,7 +103,12 @@ export function spawnChildProcess(
         cwd: launch.cwd ?? process.cwd(),
         env: launch.env,
         stdio: ['ignore', out, out],
-        ...(options.detached ? { detached: true } : {}),
+        // A process group is a POSIX notion; on Windows `detached` opens a
+        // console of its own instead, and a kill there tears nothing down.
+        ...(options.detached && process.platform !== 'win32'
+          ? { detached: true }
+          : {}),
+        windowsHide: true,
       }
     );
   } catch (err) {
@@ -110,7 +119,12 @@ export function spawnChildProcess(
     child.on('error', () => resolve(1));
     child.on('exit', (code, signal) => resolve(signal ? 1 : (code ?? 0)));
   }).finally(() => fs.closeSync(out));
-  return { exited, kill: () => child.kill('SIGTERM') };
+  return {
+    exited,
+    kill: (signal = 'SIGTERM') => {
+      child.kill(signal);
+    },
+  };
 }
 
 /** The last `lines` of a child's log, joined, for a failure message; empty when there is none. */

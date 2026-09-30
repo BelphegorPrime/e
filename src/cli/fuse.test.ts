@@ -15,8 +15,10 @@ import {
   type FuseCommandDeps,
   type FuseEvent,
   type FuseOutcome,
+  fuseCancelHandling,
+  FUSE_CANCEL_GRACE_MS,
 } from './fuse.js';
-import type { ReportLine } from './spawn.js';
+import { CANCEL_GRACE_MS, type ReportLine } from './spawn.js';
 import type { FusionProfile } from '../core/fusion/profile.js';
 import type { CandidateResult } from '../core/fusion/result.js';
 import { InMemoryGit } from '../ports/git/memory.js';
@@ -854,7 +856,7 @@ test('fuseEventLines: retries and exhausted budgets are said in their stage', ()
       why: 'candidates-deadline',
     }),
     [
-      '[candidates] cand-002 codex: no retry (it would not finish before the candidates deadline)',
+      "[candidates] cand-002 codex: no retry (it could not start before the fusion's deadline)",
     ]
   );
   assert.deepEqual(
@@ -893,4 +895,51 @@ test("runFuseCommand: the Store's loop caps reach the fan-out, which derives its
     await runFuseCommand('coding', ['go'], { dir: root }, deps);
     assert.equal((loop as { totalTimeoutMs: number }).totalTimeoutMs, 600000);
   });
+});
+
+test('fuseCancelHandling: the first signal cancels; later ones wait; only a spent grace kills the children and exits', () => {
+  const cancel = new AbortController();
+  const warned: string[] = [];
+  const exits: number[] = [];
+  const timers: Array<{ fn: () => void; ms: number }> = [];
+  const killed: Array<string | undefined> = [];
+  const child: ChildHandle = {
+    exited: new Promise(() => {}),
+    kill: signal => killed.push(signal),
+  };
+  const onSignal = fuseCancelHandling({
+    cancel,
+    live: () => [child],
+    exit: code => exits.push(code),
+    setTimer: (fn, ms) => timers.push({ fn, ms }),
+    warn: text => warned.push(text),
+  });
+  onSignal();
+  assert.equal(cancel.signal.aborted, true);
+  assert.equal(timers.length, 1);
+  // Past every child's own grace, so none is cut short.
+  assert.equal(timers[0].ms, FUSE_CANCEL_GRACE_MS);
+  assert.ok(FUSE_CANCEL_GRACE_MS > CANCEL_GRACE_MS);
+  // A second Ctrl-C never leaves the children running on their own.
+  onSignal();
+  assert.equal(timers.length, 1);
+  assert.deepEqual(exits, []);
+  assert.deepEqual(killed, []);
+  assert.match(warned[1], /Still canceling/);
+  timers[0].fn();
+  assert.deepEqual(killed, ['SIGKILL']);
+  assert.deepEqual(exits, [143]);
+});
+
+test('fuseEventLines: a synthesis stopped by totalMs reads exhausted, not canceled', () => {
+  const [line] = fuseEventLines(
+    { kind: 'synthesis-settled', id: 'syn-001', exitCode: 2 },
+    {
+      name: 'coding',
+      synthesizer: 'claudeCode',
+      maxConcurrency: 2,
+      minUsable: 1,
+    }
+  );
+  assert.match(line.text, /\[synthesis\] syn-001 claudeCode: exhausted/);
 });

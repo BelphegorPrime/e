@@ -317,7 +317,9 @@ export async function runSynthesis(
     params.onEvent?.({
       kind: 'synthesis-settled',
       id: request.id,
-      exitCode: outcome.exitCode,
+      // The fusion's code, as the result will say: a deadline kill is the
+      // `totalMs` budget (2), never a human's cancel (143).
+      exitCode: outcome.timedOut ? EXHAUSTED_EXIT_CODE : outcome.exitCode,
     });
     const { status: st } = outcome;
     const reason = timedOut ? FUSION_TIMEOUT_REASON : st?.reason;
