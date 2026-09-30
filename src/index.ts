@@ -2,6 +2,7 @@
 
 import { Command } from 'commander';
 import { registerSpawnCommand } from './cli/spawn.js';
+import { registerResumeCommand } from './cli/resume.js';
 import { registerInitCommand } from './cli/init/index.js';
 import { registerServeCommand } from './cli/serve/serve.js';
 import { registerRuntimeCommands } from './cli/runtime.js';
@@ -28,6 +29,7 @@ program
   });
 
 registerSpawnCommand(program);
+registerResumeCommand(program);
 registerInitCommand(program);
 registerServeCommand(program);
 registerRuntimeCommands(program);

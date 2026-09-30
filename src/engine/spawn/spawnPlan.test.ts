@@ -640,3 +640,86 @@ test('validateSpawn: a sibling spawn must carry the child role', () => {
   );
   assert.doesNotThrow(() => validateSpawn(facts({ sibling, role: 'child' })));
 });
+
+// ADR-0017: the session a Run keeps on the host, and resume.
+
+test('planSpawn: a Run of a resumable harness plans a session with what the record needs', () => {
+  const plan = planSpawn(
+    facts({
+      agent: {
+        name: 'smart-pi',
+        harness: 'pi',
+        provider: {
+          baseUrl: 'https://gw.example.com',
+          model: 'opus',
+          protocol: 'anthropic-messages',
+          apiKeyEnv: 'GW_KEY',
+        },
+      },
+      harness: HARNESSES.pi,
+      storeEnv: { GW_KEY: 'k' },
+      mcpServers: [containerMcp],
+      perRunSkills: ['lint'],
+      sessionStoreDir: '/root/.e',
+    })
+  );
+  assert.deepEqual(plan.session, {
+    agent: 'smart-pi',
+    harness: 'pi',
+    harnessVersion: HARNESSES.pi.version,
+    provider: {
+      baseUrl: 'https://gw.example.com',
+      model: 'opus',
+      protocol: 'anthropic-messages',
+    },
+    mcp: ['everything'],
+    skills: ['lint'],
+  });
+});
+
+test('planSpawn: no session for a harness that cannot resume, a sibling, or a Store-less run', () => {
+  assert.equal(
+    planSpawn(facts({ sessionStoreDir: '/root/.e' })).session,
+    undefined
+  );
+  const pi = { agent: { name: 'pi', harness: 'pi' }, harness: HARNESSES.pi };
+  assert.equal(planSpawn(facts({ ...pi })).session, undefined);
+  assert.equal(
+    planSpawn(facts({ ...pi, sessionStoreDir: '/root/.e', role: 'child' }))
+      .session,
+    undefined
+  );
+  assert.ok(planSpawn(facts({ ...pi, sessionStoreDir: '/root/.e' })).session);
+});
+
+test('validateSpawn: resume is refused on a harness that cannot, naming the ones that can', () => {
+  const resume = {
+    branch: 'e/demo/x-1',
+    base: { sha: 's', branch: 'main' },
+    elapsedMs: 0,
+  };
+  assert.throws(
+    () => validateSpawn(facts({ resume })),
+    /Harness "claudeCode" cannot resume a session:.*e resume supports: pi/
+  );
+  const pi = { agent: { name: 'pi', harness: 'pi' }, harness: HARNESSES.pi };
+  assert.throws(
+    () => validateSpawn(facts({ ...pi, resume })),
+    /no Store to keep sessions in/
+  );
+  assert.doesNotThrow(() =>
+    validateSpawn(facts({ ...pi, resume, sessionStoreDir: '/root/.e' }))
+  );
+  assert.throws(
+    () =>
+      validateSpawn(
+        facts({
+          ...pi,
+          resume,
+          sessionStoreDir: '/root/.e',
+          base: { ref: 'refs/heads/main', sha: 's', branch: 'main' },
+        })
+      ),
+    /continues its own branch/
+  );
+});

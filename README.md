@@ -665,6 +665,11 @@ e init --dir ./infra && e spawn pi --dir ./infra "Bump the base images"
 # edited provider/model or Dockerfile is picked up; skip that with --no-rebuild
 e spawn smart-claude --no-rebuild "hello"
 
+# Continue a finished, canceled or crashed pi run where it left off: same
+# branch, same harness session (the agent sees its earlier turns), ADR-0017
+e resume e/pi/fix-the-flaky-test-1 "The test still flakes on CI; look at the retry"
+e resume e/pi/fix-the-flaky-test-1            # no prompt: reopen the session in the TUI
+
 # Browser UI + terminal: start it in the repo you want runs to happen in
 e serve --detached && open http://127.0.0.1:8080   # `e serve stop` ends it
 
@@ -885,6 +890,7 @@ and exit 0 ([docs/agents/e.md](./docs/agents/e.md), Recursive spawning).
 | `e spawn` (platform configured)                | Push the run branch, then open a PR/MR into your current branch                                                                  |
 | `e spawn … --keep-worktree`                    | Leave the run's worktree in place for inspection                                                                                 |
 | `e spawn … --skill spawn-brother`              | Let the agent request sibling runs; the host merges each back into its worktree (ADR-0013)                                       |
+| `e resume <run-branch> ["<prompt>"]`           | Continue a pi run's harness session on its own branch; sessions live 14 days in `.e/runs/sessions/` (ADR-0017)                   |
 | `e spawn <remote-agent> "<prompt>"`            | Ask a Store agent with `"transport": "a2a"` over the Agent2Agent protocol; the answer on stdout, no run (ADR-0015)               |
 | `e spawn --trigger <name> [--event <path>]`    | One-shot: run a Trigger from CI or a timer, its declaration read from base; a non-matching event exits 0 (Tutorial 10)           |
 | `e serve [--detached]` / `e serve stop`        | Web UI, browser terminal, A2A (`POST /a2a`), webhooks (BFF port + 2) and the cron tick; stop the background server               |

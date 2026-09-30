@@ -218,6 +218,16 @@ One of the concurrent Runs `e serve` may start from the queue (default 2), count
 Where the autonomy machinery runs (ADR-0016). **hosted** is a long-lived `e serve` owning the scheduler, the webhook listener (its own port at BFF+2, HMAC-only), the queue and the ledger. **one-shot** is a single `e spawn --trigger <name> [--event <path>]` driven by an outer scheduler - a CI job, a systemd timer, a k8s CronJob - which owns scheduling, dedup and concurrency instead; the Loop, Verify and the Caps are identical because they live in `runSpawn`. Both read the same Trigger declaration, and a triggered Run's repository settings, from the Base Store rather than the working tree.
 _Avoid_: ephemeral (the worktree is ephemeral in both), CI mode (any scheduler drives one-shot)
 
+The next terms are the vocabulary of ADR-0017 (proposed; resumable runs, pi only):
+
+**Session**:
+A harness's own conversation of a Run - its turns, tool calls and tool output - kept on the host so it outlives the `--rm` container: `.e/runs/sessions/<run name>/` in the checkout's Store (`src/engine/runs/runSession.ts`), holding `session.json` (the **session record**: agent, harness and version, provider, the Run's base, its MCP servers and per-run skills, the wall clock spent) and `harness/`, bind-mounted at the harness's `sessionDir`. Outside the worktree and the branch, 0700, git-ignored, never exported, pruned 14 days after its last use. Kept for every Run of a harness that declares `sessionDir` and `resumeCommand` (pi), never for a Sibling run.
+_Avoid_: transcript (the harness's file inside it), history, context
+
+**Resume**:
+`e resume <run-branch> ["<prompt>"]` (`src/cli/resume.ts`): a new invocation of an earlier Run that continues its Session on the Run's own branch - the kept worktree if it is still on disk, else the branch checked out again (`Git.checkoutWorktree`) - through the harness's `resumeCommand`, with the recorded agent, MCP servers (started again, empty) and skills. The wall clock carries over (`loop.totalTimeoutMs` bounds the Run, not one invocation); the attempt count does not. Refused for a non-run branch, a harness without the capability, a missing Session, a Session another harness wrote, a spent wall clock, a Run still running or with siblings in flight. A human act, so its commits carry no Provenance.
+_Avoid_: retry (a retry starts a new Run with no memory), restart
+
 ## Additional Implementation Concepts
 
 **Mount**:

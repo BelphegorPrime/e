@@ -75,6 +75,20 @@ export interface Harness {
    * and baked skills are rejected. Grounding: `docs/research/harness-cli-facts.md`.
    */
   skillsDir?: string;
+  /**
+   * Absolute in-container directory this harness keeps its sessions in,
+   * outside `/workspace` (ADR-0017). The host mounts the Run's session
+   * directory here, so the conversation outlives the `--rm` container. With
+   * {@link resumeCommand} it is the harness's declared `resume` capability.
+   */
+  sessionDir?: string;
+  /**
+   * Builds the argv that continues the most recent session in
+   * {@link sessionDir} (ADR-0017): one-shot with `prompt` as the follow-up,
+   * the harness TUI without one. `model` as for {@link buildCommand}. Absent
+   * means `e resume` is refused for this harness.
+   */
+  resumeCommand?(prompt: string | undefined, model?: string): string[];
 }
 
 /**
@@ -160,6 +174,19 @@ export const HARNESSES: Record<string, Harness> = {
       model ? ['pi', '--provider', PI_PROVIDER_ID, '--model', model] : ['pi'],
     // pi reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
+    // pi's own default for a run in /workspace (`getDefaultSessionDirPath`,
+    // 0.99.0: `<agent dir>/sessions/--workspace--/`), so a plain `pi -p`
+    // persists into the host mount with no flag (ADR-0017).
+    sessionDir: `${NODE_HOME}/.pi/agent/sessions`,
+    // `--continue` opens the most recent session for the working directory,
+    // which is always /workspace: the last attempt of the Run.
+    resumeCommand: (prompt: string | undefined, model?: string) => [
+      'pi',
+      ...(prompt === undefined ? [] : ['--no-approve']),
+      '--continue',
+      ...(prompt === undefined ? [] : ['-p', prompt]),
+      ...(model ? ['--provider', PI_PROVIDER_ID, '--model', model] : []),
+    ],
   },
   claudeCode: {
     name: 'claudeCode',
@@ -382,6 +409,8 @@ export interface HarnessCapabilities {
   mcp: McpDeliveryForm;
   /** The in-container skills dir, or undefined when the harness supports no skills. */
   skills: string | undefined;
+  /** It keeps its session in a mountable dir and can continue it: `e resume` (ADR-0017). */
+  resume: boolean;
 }
 
 /** Describes a harness's capabilities for the spawn edge's gating (see {@link HarnessCapabilities}). */
@@ -390,7 +419,16 @@ export function harnessCapabilities(harness: Harness): HarnessCapabilities {
     provider: harness.adapter ? harness.adapter.kind : 'none',
     mcp: mcpDeliveryForm(harness),
     skills: harness.skillsDir,
+    resume:
+      harness.sessionDir !== undefined && harness.resumeCommand !== undefined,
   };
+}
+
+/** The harnesses `e resume` can continue, for the message that refuses the others. */
+export function resumableHarnessNames(): string[] {
+  return Object.values(HARNESSES)
+    .filter(harness => harnessCapabilities(harness).resume)
+    .map(harness => harness.name);
 }
 
 /**

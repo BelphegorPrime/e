@@ -261,6 +261,75 @@ test('HostGit.addWorktree creates the branch and the path; a live branch is refu
   }
 });
 
+test('HostGit.checkoutWorktree checks an existing run branch out again, at its tip (ADR-0017)', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  const wt = path.join(repo, '..', 'e-resume-wt');
+  try {
+    process.chdir(repo);
+    const host = new HostGit();
+    host.checkoutWorktree(wt, 'e/claudeCode/fix-typos-2');
+    assert.equal(
+      git(wt, 'rev-parse', '--abbrev-ref', 'HEAD'),
+      'e/claudeCode/fix-typos-2'
+    );
+    assert.equal(fs.readFileSync(path.join(wt, 'typos.txt'), 'utf8'), 'typos');
+    // It never creates a branch: a name that does not exist is refused.
+    assert.throws(() =>
+      host.checkoutWorktree(
+        path.join(repo, '..', 'e-resume-missing-wt'),
+        'e/agent/never-1'
+      )
+    );
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(wt, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.checkoutWorktree survives a worktree dir that vanished while git still lists it', () => {
+  const repo = seedRepo();
+  const originalCwd = process.cwd();
+  const wt = path.join(repo, '..', 'e-vanished-wt');
+  try {
+    process.chdir(repo);
+    const host = new HostGit();
+    host.checkoutWorktree(wt, 'e/claudeCode/fix-typos-2');
+    // A reboot wiped the temp dir after a crash: the worktree is still registered.
+    fs.rmSync(wt, { recursive: true, force: true });
+    host.checkoutWorktree(wt, 'e/claudeCode/fix-typos-2');
+    assert.equal(fs.readFileSync(path.join(wt, 'typos.txt'), 'utf8'), 'typos');
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(wt, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.checkoutWorktree takes a run branch that only exists on origin', () => {
+  const repo = seedRepo();
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-remote-'));
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-clone-'));
+  const wt = path.join(clone, '..', `${path.basename(clone)}-wt`);
+  const originalCwd = process.cwd();
+  try {
+    git(remote, 'init', '-q', '--bare');
+    git(repo, 'remote', 'add', 'origin', remote);
+    git(repo, 'push', '-q', 'origin', 'main', 'e/claudeCode/fix-typos-2');
+    git(clone, 'clone', '-q', remote, '.');
+    process.chdir(clone);
+    new HostGit().checkoutWorktree(wt, 'e/claudeCode/fix-typos-2');
+    assert.equal(fs.readFileSync(path.join(wt, 'typos.txt'), 'utf8'), 'typos');
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(wt, { recursive: true, force: true });
+    fs.rmSync(clone, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
+  }
+});
+
 test('HostGit.removeWorktree removes the path and leaves the branch', () => {
   const repo = seedRepo();
   const originalCwd = process.cwd();

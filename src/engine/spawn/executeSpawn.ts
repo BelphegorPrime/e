@@ -382,6 +382,11 @@ async function executeSpawnWith(
       base: facts.base,
       provenance: facts.provenance,
       ledger,
+      session:
+        plan.session && facts.sessionStoreDir !== undefined
+          ? { storeDir: facts.sessionStoreDir, init: plan.session }
+          : undefined,
+      resume: facts.resume,
       role: facts.role,
       broker: plan.broker,
       maxSiblings: facts.maxSiblings,

@@ -988,3 +988,46 @@ test('ledger: a run that dies before runSpawn - an image build - still ends its 
     assert.match(entry.error ?? '', /still carries no version labels/);
   });
 });
+
+test('resume: the session and the resumed branch reach the orchestrator (ADR-0017)', async () => {
+  await withDemoStore(async root => {
+    const tmp = root;
+    const resumable: Harness = {
+      ...harness,
+      sessionDir: '/home/node/.demo/sessions',
+      resumeCommand: prompt => ['demo', '--continue', '-p', prompt ?? ''],
+    };
+    const branch = 'e/demo/fix-it-2';
+    const git = new InMemoryGit({ branches: [branch], dirty: true });
+    const runtime = new RecordingRuntime();
+    const f = facts({
+      root,
+      harness: resumable,
+      worktreesDir: path.join(tmp, 'wt'),
+      sessionStoreDir: path.join(tmp, '.e'),
+      resume: { branch, base: { sha: 'orig', branch: 'main' }, elapsedMs: 0 },
+    });
+    const result = await executeSpawn(
+      f,
+      {
+        ...emptyPlan,
+        session: {
+          agent: 'demo',
+          harness: 'demo',
+          harnessVersion: '1.0.0',
+          mcp: [],
+          skills: [],
+        },
+      },
+      { git, runtime, scratch: new RunScratch() }
+    );
+    assert.equal(result.branch, branch);
+    assert.deepEqual(git.worktrees, []);
+    assert.equal(runtime.ranCommand?.[1], '--continue');
+    assert.ok(
+      runtime.options?.volumes?.some(
+        v => v.container === '/home/node/.demo/sessions'
+      )
+    );
+  });
+});

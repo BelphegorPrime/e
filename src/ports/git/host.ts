@@ -237,6 +237,20 @@ export class HostGit implements Git {
     );
   }
 
+  checkoutWorktree(worktreePath: string, branch: string): void {
+    // No `-b`: an existing branch or nothing. Without a local one, git finds
+    // the remote-tracking twin and creates the local branch tracking it.
+    log.debug(`Checking out worktree: ${worktreePath} -> branch ${branch}`);
+    // A resume after a crash may find the Run's worktree gone (a reboot wiped
+    // the temp dir) but still registered, which `worktree add` refuses:
+    // forget the registrations whose directories no longer exist first.
+    this.run(['worktree', 'prune'], 'prune vanished worktrees');
+    this.run(
+      ['worktree', 'add', worktreePath, branch],
+      `check out worktree for ${branch}`
+    );
+  }
+
   isDirty(worktreePath: string): boolean {
     const out = this.capture(
       ['-C', worktreePath, 'status', '--porcelain'],

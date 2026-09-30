@@ -51,7 +51,11 @@ import {
 } from '../engine/spawn/prepareLocalStack.js';
 import { executeSpawn } from '../engine/spawn/executeSpawn.js';
 import { findRoot } from '../core/store/root.js';
-import { envFilePath, verifyCacheVolume } from '../core/store/paths.js';
+import {
+  eBaseDir,
+  envFilePath,
+  verifyCacheVolume,
+} from '../core/store/paths.js';
 import {
   isInitialized,
   readConfig,
@@ -87,7 +91,7 @@ import {
 import { newUlid } from '../engine/queue/runsSpool.js';
 import { SPAWN_COMMAND, SPAWN_FLAGS } from '../shared/spawnArgs.js';
 /** How long a canceled `e spawn` may take to stop its container and tear down before it is exited by force. */
-const CANCEL_GRACE_MS = 60_000;
+export const CANCEL_GRACE_MS = 60_000;
 
 /** The parsed `e spawn` CLI options, as Commander hands them to the action. */
 export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
@@ -147,7 +151,7 @@ export interface TriggeredSpawn {
  * handshake, which is why it lives here and not in the engine: `prepareLocalStack`
  * decides that a key is needed and stores the answer; this only asks for it.
  */
-async function promptForLocalApiKey({
+export async function promptForLocalApiKey({
   initialPassword,
 }: ApiKeyRequest): Promise<string> {
   log.info(
@@ -214,6 +218,9 @@ export function gatherSpawnFacts(
   // A triggered run reads everything from its Base Store (ADR-0016 section 13).
   const root = triggered?.store.root ?? findRoot(opts.dir);
   const config = readConfig(root);
+  // Sessions stay with the checkout's Store, never a Base Store's scratch
+  // copy, which goes with the run (ADR-0017).
+  const sessionRoot = triggered?.store.checkoutRoot ?? root;
 
   // The target is an agent/harness name resolved directly (a bare harness →
   // its default agent).
@@ -329,6 +336,8 @@ export function gatherSpawnFacts(
     base: triggered?.base ?? claimedBase(),
     eventFile: triggered?.eventFile,
     provenance: triggered?.provenance ?? inheritedProvenance(),
+    sessionStoreDir:
+      sessionRoot !== undefined ? eBaseDir(sessionRoot) : undefined,
   };
 }
 

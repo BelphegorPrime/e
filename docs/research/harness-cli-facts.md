@@ -77,6 +77,7 @@ Sources: published tarball **v0.84.1** (2026-08-07, bundles full `docs/`), npm r
 - **MCP:** **not supported** - "intentionally does not include built-in MCP … build or install those workflows as extensions or packages." No config block, flag, or transport. (`docs/usage.md` Design Principles)
 - **Skills:** `SKILL.md` Agent Skills. Read from `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, `.agents/skills/`, packages; **`--skill <path>`** (repeatable, loads even with `--no-skills`); can reuse `~/.claude/skills` / `~/.codex/skills`. Also `AGENTS.md`/`CLAUDE.md`, `SYSTEM.md`. (`docs/skills.md`, `docs/usage.md`)
 - **Headless:** `pi -p "<prompt>"` (merges piped stdin). `--mode json` (JSONL event stream), `--mode rpc`. **No skip-permissions flag exists or is needed** - pi has no approval popups and explicitly recommends "run in a container"; only _project trust_ exists and is auto-resolved in non-interactive modes (`--approve`/`-a`, `defaultProjectTrust`). Useful: `--no-session`, `--tools`/`-t` allowlist, `--offline`. (`docs/usage.md`, `docs/json.md`, `docs/security.md`)
+- **Sessions (0.99.0):** saved by default under `<agent dir>/sessions/--<cwd>--/` as append-only JSONL (a turn is on disk as it happens); `--continue`/`-c` opens the most recent one for the cwd, `--session <id>`, `--session-dir` / `PI_CODING_AGENT_SESSION_DIR` relocate. `e` mounts the Run's host session dir at `~/.pi/agent/sessions` and resumes with `--continue` (ADR-0017). (`docs/sessions.md`, `docs/cli.md`, `dist/core/session-manager.js`)
 
 ---
 

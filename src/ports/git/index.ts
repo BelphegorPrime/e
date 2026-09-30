@@ -87,6 +87,15 @@ export interface Git {
    */
   addWorktree(spec: WorktreeSpec): void;
 
+  /**
+   * Create a worktree at `path` checking out the **existing** `branch` - a
+   * resumed Run's own (ADR-0017), never a new one. A branch that exists only
+   * on origin is checked out as a new local branch tracking it (git's
+   * `worktree add` guess). Throws when no such branch exists, when it is
+   * checked out in another worktree, or when `path` is not empty.
+   */
+  checkoutWorktree(worktreePath: string, branch: string): void;
+
   /** True if the worktree at `path` has uncommitted changes (tracked or untracked). */
   isDirty(worktreePath: string): boolean;
 

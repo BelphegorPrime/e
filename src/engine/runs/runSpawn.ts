@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import type { Git } from '../../ports/git/index.js';
 import type { PullRequest } from '../../ports/github/index.js';
 import type {
@@ -17,10 +18,18 @@ import type { Agent } from '../../core/agent/index.js';
 import { slugify } from '../../core/identity/slugify.js';
 import { nextRunName } from './nextRunName.js';
 import {
+  fromBranch,
   sidecarContainerFor,
   verifyContainerFor,
   type RunName,
 } from '../../core/identity/runName.js';
+import {
+  addSessionElapsed,
+  openRunSession,
+  pruneRunSessions,
+  type OpenRunSession,
+  type RunSessionInit,
+} from './runSession.js';
 import { runVerify, type VerifyOutcome } from './runVerify.js';
 import { verifyFeedback } from './verifyFeedback.js';
 
@@ -107,6 +116,27 @@ export function launchPrompt(
   return `${RUN_GIT_INSTRUCTIONS}\n${runRoleInstructions(role)}${gate}\n\n${prompt}`;
 }
 
+/** What a resumed Run is told before its follow-up (ADR-0017). */
+export const RESUME_NOTE =
+  'e resumed this run in a fresh container: your earlier turns are above, and /workspace holds the run branch as you left it, uncommitted changes included.';
+
+/** The follow-up of a resume that was given none. */
+export const RESUME_DEFAULT_PROMPT = 'Continue the task where you left off.';
+
+/**
+ * The one-shot prompt of a resumed Run: what happened, then the follow-up,
+ * under the same rules and gate as {@link launchPrompt} - the container is
+ * new, so the rules it states are restated too.
+ */
+export function resumePrompt(
+  prompt: string,
+  role: RunRole = 'parent',
+  verify?: VerifyConfig
+): string {
+  const followUp = prompt.trim() === '' ? RESUME_DEFAULT_PROMPT : prompt;
+  return launchPrompt(`${RESUME_NOTE}\n\n${followUp}`, role, verify);
+}
+
 /** What the orchestrator needs to build a run. */
 export interface RunSpawnDeps {
   git: Git;
@@ -144,6 +174,16 @@ export interface RunBase {
   sha: string;
   /** Its short name: the branch a pull request targets. */
   branch: string;
+}
+
+/** An earlier Run to continue instead of cutting a new one (ADR-0017). */
+export interface ResumeRun {
+  /** The Run's branch, `e/<agent>/<slug>-N`: checked out again, never re-cut. */
+  branch: string;
+  /** The base the Run recorded: what the branch was cut from, and the PR target. */
+  base: { sha: string; branch: string };
+  /** Wall clock its earlier invocations spent, taken off `loop.totalTimeoutMs`. */
+  elapsedMs: number;
 }
 
 /** Full parameters for a runSpawn call. */
@@ -220,6 +260,16 @@ export interface RunSpawnParams {
    * committed for a run that did not exit 0.
    */
   abort?: AbortSignal;
+  /**
+   * Where this Run keeps its harness session (ADR-0017): the Store's `.e/`
+   * and what the record says about the Run. Only for a harness with a
+   * `sessionDir`; the host dir is mounted there and outlives the container.
+   * A session that cannot be prepared costs a fresh Run its session, never
+   * the Run - and fails a resume, which has nothing without it.
+   */
+  session?: { storeDir: string; init: RunSessionInit };
+  /** Continue this earlier Run on its own branch (ADR-0017); needs {@link session}. */
+  resume?: ResumeRun;
   /** Fan-out bound for a run with a broker (`config.json` `maxSiblings`; default 3). */
   maxSiblings?: number;
   /**
@@ -384,6 +434,37 @@ function checkpointParent(
   return git.headSha(parent.worktreePath);
 }
 
+/**
+ * The identity of a resumed Run (ADR-0017): its own branch, checked out
+ * again. A worktree still on disk - kept dirty by teardown, or by
+ * `--keep-worktree` - is the state to continue from and is reused as it is.
+ */
+function resumeWorktree(
+  git: Git,
+  resume: ResumeRun,
+  agent: Agent,
+  worktreesDir: string
+): RunName {
+  const run = fromBranch(resume.branch);
+  if (!run) {
+    throw new Error(
+      `Cannot resume "${resume.branch}": not a run branch (e/<agent>/<slug>-N).`
+    );
+  }
+  if (run.agent !== agent.name) {
+    throw new Error(
+      `Cannot resume ${run.branch} as agent "${agent.name}": it belongs to agent "${run.agent}".`
+    );
+  }
+  const worktreePath = worktreePathFor(worktreesDir, run);
+  if (fs.existsSync(worktreePath)) {
+    log.info(`Resuming in the worktree still on disk: ${worktreePath}`);
+  } else {
+    git.checkoutWorktree(worktreePath, run.branch);
+  }
+  return run;
+}
+
 /** Main run spawn orchestrator. Builds production managers from primitives. */
 export async function runSpawn(
   deps: RunSpawnDeps,
@@ -430,12 +511,31 @@ export async function runSpawn(
   // every path out, including a throw: a live timer outlives the run.
   let loopTimer: ReturnType<typeof setTimeout> | undefined;
   let brokerSpool: string | undefined;
+  // The Run's session on the host (ADR-0017), and when its budgeted wall
+  // clock started, so teardown can add what this invocation spent.
+  let session: OpenRunSession | undefined;
+  let sessionRun: RunName | undefined;
+  let loopStartedAt: number | undefined;
   const role = params.role ?? 'parent';
   const maxSiblings = params.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
   if (params.broker && !params.siblingHost?.launch) {
     throw new Error(
       'A run with a broker needs siblingHost.launch: refusing to host siblings without a launcher'
     );
+  }
+  const resume = params.resume;
+  const resumeCommand = params.harness.resumeCommand;
+  if (resume) {
+    if (!resumeCommand || !params.harness.sessionDir || !params.session) {
+      throw new Error(
+        `Harness "${params.harness.name}" cannot resume a session: it declares no sessionDir and resumeCommand (ADR-0017).`
+      );
+    }
+    if (params.parent || params.sibling || params.base) {
+      throw new Error(
+        'A resumed run continues its own branch: it cannot also be a sibling or declare a base.'
+      );
+    }
   }
 
   /** A sibling reports into its parent's spool, a watched run into its watcher's; every other run has nowhere to. */
@@ -455,23 +555,51 @@ export async function runSpawn(
     // Pin the base before creating the worktree: the host's HEAD, a
     // trigger's declared base - or, for a sibling, the parent worktree's tip
     // once its WIP is checkpointed there.
-    const base = params.parent
-      ? checkpointParent(deps.git, params.parent, slug, params.provenance)
-      : (params.base?.sha ?? deps.git.headSha());
+    // A resumed Run keeps the base it recorded (ADR-0017).
+    const base = resume
+      ? resume.base.sha
+      : params.parent
+        ? checkpointParent(deps.git, params.parent, slug, params.provenance)
+        : (params.base?.sha ?? deps.git.headSha());
     const baseBranch =
-      params.base?.branch ?? (deps.git.currentBranch() || 'main');
+      resume?.base.branch ??
+      params.base?.branch ??
+      (deps.git.currentBranch() || 'main');
 
     // Cut the branch and create the worktree atomically (collision-retry inside
     // `nextRunName`); every other name this run uses is derived from its identity.
-    const run: RunName = await nextRunName(
-      deps.git,
-      params.agent,
-      slug,
-      base,
-      worktreesDir
-    );
+    // A resumed Run has one already: its branch, checked out again.
+    const run: RunName = resume
+      ? resumeWorktree(deps.git, resume, params.agent, worktreesDir)
+      : await nextRunName(deps.git, params.agent, slug, base, worktreesDir);
     branch = run.branch;
     worktreePath = worktreePathFor(worktreesDir, run);
+
+    // The session outlives the container (ADR-0017): prepared on the host,
+    // outside the worktree, before anything runs. Opened before the prune,
+    // so a resumed session past the retention is refreshed, not deleted.
+    const sessionMounts: Mount[] = [];
+    if (params.session && params.harness.sessionDir) {
+      try {
+        session = openRunSession(params.session.storeDir, run, {
+          init: params.session.init,
+          base: { sha: base, branch: baseBranch },
+        });
+        sessionRun = run;
+        for (const pruned of pruneRunSessions(params.session.storeDir)) {
+          log.debug(`Pruned the session of ${pruned} (past its retention)`);
+        }
+        sessionMounts.push({
+          host: session.transcriptDir,
+          container: params.harness.sessionDir,
+        });
+      } catch (err) {
+        if (resume) throw err;
+        log.warn(
+          `Could not prepare the session of ${run.name}; it runs without one and cannot be resumed: ${errorMessage(err)}`
+        );
+      }
+    }
     // A sibling has its identity now: the parent's status shows the branch
     // before any image build or container.
     report({ status: 'starting', branch });
@@ -613,6 +741,7 @@ export async function runSpawn(
       volumes: [
         { host: worktreePath, container: '/workspace' },
         ...artifactMounts,
+        ...sessionMounts,
         ...(params.configMounts ?? []),
       ],
       workdir: '/workspace',
@@ -703,11 +832,18 @@ export async function runSpawn(
     // The hard total kills mid-attempt on purpose. Checking only at the
     // boundary cannot keep its promise: with 2h total and 30min per attempt,
     // one starting at 1h59 still sees budget and runs to 2h29.
+    // A resumed Run's budget is what its earlier invocations left of it
+    // (ADR-0017): resuming must not be a way past the total.
+    const spentBefore = resume?.elapsedMs ?? 0;
     const totalTimer = params.interactive
       ? undefined
-      : setTimeout(killNow('total'), caps.totalTimeoutMs);
+      : setTimeout(
+          killNow('total'),
+          Math.max(0, caps.totalTimeoutMs - spentBefore)
+        );
     loopTimer = totalTimer;
     const startedAt = Date.now();
+    loopStartedAt = startedAt;
 
     for (let attempt = 1; attempt <= maxIterations; attempt++) {
       // The soft mark only warns, and only to the human - never into the
@@ -715,20 +851,30 @@ export async function runSpawn(
       if (
         caps.softTotalTimeoutMs !== undefined &&
         attempt > 1 &&
-        Date.now() - startedAt >= caps.softTotalTimeoutMs
+        spentBefore + Date.now() - startedAt >= caps.softTotalTimeoutMs
       ) {
         softTimeoutWarning = `Past the soft time limit (${Math.round(caps.softTotalTimeoutMs / 60000)} min) at attempt ${attempt}; the hard limit is ${Math.round(caps.totalTimeoutMs / 60000)} min.`;
         log.warn(softTimeoutWarning);
       }
-      const command = params.interactive
-        ? params.harness.buildInteractiveCommand(params.model)
-        : params.harness.buildCommand(
-            // The task is restated in full every time: a fresh container has
-            // no conversational memory, and the feedback is a suffix so the
-            // composition above it stays intact.
-            launchPrompt(params.prompt, role, params.verify) + feedback,
-            params.model
-          );
+      // A resumed Run continues its session on every attempt: the context
+      // is the conversation as well as the worktree (ADR-0017).
+      const command =
+        resume && resumeCommand
+          ? resumeCommand(
+              params.interactive
+                ? undefined
+                : resumePrompt(params.prompt, role, params.verify) + feedback,
+              params.model
+            )
+          : params.interactive
+            ? params.harness.buildInteractiveCommand(params.model)
+            : params.harness.buildCommand(
+                // The task is restated in full every time: a fresh container
+                // has no conversational memory, and the feedback is a suffix
+                // so the composition above it stays intact.
+                launchPrompt(params.prompt, role, params.verify) + feedback,
+                params.model
+              );
 
       // Execute the agent container in the foreground. A cancel while it runs
       // removes the container, so `run` returns (non-zero) and teardown follows.
@@ -1047,6 +1193,27 @@ export async function runSpawn(
     throw err;
   } finally {
     if (loopTimer) clearTimeout(loopTimer);
+    // The wall clock this invocation spent goes on the session's account, so
+    // a resume sees what is left (ADR-0017). An interactive run has no budget.
+    if (
+      session &&
+      sessionRun &&
+      params.session &&
+      loopStartedAt !== undefined &&
+      !params.interactive
+    ) {
+      try {
+        addSessionElapsed(
+          params.session.storeDir,
+          sessionRun,
+          Date.now() - loopStartedAt
+        );
+      } catch (err) {
+        log.warn(
+          `Could not record the session's wall clock: ${errorMessage(err)}`
+        );
+      }
+    }
     // Best-effort teardown: never mask a result or an aborting error.
     try {
       if (consumer && !consumerStopped) await consumer.stop();

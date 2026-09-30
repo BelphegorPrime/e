@@ -7,6 +7,7 @@ import {
   resolveHarness,
   envHarnessSections,
   requiredEnvKeys,
+  resumableHarnessNames,
 } from './index.js';
 import type { McpEndpoint } from '../mcp/index.js';
 
@@ -361,6 +362,63 @@ test('harnessCapabilities.skills is the declared skillsDir (all real harnesses s
     harnessCapabilities({ ...HARNESSES.pi, skillsDir: undefined }).skills,
     undefined
   );
+});
+
+test('pi resumeCommand continues the most recent session, one-shot with a follow-up (ADR-0017)', () => {
+  assert.deepEqual(HARNESSES.pi.resumeCommand!('go on', 'claude-opus-5'), [
+    'pi',
+    '--no-approve',
+    '--continue',
+    '-p',
+    'go on',
+    '--provider',
+    'e',
+    '--model',
+    'claude-opus-5',
+  ]);
+  assert.deepEqual(HARNESSES.pi.resumeCommand!('go on'), [
+    'pi',
+    '--no-approve',
+    '--continue',
+    '-p',
+    'go on',
+  ]);
+});
+
+test('pi resumeCommand without a prompt reopens the session in the TUI', () => {
+  assert.deepEqual(HARNESSES.pi.resumeCommand!(undefined, 'm'), [
+    'pi',
+    '--continue',
+    '--provider',
+    'e',
+    '--model',
+    'm',
+  ]);
+  assert.deepEqual(HARNESSES.pi.resumeCommand!(undefined), [
+    'pi',
+    '--continue',
+  ]);
+});
+
+test('pi keeps its sessions at its own default for /workspace, outside it (ADR-0017)', () => {
+  assert.equal(HARNESSES.pi.sessionDir, '/home/node/.pi/agent/sessions');
+  assert.ok(!HARNESSES.pi.sessionDir!.startsWith('/workspace'));
+});
+
+test('harnessCapabilities.resume needs both a sessionDir and a resumeCommand: pi only today', () => {
+  assert.equal(harnessCapabilities(HARNESSES.pi).resume, true);
+  for (const name of ['claudeCode', 'codex', 'opencode']) {
+    assert.equal(harnessCapabilities(HARNESSES[name]).resume, false, name);
+  }
+  assert.equal(
+    harnessCapabilities({ ...HARNESSES.pi, sessionDir: undefined }).resume,
+    false
+  );
+  assert.equal(
+    harnessCapabilities({ ...HARNESSES.pi, resumeCommand: undefined }).resume,
+    false
+  );
+  assert.deepEqual(resumableHarnessNames(), ['pi']);
 });
 
 test('resolveHarness returns the registered harness by name', () => {

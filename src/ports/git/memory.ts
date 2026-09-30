@@ -97,7 +97,12 @@ export interface InMemoryGitOptions {
   /** Messages that make a call throw instead of doing its work. */
   fail?: Partial<
     Record<
-      'addWorktree' | 'commitAll' | 'push' | 'listRunRefs' | 'abortMerge',
+      | 'addWorktree'
+      | 'checkoutWorktree'
+      | 'commitAll'
+      | 'push'
+      | 'listRunRefs'
+      | 'abortMerge',
       string
     >
   >;
@@ -117,6 +122,8 @@ export class InMemoryGit implements Git {
   readonly listedPrefixes: string[] = [];
   /** Worktrees created, in order. */
   readonly worktrees: WorktreeSpec[] = [];
+  /** Existing branches checked out again (`checkoutWorktree`), in order. */
+  readonly checkedOut: { path: string; branch: string }[] = [];
   /** Worktree paths removed, in order. */
   readonly removedWorktrees: string[] = [];
   /** Commits made, in order. */
@@ -300,6 +307,26 @@ export class InMemoryGit implements Git {
     this.branches.set(spec.branch, tip);
     this.checkouts.set(spec.path, spec.branch);
     this.worktrees.push(spec);
+  }
+
+  checkoutWorktree(worktreePath: string, branch: string): void {
+    this.calls.push('checkoutWorktree');
+    if (this.opts.fail?.checkoutWorktree) {
+      throw new Error(this.opts.fail.checkoutWorktree);
+    }
+    // Only an existing branch, local or on origin - like git, it never makes
+    // one up; a remote-only one becomes a local branch at the same tip.
+    const tip =
+      this.branches.get(branch) ?? this.branches.get(`origin/${branch}`);
+    if (tip === undefined) {
+      throw new Error(`fatal: invalid reference: ${branch}`);
+    }
+    if ([...this.checkouts.values()].includes(branch)) {
+      throw new Error(`fatal: '${branch}' is already used by worktree`);
+    }
+    this.branches.set(branch, tip);
+    this.checkouts.set(worktreePath, branch);
+    this.checkedOut.push({ path: worktreePath, branch });
   }
 
   isDirty(worktreePath: string): boolean {

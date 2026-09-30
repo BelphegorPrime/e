@@ -17,6 +17,7 @@ import type { Harness } from '../../core/harness/index.js';
 import {
   harnessCapabilities,
   planMcpDelivery,
+  resumableHarnessNames,
 } from '../../core/harness/index.js';
 import {
   validateProviderProtocol,
@@ -63,7 +64,8 @@ import { skillMountSpec } from '../../core/skill/index.js';
 import { skillDir } from '../../core/store/paths.js';
 import { EVENT_MOUNT_PATH } from '../../core/trigger/oneShot.js';
 import type { Provenance } from '../../core/trigger/provenance.js';
-import type { RunBase } from '../runs/runSpawn.js';
+import type { ResumeRun, RunBase } from '../runs/runSpawn.js';
+import { sessionProvider, type RunSessionInit } from '../runs/runSession.js';
 
 /**
  * The env files a run loads, in precedence order. `--env-file` entries loaded
@@ -308,6 +310,14 @@ export interface SpawnFacts {
    * Absent for a manual run.
    */
   readonly provenance?: Readonly<Provenance>;
+  /**
+   * The Store's `.e/` a Run keeps its harness session in (ADR-0017): the
+   * checkout's, never a Base Store's scratch copy. Absent without a Store,
+   * and then no Run can be resumed.
+   */
+  readonly sessionStoreDir?: string;
+  /** `e resume`: continue this earlier Run on its own branch (ADR-0017). */
+  readonly resume?: Readonly<ResumeRun>;
 }
 
 /** True when the positional prompt carries anything but whitespace. */
@@ -384,6 +394,27 @@ export function validateSpawn(facts: SpawnFacts): void {
     throw new Error(
       `A spawn started for sibling ${facts.sibling.id} cannot also carry the report markers.`
     );
+  }
+
+  // A resume continues a session only a resumable harness keeps (ADR-0017),
+  // in a Store, on the Run's own branch.
+  if (facts.resume) {
+    if (!caps.resume) {
+      const resumable = resumableHarnessNames();
+      throw new Error(
+        `Harness "${harness.name}" cannot resume a session: it declares no resumeCommand. e resume supports: ${resumable.length > 0 ? resumable.join(', ') : '(none)'}.`
+      );
+    }
+    if (facts.sessionStoreDir === undefined) {
+      throw new Error(
+        `Cannot resume ${facts.resume.branch}: there is no Store to keep sessions in (run \`e init\`).`
+      );
+    }
+    if (facts.sibling || facts.base || facts.report) {
+      throw new Error(
+        `A resumed run continues its own branch (${facts.resume.branch}): it cannot also be a sibling, a watched run or declare a base.`
+      );
+    }
   }
 
   // The role contract is the host's to set for every run container (ADR-0013);
@@ -507,6 +538,12 @@ export interface SpawnPlan {
   agentEnv: string[];
   /** A runtime-resolved model to pass on the harness command line, when applicable. */
   runtimeModel?: string;
+  /**
+   * The session the Run keeps on the host (ADR-0017), as the record's
+   * Run-independent part: planned for a harness that can resume, in a Store,
+   * and never for a child, whose delivery is the merge-back.
+   */
+  session?: RunSessionInit;
   /**
    * The base `.e/.env` key whitelist (Zone 2): the only keys a container may
    * receive - the provider's `apiKeyEnv`/`baseUrlEnv`, the `requiredEnv` of every
@@ -701,5 +738,23 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
       ...roleContract,
     ],
     runtimeModel: delivery?.runtimeModel,
+    session: planSession(facts),
+  };
+}
+
+/** The session part of {@link planSpawn} (ADR-0017). */
+function planSession(facts: SpawnFacts): RunSessionInit | undefined {
+  const { agent, harness } = facts;
+  if (!harnessCapabilities(harness).resume) return undefined;
+  const provider = sessionProvider(agent.provider);
+  if (facts.sessionStoreDir === undefined) return undefined;
+  if ((facts.role ?? 'parent') === 'child' || facts.sibling) return undefined;
+  return {
+    agent: agent.name,
+    harness: harness.name,
+    harnessVersion: harness.version,
+    ...(provider ? { provider } : {}),
+    mcp: facts.mcpServers.map(server => server.name),
+    skills: [...facts.perRunSkills],
   };
 }
