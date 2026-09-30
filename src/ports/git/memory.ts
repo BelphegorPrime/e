@@ -101,6 +101,7 @@ export interface InMemoryGitOptions {
       | 'checkoutWorktree'
       | 'commitAll'
       | 'push'
+      | 'listRunBranches'
       | 'listRunRefs'
       | 'abortMerge',
       string
@@ -259,6 +260,9 @@ export class InMemoryGit implements Git {
   listRunBranches(prefix: string): string[] {
     this.calls.push('listRunBranches');
     this.listedPrefixes.push(prefix);
+    if (this.opts.fail?.listRunBranches) {
+      throw new Error(this.opts.fail.listRunBranches);
+    }
     // The real one globs `refs/heads/<prefix>-*` and `refs/remotes/*/<prefix>-*`.
     return [...this.branches.keys()].filter(
       name => name.includes(`${prefix}-`) || name.startsWith(`${prefix}/`)

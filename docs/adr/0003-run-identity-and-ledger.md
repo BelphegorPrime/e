@@ -34,6 +34,33 @@ Git refs are the **sole** source of truth: there is no `runs.json`, so there is
 nothing to keep in sync or recover from corruption. The counter race between
 concurrent spawns is closed by the atomicity of branch creation, not by a lock.
 
+## Several repositories, one namespace
+
+A home Store's runs are cut in several repositories (ADR-0016), but the
+worktrees dir is one per host, and the container name and the session
+(`.e/runs/sessions/<run name>`, one per Store) are keyed by the run name alone.
+So the counter spans the Store's **run namespace** (`runNamespace.ts`, #208):
+this repository's refs plus those of every repository the Store's triggers name
+(`repo`) or its runs have been cut in (`.e/runs/repos/`, one file per
+repository, written by each run before it cuts its branch). One that cannot be
+read is skipped. A run name is thereby unique per Store rather than per
+repository. Two runs racing for one name are kept apart by the worktree path,
+which is host-wide: the host claims it with an exclusive `mkdir` before
+`git worktree add`, which would otherwise create the branch before refusing
+the path and leave the loser a stray one. The loser bumps `N` like on any
+other collision. `GET /api/runs` lists the runs of the whole namespace next to
+`serve`'s own, each naming its `repo`.
+
+The namespace record is a list of repositories, not of runs: branches stay the
+only source of truth for which runs exist.
+
+Rejected: a repository component in the worktree, container and session names
+(every name `runName.ts` derives, and every reader of them, would take a second
+key, and the branch alone would no longer name a run), and a per-repository
+worktrees subdir (it separates the worktrees and nothing else). The browser
+terminal starts runs only in `serve`'s own repository; a run elsewhere comes
+from a trigger or from an `e spawn` in that repository.
+
 ## Considered Options
 
 - **A managed index file (`runs.json`)**, rejected for now: a second source of

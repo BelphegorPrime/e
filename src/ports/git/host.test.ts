@@ -261,6 +261,49 @@ test('HostGit.addWorktree creates the branch and the path; a live branch is refu
   }
 });
 
+test('HostGit.addWorktree claims the path before the branch: a taken path leaves no stray branch (#208)', () => {
+  const a = initRepo('e-claim-a-');
+  const b = initRepo('e-claim-b-');
+  const wt = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'e-claim-wt-')),
+    'e',
+    'pi',
+    'nightly-1'
+  );
+  try {
+    new HostGit(a).addWorktree({
+      branch: 'e/pi/nightly-1',
+      path: wt,
+      base: 'main',
+    });
+    assert.throws(
+      () =>
+        new HostGit(b).addWorktree({
+          branch: 'e/pi/nightly-1',
+          path: wt,
+          base: 'main',
+        }),
+      /already exists/
+    );
+    assert.deepEqual(new HostGit(b).listRunBranches('e/pi/nightly'), []);
+    // A branch that exists releases the path it claimed.
+    const other = path.join(path.dirname(wt), 'nightly-2');
+    git(b, 'branch', 'e/pi/nightly-2');
+    assert.throws(() =>
+      new HostGit(b).addWorktree({
+        branch: 'e/pi/nightly-2',
+        path: other,
+        base: 'main',
+      })
+    );
+    assert.equal(fs.existsSync(other), false);
+  } finally {
+    for (const dir of [a, b, path.dirname(path.dirname(path.dirname(wt)))]) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
 test('HostGit.checkoutWorktree checks an existing run branch out again, at its tip (ADR-0017)', () => {
   const repo = seedRepo();
   const originalCwd = process.cwd();

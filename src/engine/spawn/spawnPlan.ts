@@ -316,6 +316,12 @@ export interface SpawnFacts {
    * and then no Run can be resumed.
    */
   readonly sessionStoreDir?: string;
+  /**
+   * The repositories of the run namespace of the sessions' Store
+   * (`runs/runNamespace.ts`, #208): their runs share this run's names, so
+   * the run counter spans them.
+   */
+  readonly runNamespace?: readonly string[];
   /** `e resume`: continue this earlier Run on its own branch (ADR-0017). */
   readonly resume?: Readonly<ResumeRun>;
   /**

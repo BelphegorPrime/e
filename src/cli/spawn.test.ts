@@ -157,6 +157,35 @@ test('a bare spawn runs the favorite harness (pi by default) with an empty promp
   });
 });
 
+test('a home Store spans its run namespace over every repository its triggers name', () => {
+  withStore(root => {
+    fs.mkdirSync(path.dirname(triggerConfigPath('nightly', root)), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      triggerConfigPath('nightly', root),
+      JSON.stringify({
+        agent: 'pi',
+        prompt: 'p',
+        repo: '/src/other',
+        on: { type: 'cron', expr: '0 3 * * *' },
+      })
+    );
+    // A repo-local Store ignores `repo`: its runs are its own repository's.
+    assert.deepEqual(gather(root, undefined, []).runNamespace, []);
+    const home = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      assert.deepEqual(gather(root, undefined, []).runNamespace, [
+        path.resolve('/src/other'),
+      ]);
+    } finally {
+      if (home === undefined) delete process.env.HOME;
+      else process.env.HOME = home;
+    }
+  });
+});
+
 test('an unknown first positional is prompt text for the favorite harness', () => {
   withStore(root => {
     const facts = gather(root, 'fix', ['the', 'bug']);

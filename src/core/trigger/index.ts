@@ -1,3 +1,4 @@
+import path from 'path';
 import type { LoopCaps } from '../store/config.js';
 import { cronExprError } from './cron.js';
 import { payloadReferences } from './prompt.js';
@@ -179,6 +180,11 @@ export function parseTrigger(
     typeof p.repo === 'string' &&
     p.repo !== ''
   ) {
+    // Absolute, because every reader resolves it from somewhere else: `serve`
+    // from its cwd, a run it starts from the repository itself (#208).
+    if (!path.isAbsolute(p.repo)) {
+      invalid(name, where, `"repo" must be an absolute path, got "${p.repo}"`);
+    }
     trigger.repo = p.repo;
   }
   if (typeof p.base === 'string' && p.base !== '') trigger.base = p.base;

@@ -55,6 +55,7 @@ import {
 } from '../engine/spawn/oneShotStack.js';
 import { executeSpawn } from '../engine/spawn/executeSpawn.js';
 import { findRoot } from '../core/store/root.js';
+import { runNamespace } from '../engine/runs/runNamespace.js';
 import {
   eBaseDir,
   envFilePath,
@@ -350,6 +351,9 @@ export function gatherSpawnFacts(
     provenance: triggered?.provenance ?? inheritedProvenance(),
     sessionStoreDir:
       sessionRoot !== undefined ? eBaseDir(sessionRoot) : undefined,
+    // The run namespace is the sessions' Store's (#208): its runs are cut
+    // in several repositories and keyed by run name alone.
+    runNamespace: runNamespace(sessionRoot),
     // One-shot uses a running stack and never starts one (ADR-0016 section
     // 13), and so does a sibling its parent marked as one-shot.
     oneShotShape: triggered !== undefined || env.oneShotSibling,

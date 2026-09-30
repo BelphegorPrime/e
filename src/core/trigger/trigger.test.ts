@@ -246,6 +246,23 @@ test('parseTrigger: a repo-local store ignores repo, a home store keeps it (#201
   );
 });
 
+test('parseTrigger: a home store refuses a relative repo (#208)', () => {
+  assert.throws(
+    () =>
+      parseTrigger({ ...webhook, repo: 'projects/e' }, 'nightly', where, {
+        repoLocal: false,
+      }),
+    /"repo" must be an absolute path, got "projects\/e"/
+  );
+  // A repo-local store ignores the field, whatever it says.
+  assert.equal(
+    parseTrigger({ ...webhook, repo: 'projects/e' }, 'nightly', where, {
+      repoLocal: true,
+    }).repo,
+    undefined
+  );
+});
+
 test('triggerRequest: the request carries the repo a home store trigger targets', () => {
   const trigger = parseTrigger(
     { ...webhook, repo: '/home/me/e', dedup: undefined },

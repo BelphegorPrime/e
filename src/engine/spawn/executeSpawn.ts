@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Git } from '../../ports/git/index.js';
+import { HostGit } from '../../ports/git/host.js';
 import type { PullRequest } from '../../ports/github/index.js';
 import type { GitPlatform } from '../../core/store/config.js';
 import type {
@@ -9,6 +10,7 @@ import type {
   RunOptions,
 } from '../../ports/runtime/index.js';
 import { runSpawn, type RunSpawnResult } from '../runs/runSpawn.js';
+import { recordRunRepository } from '../runs/runNamespace.js';
 import type { SidecarPlan } from '../sidecarPlan.js';
 import { filterEnvContent, parseDotenv } from '../../shared/utils/dotenv.js';
 import { NEVER_FORWARDED_ENV } from '../../core/harness/renderEnvTemplate.js';
@@ -70,6 +72,8 @@ export interface ExecuteSpawnDeps {
    * remote agent). Tests pass a scripted one.
    */
   launchSibling?: ChildLauncher;
+  /** The git of another repository of the run namespace; defaults to the host executable there. */
+  gitAt?: (repo: string) => Git;
 }
 
 /**
@@ -463,6 +467,20 @@ async function executeSpawnWith(
         : undefined,
   };
 
+  // The repository this run is cut in joins its Store's run namespace
+  // (#208), so a run elsewhere counts past it. Best-effort: a Store it
+  // cannot record into still runs, it only shares its names less safely.
+  const repo = git.toplevel();
+  if (facts.sessionStoreDir !== undefined && repo !== undefined) {
+    try {
+      recordRunRepository(facts.sessionStoreDir, repo);
+    } catch (err) {
+      log.debug(
+        `Could not record ${repo} in the run namespace: ${errorMessage(err)}`
+      );
+    }
+  }
+
   return runSpawn(
     { git, runtime, pullRequest: deps.pullRequest },
     {
@@ -483,6 +501,9 @@ async function executeSpawnWith(
       base: facts.base,
       provenance: facts.provenance,
       ledger,
+      runNamespace: facts.runNamespace?.map(
+        deps.gitAt ?? (repo => new HostGit(repo))
+      ),
       session:
         session && facts.sessionStoreDir !== undefined
           ? {

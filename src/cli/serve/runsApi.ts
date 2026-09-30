@@ -37,6 +37,8 @@ import {
 } from '../../sidecars/broker/contract/spool.js';
 import type { StatusResponse } from '../../sidecars/broker/contract/types.js';
 import { NotFoundError, respondJson, respondNotFound } from './apiResponse.js';
+import { errorMessage } from '../../shared/utils/errors.js';
+import { log } from '../../shared/utils/log.js';
 import {
   listDead,
   listLedger,
@@ -102,6 +104,8 @@ export interface RunStatus {
   latest: RunCommit | null;
   local: boolean;
   pushed: boolean;
+  /** The repository the run is in, when it is not `serve`'s own (#208). */
+  repo?: string;
 }
 
 /** A Run's commit history as `/api/runs/<branch>/logs` answers it. */
@@ -110,9 +114,22 @@ export interface RunLogs {
   commits: RunCommit[];
 }
 
+/** Another repository of the run namespace, whose runs the index lists. */
+export interface RunRepository {
+  path: string;
+  git: Git;
+}
+
 export interface RunsApiDeps {
   /** Git read source for the branch-backed index; the host executable in production. */
   git: Git;
+  /**
+   * The other repositories of the serving Store's run namespace (#208), read
+   * afresh at each request so a trigger added under a running `serve`
+   * counts. Run names are unique across them and `git`'s (the counter spans
+   * them all), so a branch names one run wherever it is found.
+   */
+  runNamespace?: () => readonly RunRepository[];
   /** Where run Spools live (`<worktreesDir>/.broker/<runName>`). */
   worktreesDir: string;
   /**
@@ -138,9 +155,14 @@ export type LedgerView = Pick<
   | 'error'
 >;
 
+/**
+ * A run of the index, with the repository it is in when that is not
+ * `serve`'s own: another of the run namespace (#208).
+ */
+export type IndexedRun = RunIndexEntry & { repo?: string };
+
 /** A run with a branch, and what the ledger knows of it, if anything. */
-export type BranchRunItem = RunIndexEntry &
-  Partial<LedgerView> & { id?: string };
+export type BranchRunItem = IndexedRun & Partial<LedgerView> & { id?: string };
 
 /**
  * Something that is not a branch: a request still `queued`, a run `serve`
@@ -174,7 +196,7 @@ export type RunListItem = BranchRunItem | PendingRunItem;
  * its ledger state where the ledger has one.
  */
 export function runList(
-  index: RunIndexEntry[],
+  index: IndexedRun[],
   ledger: LedgerEntry[],
   queue: QueuedRequest[],
   dead: DeadRequest[] = []
@@ -260,7 +282,7 @@ export class RunsApi {
 
   /** Every pending request, live claim and dead request, then every run branch newest first, with its ledger state. */
   index(): RunListItem[] {
-    const index = buildRunIndex(this.deps.git.listRunRefs('e'));
+    const index = this.branchIndex(this.sources());
     const dirs = this.deps.runs;
     if (!dirs) return index;
     return runList(index, listLedger(dirs), listQueue(dirs), listDead(dirs));
@@ -270,12 +292,10 @@ export class RunsApi {
   status(run: RunName): RunStatus | undefined {
     // One enumeration per read keeps status consistent with the index and
     // answers the `local`/`pushed` questions without extra git calls.
-    const refs = this.deps.git.listRunRefs('e');
-    const entry = buildRunIndex(refs).find(
-      candidate => candidate.branch === run.branch
-    );
-    if (!entry) return undefined;
-    const commits = this.commitsOf(refs, run);
+    const found = this.find(run);
+    if (!found) return undefined;
+    const { entry } = found;
+    const commits = this.commitsOf(found, run);
     return {
       branch: entry.branch,
       agent: entry.agent,
@@ -285,17 +305,15 @@ export class RunsApi {
       latest: commits[0] ?? null,
       local: entry.local,
       pushed: entry.pushed,
+      ...(found.repo !== undefined ? { repo: found.repo } : {}),
     };
   }
 
   /** `run`'s commit history, or `undefined` when no branch of that name exists. */
   logs(run: RunName): RunLogs | undefined {
-    const refs = this.deps.git.listRunRefs('e');
-    const known = buildRunIndex(refs).some(
-      candidate => candidate.branch === run.branch
-    );
-    if (!known) return undefined;
-    return { branch: run.branch, commits: this.commitsOf(refs, run) };
+    const found = this.find(run);
+    if (!found) return undefined;
+    return { branch: run.branch, commits: this.commitsOf(found, run) };
   }
 
   /**
@@ -309,10 +327,79 @@ export class RunsApi {
   }
 
   /** A branch's commits, read from its local head or, failing that, its remote twin. */
-  private commitsOf(refs: RunRef[], run: RunName): RunCommit[] {
-    const ref = resolveRunRef(refs, run.branch);
-    return ref ? this.deps.git.runLog(ref.name) : [];
+  private commitsOf(source: RefSource, run: RunName): RunCommit[] {
+    const ref = resolveRunRef(source.refs, run.branch);
+    return ref ? source.git.runLog(ref.name) : [];
   }
+
+  /**
+   * Every repository's run refs, `serve`'s own first, read lazily so a
+   * lookup stops at the repository that has the run. Its own failing (in a
+   * repository) is a failed read; another's (moved, not a repository) only drops its runs,
+   * so one stale trigger `repo` cannot take the index down.
+   */
+  private *sources(): Generator<RefSource> {
+    // A home Store's `serve` may stand outside any repository: then only
+    // its namespace has runs.
+    if (this.deps.git.isRepo()) {
+      yield { git: this.deps.git, refs: this.deps.git.listRunRefs('e') };
+    }
+    for (const repository of this.deps.runNamespace?.() ?? []) {
+      let refs: RunRef[];
+      try {
+        refs = repository.git.listRunRefs('e');
+      } catch (err) {
+        log.debug(
+          `Not listing the runs of ${repository.path}: ${errorMessage(err)}`
+        );
+        continue;
+      }
+      yield { repo: repository.path, git: repository.git, refs };
+    }
+  }
+
+  /**
+   * The runs of every source, newest first. A branch found twice is one run
+   * (the counter spans every repository, so only the same repository listed
+   * twice repeats one): the first source's wins, `serve`'s own before any.
+   */
+  private branchIndex(sources: Iterable<RefSource>): IndexedRun[] {
+    const seen = new Set<string>();
+    const entries: IndexedRun[] = [];
+    for (const source of sources) {
+      for (const entry of buildRunIndex(source.refs)) {
+        if (seen.has(entry.branch)) continue;
+        seen.add(entry.branch);
+        entries.push(
+          source.repo !== undefined ? { ...entry, repo: source.repo } : entry
+        );
+      }
+    }
+    // ISO-8601 strict timestamps compare lexicographically.
+    entries.sort((a, b) => b.committerDate.localeCompare(a.committerDate));
+    return entries;
+  }
+
+  /** The first repository holding `run`'s branch, and its index entry there. */
+  private find(
+    run: RunName
+  ): (RefSource & { entry: RunIndexEntry }) | undefined {
+    for (const source of this.sources()) {
+      const entry = buildRunIndex(source.refs).find(
+        candidate => candidate.branch === run.branch
+      );
+      if (entry) return { ...source, entry };
+    }
+    return undefined;
+  }
+}
+
+/** One repository's run refs, and the git that reads its logs. */
+interface RefSource {
+  /** Absent for `serve`'s own repository. */
+  repo?: string;
+  git: Git;
+  refs: RunRef[];
 }
 
 /**

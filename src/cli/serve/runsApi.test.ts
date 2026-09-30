@@ -13,9 +13,20 @@ import {
   writeRequest,
   writeRunInfo,
 } from '../../sidecars/broker/contract/spool.js';
-import { parseRunRequest, runList, RunsApi } from './runsApi.js';
+import {
+  parseRunRequest,
+  runList,
+  RunsApi,
+  type BranchRunItem,
+  type IndexedRun,
+} from './runsApi.js';
 import { buildRunIndex } from '../../engine/runs/runIndex.js';
-import { runsDirs, writeDeadRequest } from '../../engine/queue/runsSpool.js';
+import {
+  newRequestId,
+  runsDirs,
+  writeDeadRequest,
+  writeLedgerEntry,
+} from '../../engine/queue/runsSpool.js';
 
 const runRefs: RunRef[] = [
   {
@@ -415,4 +426,147 @@ test('RunsApi.index: the dead spool on disk joins the list as state dead', () =>
   } finally {
     fs.rmSync(store, { recursive: true, force: true });
   }
+});
+
+/*
+ * A home Store's triggers cut runs in several repositories (#208): the index
+ * lists every one of them with its branch, not only `serve`'s own.
+ */
+
+const otherRefs: RunRef[] = [
+  {
+    name: 'e/pi/nightly-3',
+    sha: 'ccc',
+    committerDate: '2025-01-03T03:00:00+00:00',
+    subject: 'nightly in the other repository',
+  },
+];
+const otherCommits: Record<string, RunCommit[]> = {
+  'e/pi/nightly-3': [
+    {
+      sha: 'ccc',
+      subject: 'nightly in the other repository',
+      committerDate: '2025-01-03T03:00:00+00:00',
+    },
+  ],
+};
+
+function runsAcross(
+  repositories: { path: string; git: InMemoryGit }[]
+): RunsApi {
+  return new RunsApi({
+    git: new InMemoryGit({ refs: runRefs, log: runCommits }),
+    worktreesDir: path.join(os.tmpdir(), 'e-runs-api-no-spools'),
+    runNamespace: () => repositories,
+  });
+}
+
+test('index lists the runs of every repository the Store serves, newest first, naming the repo', () => {
+  const api = runsAcross([
+    { path: '/src/other', git: new InMemoryGit({ refs: otherRefs }) },
+  ]);
+  const runs = api.index() as IndexedRun[];
+  assert.deepEqual(
+    runs.map(entry => [entry.branch, entry.repo]),
+    [
+      ['e/pi/nightly-3', '/src/other'],
+      ['e/claudeCode/fix-typos-2', undefined],
+      ['e/claudeCode/fix-typos-1', undefined],
+    ]
+  );
+});
+
+test('a run in another repository answers its status and logs from there', () => {
+  const api = runsAcross([
+    {
+      path: '/src/other',
+      git: new InMemoryGit({ refs: otherRefs, log: otherCommits }),
+    },
+  ]);
+  const status = api.status(run('e/pi/nightly-3'));
+  assert.equal(status?.repo, '/src/other');
+  assert.equal(status?.commits, 1);
+  assert.equal(status?.latest?.sha, 'ccc');
+  assert.deepEqual(
+    api.logs(run('e/pi/nightly-3'))?.commits.map(commit => commit.sha),
+    ['ccc']
+  );
+  // serve's own run carries no repo.
+  assert.equal(api.status(run('e/claudeCode/fix-typos-2'))?.repo, undefined);
+});
+
+test('a trigger repo that cannot be read drops only its own runs', () => {
+  const api = runsAcross([
+    {
+      path: '/src/gone',
+      git: new InMemoryGit({ fail: { listRunRefs: 'not a git repository' } }),
+    },
+  ]);
+  assert.equal(api.index().length, 2);
+  assert.equal(api.status(run('e/pi/nightly-3')), undefined);
+});
+
+test("serve's own repository named by a trigger lists each run once, as its own", () => {
+  const api = runsAcross([
+    { path: '/src/self', git: new InMemoryGit({ refs: runRefs }) },
+  ]);
+  const runs = api.index() as IndexedRun[];
+  assert.deepEqual(
+    runs.map(entry => [entry.branch, entry.repo]),
+    [
+      ['e/claudeCode/fix-typos-2', undefined],
+      ['e/claudeCode/fix-typos-1', undefined],
+    ]
+  );
+});
+
+test('a queued run in another repository joins the ledger by its branch', () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-runs-api-ns-'));
+  try {
+    const dirs = runsDirs(storeDir);
+    writeLedgerEntry(dirs, {
+      id: newRequestId(),
+      state: 'done',
+      slot: false,
+      agent: 'pi',
+      run: 'e/pi/nightly-3',
+      exitCode: 0,
+    });
+    const api = new RunsApi({
+      git: new InMemoryGit({ refs: runRefs }),
+      worktreesDir: path.join(os.tmpdir(), 'e-runs-api-no-spools'),
+      runs: dirs,
+      runNamespace: () => [
+        { path: '/src/other', git: new InMemoryGit({ refs: otherRefs }) },
+      ],
+    });
+    const nightly = api
+      .index()
+      .find(
+        (entry): entry is BranchRunItem => entry.branch === 'e/pi/nightly-3'
+      );
+    assert.equal(nightly?.repo, '/src/other');
+    assert.equal(nightly?.state, 'done');
+    assert.equal(nightly?.exitCode, 0);
+  } finally {
+    fs.rmSync(storeDir, { recursive: true, force: true });
+  }
+});
+
+test("a serve outside any repository lists its namespace's runs alone", () => {
+  const api = new RunsApi({
+    git: new InMemoryGit({ repo: false }),
+    worktreesDir: path.join(os.tmpdir(), 'e-runs-api-no-spools'),
+    runNamespace: () => [
+      {
+        path: '/src/other',
+        git: new InMemoryGit({ refs: otherRefs, log: otherCommits }),
+      },
+    ],
+  });
+  assert.deepEqual(
+    api.index().map(entry => entry.branch),
+    ['e/pi/nightly-3']
+  );
+  assert.equal(api.status(run('e/pi/nightly-3'))?.commits, 1);
 });

@@ -265,6 +265,18 @@ test('counter considers remote-tracking branches', async () => {
   assert.equal(result.branch, `e/demo/${slug}-5`);
 });
 
+test('a home Store run numbers past the runs of every repository in its namespace (#208)', async () => {
+  const slug = slugify('Fix the flaky test');
+  const { deps, runtime } = makeDeps({
+    git: new InMemoryGit({ branches: [`e/demo/${slug}-1`] }),
+  });
+  const other = new InMemoryGit({ branches: [`e/demo/${slug}-3`] });
+  const result = await runSpawn(deps, makeParams({ runNamespace: [other] }));
+  assert.equal(result.branch, `e/demo/${slug}-4`);
+  // Every name keyed by the run follows: the container is not the other repository's.
+  assert.equal(runtime.runs[0]?.options.name, `e-demo-${slug}-4`);
+});
+
 test('bumps the counter and retries on an atomic-create collision', async () => {
   const slug = slugify('Fix the flaky test');
   const { deps, git } = makeDeps({

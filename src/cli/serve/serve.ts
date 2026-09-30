@@ -19,6 +19,7 @@ import { findRoot } from '../../core/store/root.js';
 import { eBaseDir, envFilePath } from '../../core/store/paths.js';
 import { storeTriggerContext } from '../../core/trigger/context.js';
 import { loadTriggers } from '../../core/trigger/load.js';
+import { runNamespace } from '../../engine/runs/runNamespace.js';
 import { CronScheduler } from '../../engine/queue/cronScheduler.js';
 import { RunQueue } from '../../engine/queue/runQueue.js';
 import { runsDirs } from '../../engine/queue/runsSpool.js';
@@ -196,6 +197,12 @@ export function registerServeCommand(program: Command): void {
         },
         worktreesDir,
         runs,
+        // This Store's runs are cut in several repositories (#208).
+        runNamespace: () =>
+          runNamespace(root).map(repo => ({
+            path: repo,
+            git: new HostGit(repo),
+          })),
         triggers: {
           store: triggerStore,
           ...(queue ? { queue } : {}),

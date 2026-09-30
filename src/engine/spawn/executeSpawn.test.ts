@@ -23,6 +23,7 @@ import {
   runsDirs,
   writeLedgerEntry,
 } from '../queue/runsSpool.js';
+import { recordedRunRepositories } from '../runs/runNamespace.js';
 import {
   executeSpawn,
   sessionSecrets,
@@ -1268,4 +1269,40 @@ test('sessionSecrets: what the run hands its container, base URLs aside (#205)',
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('namespace: the repositories a home Store serves reach the run counter (#208)', async () => {
+  await withDemoStore(async root => {
+    const other = new InMemoryGit({ branches: ['e/demo/do-2'] });
+    const asked: string[] = [];
+    const result = await executeSpawn(
+      facts({ root, runNamespace: ['/src/other'] }),
+      emptyPlan,
+      {
+        git: new InMemoryGit(),
+        runtime: new RecordingRuntime(),
+        scratch: new RunScratch(),
+        gitAt: repo => {
+          asked.push(repo);
+          return other;
+        },
+      }
+    );
+    assert.deepEqual(asked, ['/src/other']);
+    assert.equal(result.branch, 'e/demo/do-3');
+  });
+});
+
+test('namespace: a run records the repository it is cut in with its Store (#208)', async () => {
+  await withDemoStore(async root => {
+    const storeDir = path.join(root, '.e');
+    await executeSpawn(facts({ root, sessionStoreDir: storeDir }), emptyPlan, {
+      git: new InMemoryGit({ toplevel: '/src/here' }),
+      runtime: new RecordingRuntime(),
+      scratch: new RunScratch(),
+    });
+    assert.deepEqual(recordedRunRepositories(storeDir), [
+      path.resolve('/src/here'),
+    ]);
+  });
 });

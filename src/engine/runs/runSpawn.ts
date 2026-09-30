@@ -254,6 +254,8 @@ export interface RunSpawnParams {
    * has ended - after teardown, which is when a slot frees. Best-effort.
    */
   ledger?: RunLedger;
+  /** The other repositories of the run namespace, whose runs the counter starts past (#208). */
+  runNamespace?: readonly Git[];
   /**
    * A cancel (ADR-0015): aborted before the container starts, the run ends
    * without one; aborted while the container runs, the host removes it, so
@@ -580,7 +582,9 @@ export async function runSpawn(
     // A resumed Run has one already: its branch, checked out again.
     const run: RunName = resume
       ? resumeWorktree(deps.git, resume, params.agent, worktreesDir)
-      : await nextRunName(deps.git, params.agent, slug, base, worktreesDir);
+      : await nextRunName(deps.git, params.agent, slug, base, worktreesDir, {
+          runNamespace: params.runNamespace,
+        });
     branch = run.branch;
     worktreePath = worktreePathFor(worktreesDir, run);
 

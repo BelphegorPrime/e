@@ -377,6 +377,11 @@ run gets this from the base `serve` recorded at claim. A home Store's
 trigger carries its `repo` on the request: the base resolves in that
 repository, and its `e spawn` starts there with `--dir` naming the serving
 Store, so the worktree, the base and the gate are all the target's (#201).
+Its run name is still unique across the Store: the run counter spans the
+Store's run namespace, every repository its triggers name or its runs were
+cut in, and `GET /api/runs` lists their runs too (ADR-0003, #208). A `repo`
+is an absolute path; a relative one is a load error, since `serve` and the
+run it starts stand in different directories.
 The queue and ledger stay with the **serving** Store: slots bound how many
 containers this machine runs.
 

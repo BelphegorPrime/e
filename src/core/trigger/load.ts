@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import {
   triggerConfigPath,
   triggerPromptPath,
@@ -110,6 +111,26 @@ export function loadTriggers(
   context: TriggerContext = {}
 ): LoadedTrigger[] {
   return listTriggerNames(root).map(name => loadTrigger(name, root, context));
+}
+
+/**
+ * Every repository the Store's triggers name, resolved and deduplicated: the
+ * repositories a home Store's runs are cut in, which share one run namespace
+ * (#208). Read leniently - only `context.repoLocal` counts, so a trigger whose
+ * agent no longer resolves still names the repository its earlier runs are
+ * in. A repo-local Store ignores `repo` and names none.
+ */
+export function triggerRepositories(
+  root: string | undefined,
+  context: TriggerContext
+): string[] {
+  if (root === undefined) return [];
+  const repos = new Set<string>();
+  for (const loaded of loadTriggers(root, { repoLocal: context.repoLocal })) {
+    const repo = loaded.trigger?.repo;
+    if (repo !== undefined) repos.add(path.resolve(repo));
+  }
+  return [...repos];
 }
 
 /** One file's change marker: its mtime and size, `-` when it is absent. */

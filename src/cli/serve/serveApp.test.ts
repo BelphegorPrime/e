@@ -156,6 +156,37 @@ test('/api/runs serves the index and the per-run views', async () => {
   );
 });
 
+test('/api/runs lists the runs of the repositories a home Store serves (#208)', async () => {
+  const other = new InMemoryGit({
+    refs: [
+      {
+        name: 'e/pi/nightly-3',
+        sha: 'ccc',
+        committerDate: '2025-01-03T03:00:00+00:00',
+        subject: 'nightly',
+      },
+    ],
+  });
+  await withServeApp(
+    {
+      git: new InMemoryGit({ refs: runRefs, log: runCommits }),
+      runNamespace: () => [{ path: '/src/other', git: other }],
+    },
+    async baseUrl => {
+      const index = (await (await fetch(`${baseUrl}/api/runs`)).json()) as {
+        runs: Array<{ branch: string; repo?: string }>;
+      };
+      assert.deepEqual(index.runs[0], {
+        ...index.runs[0],
+        branch: 'e/pi/nightly-3',
+        repo: '/src/other',
+      });
+      const status = await fetch(`${baseUrl}/api/runs/e/pi/nightly-3`);
+      assert.equal(status.status, 200);
+    }
+  );
+});
+
 test('/api/runs is 404 for an unknown or non-run branch', async () => {
   await withServeApp(
     { git: new InMemoryGit({ refs: runRefs, log: runCommits }) },

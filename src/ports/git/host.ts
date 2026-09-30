@@ -240,15 +240,41 @@ export class HostGit implements Git {
   }
 
   addWorktree(spec: WorktreeSpec): void {
-    // `-b <branch>` makes the branch; git refuses if it already exists, and
-    // refuses if `path` is non-empty - giving us atomic create for free.
+    // `-b <branch>` makes the branch, and git refuses one that exists. The
+    // path is claimed first, by an exclusive mkdir: git refuses a non-empty
+    // path only after it has made the branch, and makes the directory
+    // without an exclusive create, so two repositories racing for one host
+    // path (#208) could both pass its check, or the loser keep a stray
+    // branch. Git accepts the empty directory.
     log.debug(
       `Creating worktree: ${spec.path} -> branch ${spec.branch} at ${spec.base}`
     );
-    this.run(
-      ['worktree', 'add', '-b', spec.branch, spec.path, spec.base],
-      `create worktree for ${spec.branch}`
-    );
+    fs.mkdirSync(path.dirname(spec.path), { recursive: true });
+    try {
+      fs.mkdirSync(spec.path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new Error(
+          `Failed to create worktree for ${spec.branch}: '${spec.path}' already exists`,
+          { cause: err }
+        );
+      }
+      throw err;
+    }
+    try {
+      this.run(
+        ['worktree', 'add', '-b', spec.branch, spec.path, spec.base],
+        `create worktree for ${spec.branch}`
+      );
+    } catch (err) {
+      // Release the claim; a directory git left anything in stays taken.
+      try {
+        fs.rmdirSync(spec.path);
+      } catch {
+        // Not empty, or already gone.
+      }
+      throw err;
+    }
   }
 
   checkoutWorktree(worktreePath: string, branch: string): void {

@@ -38,7 +38,7 @@ import { env } from '../../shared/utils/env.js';
 import { E_VERSION } from '../../shared/version.js';
 import { respondJson, respondNotFound } from './apiResponse.js';
 import { egressRoutes } from './reverseProxy.js';
-import { RunsApi, runsRoutes } from './runsApi.js';
+import { RunsApi, runsRoutes, type RunRepository } from './runsApi.js';
 import { spawnRoutes } from './spawnApi.js';
 import { TerminalRequestError, TerminalSessions } from './terminalSessions.js';
 import { triggersRoutes, type TriggersApiDeps } from './triggersApi.js';
@@ -82,6 +82,11 @@ export interface ServeAppDeps {
    * the host git executable; tests inject a fake.
    */
   git?: Git;
+  /**
+   * The other repositories of the serving Store's run namespace, listed by
+   * `GET /api/runs` next to `git`'s (#208).
+   */
+  runNamespace?: () => readonly RunRepository[];
   /**
    * Browser-started runs (ADR-0014). Absent in tests that do not exercise the
    * terminal; the routes then answer 503.
@@ -176,6 +181,7 @@ export function createServeApp(deps: ServeAppDeps = {}): Express {
     egressApiUrl = env.egressApiUrl,
     omniRouteEmbedPort = null,
     git = new HostGit(),
+    runNamespace,
     terminal,
     listAgents = storeAgents,
     a2a,
@@ -299,7 +305,16 @@ export function createServeApp(deps: ServeAppDeps = {}): Express {
   // Manual child requests first (ADR-0013, ticket 09), ahead of the read
   // router so the POST has no GET sibling view to collide with.
   app.use(spawnRoutes(worktreesDir));
-  app.use(runsRoutes(new RunsApi({ git, worktreesDir, runs })));
+  app.use(
+    runsRoutes(
+      new RunsApi({
+        git,
+        worktreesDir,
+        runs,
+        ...(runNamespace ? { runNamespace } : {}),
+      })
+    )
+  );
   if (deps.triggers) app.use(triggersRoutes(deps.triggers));
 
   app.use('/api', (_request, response) => {

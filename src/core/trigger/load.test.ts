@@ -6,6 +6,7 @@ import path from 'path';
 import {
   loadTriggers,
   parseTriggerFiles,
+  triggerRepositories,
   triggerSignatures,
   type LoadedTrigger,
 } from './load.js';
@@ -177,3 +178,65 @@ test('triggerSignatures: one marker per directory, moved by an edit to either fi
       assert.equal(triggerSignatures(root).get('a'), after.get('a'));
     }
   ));
+
+test('triggerRepositories: a home Store names each trigger repository once, resolved', () => {
+  const cron = { type: 'cron', expr: '0 3 * * *' };
+  withStore(
+    {
+      nightly: {
+        'trigger.json': JSON.stringify({
+          agent: 'a',
+          prompt: 'p',
+          repo: '/src/a',
+          on: cron,
+        }),
+      },
+      weekly: {
+        // The agent does not resolve: still the repository of its runs.
+        'trigger.json': JSON.stringify({
+          agent: 'gone',
+          prompt: 'p',
+          repo: '/src/a/',
+          on: cron,
+        }),
+      },
+      other: {
+        'trigger.json': JSON.stringify({
+          agent: 'a',
+          prompt: 'p',
+          repo: '/src/b',
+          on: cron,
+        }),
+      },
+      broken: { 'trigger.json': '{' },
+    },
+    root => {
+      assert.deepEqual(
+        triggerRepositories(root, {
+          repoLocal: false,
+          knownAgents: ['a'],
+        }).sort(),
+        [path.resolve('/src/a'), path.resolve('/src/b')]
+      );
+    }
+  );
+});
+
+test('triggerRepositories: a repo-local Store, or none at all, names no repository', () => {
+  withStore(
+    {
+      nightly: {
+        'trigger.json': JSON.stringify({
+          agent: 'a',
+          prompt: 'p',
+          repo: '/src/a',
+          on: { type: 'cron', expr: '0 3 * * *' },
+        }),
+      },
+    },
+    root => {
+      assert.deepEqual(triggerRepositories(root, { repoLocal: true }), []);
+    }
+  );
+  assert.deepEqual(triggerRepositories(undefined, { repoLocal: false }), []);
+});
