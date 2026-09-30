@@ -493,7 +493,8 @@ type McpWiring =
       form: 'file';
       planOverlay: (
         baseConfig: string,
-        endpoints: McpEndpoint[]
+        endpoints: McpEndpoint[],
+        secretEnv: readonly string[]
       ) => ConfigOverlayDelivery;
     }
   | { form: 'none' };
@@ -603,7 +604,8 @@ export type McpDelivery =
 export function planMcpDelivery(
   harness: Harness,
   endpoints: McpEndpoint[],
-  baseConfig: string
+  baseConfig: string,
+  secretEnv: readonly string[] = []
 ): McpDelivery {
   const wiring = mcpWiring(harness);
   switch (wiring.form) {
@@ -612,7 +614,7 @@ export function planMcpDelivery(
     case 'file':
       return {
         form: wiring.form,
-        overlay: wiring.planOverlay(baseConfig, endpoints),
+        overlay: wiring.planOverlay(baseConfig, endpoints, secretEnv),
       };
     case 'none':
       return { form: wiring.form };

@@ -637,6 +637,13 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
   const remoteCredentials: string[] = [];
   let mcpArgs: string[] = [];
   let configOverlay: ConfigOverlayDelivery | undefined;
+  // The keys this run may carry, for a harness that keeps them out of its
+  // agent's shell (Codex's `exclude`): its own and the provider's.
+  const secretEnv = [
+    ...harness.requiredEnv,
+    ...(agent.provider ? [agent.provider.apiKeyEnv] : []),
+  ];
+  const baseConfig = delivery?.bakedConfig?.file.content ?? '';
   if (facts.mcpServers.length > 0) {
     const selection = planMcpSelection(
       facts.mcpServers,
@@ -674,13 +681,25 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     const mcp = planMcpDelivery(
       harness,
       selection.endpoints,
-      delivery?.bakedConfig?.file.content ?? ''
+      baseConfig,
+      secretEnv
     );
     if (mcp.form === 'flag') {
       mcpArgs = mcp.args;
     } else if (mcp.form === 'file') {
       configOverlay = mcp.overlay;
     }
+  }
+  // A harness that needs its config on every run gets it without --mcp too:
+  // Codex, whose secret policy a default agent bakes nowhere (#206).
+  const adapter = harness.adapter;
+  if (
+    configOverlay === undefined &&
+    adapter?.kind === 'file' &&
+    adapter.overlayEveryRun &&
+    adapter.planConfigOverlay
+  ) {
+    configOverlay = adapter.planConfigOverlay(baseConfig, [], secretEnv);
   }
 
   // Per-run skill mounts (baked skills are handled by the derived image below).

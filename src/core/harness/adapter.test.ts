@@ -340,6 +340,17 @@ test('codexAdapter.planConfigOverlay: MCP header secrets join the key in the one
   assert.match(bare, /^exclude = \["GITHUB_TOKEN"\]$/m);
 });
 
+test('codexAdapter.planConfigOverlay: extra secret env joins the exclude list once', () => {
+  const content = codexAdapter.planConfigOverlay!(
+    renderCodexConfig(codexProvider),
+    [],
+    ['OPENAI_API_KEY', 'MY_GATEWAY_KEY']
+  ).file.content;
+  assert.match(content, /^exclude = \["MY_GATEWAY_KEY", "OPENAI_API_KEY"\]$/m);
+  assert.equal(codexAdapter.overlayEveryRun, true);
+  assert.equal(piAdapter.overlayEveryRun, undefined);
+});
+
 test('codexAdapter.planConfigOverlay: merges the MCP block onto the baked base config', () => {
   const base = renderCodexConfig(codexProvider);
   const overlay = codexAdapter.planConfigOverlay!(base, [

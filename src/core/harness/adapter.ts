@@ -180,8 +180,16 @@ export interface FileHarnessAdapter {
    */
   planConfigOverlay?(
     baseConfig: string,
-    endpoints: McpEndpoint[]
+    endpoints: McpEndpoint[],
+    secretEnv?: readonly string[]
   ): ConfigOverlayDelivery;
+  /**
+   * The overlay is planned on **every** run, with no endpoints when there is
+   * no `--mcp`: the harness needs its config on every run for more than MCP.
+   * Codex does, for the settings that keep `secretEnv` (the keys a run may
+   * carry) out of its shell and its shell snapshot.
+   */
+  overlayEveryRun?: true;
 }
 
 /**
@@ -428,9 +436,11 @@ export const codexAdapter: FileHarnessAdapter = {
         provider.model === 'auto/coding' ? provider.model : undefined,
     };
   },
+  overlayEveryRun: true,
   planConfigOverlay(
     baseConfig: string,
-    endpoints: McpEndpoint[]
+    endpoints: McpEndpoint[],
+    secretEnv: readonly string[] = []
   ): ConfigOverlayDelivery {
     // The policy stays the file's last tables, extended by the MCP secrets:
     // TOML allows each table once, and a default agent bakes none.
@@ -439,12 +449,12 @@ export const codexAdapter: FileHarnessAdapter = {
       start === undefined ? baseConfig : baseConfig.slice(0, start);
     const vars = [
       ...(start === undefined ? [] : codexPolicyVars(baseConfig.slice(start))),
+      ...secretEnv,
       ...codexSecretVars(endpoints),
     ];
     const content =
       (provider.trim() ? provider.trimEnd() + '\n\n' : '') +
-      renderCodexMcpServers(endpoints) +
-      '\n' +
+      (endpoints.length > 0 ? renderCodexMcpServers(endpoints) + '\n' : '') +
       renderCodexSecretPolicy(vars);
     return {
       file: { fileName: CODEX_CONFIG_FILE, content },

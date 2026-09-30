@@ -399,6 +399,63 @@ test('planSpawn: no file harness bakes or mounts the key value, only its name', 
   }
 });
 
+test('planSpawn: a default Codex agent still gets the secret policy, its required key excluded', () => {
+  // No provider and no --mcp: nothing is baked, yet Codex would snapshot the
+  // env and hand the shell the key an --env-file brought (#206).
+  const plan = planSpawn(
+    facts({
+      harness: HARNESSES.codex,
+      agent: { name: 'codex', harness: 'codex' },
+    })
+  );
+  const content = plan.configOverlay?.file.content ?? '';
+  assert.equal(plan.configOverlay?.mountTo, '/home/node/.codex/config.toml');
+  assert.match(content, /^shell_snapshot = false$/m);
+  assert.match(content, /^exclude = \["OPENAI_API_KEY"\]$/m);
+  assert.doesNotMatch(content, /mcp_servers/);
+});
+
+test('planSpawn: one Codex exclude list holds the provider key, the required key and every MCP header var', () => {
+  const plan = planSpawn(
+    facts({
+      harness: HARNESSES.codex,
+      agent: {
+        name: 'gw-codex',
+        harness: 'codex',
+        provider: {
+          baseUrl: 'https://gw.example.com/v1',
+          model: 'm',
+          protocol: 'openai-responses',
+          apiKeyEnv: 'GW_KEY',
+        },
+      },
+      storeEnv: { GW_KEY: 'k', MCP_TOKEN: 't' },
+      mcpServers: [
+        {
+          name: 'hosted',
+          transport: 'remote',
+          url: 'https://mcp.example.com/mcp',
+          headers: { Authorization: 'Bearer ${MCP_TOKEN}' },
+          requiredEnv: ['MCP_TOKEN'],
+        },
+      ],
+    })
+  );
+  const content = plan.configOverlay?.file.content ?? '';
+  assert.match(
+    content,
+    /^exclude = \["GW_KEY", "OPENAI_API_KEY", "MCP_TOKEN"\]$/m
+  );
+  assert.equal(content.match(/^\[shell_environment_policy\]$/gm)?.length, 1);
+});
+
+test('planSpawn: pi gets no overlay without --mcp', () => {
+  const plan = planSpawn(
+    facts({ harness: HARNESSES.pi, agent: { name: 'pi', harness: 'pi' } })
+  );
+  assert.equal(plan.configOverlay, undefined);
+});
+
 test('planSpawn: a flag-MCP harness (claude) wires --mcp-config, no overlay', () => {
   const plan = planSpawn(facts({ mcpServers: [containerMcp] }));
   assert.equal(plan.sidecars.length, 1);
