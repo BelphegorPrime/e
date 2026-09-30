@@ -633,6 +633,69 @@ test('validateSpawn: a sibling cannot also declare a base', () => {
   );
 });
 
+const fusionBase = {
+  ref: 'refs/heads/main',
+  sha: 'pinned-sha',
+  branch: 'main',
+};
+const fusionCandidate = { fusion: 'fusion-X', base: fusionBase };
+const candidateReport = { spoolDir: '/tmp/fusion', id: 'cand-001' };
+
+test('validateSpawn: a fusion candidate is watched, cuts from its fusion base, and is never a sibling', () => {
+  assert.doesNotThrow(() =>
+    validateSpawn(
+      facts({ fusionCandidate, base: fusionBase, report: candidateReport })
+    )
+  );
+  assert.throws(
+    () => validateSpawn(facts({ fusionCandidate, base: fusionBase })),
+    /fusion candidate .*reports into its fusion's spool/
+  );
+  assert.throws(
+    () =>
+      validateSpawn(
+        facts({
+          fusionCandidate,
+          base: { ...fusionBase, sha: 'moved' },
+          report: candidateReport,
+        })
+      ),
+    /cuts from its fusion's base pinned-sha/
+  );
+  assert.throws(
+    () =>
+      validateSpawn(
+        facts({
+          fusionCandidate,
+          role: 'child',
+          sibling: {
+            id: 'sib-001',
+            spoolDir: '/tmp/spool',
+            parent: { worktreePath: '/tmp/p', branch: 'e/demo/p-1' },
+          },
+          report: candidateReport,
+        })
+      ),
+    /sibling sib-001 cannot also/
+  );
+});
+
+test('planSpawn: a fusion candidate keeps no session', () => {
+  const pi = { agent: { name: 'pi', harness: 'pi' }, harness: HARNESSES.pi };
+  assert.equal(
+    planSpawn(
+      facts({
+        ...pi,
+        sessionStoreDir: '/root/.e',
+        fusionCandidate,
+        base: fusionBase,
+        report: candidateReport,
+      })
+    ).session,
+    undefined
+  );
+});
+
 test('planSpawn: a one-shot payload is mounted read-only at /run/e/event.json', () => {
   // Outside /workspace, so it can never ride along in a commitAll (ADR-0016).
   const plan = planSpawn(facts({ eventFile: '/runner/temp/event.json' }));

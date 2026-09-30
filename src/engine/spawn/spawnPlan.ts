@@ -39,7 +39,10 @@ import {
 } from '../../core/harness/deriveImage.js';
 import { planMcpSelection, type McpServer } from '../../core/mcp/index.js';
 import type { Mount } from '../../core/mount.js';
-import type { SiblingSpawn } from '../../shared/utils/env.js';
+import type {
+  FusionCandidateSpawn,
+  SiblingSpawn,
+} from '../../shared/utils/env.js';
 import type { LocalRuntime } from '../../core/localRuntimes.js';
 import type {
   GitPlatform,
@@ -270,6 +273,13 @@ export interface SpawnFacts {
    * `e serve`, ADR-0015): where to report status, `pushed` and the PR/MR URL.
    */
   readonly report?: { spoolDir: string; id: string };
+  /**
+   * Present for a fusion's Candidate run (the `E_SPAWN_FUSION_*` markers,
+   * ADR-0019 section 4): it cuts from the fusion's pinned base, which is
+   * also {@link base}, reports into the fusion's spool, pushes nothing,
+   * opens no PR and keeps no session.
+   */
+  readonly fusionCandidate?: Readonly<FusionCandidateSpawn>;
   /** The store's `siblingArtifacts` (`config.json`): what a sibling copies from its parent (ADR-0013). */
   readonly siblingArtifacts: readonly string[];
   /** The store's `maxSiblings` (`config.json`): siblings a run may have in flight at once (ADR-0013). */
@@ -407,6 +417,26 @@ export function validateSpawn(facts: SpawnFacts): void {
     throw new Error(
       `A spawn started for sibling ${facts.sibling.id} cannot also carry the report markers.`
     );
+  }
+
+  // A candidate's end is read from its fusion's spool, and the base it cuts
+  // from is the one the fusion pinned for every candidate (ADR-0019).
+  if (facts.fusionCandidate) {
+    if (facts.sibling) {
+      throw new Error(
+        `A spawn started for sibling ${facts.sibling.id} cannot also be a fusion candidate.`
+      );
+    }
+    if (!facts.report) {
+      throw new Error(
+        `A fusion candidate of ${facts.fusionCandidate.fusion} reports into its fusion's spool; the report markers are missing.`
+      );
+    }
+    if (facts.base?.sha !== facts.fusionCandidate.base.sha) {
+      throw new Error(
+        `A fusion candidate of ${facts.fusionCandidate.fusion} cuts from its fusion's base ${facts.fusionCandidate.base.sha}, not ${facts.base?.sha ?? "the host's HEAD"}.`
+      );
+    }
   }
 
   // A resume continues a session only a resumable harness keeps (ADR-0017),
@@ -785,7 +815,10 @@ function planSession(facts: SpawnFacts): RunSessionInit | undefined {
   if (!harnessCapabilities(harness).resume) return undefined;
   const provider = sessionProvider(agent.provider);
   if (facts.sessionStoreDir === undefined) return undefined;
+  // A sibling's and a candidate's delivery is someone else's: resuming one
+  // as a Run of its own would push it and open a PR nobody asked for.
   if ((facts.role ?? 'parent') === 'child' || facts.sibling) return undefined;
+  if (facts.fusionCandidate) return undefined;
   return {
     agent: agent.name,
     harness: harness.name,

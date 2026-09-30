@@ -40,7 +40,7 @@ export interface SpawnRequestBody {
 
 /** A request as spooled by the broker (`requests/<id>.json`). */
 export interface SpawnRequest extends SpawnRequestBody {
-  /** `sib-NNN` (a sibling) or `a2a-NNN` (a task the A2A facade started), assigned in arrival order. */
+  /** `sib-NNN` (a sibling), `a2a-NNN` (a task the A2A facade started) or `cand-NNN` (a fusion's Candidate run), assigned in arrival order. */
   id: string;
   /** ISO timestamp of arrival at the broker. */
   requestedAt: string;
@@ -95,6 +95,13 @@ export interface SiblingStatusPatch {
   pushed?: boolean;
   /** A run of the user's own: the PR/MR opened for its branch, when one was. */
   pullRequestUrl?: string;
+  /**
+   * A fusion's Candidate run (ADR-0019): why it ended as it did, as the
+   * Verdict spells a reason (`aborted:*` / `exhausted:*`), when it has one.
+   */
+  reason?: string;
+  /** A fusion's Candidate run with a gate: the repository check's verdict and how many attempts it took. */
+  verify?: { verdict: 'green' | 'red' | 'broken'; attempts: number };
   /**
    * A remote A2A agent's answer (ADR-0015): the text of the artifacts it
    * returned. Such a sibling has no branch; the answer goes into the report.

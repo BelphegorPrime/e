@@ -38,10 +38,12 @@ const request = (id: string) => ({
   requestedAt: '2026-09-12T10:00:00.000Z',
 });
 
-test('isRequestId: sib-NNN (a sibling) or a2a-NNN (an A2A task) only, so an id is safe to use as a file name', () => {
+test('isRequestId: sib-NNN (a sibling), a2a-NNN (an A2A task) or cand-NNN (a fusion candidate) only, so an id is safe to use as a file name', () => {
   assert.equal(isRequestId('sib-001'), true);
   assert.equal(isRequestId('sib-1234'), true);
   assert.equal(isRequestId('a2a-001'), true);
+  assert.equal(isRequestId('cand-001'), true);
+  assert.equal(isRequestId('cand-1'), false);
   assert.equal(isRequestId('sib-1'), false);
   assert.equal(isRequestId('task-001'), false);
   assert.equal(isRequestId('../etc/passwd'), false);

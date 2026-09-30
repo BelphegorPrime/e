@@ -1508,6 +1508,99 @@ test('a sibling reports running with its branch, then done, into its parent spoo
   });
 });
 
+test('a fusion candidate cuts from the pinned base and reports into its fusion spool; it neither pushes nor opens a PR', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, 'fusion');
+    ensureSpool(spool);
+    const pullRequest = new FakePullRequest();
+    const { deps, git } = makeDeps({ pullRequest });
+    git.setDirty(true);
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        gitPlatform: 'github',
+        base: { ref: 'refs/heads/main', sha: 'pinned-sha', branch: 'main' },
+        report: { spoolDir: spool, id: 'cand-001' },
+        candidate: true,
+      })
+    );
+    assert.equal(git.worktrees[0].base, 'pinned-sha');
+    const status = readStatus(spool, 'cand-001');
+    assert.equal(status?.status, 'done');
+    assert.equal(status?.branch, result.branch);
+    assert.equal(status?.pushed, false);
+    // The fusion pushes every usable candidate once its fan-out has closed.
+    assert.ok(!git.calls.includes('push'));
+    assert.deepEqual(pullRequest.specs, []);
+    // Ungated, there is no verdict to report.
+    assert.equal(status?.reason, undefined);
+    assert.equal(status?.verify, undefined);
+  });
+});
+
+test('a verified fusion candidate reports its green verdict and no reason', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, 'fusion');
+    ensureSpool(spool);
+    const { deps, git } = makeDeps();
+    git.setDirty(true);
+    await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        verify: { command: 'npm test' },
+        base: { ref: 'refs/heads/main', sha: 'pinned-sha', branch: 'main' },
+        report: { spoolDir: spool, id: 'cand-001' },
+        candidate: true,
+      })
+    );
+    const status = readStatus(spool, 'cand-001');
+    assert.equal(status?.exitCode, 0);
+    assert.equal(status?.reason, undefined);
+    assert.deepEqual(status?.verify, { verdict: 'green', attempts: 1 });
+  });
+});
+
+test('a fusion candidate without a report target is refused before anything is cut', async () => {
+  const { deps, git } = makeDeps();
+  await assert.rejects(
+    runSpawn(deps, makeParams({ candidate: true })),
+    /needs a report target/
+  );
+  assert.equal(git.worktrees.length, 0);
+});
+
+test('a gated fusion candidate reports its reason and the verify verdict, never its gate removals', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, 'fusion');
+    ensureSpool(spool);
+    const runtime = new FakeRuntime();
+    // agent, check, agent, check: red twice.
+    runtime.exitCodes = [0, 1, 0, 1];
+    const { deps, git } = makeDeps({ runtime });
+    git.setDirty(true);
+    runtime.onRun = options => git.setDirty(true, options.volumes![0].host);
+    await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        verify: { command: 'npm test' },
+        loop: { ...DEFAULT_LOOP_CAPS, maxIterations: 2 },
+        base: { ref: 'refs/heads/main', sha: 'pinned-sha', branch: 'main' },
+        report: { spoolDir: spool, id: 'cand-001' },
+        candidate: true,
+      })
+    );
+    const status = readStatus(spool, 'cand-001');
+    assert.equal(status?.exitCode, 2);
+    assert.equal(status?.reason, 'exhausted:iterations');
+    assert.deepEqual(status?.verify, { verdict: 'red', attempts: 2 });
+    assert.equal('gateRemovals' in (status ?? {}), false);
+    assert.ok(!git.calls.includes('push'));
+  });
+});
+
 test('a sibling that fails before its container reports failed with the reason', async () => {
   await withWorktreesDir(async worktreesDir => {
     const spool = path.join(worktreesDir, 'spool');

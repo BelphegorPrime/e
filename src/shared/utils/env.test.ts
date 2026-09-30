@@ -15,6 +15,10 @@ const VARS = [
   Env.TTY_HEADLESS_VAR,
   Env.SPAWN_REPORT_SPOOL_VAR,
   Env.SPAWN_REPORT_ID_VAR,
+  Env.SPAWN_FUSION_VAR,
+  Env.SPAWN_FUSION_BASE_SHA_VAR,
+  Env.SPAWN_FUSION_BASE_REF_VAR,
+  Env.SPAWN_FUSION_BASE_BRANCH_VAR,
   Env.A2A_TOKEN_VAR,
   Env.GITHUB_EVENT_NAME_VAR,
   Env.STORE_ENV_FILE_VAR,
@@ -191,6 +195,77 @@ test('withReport sets the report markers and drops the serve, terminal and sibli
   );
   assert.equal(sibling[Env.SPAWN_REPORT_SPOOL_VAR], undefined);
   assert.equal(sibling[Env.SPAWN_REPORT_ID_VAR], undefined);
+});
+
+const pinned = { sha: 'abc123', ref: 'refs/heads/main', branch: 'main' };
+
+test('fusion candidate markers (ADR-0019): undefined when unset, complete with the report markers, an error otherwise', () => {
+  for (const name of [
+    Env.SPAWN_FUSION_VAR,
+    Env.SPAWN_FUSION_BASE_SHA_VAR,
+    Env.SPAWN_FUSION_BASE_REF_VAR,
+    Env.SPAWN_FUSION_BASE_BRANCH_VAR,
+    Env.SPAWN_REPORT_SPOOL_VAR,
+    Env.SPAWN_REPORT_ID_VAR,
+  ]) {
+    delete process.env[name];
+  }
+  assert.equal(env.fusionCandidate, undefined);
+  process.env[Env.SPAWN_FUSION_VAR] = 'fusion-X';
+  assert.throws(
+    () => env.fusionCandidate,
+    /Incomplete fusion candidate markers/
+  );
+  process.env[Env.SPAWN_FUSION_BASE_SHA_VAR] = pinned.sha;
+  process.env[Env.SPAWN_FUSION_BASE_REF_VAR] = pinned.ref;
+  process.env[Env.SPAWN_FUSION_BASE_BRANCH_VAR] = pinned.branch;
+  // A candidate is always watched: its fusion reads its end from the spool.
+  assert.throws(
+    () => env.fusionCandidate,
+    /A fusion candidate needs the report markers/
+  );
+  process.env[Env.SPAWN_REPORT_SPOOL_VAR] = '/spool';
+  process.env[Env.SPAWN_REPORT_ID_VAR] = 'cand-001';
+  assert.deepEqual(env.fusionCandidate, { fusion: 'fusion-X', base: pinned });
+});
+
+test('withFusionCandidate: the report and candidate markers set; no sibling, report or ledger child inherits them', () => {
+  const copy = env.withFusionCandidate(
+    { spoolDir: '/spool', id: 'cand-002' },
+    { fusion: 'fusion-X', base: pinned },
+    {
+      PATH: '/bin',
+      [Env.SPAWN_ROLE_VAR]: 'child',
+      [Env.SPAWN_SIBLING_ID_VAR]: 'sib-001',
+    }
+  );
+  assert.deepEqual(copy, {
+    PATH: '/bin',
+    [Env.SPAWN_REPORT_SPOOL_VAR]: '/spool',
+    [Env.SPAWN_REPORT_ID_VAR]: 'cand-002',
+    [Env.SPAWN_FUSION_VAR]: 'fusion-X',
+    [Env.SPAWN_FUSION_BASE_SHA_VAR]: 'abc123',
+    [Env.SPAWN_FUSION_BASE_REF_VAR]: 'refs/heads/main',
+    [Env.SPAWN_FUSION_BASE_BRANCH_VAR]: 'main',
+  });
+  // A candidate's own sibling branches from the candidate, not the fusion base,
+  // and a run it hands on is a run of its own.
+  const sibling = env.withSibling(
+    {
+      parent: { worktreePath: '/wt', branch: 'b' },
+      spoolDir: '/s',
+      id: 'sib-001',
+    },
+    copy
+  );
+  const report = env.withReport({ spoolDir: '/r', id: 'a2a-001' }, copy);
+  const ledger = env.withLedger('/live/x.json', copy);
+  for (const child of [sibling, report, ledger]) {
+    assert.equal(child[Env.SPAWN_FUSION_VAR], undefined);
+    assert.equal(child[Env.SPAWN_FUSION_BASE_SHA_VAR], undefined);
+    assert.equal(child[Env.SPAWN_FUSION_BASE_REF_VAR], undefined);
+    assert.equal(child[Env.SPAWN_FUSION_BASE_BRANCH_VAR], undefined);
+  }
 });
 
 test('a2aToken is the trimmed E_A2A_TOKEN, undefined when unset or blank', () => {

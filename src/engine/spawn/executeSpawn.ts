@@ -530,6 +530,7 @@ async function executeSpawnWith(
         ? { spoolDir: sibling.spoolDir, id: sibling.id }
         : undefined,
       report: facts.report,
+      candidate: facts.fusionCandidate !== undefined,
       abort: deps.abort,
       // What every sibling `e spawn` inherits from this invocation: the same
       // store, the same user env-file, the same container engine.

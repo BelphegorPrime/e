@@ -249,6 +249,14 @@ export interface RunSpawnParams {
    */
   report?: { spoolDir: string; id: string };
   /**
+   * A fusion's Candidate run (ADR-0019 section 4), which needs {@link report}:
+   * its delivery is the fusion, so it pushes nothing and opens no PR - the
+   * fusion pushes every usable candidate once its fan-out has closed - and
+   * its report carries the reason and the verify verdict the Candidate
+   * result is built from.
+   */
+  candidate?: boolean;
+  /**
    * This run's ledger entry (ADR-0016 section 6): a manual spawn's own, or the
    * one `e serve` claimed for it. Patched as the run gets a branch and when it
    * has ended - after teardown, which is when a slot frees. Best-effort.
@@ -529,6 +537,11 @@ export async function runSpawn(
   let loopStartedAt: number | undefined;
   const role = params.role ?? 'parent';
   const maxSiblings = params.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
+  if (params.candidate && !params.report) {
+    throw new Error(
+      "A fusion candidate reports into its fusion's spool; it needs a report target."
+    );
+  }
   if (params.broker && !params.siblingHost?.launch) {
     throw new Error(
       'A run with a broker needs siblingHost.launch: refusing to host siblings without a launcher'
@@ -1080,6 +1093,7 @@ export async function runSpawn(
     // not (ADR-0015), and a sibling's work reaches its parent by merge-back.
     if (
       !params.sibling &&
+      !params.candidate &&
       !canceled &&
       (captured || deps.git.hasCommitsBeyondBase(branch, base))
     ) {
@@ -1180,6 +1194,20 @@ export async function runSpawn(
       exitCode,
       ...(params.report ? { pushed } : {}),
       ...(pullRequestUrl !== undefined ? { pullRequestUrl } : {}),
+      // What a Candidate result says of the run's end; never gate removals,
+      // which are for the human (ADR-0016 section 11).
+      // `reason` is only meant for a run that did not end verified.
+      ...(params.candidate && gated && outcome !== 'verified' && reason
+        ? { reason }
+        : {}),
+      ...(params.candidate && gated && verifyOutcome
+        ? {
+            verify: {
+              verdict: verifyOutcome.verdict,
+              attempts: iterations.length,
+            },
+          }
+        : {}),
     });
     ledgerEnd = {
       state: 'done',

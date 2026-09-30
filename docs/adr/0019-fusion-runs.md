@@ -127,7 +127,7 @@ beside `engine/a2a` and `engine/queue`. It is the only new moving part.
 ```mermaid
 stateDiagram-v2
     state "fanning-out" as fanning_out
-    [*] --> prepared: profile valid, base pinned, images built
+    [*] --> prepared: profile valid, base pinned
     prepared --> fanning_out: launch candidates
     fanning_out --> synthesizing: every candidate terminal, usable >= minUsable
     fanning_out --> failed: usable < minUsable
@@ -136,7 +136,7 @@ stateDiagram-v2
     synthesizing --> canceled: cancel
     fanning_out --> exhausted: totalMs
     synthesizing --> exhausted: totalMs
-    prepared --> failed: build or preflight error
+    fanning_out --> failed: coordinator error
     fanning_out --> interrupted: coordinator died
     synthesizing --> interrupted: coordinator died
     completed --> [*]
@@ -149,14 +149,17 @@ stateDiagram-v2
 1. **Prepare.** Resolve and validate the profile. Pin the base: the checkout's
    `HEAD` resolved once to a sha, with the branch it names as the PR target -
    what a manual `e spawn` cuts from today, but read once rather than once per
-   Run. Build every distinct Agent's image, serially, before any worktree
-   exists (ADR-0005's "build before worktree"), so N candidates never race one
-   build. Write the fusion record (section 6).
+   Run. Write the fusion record (section 6), after marking any record a dead
+   coordinator left `interrupted` and pruning the ones past retention.
 2. **Fan out.** Launch the candidates, at most `maxConcurrency` at a time, in
    profile order. Each is a headless child
-   `e spawn <agent> --name <slug> -- <prompt>` started through `childRun.ts`,
+   `e spawn <agent> -- <prompt>` started through `childRun.ts`,
    carrying host-set markers (section 4). A candidate starts as soon as a slot
-   frees, not in lockstep batches.
+   frees, not in lockstep batches - and **one image build at a time**: the
+   next candidate starts only once every live one has built its images and
+   cut its worktree (`starting`), so N candidates never race one build and
+   each build still precedes its worktree (ADR-0005). A later candidate of an
+   Agent already built in this fan-out passes `--no-rebuild`.
 3. **Collect.** As each candidate settles, the host writes its Candidate result
    and its patch (section 5). When the fan-out closes, the host pushes every
    usable candidate branch, after the last candidate has stopped, so no
@@ -350,8 +353,10 @@ host-side git, never from anything the candidate wrote about itself:
   the same Store, the retention ADR-0017 settled for sessions.
 - **Restart reconciles, never resumes.** A coordinator that dies leaves its
   record in a non-terminal state; the next `e fuse` in that Store marks it
-  `interrupted`, keeps every envelope already written, and resumes nothing -
-  the rule #141 set for the ledger. A fan-out that never closed pushed
+  `interrupted` once its recorded coordinator pid no longer runs, keeps every
+  envelope already written, and resumes nothing - the rule #141 set for the
+  ledger. Known limit: a reused pid keeps a dead record live until that
+  process ends. A fan-out that never closed pushed
   nothing; its branches are local, and their envelopes name them.
 
 The record is a record of **one fusion**, not of runs: which Runs exist is
@@ -394,7 +399,7 @@ PR.
 ### 8. Verdict, exit codes and provenance
 
 The fusion's exit code is the synthesis run's verdict (ADR-0016), plus the
-three ways a fusion ends without one:
+ways a fusion ends without one:
 
 | Outcome                                           | Code  | Reason                        |
 | ------------------------------------------------- | ----- | ----------------------------- |
@@ -402,7 +407,7 @@ three ways a fusion ends without one:
 | Synthesis run `aborted`                           | `1`   | its `aborted:*`               |
 | Synthesis run `exhausted`                         | `2`   | its `exhausted:*`             |
 | Fewer than `minUsable` usable candidates          | `1`   | `aborted:no-usable-candidate` |
-| A build or preflight error before the fan-out     | `1`   | `aborted:fusion-preflight`    |
+| The coordinator itself failed mid-fan-out         | `1`   | `aborted:fusion-coordinator`  |
 | `totalMs` fired                                   | `2`   | `exhausted:fusion-timeout`    |
 | Canceled                                          | `143` |                               |
 
@@ -567,8 +572,10 @@ The threat model belongs to #180; the lines it must work within are these:
 - **New code**: `src/core/fusion/` (profile schema, load, validation, the
   envelope type and its version check) and `src/engine/fusion/` (the
   coordinator, the synthesis preamble); `childRun.ts` gains a third caller.
-- **Three new internal markers** for a candidate - pinned base, no PR, report
-  spool - host-set and refused from the user like `E_ROLE` (`validateSpawn`).
+- **New internal markers** for a candidate - `E_SPAWN_FUSION` and the pinned
+  base (`E_SPAWN_FUSION_BASE_SHA`/`_REF`/`_BRANCH`), beside the report
+  markers - host-set like `E_SPAWN_ROLE`, never a user flag, and stripped
+  from every child a candidate itself starts.
 - **The `Git` port gains `diff` and `exportFiles`** for the patch and
   `files/`; it has numstat.
 - **The PR body gains a fusion block** for a synthesis run.

@@ -62,6 +62,12 @@ const MARKERS = [
   Env.STORE_ENV_FILE_VAR,
   Env.ONE_SHOT_VAR,
   Env.LEDGER_FILE_VAR,
+  Env.SPAWN_REPORT_SPOOL_VAR,
+  Env.SPAWN_REPORT_ID_VAR,
+  Env.SPAWN_FUSION_VAR,
+  Env.SPAWN_FUSION_BASE_SHA_VAR,
+  Env.SPAWN_FUSION_BASE_REF_VAR,
+  Env.SPAWN_FUSION_BASE_BRANCH_VAR,
   Env.TRIGGER_VAR,
   Env.EVENT_VAR,
   Env.EVENT_URL_VAR,
@@ -1704,6 +1710,43 @@ test("a queued run's gate and caps come from its base, not from the checkout's c
       git
     );
     assert.equal(manual.verify?.command, 'true');
+  });
+});
+
+test("gatherSpawnFacts: a fusion candidate cuts from its fusion's base and reads the checkout's config", () => {
+  withStore(root => {
+    fs.writeFileSync(
+      configFilePath(root),
+      JSON.stringify({ verify: 'npm test' })
+    );
+    process.env[Env.SPAWN_REPORT_SPOOL_VAR] = '/wt/.fusion/f';
+    process.env[Env.SPAWN_REPORT_ID_VAR] = 'cand-001';
+    process.env[Env.SPAWN_FUSION_VAR] = 'fusion-X';
+    process.env[Env.SPAWN_FUSION_BASE_SHA_VAR] = 'pinned-sha';
+    process.env[Env.SPAWN_FUSION_BASE_REF_VAR] = 'refs/heads/main';
+    process.env[Env.SPAWN_FUSION_BASE_BRANCH_VAR] = 'main';
+    const facts = gather(root, 'claudeCode', ['x']);
+    const pinned = {
+      sha: 'pinned-sha',
+      ref: 'refs/heads/main',
+      branch: 'main',
+    };
+    assert.deepEqual(facts.base, pinned);
+    assert.deepEqual(facts.fusionCandidate, {
+      fusion: 'fusion-X',
+      base: pinned,
+    });
+    assert.deepEqual(facts.report, {
+      spoolDir: '/wt/.fusion/f',
+      id: 'cand-001',
+    });
+    assert.equal(facts.verify?.command, 'npm test');
+    // A queued run is somebody else's; a candidate is only ever its fusion's.
+    process.env[Env.LEDGER_FILE_VAR] = '/s/.e/runs/live/trg-x.json';
+    assert.throws(
+      () => gather(root, 'claudeCode', ['x']),
+      /fusion candidate of fusion-X is started by its fusion, never by a trigger or the queue/
+    );
   });
 });
 

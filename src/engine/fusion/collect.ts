@@ -72,7 +72,17 @@ export interface SettledCandidate {
   endedAt: Date;
   /** Only ever as a harness reported it. */
   usage?: CandidateUsage;
+  /**
+   * Set when an earlier collect of this attempt failed reading its branch:
+   * collected again without git, as `failed` with the reason
+   * `aborted:collect-failed`, so one unreadable candidate costs the fusion
+   * that candidate and nothing else.
+   */
+  unreadable?: boolean;
 }
+
+/** The reason of a candidate whose branch could not be read. */
+export const COLLECT_FAILED_REASON = 'aborted:collect-failed';
 
 /** The byte budgets of one collect; the defaults are {@link PATCH_MAX_BYTES} and {@link FILES_MAX_BYTES}. */
 export interface CollectBudgets {
@@ -96,7 +106,9 @@ export function collectCandidateResult(
   const ref =
     settled.branch === undefined ? undefined : `refs/heads/${settled.branch}`;
   const tip =
-    ref !== undefined && git.hasCommitsBeyondBase(ref, settled.base.sha)
+    !settled.unreadable &&
+    ref !== undefined &&
+    git.hasCommitsBeyondBase(ref, settled.base.sha)
       ? (git.resolveCommit(ref) ?? null)
       : null;
 
@@ -155,14 +167,18 @@ export function collectCandidateResult(
     patchTruncated,
     files: tip === null ? null : CANDIDATE_FILES_DIR,
     filesTruncated,
-    outcome: candidateOutcome({
-      exitCode: settled.exitCode,
-      stoppedBy: settled.stoppedBy,
-      // A branch that stopped resolving has nothing a synthesizer could read.
-      hasCommits: tip !== null,
-    }),
+    outcome: settled.unreadable
+      ? 'failed'
+      : candidateOutcome({
+          exitCode: settled.exitCode,
+          stoppedBy: settled.stoppedBy,
+          // A branch that stopped resolving has nothing a synthesizer could read.
+          hasCommits: tip !== null,
+        }),
     exitCode: settled.exitCode ?? null,
-    reason: settled.reason ?? null,
+    reason: settled.unreadable
+      ? COLLECT_FAILED_REASON
+      : (settled.reason ?? null),
     attempt: settled.attempt,
     retryOf: settled.retryOf ?? null,
     startedAt: settled.startedAt.toISOString(),

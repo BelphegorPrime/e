@@ -228,6 +228,17 @@ export function gatherSpawnFacts(
   // and its repository's gate and caps are read from that base, never from
   // whatever the checkout has on disk (ADR-0016 section 5).
   const base = triggered?.base ?? claimedBase();
+  // A fusion's candidate is a manual run cut from the base its fusion pinned
+  // (ADR-0019): the checkout's config, not one read from that base.
+  const fusionCandidate = env.fusionCandidate;
+  if (
+    fusionCandidate &&
+    (triggered !== undefined || env.ledgerFile !== undefined)
+  ) {
+    throw new Error(
+      `A fusion candidate of ${fusionCandidate.fusion} is started by its fusion, never by a trigger or the queue.`
+    );
+  }
   const config =
     triggered === undefined && base !== undefined
       ? readQueuedConfig(git, root, base)
@@ -346,7 +357,8 @@ export function gatherSpawnFacts(
     // A trigger may move `loop` field-wise, and nothing else (ADR-0016).
     loop: triggered?.loop ? { ...config.loop, ...triggered.loop } : config.loop,
     resources: config.resources,
-    base,
+    base: base ?? fusionCandidate?.base,
+    fusionCandidate,
     eventFile: triggered?.eventFile,
     provenance: triggered?.provenance ?? inheritedProvenance(),
     sessionStoreDir:

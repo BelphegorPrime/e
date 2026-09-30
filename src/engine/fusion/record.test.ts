@@ -8,8 +8,14 @@ import {
   candidateDirFor,
   fusionsDirFor,
   prepareCandidateDir,
+  processAlive,
+  pruneFusions,
   readCandidateResults,
+  readFusionRecord,
+  reconcileFusions,
   writeCandidateResult,
+  writeFusionRecord,
+  type FusionRecord,
 } from './record.js';
 
 /*
@@ -190,4 +196,151 @@ test('readCandidateResults: survives the coordinator, and says what a crash left
     assert.match(loaded[2].error ?? '', /incomplete: no result\.json/);
     assert.match(loaded[3].error ?? '', /schemaVersion 2 is not 1/);
   });
+});
+
+// --- fusion.json: the record of one Fusion run --------------------------------
+
+const PROFILE = {
+  name: 'coding',
+  candidates: ['claude', 'codex'],
+  synthesizer: 'claude',
+  strategy: 'parallel-synthesize' as const,
+  maxConcurrency: 2,
+  minUsable: 1,
+};
+
+function record(over: Partial<FusionRecord> = {}): FusionRecord {
+  return {
+    schemaVersion: 1,
+    fusion: FUSION,
+    state: 'fanning-out',
+    profile: PROFILE,
+    agents: [
+      {
+        name: 'claude',
+        harness: 'claudeCode',
+        harnessVersion: '2.1.284',
+        provider: null,
+        skills: [],
+      },
+    ],
+    prompt: 'Add retries',
+    base: { sha: 'b', ref: 'refs/heads/main', branch: 'main' },
+    candidates: ['cand-001', 'cand-002'],
+    coordinator: { pid: 4242 },
+    createdAt: '2026-09-30T10:00:00.000Z',
+    updatedAt: '2026-09-30T10:00:00.000Z',
+    ...over,
+  };
+}
+
+test('writeFusionRecord: 0600 in a private, git-ignored record, read back whole', () => {
+  withStore(storeDir => {
+    writeFusionRecord(storeDir, record());
+    const file = path.join(fusionsDirFor(storeDir), FUSION, 'fusion.json');
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.equal(
+      fs.statSync(path.join(fusionsDirFor(storeDir), FUSION)).mode & 0o777,
+      0o700
+    );
+    assert.deepEqual(readFusionRecord(storeDir, FUSION), record());
+    assert.equal(
+      readFusionRecord(storeDir, 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D8F'),
+      undefined
+    );
+  });
+});
+
+test('reconcileFusions: a live record whose coordinator died is interrupted, never resumed', () => {
+  withStore(storeDir => {
+    const dead = 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D81';
+    const alive = 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D82';
+    const done = 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D83';
+    writeFusionRecord(
+      storeDir,
+      record({ fusion: dead, coordinator: { pid: 1 } })
+    );
+    writeFusionRecord(
+      storeDir,
+      record({ fusion: alive, coordinator: { pid: 2 } })
+    );
+    writeFusionRecord(
+      storeDir,
+      record({ fusion: done, state: 'canceled', coordinator: { pid: 1 } })
+    );
+    const now = new Date('2026-10-01T00:00:00.000Z');
+    const interrupted = reconcileFusions(storeDir, {
+      isAlive: pid => pid === 2,
+      now,
+    });
+    assert.deepEqual(interrupted, [dead]);
+    const after = readFusionRecord(storeDir, dead)!;
+    assert.equal(after.state, 'interrupted');
+    assert.equal(after.endedAt, now.toISOString());
+    assert.equal(readFusionRecord(storeDir, alive)?.state, 'fanning-out');
+    assert.equal(readFusionRecord(storeDir, done)?.state, 'canceled');
+  });
+});
+
+test('pruneFusions: an ended record past 14 days goes, with everything in it; a live one stays', () => {
+  withStore(storeDir => {
+    const old = 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D81';
+    const recent = 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D82';
+    const live = 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D83';
+    writeFusionRecord(
+      storeDir,
+      record({
+        fusion: old,
+        state: 'failed',
+        endedAt: '2026-09-01T00:00:00.000Z',
+      })
+    );
+    prepareCandidateDir(storeDir, old, 'cand-001');
+    writeFusionRecord(
+      storeDir,
+      record({
+        fusion: recent,
+        state: 'completed',
+        endedAt: '2026-09-29T00:00:00.000Z',
+      })
+    );
+    writeFusionRecord(
+      storeDir,
+      record({ fusion: live, updatedAt: '2026-08-01T00:00:00.000Z' })
+    );
+    // A directory without a readable record is left alone: nothing says when it ended.
+    fs.mkdirSync(
+      path.join(fusionsDirFor(storeDir), 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D84')
+    );
+    const pruned = pruneFusions(storeDir, new Date('2026-09-30T00:00:00.000Z'));
+    assert.deepEqual(pruned, [old]);
+    assert.equal(fs.existsSync(path.join(fusionsDirFor(storeDir), old)), false);
+    assert.ok(readFusionRecord(storeDir, recent));
+    assert.ok(readFusionRecord(storeDir, live));
+  });
+});
+
+test('readFusionRecord: a record this e did not write reads as none, never as a guess', () => {
+  withStore(storeDir => {
+    writeFusionRecord(storeDir, record());
+    const file = path.join(fusionsDirFor(storeDir), FUSION, 'fusion.json');
+    for (const junk of [
+      '{ not json',
+      'null',
+      JSON.stringify({ ...record(), schemaVersion: 2 }),
+      JSON.stringify({
+        ...record(),
+        fusion: 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D81',
+      }),
+      JSON.stringify({ ...record(), state: 'dreaming' }),
+    ]) {
+      fs.writeFileSync(file, junk);
+      assert.equal(readFusionRecord(storeDir, FUSION), undefined, junk);
+    }
+  });
+});
+
+test('processAlive: this process is, a pid nobody holds is not', () => {
+  assert.equal(processAlive(process.pid), true);
+  assert.equal(processAlive(2 ** 22 + 12345), false);
 });
