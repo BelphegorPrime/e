@@ -2,6 +2,8 @@ import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import type {
+  DiffOutput,
+  ExportedFiles,
   Git,
   MergeOutcome,
   NumstatEntry,
@@ -127,13 +129,7 @@ export class HostGit implements Git {
     const root = path.resolve(dest);
     fs.mkdirSync(root, { recursive: true });
     const destOf = (file: string): string => {
-      const target = path.resolve(root, file);
-      const relative = path.relative(root, target);
-      if (relative === '' || relative.startsWith('..')) {
-        throw new Error(
-          `git failed (${description}): ${file} is not inside the tree`
-        );
-      }
+      const target = targetInside(root, file, description);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       return target;
     };
@@ -344,6 +340,106 @@ export class HostGit implements Git {
     );
   }
 
+  diff(base: string, tip: string, maxBytes: number): DiffOutput {
+    const description = `diff ${base}..${tip}`;
+    // Plumbing, not `git diff`: porcelain honours the user's and the
+    // repository's diff config (`diff.noprefix`, `diff.relative`, textconv
+    // drivers), and any of them yields a patch `git apply` cannot replay.
+    // The prefixes are spelled out all the same, and renames detected as a
+    // PR shows them. One byte past the budget tells a patch that fits
+    // exactly from one that does not; git is stopped there, not buffered.
+    const result = spawnSync(
+      'git',
+      [
+        'diff-tree',
+        '-p',
+        '--binary',
+        '-M',
+        '--no-color',
+        '--no-textconv',
+        '--no-ext-diff',
+        '--src-prefix=a/',
+        '--dst-prefix=b/',
+        base,
+        tip,
+      ],
+      { cwd: this.here, maxBuffer: maxBytes + 1, shell: false }
+    );
+    // An overflow is the budget, not a failure: git was killed for it, and a
+    // fatal error after that point would read the same - the cut is flagged
+    // either way, so nothing claims to be whole that is not.
+    const overflow =
+      (result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS';
+    if (!overflow && (result.error || result.status !== 0)) {
+      throw new Error(
+        `git failed (${description}): ${result.error?.message ?? result.stderr?.toString().trim()}`
+      );
+    }
+    log.command(description);
+    // Bytes, never a string: a Latin-1 source file is text to git and would
+    // lose its bytes to U+FFFD, and the patch would no longer apply.
+    const out: Buffer = result.stdout ?? Buffer.alloc(0);
+    if (!overflow && out.length <= maxBytes) {
+      return { patch: out, truncated: false };
+    }
+    // Cut after the last newline inside the budget: every hunk line ends in
+    // one, and 0x0a is never part of a multi-byte UTF-8 character.
+    const cut = out.subarray(0, maxBytes).lastIndexOf(0x0a);
+    return { patch: out.subarray(0, cut + 1), truncated: true };
+  }
+
+  exportFiles(
+    ref: string,
+    files: string[],
+    dest: string,
+    maxBytes: number
+  ): ExportedFiles {
+    if (files.length === 0) return { written: [], truncated: false };
+    const description = `export ${files.length} file(s) at ${ref}`;
+    // `--full-tree`: the paths are the repository's, wherever `e` stands;
+    // `-l` adds each blob's size, so the budget is kept before reading one.
+    // In batches, so a change touching thousands of files fits the argv.
+    const byPath = new Map<string, LsTreeLongEntry>();
+    for (let i = 0; i < files.length; i += EXPORT_FILES_BATCH) {
+      const batch = files.slice(i, i + EXPORT_FILES_BATCH);
+      for (const entry of parseLsTreeLongZ(
+        this.capture(
+          ['ls-tree', '-z', '-l', '--full-tree', ref, '--', ...batch],
+          description
+        )
+      )) {
+        byPath.set(entry.path, entry);
+      }
+    }
+    const chosen: LsTreeLongEntry[] = [];
+    let total = 0;
+    let truncated = false;
+    for (const file of files) {
+      const entry = byPath.get(file);
+      if (!entry || entry.type !== 'blob' || entry.mode === SYMLINK_MODE) {
+        continue;
+      }
+      if (total + entry.size > maxBytes) {
+        truncated = true;
+        continue;
+      }
+      total += entry.size;
+      chosen.push(entry);
+    }
+    const blobs = this.readBlobs(
+      chosen.map(entry => entry.object),
+      description
+    );
+    const root = path.resolve(dest);
+    chosen.forEach((entry, i) => {
+      const target = targetInside(root, entry.path, description);
+      // Every directory created here is as private as the one it is in.
+      fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(target, blobs[i], { mode: 0o600 });
+    });
+    return { written: chosen.map(entry => entry.path), truncated };
+  }
+
   push(branch: string): void {
     this.run(['push', 'origin', branch], `push ${branch} to origin`);
   }
@@ -525,6 +621,55 @@ const EXPORT_MAX_BYTES = 512 * 1024 * 1024;
 function revPath(ref: string, filePath: string, cwd: string): string {
   const relative = path.relative(cwd, filePath);
   return `${ref}:${relative.startsWith('..') ? relative : `./${relative}`}`;
+}
+
+/** One entry of `git ls-tree -z -l`: the size is the blob's, `-` for anything else. */
+interface LsTreeLongEntry extends LsTreeEntry {
+  size: number;
+}
+
+/** Reads `git ls-tree -z -l`: `<mode> <type> <object> <padded size>\t<path>\0`. */
+function parseLsTreeLongZ(out: string): LsTreeLongEntry[] {
+  return out
+    .split('\0')
+    .filter(record => record !== '')
+    .map(record => {
+      const tab = record.indexOf('\t');
+      const [mode = '', type = '', object = '', size = ''] = record
+        .slice(0, tab)
+        .split(/ +/);
+      return {
+        mode,
+        type,
+        object,
+        size: Number(size) || 0,
+        path: record.slice(tab + 1),
+      };
+    });
+}
+
+/** Paths per `ls-tree` call in {@link HostGit.exportFiles}, well inside any argv limit. */
+const EXPORT_FILES_BATCH = 500;
+
+/**
+ * `file` resolved under `root`, or a throw when it would land outside it: a
+ * path git reported is still checked before anything is written there. A
+ * name that merely begins with `..` (`..foo`) is inside.
+ */
+function targetInside(root: string, file: string, description: string): string {
+  const target = path.resolve(root, file);
+  const relative = path.relative(root, target);
+  if (
+    relative === '' ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(
+      `git failed (${description}): ${file} is not inside the tree`
+    );
+  }
+  return target;
 }
 
 /** One entry of `git ls-tree -z`. */

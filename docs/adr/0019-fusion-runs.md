@@ -241,22 +241,23 @@ host-side git, never from anything the candidate wrote about itself:
   "harness": { "name": "codex", "version": "0.159.0", "image": "e-codex-..." },
   "skills": ["web-search"],
   "mcp": [],
-  "provider": { "protocol": "openai-responses", "model": "gpt-5.3-codex" },
+  "provider": { "protocol": "openai-responses", "model": "gpt-5.3-codex" }, // null without one
   "base": { "sha": "3f1c...", "branch": "main" }, // the pinned base and PR target
-  "branch": "e/codex/add-retry-backoff-4",
+  "branch": "e/codex/add-retry-backoff-4", // null when the run died before it had one
   "tip": "9a0e...", // null when the branch holds nothing beyond base
   "changes": {
+    // numstat over the whole repository; `from` for a rename, null counts for a binary
     "files": [{ "path": "src/net/retry.ts", "added": 41, "removed": 3 }],
     "added": 41,
     "removed": 3,
   },
   "patch": "patch.diff", // beside this file; null when tip is null
   "patchTruncated": false,
-  "files": "files/", // tip content of every changed file, beside this file
+  "files": "files", // tip content of every changed file, beside this file; null when tip is null
   "filesTruncated": false,
   "outcome": "succeeded", // succeeded | empty | failed | timed-out | canceled
   "exitCode": 0,
-  "reason": null, // a LoopReason, or a fusion reason (section 8)
+  "reason": null, // aborted:* or exhausted:*, a LoopReason or a fusion reason (section 8), never prose
   "verify": { "verdict": "green", "attempts": 2 }, // absent without a gate
   "attempt": 1, // fusion-level attempt of this candidate (section 9)
   "retryOf": null, // the record id of the attempt this one retries
@@ -303,8 +304,8 @@ host-side git, never from anything the candidate wrote about itself:
   Accepted limit, against #176's "every successful candidate's changes": past
   the second budget, a candidate is visible only in part, and its envelope
   says so. Both are written beside the envelope, outside every worktree. The
-  `Git` port gains the diff and show methods; numstat it already has (ADR-0016
-  section 11).
+  `Git` port gains the `diff` and `exportFiles` methods; numstat it already
+  has (ADR-0016 section 11).
 - **Human-facing fields stay out.** `gateRemovals` (ADR-0016 section 11) and a
   judge's answers (ADR-0018) are **not** in the envelope, because the envelope
   is read by an agent, the synthesizer, and a counted signal handed to an agent
@@ -312,7 +313,9 @@ host-side git, never from anything the candidate wrote about itself:
   repository's own check, already fed back to agents as iteration feedback.
 - **Versioned by `schemaVersion`**, an integer. A reader refuses a version it
   does not know rather than guessing; adding an optional field is not a new
-  version, changing or removing one is.
+  version, changing or removing one is. So is a new `outcome` or verify
+  verdict, which changes what a synthesizer must understand; a new
+  `provider.protocol` is not, being a name no reader decides on.
 
 ### 6. The fusion record
 
@@ -320,7 +323,7 @@ host-side git, never from anything the candidate wrote about itself:
 .e/runs/fusions/<fusion id>/
   fusion.json                 # the record: profile snapshot, prompt, base,
                               # state, timestamps, candidate and synthesis ids
-  candidates/<record id>/     # cand-NNN, one per attempt
+  candidates/<record id>/     # cand-NNN, one per attempt, never reused
     result.json               # the Candidate result
     patch.diff
     files/                    # tip content of the changed files
@@ -566,8 +569,8 @@ The threat model belongs to #180; the lines it must work within are these:
   coordinator, the synthesis preamble); `childRun.ts` gains a third caller.
 - **Three new internal markers** for a candidate - pinned base, no PR, report
   spool - host-set and refused from the user like `E_ROLE` (`validateSpawn`).
-- **The `Git` port gains diff and show methods** for the patch and `files/`;
-  it has numstat.
+- **The `Git` port gains `diff` and `exportFiles`** for the patch and
+  `files/`; it has numstat.
 - **The PR body gains a fusion block** for a synthesis run.
 - **Costs multiply, visibly.** A fusion of N candidates is N + 1 Runs, each with
   its own loop and caps; its worst case is `totalMs`, stated in the profile or
@@ -576,13 +579,13 @@ The threat model belongs to #180; the lines it must work within are these:
 
 ## Implementation tickets
 
-| Ticket | Slice                                                                             | Sections   |
-| ------ | --------------------------------------------------------------------------------- | ---------- |
-| #173   | Fusion profiles: schema, Store paths, load, validation                            | 2          |
-| #175   | The Candidate result: type, `schemaVersion`, persistence in the record, the patch | 5, 6       |
-| #174   | The coordinator: pinned base, image pre-build, bounded fan-out, markers, cancel   | 3, 4, 6, 9 |
-| #176   | The synthesis run: the `/run/e/fusion/` mount, the preamble, the PR block         | 7, 8       |
-| #177   | `e fuse` and its progress output                                                  | 3, 8       |
-| #178   | Deadlines, retry classification, backoff, provider buckets                        | 9          |
-| #180   | Threat model, provider policy, retention                                          | 10, 6      |
-| #179   | Evaluation: single Agent vs fusion, same-provider sampling, select vs synthesize  | 2, 11      |
+| Ticket | Slice                                                                                                            | Sections   |
+| ------ | ---------------------------------------------------------------------------------------------------------------- | ---------- |
+| #173   | Fusion profiles: schema, Store paths, load, validation                                                           | 2          |
+| #175   | The Candidate result: type, `schemaVersion`, the patch and files, their records                                  | 5, 6       |
+| #174   | The coordinator: pinned base, image pre-build, bounded fan-out, markers, cancel, `fusion.json`, prune, reconcile | 3, 4, 6, 9 |
+| #176   | The synthesis run: the `/run/e/fusion/` mount, the preamble, the PR block                                        | 7, 8       |
+| #177   | `e fuse` and its progress output                                                                                 | 3, 8       |
+| #178   | Deadlines, retry classification, backoff, provider buckets                                                       | 9          |
+| #180   | Threat model, provider policy, retention                                                                         | 10, 6      |
+| #179   | Evaluation: single Agent vs fusion, same-provider sampling, select vs synthesize                                 | 2, 11      |

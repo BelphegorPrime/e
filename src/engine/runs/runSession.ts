@@ -23,6 +23,11 @@ import path from 'node:path';
 import type { RunName } from '../../core/identity/runName.js';
 import type { Provider } from '../../core/harness/adapter.js';
 import { RUNS_DIR } from '../queue/runsSpool.js';
+import {
+  privateDir,
+  privateIgnoredDir,
+  writePrivateFileAtomic,
+} from '../../shared/utils/privateFs.js';
 
 /** `.e/runs/sessions/`, beside the queue spools (ADR-0016 section 6). */
 export const SESSIONS_DIR = 'sessions';
@@ -86,19 +91,9 @@ function recordPath(storeDir: string, run: RunName): string {
   return path.join(runSessionDirFor(storeDir, run), RECORD_FILE);
 }
 
-/** A 0700 directory, whatever the umask made of it. */
-function privateDir(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(dir, 0o700);
-}
-
 /** Temp + rename, 0600 from the first byte. */
 function writeRecord(file: string, record: RunSessionRecord): void {
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(record, null, 2) + '\n', {
-    mode: 0o600,
-  });
-  fs.renameSync(tmp, file);
+  writePrivateFileAtomic(file, JSON.stringify(record, null, 2) + '\n');
 }
 
 function isRecord(value: unknown): value is RunSessionRecord {
@@ -185,9 +180,7 @@ export function openRunSession(
   now: Date = new Date()
 ): OpenRunSession {
   const sessions = sessionsDirFor(storeDir);
-  privateDir(sessions);
-  const ignore = path.join(sessions, '.gitignore');
-  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+  privateIgnoredDir(sessions);
   const dir = runSessionDirFor(storeDir, run);
   const transcriptDir = path.join(dir, TRANSCRIPT_DIR);
   privateDir(dir);

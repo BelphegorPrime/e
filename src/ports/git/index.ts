@@ -114,6 +114,31 @@ export interface Git {
    */
   numstat(base: string, tip: string, pathspecs: string[]): NumstatEntry[];
 
+  /**
+   * The unified patch of `base..tip` over the whole repository, renames
+   * detected and binary files included, so `git apply` can replay it onto
+   * `base` without a repository - whatever diff config the user or the
+   * repository sets. Bytes, as git wrote them. Cut at the last line boundary
+   * within `maxBytes`, with `truncated` set: a cut patch no longer applies,
+   * and the caller has to say so.
+   */
+  diff(base: string, tip: string, maxBytes: number): DiffOutput;
+
+  /**
+   * Writes `files` (repository-relative paths) as committed at `ref` into
+   * `dest` (created if missing), each at its own relative path. A file absent
+   * at `ref` (deleted) is left out, and so is a symlink or a submodule: where
+   * a link leads is in the patch, and as a file it could lead anywhere. Files
+   * are taken in order and one that would take the total past `maxBytes` is
+   * skipped, with `truncated` set; `written` names what landed.
+   */
+  exportFiles(
+    ref: string,
+    files: string[],
+    dest: string,
+    maxBytes: number
+  ): ExportedFiles;
+
   /** Push `branch` to origin. Throws on any failure (no remote, auth, reject). */
   push(branch: string): void;
 
@@ -165,6 +190,21 @@ export interface NumstatEntry {
   added: number | null;
   /** Lines removed; `null` for a binary file. */
   removed: number | null;
+}
+
+/** What {@link Git.diff} produced. */
+export interface DiffOutput {
+  patch: Buffer;
+  /** True when the patch was cut at the byte budget. */
+  truncated: boolean;
+}
+
+/** What {@link Git.exportFiles} wrote. */
+export interface ExportedFiles {
+  /** The repository-relative paths written, in the order asked. */
+  written: string[];
+  /** True when a file was skipped because it would not fit the budget. */
+  truncated: boolean;
 }
 
 /** How a {@link Git.merge} ended. */

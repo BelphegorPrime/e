@@ -22,6 +22,8 @@
 import fs from 'fs';
 import path from 'path';
 import type {
+  DiffOutput,
+  ExportedFiles,
   Git,
   MergeOutcome,
   NumstatEntry,
@@ -82,6 +84,8 @@ export interface InMemoryGitOptions {
   merge?: Record<string, ScriptedMerge | ScriptedMerge[]>;
   /** What `numstat` answers, whatever it is asked: the diff of the run branch. */
   numstat?: NumstatEntry[];
+  /** The patch `diff` answers, whatever it is asked; cut to its budget like git's. */
+  diff?: string;
   /** Full ref names to the commit each resolves to, for `resolveCommit`. */
   refCommits?: Record<string, string>;
   /**
@@ -133,6 +137,8 @@ export class InMemoryGit implements Git {
   readonly pushed: string[] = [];
   /** Every `numstat` asked, in order. */
   readonly numstats: { base: string; tip: string; pathspecs: string[] }[] = [];
+  /** Every `diff` asked, in order. */
+  readonly diffs: { base: string; tip: string; maxBytes: number }[] = [];
   /** Every `exportTree`, in order. */
   readonly exports: { ref: string; dirPath: string; dest: string }[] = [];
   /** Worktree paths whose merge was aborted, in order. */
@@ -241,6 +247,35 @@ export class InMemoryGit implements Git {
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, content);
     }
+  }
+
+  exportFiles(
+    ref: string,
+    files: string[],
+    dest: string,
+    maxBytes: number
+  ): ExportedFiles {
+    this.calls.push('exportFiles');
+    // Repository-relative paths, as the files of `ref` are keyed for this call.
+    const committed = this.filesAt(ref);
+    const written: string[] = [];
+    let total = 0;
+    let truncated = false;
+    for (const file of files) {
+      const content = committed[file];
+      if (content === undefined) continue;
+      const size = Buffer.byteLength(content);
+      if (total + size > maxBytes) {
+        truncated = true;
+        continue;
+      }
+      total += size;
+      const target = path.join(dest, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+      written.push(file);
+    }
+    return { written, truncated };
   }
 
   /** The files committed at `ref`: by its name, or by the sha a ref resolves to. */
@@ -381,6 +416,15 @@ export class InMemoryGit implements Git {
     this.calls.push('numstat');
     this.numstats.push({ base, tip, pathspecs });
     return this.opts.numstat ?? [];
+  }
+
+  diff(base: string, tip: string, maxBytes: number): DiffOutput {
+    this.calls.push('diff');
+    this.diffs.push({ base, tip, maxBytes });
+    const patch = Buffer.from(this.opts.diff ?? '');
+    if (patch.length <= maxBytes) return { patch, truncated: false };
+    const cut = patch.subarray(0, maxBytes).lastIndexOf(0x0a);
+    return { patch: patch.subarray(0, cut + 1), truncated: true };
   }
 
   hasCommitsBeyondBase(_branch: string, _base: string): boolean {

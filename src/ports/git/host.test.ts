@@ -1092,3 +1092,214 @@ test('HostGit with a cwd works on that repository, wherever the process stands (
     fs.rmSync(plain, { recursive: true, force: true });
   }
 });
+
+/** A repo with a base commit and a tip that edits, adds, deletes, renames and adds a binary. */
+function diffRepo(): { repo: string; base: string; tip: string } {
+  const repo = initRepo('e-host-git-diff-');
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src', 'keep.ts'), 'a\nb\n');
+  fs.writeFileSync(path.join(repo, 'src', 'gone.ts'), 'x\n');
+  fs.writeFileSync(path.join(repo, 'src', 'old.ts'), 'same\n'.repeat(20));
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'base');
+  const base = git(repo, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(repo, 'src', 'keep.ts'), 'a\nB\nc\n');
+  fs.writeFileSync(path.join(repo, 'src', 'new.ts'), 'fresh\n');
+  fs.writeFileSync(path.join(repo, 'logo.bin'), Buffer.from([0, 1, 2, 255]));
+  fs.symlinkSync('keep.ts', path.join(repo, 'src', 'link.ts'));
+  git(repo, 'rm', '-q', 'src/gone.ts');
+  git(repo, 'mv', 'src/old.ts', 'src/renamed.ts');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'tip');
+  return { repo, base, tip: git(repo, 'rev-parse', 'HEAD') };
+}
+
+test('HostGit.diff: the whole patch of base..tip, binary-safe and applicable to the base', () => {
+  const { repo, base, tip } = diffRepo();
+  try {
+    const out = new HostGit(repo).diff(base, tip, 1 << 20);
+    assert.equal(out.truncated, false);
+    const patch = out.patch.toString('utf8');
+    assert.match(patch, /^diff --git a\/logo\.bin b\/logo\.bin/m);
+    assert.match(patch, /GIT binary patch/);
+    assert.match(patch, /rename from src\/old\.ts/);
+    assert.match(patch, /deleted file mode/);
+    // What a synthesizer does with it: `git apply` onto the base, no repository needed.
+    const check = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-git-apply-'));
+    try {
+      git(repo, 'worktree', 'add', '-q', '--detach', check, base);
+      fs.writeFileSync(path.join(check, '..', 'p.diff'), patch);
+      git(check, 'apply', '--check', path.join(check, '..', 'p.diff'));
+    } finally {
+      git(repo, 'worktree', 'remove', '--force', check);
+      fs.rmSync(path.join(check, '..', 'p.diff'), { force: true });
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.diff: a patch past the budget is cut at a line boundary and says so', () => {
+  const { repo, base, tip } = diffRepo();
+  try {
+    const whole = new HostGit(repo).diff(base, tip, 1 << 20).patch;
+    const cut = new HostGit(repo).diff(base, tip, 200);
+    assert.equal(cut.truncated, true);
+    assert.ok(cut.patch.length <= 200);
+    assert.equal(cut.patch.at(-1), 0x0a);
+    assert.ok(whole.subarray(0, cut.patch.length).equals(cut.patch));
+    // A patch exactly the size of the budget is whole.
+    const exact = new HostGit(repo).diff(base, tip, whole.length);
+    assert.equal(exact.truncated, false);
+    assert.ok(exact.patch.equals(whole));
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.diff: an empty range is an empty patch', () => {
+  const { repo, tip } = diffRepo();
+  try {
+    const out = new HostGit(repo).diff(tip, tip, 100);
+    assert.equal(out.patch.length, 0);
+    assert.equal(out.truncated, false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.exportFiles: the named files as committed, a deleted one and a link left out', () => {
+  const { repo, tip } = diffRepo();
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-git-files-'));
+  try {
+    // The working tree says something else; the commit is what counts.
+    fs.writeFileSync(path.join(repo, 'src', 'keep.ts'), 'dirty\n');
+    const out = new HostGit(repo).exportFiles(
+      tip,
+      ['src/keep.ts', 'src/gone.ts', 'logo.bin', 'src/link.ts'],
+      dest,
+      1 << 20
+    );
+    assert.deepEqual(out, {
+      written: ['src/keep.ts', 'logo.bin'],
+      truncated: false,
+    });
+    assert.equal(
+      fs.readFileSync(path.join(dest, 'src', 'keep.ts'), 'utf8'),
+      'a\nB\nc\n'
+    );
+    assert.deepEqual(
+      [...fs.readFileSync(path.join(dest, 'logo.bin'))],
+      [0, 1, 2, 255]
+    );
+    // A link's target is in the patch; as a file it could lead anywhere.
+    assert.equal(fs.existsSync(path.join(dest, 'src', 'link.ts')), false);
+    assert.equal(fs.existsSync(path.join(dest, 'src', 'gone.ts')), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.exportFiles: stops before the budget, keeping what fits in order', () => {
+  const { repo, tip } = diffRepo();
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-git-files-'));
+  try {
+    // keep.ts is 6 bytes, renamed.ts 100, new.ts 6: the second does not fit.
+    const out = new HostGit(repo).exportFiles(
+      tip,
+      ['src/keep.ts', 'src/renamed.ts', 'src/new.ts'],
+      dest,
+      20
+    );
+    assert.deepEqual(out, {
+      written: ['src/keep.ts', 'src/new.ts'],
+      truncated: true,
+    });
+    assert.equal(fs.existsSync(path.join(dest, 'src', 'renamed.ts')), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.exportFiles: no files is nothing to do', () => {
+  const { repo, tip } = diffRepo();
+  const dest = path.join(os.tmpdir(), `e-host-git-none-${process.pid}`);
+  try {
+    assert.deepEqual(new HostGit(repo).exportFiles(tip, [], dest, 10), {
+      written: [],
+      truncated: false,
+    });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.diff: a Latin-1 file and a repository diff config still give a patch that applies', () => {
+  const repo = initRepo('e-host-git-diff-latin1-');
+  try {
+    fs.writeFileSync(
+      path.join(repo, 'legacy.txt'),
+      Buffer.from('caf\xe9\n', 'latin1')
+    );
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'base');
+    const base = git(repo, 'rev-parse', 'HEAD');
+    fs.writeFileSync(
+      path.join(repo, 'legacy.txt'),
+      Buffer.from('caf\xe9 cr\xe8me\n', 'latin1')
+    );
+    git(repo, 'commit', '-q', '-am', 'tip');
+    const tip = git(repo, 'rev-parse', 'HEAD');
+    // Config a user or a repository may set, each of which breaks `git apply`.
+    git(repo, 'config', 'diff.noprefix', 'true');
+    git(repo, 'config', 'diff.mnemonicPrefix', 'true');
+    const { patch } = new HostGit(repo).diff(base, tip, 1 << 20);
+    assert.match(patch.toString('latin1'), /^--- a\/legacy\.txt$/m);
+    assert.ok(patch.includes(Buffer.from('cr\xe8me', 'latin1')));
+    const file = path.join(os.tmpdir(), `e-latin1-${process.pid}.diff`);
+    try {
+      fs.writeFileSync(file, patch);
+      git(repo, 'checkout', '-q', base);
+      git(repo, 'apply', '--check', file);
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('HostGit.exportFiles: a file whose name begins with .. is inside the tree', () => {
+  const repo = initRepo('e-host-git-dots-');
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-git-dots-dest-'));
+  try {
+    fs.mkdirSync(path.join(repo, 'deep', 'er'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '..foo'), 'dots\n');
+    fs.writeFileSync(path.join(repo, 'deep', 'er', 'x.ts'), 'x\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'dots');
+    const out = new HostGit(repo).exportFiles(
+      'HEAD',
+      ['..foo', 'deep/er/x.ts'],
+      dest,
+      1 << 20
+    );
+    assert.deepEqual(out.written, ['..foo', 'deep/er/x.ts']);
+    assert.equal(fs.readFileSync(path.join(dest, '..foo'), 'utf8'), 'dots\n');
+    // Directories it creates are as private as the files.
+    assert.equal(
+      fs.statSync(path.join(dest, 'deep', 'er')).mode & 0o777,
+      0o700
+    );
+    assert.equal(
+      fs.statSync(path.join(dest, 'deep', 'er', 'x.ts')).mode & 0o777,
+      0o600
+    );
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+});
