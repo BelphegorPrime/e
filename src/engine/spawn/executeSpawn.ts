@@ -435,6 +435,7 @@ async function executeSpawnWith(
   }
   configMounts.push(...plan.skillMounts);
   if (plan.eventMount) configMounts.push(plan.eventMount);
+  if (plan.fusionMount) configMounts.push(plan.fusionMount);
 
   // A sibling (ADR-0013) joins its parent's private run network so the
   // `runtime-broker` alias resolves for it too; in the shared egress
@@ -531,6 +532,7 @@ async function executeSpawnWith(
         : undefined,
       report: facts.report,
       candidate: facts.fusionCandidate !== undefined,
+      fusion: facts.fusionSynthesis?.summary,
       abort: deps.abort,
       // What every sibling `e spawn` inherits from this invocation: the same
       // store, the same user env-file, the same container engine.

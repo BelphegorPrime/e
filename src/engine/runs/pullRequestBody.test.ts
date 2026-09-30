@@ -148,3 +148,51 @@ test('the block holds no payload prose, however hostile the title and body', () 
     /^Event: https:\/\/github\.com\/octo\/repo\/issues\/42$/m
   );
 });
+
+const fusion = {
+  schemaVersion: 1 as const,
+  fusion: 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D8E',
+  profile: 'coding',
+  synthesizer: 'claude-reviewer',
+  base: { sha: 'abc1234def', branch: 'main' },
+  task: 'Add retries',
+  candidates: [
+    {
+      candidate: 'cand-001',
+      agent: 'codex',
+      outcome: 'succeeded' as const,
+      reason: null,
+      verify: null,
+      branch: 'e/codex/add-retries-1',
+      usable: true,
+    },
+  ],
+};
+
+test('a synthesis run names its fusion in the block, and a human-started one is not called autonomous', () => {
+  assert.equal(
+    pullRequestBody({ prompt: 'Add retries', harness, fusion }),
+    [
+      `Fusion: ${fusion.fusion} · profile coding · base abc1234def (main)`,
+      'Synthesizer: claude-reviewer',
+      'Candidate cand-001: codex · succeeded · e/codex/add-retries-1',
+      'Harness: codex 0.147.0',
+      '',
+      '---',
+      '',
+      'Add retries',
+    ].join('\n')
+  );
+});
+
+test('a gated synthesis run carries the fusion lines and the verdict', () => {
+  const body = pullRequestBody({
+    prompt: 'Add retries',
+    harness,
+    fusion,
+    verdict: { outcome: 'verified', attempts: 1, maxIterations: 3 },
+  });
+  assert.match(body, /^Fusion: fusion-/);
+  assert.match(body, /\nVerdict: verified \(1\/3 iterations\)\n/);
+  assert.match(body, /Autonomous run - not reviewed by a human\./);
+});

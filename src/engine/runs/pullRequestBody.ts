@@ -1,3 +1,7 @@
+import {
+  fusionBlockLines,
+  type FusionMaterial,
+} from '../../core/fusion/material.js';
 import type { Provenance } from '../../core/trigger/provenance.js';
 import { describeGateRemovals, type GateRemovals } from './gateRemovals.js';
 import type { LoopOutcome, LoopReason } from './runSpawn.js';
@@ -34,6 +38,8 @@ export interface PullRequestBodyInput {
   harness: { name: string; version: string };
   /** Present for a gated run. */
   verdict?: PullRequestVerdict;
+  /** Present for a fusion's synthesis run (ADR-0019 section 8): its fusion, from identifiers only. */
+  fusion?: FusionMaterial;
 }
 
 /** `verified (2/3 iterations)`, qualified by the reason or the weakened gate. */
@@ -51,10 +57,11 @@ function verdictLine(verdict: PullRequestVerdict): string {
 
 /** The body of a run's PR/MR. */
 export function pullRequestBody(input: PullRequestBodyInput): string {
-  const { provenance, verdict } = input;
+  const { provenance, verdict, fusion } = input;
   // A manual run nobody gated: a human typed it and will read it.
-  if (!provenance && !verdict) return input.prompt;
-  const lines: string[] = [];
+  if (!provenance && !verdict && !fusion) return input.prompt;
+  // A fusion's provenance lives here, not in a trailer (ADR-0019 section 8).
+  const lines: string[] = fusion ? fusionBlockLines(fusion) : [];
   if (provenance) {
     lines.push(
       `Trigger: ${provenance.trigger} · ${provenance.event.source}:${provenance.event.event}`
@@ -63,7 +70,11 @@ export function pullRequestBody(input: PullRequestBodyInput): string {
   }
   lines.push(`Harness: ${input.harness.name} ${input.harness.version}`);
   if (verdict) lines.push(verdictLine(verdict));
-  lines.push('Autonomous run - not reviewed by a human.');
+  // A human who ran `e fuse` reads the PR as they would a manual run's; the
+  // line is for what a trigger started or a gate accepted.
+  if (provenance || verdict) {
+    lines.push('Autonomous run - not reviewed by a human.');
+  }
   // The blank line before `---` matters: straight after text it would turn
   // the last line into a heading.
   return `${lines.join('\n')}\n\n---\n\n${input.prompt}`;

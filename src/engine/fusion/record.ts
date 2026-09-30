@@ -229,6 +229,8 @@ export interface FusionRecord {
     pushed: string[];
     pushWarnings: string[];
   };
+  /** Set when the synthesis started: its spool record id and Agent; `synthesis.json` has its end. */
+  synthesis?: { id: string; agent: string };
   /** The process driving it, so a later one can tell a live record from a dead one. */
   coordinator: { pid: number };
   createdAt: string;
@@ -359,4 +361,65 @@ export function pruneFusions(
     pruned.push(fusion);
   }
   return pruned;
+}
+
+// --- synthesis.json: how the synthesis run ended (ADR-0019 section 6) -------
+
+const SYNTHESIS_RECORD_FILE = 'synthesis.json';
+
+/** `synthesis.json`: the synthesis run of one Fusion run, once it has ended. */
+export interface SynthesisRecord {
+  schemaVersion: 1;
+  fusion: string;
+  /** Its spool record id, `syn-NNN`. */
+  id: string;
+  agent: string;
+  /** The run branch; absent when the run died before it had one. */
+  branch?: string;
+  /** The run's Verdict (ADR-0016), or 143 for a cancel. */
+  exitCode: number;
+  reason?: string;
+  verify?: { verdict: 'green' | 'red' | 'broken'; attempts: number };
+  /** Why it failed without a verdict: a launch that did not start, a process that never reported. */
+  error?: string;
+  pushed: boolean;
+  pullRequestUrl?: string;
+  canceled: boolean;
+  startedAt: string;
+  endedAt: string;
+}
+
+/** Writes `synthesis.json` beside `fusion.json`, temp + rename, 0600. */
+export function writeSynthesisRecord(
+  storeDir: string,
+  record: SynthesisRecord
+): void {
+  privateDir(fusionRecordDirFor(storeDir, record.fusion));
+  writePrivateFileAtomic(
+    path.join(
+      fusionRecordDirFor(storeDir, record.fusion),
+      SYNTHESIS_RECORD_FILE
+    ),
+    JSON.stringify(record, null, 2) + '\n'
+  );
+}
+
+/** `synthesis.json` of one Fusion run, or undefined when there is none or it is not one this `e` wrote. */
+export function readSynthesisRecord(
+  storeDir: string,
+  fusion: string
+): SynthesisRecord | undefined {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(
+        path.join(fusionRecordDirFor(storeDir, fusion), SYNTHESIS_RECORD_FILE),
+        'utf8'
+      )
+    ) as Partial<SynthesisRecord> | null;
+    return raw?.schemaVersion === 1 && raw.fusion === fusion
+      ? (raw as SynthesisRecord)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }

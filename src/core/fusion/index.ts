@@ -10,3 +10,4 @@ export * from './profile.js';
 export * from './load.js';
 export * from './context.js';
 export * from './result.js';
+export * from './material.js';

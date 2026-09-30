@@ -59,6 +59,7 @@ import {
   type Provenance,
 } from '../../core/trigger/provenance.js';
 import { pullRequestBody } from './pullRequestBody.js';
+import type { FusionMaterial } from '../../core/fusion/material.js';
 import type { LedgerEntry } from '../queue/runsSpool.js';
 import {
   brokerSidecarSpec,
@@ -256,6 +257,12 @@ export interface RunSpawnParams {
    * result is built from.
    */
   candidate?: boolean;
+  /**
+   * A fusion's Synthesis run (ADR-0019 sections 7, 8): the material summary
+   * its PR block is built from, identifiers only, with the user's task -
+   * not the synthesis preamble - as the prompt under it.
+   */
+  fusion?: FusionMaterial;
   /**
    * This run's ledger entry (ADR-0016 section 6): a manual spawn's own, or the
    * one `e serve` claimed for it. Patched as the run gets a branch and when it
@@ -1151,7 +1158,8 @@ export async function runSpawn(
           base: baseBranch,
           title,
           body: pullRequestBody({
-            prompt: params.prompt,
+            prompt: params.fusion?.task ?? params.prompt,
+            ...(params.fusion ? { fusion: params.fusion } : {}),
             harness: params.harness,
             ...(params.provenance ? { provenance: params.provenance } : {}),
             ...(gated
@@ -1188,6 +1196,8 @@ export async function runSpawn(
         ? undefined
         : `a merge-back conflict could not be abandoned (${mergeStuck}); nothing of the run after it was committed, and the worktree is kept at ${worktreePath}`;
 
+    // A fusion reads a candidate's or its synthesis's end from this report.
+    const fusionRun = params.candidate === true || params.fusion !== undefined;
     report({
       status: 'done',
       branch,
@@ -1197,10 +1207,10 @@ export async function runSpawn(
       // What a Candidate result says of the run's end; never gate removals,
       // which are for the human (ADR-0016 section 11).
       // `reason` is only meant for a run that did not end verified.
-      ...(params.candidate && gated && outcome !== 'verified' && reason
+      ...(fusionRun && gated && outcome !== 'verified' && reason
         ? { reason }
         : {}),
-      ...(params.candidate && gated && verifyOutcome
+      ...(fusionRun && gated && verifyOutcome
         ? {
             verify: {
               verdict: verifyOutcome.verdict,

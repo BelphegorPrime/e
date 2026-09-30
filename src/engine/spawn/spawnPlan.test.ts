@@ -680,6 +680,109 @@ test('validateSpawn: a fusion candidate is watched, cuts from its fusion base, a
   );
 });
 
+const fusionSynthesis = {
+  fusion: 'fusion-X',
+  base: fusionBase,
+  material: '/wt/.fusion/x/material',
+  summary: {
+    schemaVersion: 1 as const,
+    fusion: 'fusion-X',
+    profile: 'coding',
+    synthesizer: 'claude',
+    base: { sha: 'pinned-sha', branch: 'main' },
+    task: 'Add retries',
+    candidates: [],
+  },
+};
+const synthesisReport = { spoolDir: '/tmp/fusion', id: 'syn-001' };
+
+test('validateSpawn: a fusion synthesis is watched, cuts from its fusion base, and reads its own fusion only', () => {
+  assert.doesNotThrow(() =>
+    validateSpawn(
+      facts({ fusionSynthesis, base: fusionBase, report: synthesisReport })
+    )
+  );
+  assert.throws(
+    () => validateSpawn(facts({ fusionSynthesis, base: fusionBase })),
+    /synthesis of fusion-X reports into its fusion's spool/
+  );
+  assert.throws(
+    () =>
+      validateSpawn(
+        facts({
+          fusionSynthesis,
+          base: { ...fusionBase, sha: 'moved' },
+          report: synthesisReport,
+        })
+      ),
+    /cuts from its fusion's base pinned-sha/
+  );
+  assert.throws(
+    () =>
+      validateSpawn(
+        facts({
+          fusionSynthesis: {
+            ...fusionSynthesis,
+            summary: { ...fusionSynthesis.summary, fusion: 'fusion-Y' },
+          },
+          base: fusionBase,
+          report: synthesisReport,
+        })
+      ),
+    /is fusion-Y's, not fusion-X's/
+  );
+  assert.throws(
+    () =>
+      validateSpawn(
+        facts({
+          fusionSynthesis: {
+            ...fusionSynthesis,
+            summary: {
+              ...fusionSynthesis.summary,
+              base: { sha: 'other', branch: 'main' },
+            },
+          },
+          base: fusionBase,
+          report: synthesisReport,
+        })
+      ),
+    /names base other, not the pinned pinned-sha/
+  );
+  assert.throws(
+    () =>
+      validateSpawn(
+        facts({
+          fusionSynthesis,
+          fusionCandidate,
+          base: fusionBase,
+          report: synthesisReport,
+        })
+      ),
+    /never a sibling or a candidate/
+  );
+});
+
+test('planSpawn: a fusion synthesis mounts its material read-only at /run/e/fusion, and keeps its session', () => {
+  const pi = { agent: { name: 'pi', harness: 'pi' }, harness: HARNESSES.pi };
+  const plan = planSpawn(
+    facts({
+      ...pi,
+      sessionStoreDir: '/root/.e',
+      fusionSynthesis,
+      base: fusionBase,
+      report: synthesisReport,
+    })
+  );
+  assert.deepEqual(plan.fusionMount, {
+    host: '/wt/.fusion/x/material',
+    container: '/run/e/fusion',
+    ro: true,
+  });
+  // The synthesis is the fusion's deliverable, resumable as any Run.
+  assert.ok(plan.session);
+  assert.equal(planSpawn(facts({})).fusionMount, undefined);
+});
+
 test('planSpawn: a fusion candidate keeps no session', () => {
   const pi = { agent: { name: 'pi', harness: 'pi' }, harness: HARNESSES.pi };
   assert.equal(

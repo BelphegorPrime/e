@@ -43,6 +43,10 @@ import type {
   FusionCandidateSpawn,
   SiblingSpawn,
 } from '../../shared/utils/env.js';
+import {
+  FUSION_MOUNT_PATH,
+  type FusionMaterial,
+} from '../../core/fusion/material.js';
 import type { LocalRuntime } from '../../core/localRuntimes.js';
 import type {
   GitPlatform,
@@ -280,6 +284,21 @@ export interface SpawnFacts {
    * opens no PR and keeps no session.
    */
   readonly fusionCandidate?: Readonly<FusionCandidateSpawn>;
+  /**
+   * Present for a fusion's Synthesis run (the `E_SPAWN_FUSION_SYNTHESIS`
+   * markers, ADR-0019 section 7): it cuts from the fusion's pinned base,
+   * which is also {@link base}, reads its candidates' material read-only at
+   * `/run/e/fusion`, reports into the fusion's spool, and pushes and opens
+   * its PR with the fusion block built from the material's summary.
+   */
+  readonly fusionSynthesis?: Readonly<{
+    fusion: string;
+    base: FusionCandidateSpawn['base'];
+    /** The material's host directory. */
+    material: string;
+    /** Its `fusion.json`, already checked field by field. */
+    summary: FusionMaterial;
+  }>;
   /** The store's `siblingArtifacts` (`config.json`): what a sibling copies from its parent (ADR-0013). */
   readonly siblingArtifacts: readonly string[];
   /** The store's `maxSiblings` (`config.json`): siblings a run may have in flight at once (ADR-0013). */
@@ -439,6 +458,38 @@ export function validateSpawn(facts: SpawnFacts): void {
     }
   }
 
+  // The synthesis reads what its fusion's candidates produced, from the same
+  // base, and reports back the same way (ADR-0019 section 7).
+  const synthesis = facts.fusionSynthesis;
+  if (synthesis) {
+    if (facts.sibling || facts.fusionCandidate) {
+      throw new Error(
+        `A fusion synthesis of ${synthesis.fusion} is a run of its own: never a sibling or a candidate.`
+      );
+    }
+    if (!facts.report) {
+      throw new Error(
+        `A fusion synthesis of ${synthesis.fusion} reports into its fusion's spool; the report markers are missing.`
+      );
+    }
+    if (facts.base?.sha !== synthesis.base.sha) {
+      throw new Error(
+        `A fusion synthesis of ${synthesis.fusion} cuts from its fusion's base ${synthesis.base.sha}, not ${facts.base?.sha ?? "the host's HEAD"}.`
+      );
+    }
+    if (synthesis.summary.fusion !== synthesis.fusion) {
+      throw new Error(
+        `The material at ${synthesis.material} is ${synthesis.summary.fusion}'s, not ${synthesis.fusion}'s.`
+      );
+    }
+    // The PR block states the base; it must be the one this run cuts from.
+    if (synthesis.summary.base.sha !== synthesis.base.sha) {
+      throw new Error(
+        `The material at ${synthesis.material} names base ${synthesis.summary.base.sha}, not the pinned ${synthesis.base.sha}.`
+      );
+    }
+  }
+
   // A resume continues a session only a resumable harness keeps (ADR-0017),
   // in a Store, on the Run's own branch.
   if (facts.resume) {
@@ -572,6 +623,8 @@ export interface SpawnPlan {
    * `/workspace`, so it can never ride along in a `commitAll`.
    */
   eventMount?: Mount;
+  /** A fusion synthesis's material, read-only at `/run/e/fusion` (ADR-0019 section 7). */
+  fusionMount?: Mount;
   /**
    * The agent container's `-e` env: the user's `-e`, any config-dir relocation
    * env, then the host-set role contract (`E_ROLE`, `E_BROKER_URL`). A user
@@ -796,6 +849,13 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     configOverlay,
     agentImagePlan,
     skillMounts,
+    fusionMount: facts.fusionSynthesis
+      ? {
+          host: facts.fusionSynthesis.material,
+          container: FUSION_MOUNT_PATH,
+          ro: true,
+        }
+      : undefined,
     eventMount: facts.eventFile
       ? { host: facts.eventFile, container: EVENT_MOUNT_PATH, ro: true }
       : undefined,

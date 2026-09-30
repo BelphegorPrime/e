@@ -31,7 +31,8 @@ import type {
 /**
  * Request ids are `<prefix>-NNN`: `sib-` for a sibling the broker accepted,
  * `a2a-` for a task the A2A facade on `e serve` started (ADR-0015), `cand-`
- * for a Candidate run a fusion started (ADR-0019). The shape is checked
+ * for a Candidate run a fusion started, `syn-` for its Synthesis run
+ * (ADR-0019). The shape is checked
  * before it becomes a file name.
  *
  * The prefixes, the pattern and the error message all derive from
@@ -39,7 +40,7 @@ import type {
  * request is to add it there - and the message can never describe a format
  * the check does not enforce.
  */
-const REQUEST_ID_PREFIXES = ['sib', 'a2a', 'cand'] as const;
+const REQUEST_ID_PREFIXES = ['sib', 'a2a', 'cand', 'syn'] as const;
 const REQUEST_ID_DIGITS = 3;
 const REQUEST_ID_RE = new RegExp(
   `^(${REQUEST_ID_PREFIXES.join('|')})-\\d{${REQUEST_ID_DIGITS},}$`

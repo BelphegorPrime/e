@@ -89,6 +89,7 @@ import {
 } from '../engine/runs/runSpawn.js';
 
 import { errorMessage } from '../shared/utils/errors.js';
+import { readFusionMaterial } from '../core/fusion/material.js';
 import {
   provenanceFromStrings,
   workflowEvent,
@@ -231,14 +232,17 @@ export function gatherSpawnFacts(
   // A fusion's candidate is a manual run cut from the base its fusion pinned
   // (ADR-0019): the checkout's config, not one read from that base.
   const fusionCandidate = env.fusionCandidate;
-  if (
-    fusionCandidate &&
-    (triggered !== undefined || env.ledgerFile !== undefined)
-  ) {
+  const synthesis = env.fusionSynthesis;
+  const fusionRun = fusionCandidate ?? synthesis;
+  if (fusionRun && (triggered !== undefined || env.ledgerFile !== undefined)) {
     throw new Error(
-      `A fusion candidate of ${fusionCandidate.fusion} is started by its fusion, never by a trigger or the queue.`
+      `A fusion ${fusionCandidate ? 'candidate' : 'synthesis'} of ${fusionRun.fusion} is started by its fusion, never by a trigger or the queue.`
     );
   }
+  const fusionSynthesis = synthesis && {
+    ...synthesis,
+    summary: readFusionMaterial(synthesis.material),
+  };
   const config =
     triggered === undefined && base !== undefined
       ? readQueuedConfig(git, root, base)
@@ -357,8 +361,9 @@ export function gatherSpawnFacts(
     // A trigger may move `loop` field-wise, and nothing else (ADR-0016).
     loop: triggered?.loop ? { ...config.loop, ...triggered.loop } : config.loop,
     resources: config.resources,
-    base: base ?? fusionCandidate?.base,
+    base: base ?? fusionRun?.base,
     fusionCandidate,
+    fusionSynthesis,
     eventFile: triggered?.eventFile,
     provenance: triggered?.provenance ?? inheritedProvenance(),
     sessionStoreDir:

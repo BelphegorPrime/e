@@ -1562,6 +1562,47 @@ test('a verified fusion candidate reports its green verdict and no reason', asyn
   });
 });
 
+test('a fusion synthesis pushes and opens its PR, naming the fusion, with the task under the block', async () => {
+  await withWorktreesDir(async worktreesDir => {
+    const spool = path.join(worktreesDir, 'fusion');
+    ensureSpool(spool);
+    const pullRequest = new FakePullRequest();
+    const { deps, git } = makeDeps({ pullRequest });
+    git.setDirty(true);
+    const result = await runSpawn(
+      deps,
+      makeParams({
+        worktreesDir,
+        gitPlatform: 'github',
+        prompt: 'You are synthesizing... ## Task\nAdd retries',
+        base: { ref: 'refs/heads/main', sha: 'pinned-sha', branch: 'main' },
+        report: { spoolDir: spool, id: 'syn-001' },
+        fusion: {
+          schemaVersion: 1,
+          fusion: 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D8E',
+          profile: 'coding',
+          synthesizer: 'demo',
+          base: { sha: 'pinned-sha', branch: 'main' },
+          task: 'Add retries',
+          candidates: [],
+        },
+      })
+    );
+    assert.equal(git.worktrees[0].base, 'pinned-sha');
+    assert.deepEqual(git.pushed, [result.branch]);
+    assert.equal(pullRequest.specs.length, 1);
+    const body = pullRequest.specs[0].body;
+    assert.match(
+      body,
+      /^Fusion: fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D8E · profile coding/
+    );
+    assert.match(body, /\nSynthesizer: demo\n/);
+    // The user's task, never the preamble the synthesizer was handed.
+    assert.ok(body.endsWith('---\n\nAdd retries'));
+    assert.equal(readStatus(spool, 'syn-001')?.pushed, true);
+  });
+});
+
 test('a fusion candidate without a report target is refused before anything is cut', async () => {
   const { deps, git } = makeDeps();
   await assert.rejects(

@@ -64,6 +64,15 @@ export class Env {
   static readonly SPAWN_FUSION_BASE_REF_VAR = 'E_SPAWN_FUSION_BASE_REF';
   static readonly SPAWN_FUSION_BASE_BRANCH_VAR = 'E_SPAWN_FUSION_BASE_BRANCH';
   /**
+   * Set on the `e spawn` of a fusion's Synthesis run (ADR-0019 section 7)
+   * in place of {@link Env.SPAWN_FUSION_VAR}, with the same base markers and
+   * the report markers: the Fusion run's id, and the host directory of its
+   * material, mounted read-only at `/run/e/fusion`. Unlike a candidate it
+   * pushes and opens its PR, which names the fusion.
+   */
+  static readonly SPAWN_FUSION_SYNTHESIS_VAR = 'E_SPAWN_FUSION_SYNTHESIS';
+  static readonly SPAWN_FUSION_MATERIAL_VAR = 'E_SPAWN_FUSION_MATERIAL';
+  /**
    * The ledger entry (`.e/runs/live/<id>.json`) an `e spawn` started by `e
    * serve`'s queue reports into (ADR-0016 section 6): `serve` claimed it and
    * holds its slot, so the run patches that entry rather than writing its own.
@@ -276,26 +285,73 @@ export class Env {
    * candidate's fusion reads its end from the spool.
    */
   get fusionCandidate(): FusionCandidateSpawn | undefined {
+    const fusion = this.fusionMarkers();
+    if (fusion?.role !== 'candidate') return undefined;
+    return { fusion: fusion.fusion, base: fusion.base };
+  }
+
+  /**
+   * The fusion synthesis markers of this `e spawn` process (see
+   * {@link Env.SPAWN_FUSION_SYNTHESIS_VAR}), or undefined for any other run.
+   * Throws as {@link fusionCandidate} does.
+   */
+  get fusionSynthesis(): FusionSynthesisSpawn | undefined {
+    const fusion = this.fusionMarkers();
+    if (fusion?.role !== 'synthesis') return undefined;
+    return {
+      fusion: fusion.fusion,
+      base: fusion.base,
+      material: fusion.material!,
+    };
+  }
+
+  /** The fusion markers, whichever role they give; undefined when none is set. */
+  private fusionMarkers():
+    | (FusionCandidateSpawn & {
+        role: 'candidate' | 'synthesis';
+        material?: string;
+      })
+    | undefined {
     const read = (name: string) => process.env[name]?.trim() || undefined;
-    const fusion = read(Env.SPAWN_FUSION_VAR);
+    const candidate = read(Env.SPAWN_FUSION_VAR);
+    const synthesis = read(Env.SPAWN_FUSION_SYNTHESIS_VAR);
+    const material = read(Env.SPAWN_FUSION_MATERIAL_VAR);
     const sha = read(Env.SPAWN_FUSION_BASE_SHA_VAR);
     const ref = read(Env.SPAWN_FUSION_BASE_REF_VAR);
     const branch = read(Env.SPAWN_FUSION_BASE_BRANCH_VAR);
-    const present = [fusion, sha, ref, branch].filter(
+    const present = [candidate, synthesis, material, sha, ref, branch].filter(
       value => value !== undefined
     ).length;
     if (present === 0) return undefined;
-    if (!fusion || !sha || !ref || !branch) {
+    if (candidate && synthesis) {
       throw new Error(
-        `Incomplete fusion candidate markers: ${Env.SPAWN_FUSION_VAR}, ${Env.SPAWN_FUSION_BASE_SHA_VAR}, ${Env.SPAWN_FUSION_BASE_REF_VAR} and ${Env.SPAWN_FUSION_BASE_BRANCH_VAR} must all be set.`
+        `${Env.SPAWN_FUSION_VAR} and ${Env.SPAWN_FUSION_SYNTHESIS_VAR} are both set: a run is a fusion's candidate or its synthesis, never both.`
+      );
+    }
+    const fusion = candidate ?? synthesis;
+    if (!fusion || !sha || !ref || !branch || (synthesis && !material)) {
+      throw new Error(
+        synthesis || (material && !candidate)
+          ? `Incomplete fusion synthesis markers: ${Env.SPAWN_FUSION_SYNTHESIS_VAR}, ${Env.SPAWN_FUSION_MATERIAL_VAR}, ${Env.SPAWN_FUSION_BASE_SHA_VAR}, ${Env.SPAWN_FUSION_BASE_REF_VAR} and ${Env.SPAWN_FUSION_BASE_BRANCH_VAR} must all be set.`
+          : `Incomplete fusion candidate markers: ${Env.SPAWN_FUSION_VAR}, ${Env.SPAWN_FUSION_BASE_SHA_VAR}, ${Env.SPAWN_FUSION_BASE_REF_VAR} and ${Env.SPAWN_FUSION_BASE_BRANCH_VAR} must all be set.`
+      );
+    }
+    if (candidate && material) {
+      throw new Error(
+        `${Env.SPAWN_FUSION_MATERIAL_VAR} is the synthesis run's; a candidate is never shown the others' work.`
       );
     }
     if (this.report === undefined) {
       throw new Error(
-        `A fusion candidate needs the report markers (${Env.SPAWN_REPORT_SPOOL_VAR}, ${Env.SPAWN_REPORT_ID_VAR}): its fusion reads its end from the spool.`
+        `A fusion ${synthesis ? 'synthesis' : 'candidate'} needs the report markers (${Env.SPAWN_REPORT_SPOOL_VAR}, ${Env.SPAWN_REPORT_ID_VAR}): its fusion reads its end from the spool.`
       );
     }
-    return { fusion, base: { sha, ref, branch } };
+    return {
+      role: synthesis ? 'synthesis' : 'candidate',
+      fusion,
+      base: { sha, ref, branch },
+      ...(material ? { material } : {}),
+    };
   }
 
   /**
@@ -313,6 +369,25 @@ export class Env {
     copy[Env.SPAWN_FUSION_BASE_SHA_VAR] = candidate.base.sha;
     copy[Env.SPAWN_FUSION_BASE_REF_VAR] = candidate.base.ref;
     copy[Env.SPAWN_FUSION_BASE_BRANCH_VAR] = candidate.base.branch;
+    return copy;
+  }
+
+  /**
+   * Copies `base` for the `e spawn` of a fusion's Synthesis run: the report
+   * markers, the synthesis marker, the base and the material set, everything
+   * {@link withReport} drops dropped.
+   */
+  withFusionSynthesis(
+    report: { spoolDir: string; id: string },
+    synthesis: FusionSynthesisSpawn,
+    base: Record<string, string | undefined> = process.env
+  ): Record<string, string | undefined> {
+    const copy = this.withReport(report, base);
+    copy[Env.SPAWN_FUSION_SYNTHESIS_VAR] = synthesis.fusion;
+    copy[Env.SPAWN_FUSION_MATERIAL_VAR] = synthesis.material;
+    copy[Env.SPAWN_FUSION_BASE_SHA_VAR] = synthesis.base.sha;
+    copy[Env.SPAWN_FUSION_BASE_REF_VAR] = synthesis.base.ref;
+    copy[Env.SPAWN_FUSION_BASE_BRANCH_VAR] = synthesis.base.branch;
     return copy;
   }
 
@@ -340,7 +415,7 @@ export class Env {
       Env.STORE_ENV_FILE_VAR,
       Env.ONE_SHOT_VAR,
       ...PROVENANCE_VARS,
-      ...FUSION_CANDIDATE_VARS,
+      ...FUSION_VARS,
     ]) {
       delete copy[name];
     }
@@ -459,7 +534,7 @@ export class Env {
     // A sibling inherits its parent's provenance explicitly, never a stale
     // marker from the environment around it; and a candidate's sibling is
     // not itself a candidate.
-    for (const name of [...PROVENANCE_VARS, ...FUSION_CANDIDATE_VARS]) {
+    for (const name of [...PROVENANCE_VARS, ...FUSION_VARS]) {
       delete copy[name];
     }
     copy[Env.SPAWN_ROLE_VAR] = 'child';
@@ -484,8 +559,16 @@ export interface FusionCandidateSpawn {
   base: { sha: string; ref: string; branch: string };
 }
 
-const FUSION_CANDIDATE_VARS = [
+/** A fusion's Synthesis run, as its markers carry it (ADR-0019 section 7). */
+export interface FusionSynthesisSpawn extends FusionCandidateSpawn {
+  /** The host directory of the material, mounted read-only at `/run/e/fusion`. */
+  material: string;
+}
+
+const FUSION_VARS = [
   Env.SPAWN_FUSION_VAR,
+  Env.SPAWN_FUSION_SYNTHESIS_VAR,
+  Env.SPAWN_FUSION_MATERIAL_VAR,
   Env.SPAWN_FUSION_BASE_SHA_VAR,
   Env.SPAWN_FUSION_BASE_REF_VAR,
   Env.SPAWN_FUSION_BASE_BRANCH_VAR,

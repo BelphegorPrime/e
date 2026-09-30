@@ -374,8 +374,17 @@ PR.
   `/run/e/fusion/`, the way a triggered run's payload is at
   `/run/e/event.json` (ADR-0016 section 5): a host-built copy of each
   Candidate result, patch and files, `candidates/<record id>/`,
-  for **every** candidate, usable or not. A failed or empty candidate is an
-  explicit input - "codex refused" is information - never a silent gap.
+  for **every** candidate, usable or not, with `fusion.json` on top: the
+  summary naming each candidate's Agent, outcome, reason, verify verdict and
+  pushed branch. A failed or empty candidate is an explicit input - "codex
+  refused" is information - never a silent gap. The copy is built beside the
+  children's spool under the worktrees dir, a path the engine can
+  bind-mount, never mounted from the Store's record, and it goes with the
+  spool when the fusion ends. It is private like the record (0700/0600),
+  readable in the container under the same uid assumption the worktree and
+  the session mount already make (ADR-0017). The synthesis run's host side reads the same
+  summary back, checked field by field, and builds the PR block from it
+  alone.
 - **Candidate branches are never merged by the host.** There is no merge-back
   and no `git merge` of a candidate anywhere in a fusion. The synthesizer
   chooses one candidate (`git apply` works without a repository), combines
@@ -574,11 +583,16 @@ The threat model belongs to #180; the lines it must work within are these:
   coordinator, the synthesis preamble); `childRun.ts` gains a third caller.
 - **New internal markers** for a candidate - `E_SPAWN_FUSION` and the pinned
   base (`E_SPAWN_FUSION_BASE_SHA`/`_REF`/`_BRANCH`), beside the report
-  markers - host-set like `E_SPAWN_ROLE`, never a user flag, and stripped
-  from every child a candidate itself starts.
+  markers - and for the synthesis, `E_SPAWN_FUSION_SYNTHESIS` with the same
+  base and `E_SPAWN_FUSION_MATERIAL`, the host directory mounted at
+  `/run/e/fusion`. Host-set like `E_SPAWN_ROLE`, never a user flag, never
+  both at once, and stripped from every child either run itself starts.
 - **The `Git` port gains `diff` and `exportFiles`** for the patch and
   `files/`; it has numstat.
-- **The PR body gains a fusion block** for a synthesis run.
+- **The PR body gains a fusion block** for a synthesis run, with the user's
+  task, not the synthesis preamble, under it. A synthesis a human started
+  with `e fuse` is not called autonomous unless a gate or a trigger makes it
+  so.
 - **Costs multiply, visibly.** A fusion of N candidates is N + 1 Runs, each with
   its own loop and caps; its worst case is `totalMs`, stated in the profile or
   derived from the Store. Whether it is worth it is an empirical question,

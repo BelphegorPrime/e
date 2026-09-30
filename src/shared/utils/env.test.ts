@@ -19,6 +19,8 @@ const VARS = [
   Env.SPAWN_FUSION_BASE_SHA_VAR,
   Env.SPAWN_FUSION_BASE_REF_VAR,
   Env.SPAWN_FUSION_BASE_BRANCH_VAR,
+  Env.SPAWN_FUSION_SYNTHESIS_VAR,
+  Env.SPAWN_FUSION_MATERIAL_VAR,
   Env.A2A_TOKEN_VAR,
   Env.GITHUB_EVENT_NAME_VAR,
   Env.STORE_ENV_FILE_VAR,
@@ -266,6 +268,59 @@ test('withFusionCandidate: the report and candidate markers set; no sibling, rep
     assert.equal(child[Env.SPAWN_FUSION_BASE_REF_VAR], undefined);
     assert.equal(child[Env.SPAWN_FUSION_BASE_BRANCH_VAR], undefined);
   }
+});
+
+test('fusion synthesis markers (ADR-0019): the material with the base and the report markers; never a candidate as well', () => {
+  const setBase = () => {
+    process.env[Env.SPAWN_FUSION_BASE_SHA_VAR] = pinned.sha;
+    process.env[Env.SPAWN_FUSION_BASE_REF_VAR] = pinned.ref;
+    process.env[Env.SPAWN_FUSION_BASE_BRANCH_VAR] = pinned.branch;
+    process.env[Env.SPAWN_REPORT_SPOOL_VAR] = '/spool';
+    process.env[Env.SPAWN_REPORT_ID_VAR] = 'syn-001';
+  };
+  delete process.env[Env.SPAWN_FUSION_VAR];
+  setBase();
+  process.env[Env.SPAWN_FUSION_SYNTHESIS_VAR] = 'fusion-X';
+  assert.throws(
+    () => env.fusionSynthesis,
+    /Incomplete fusion synthesis markers/
+  );
+  process.env[Env.SPAWN_FUSION_MATERIAL_VAR] = '/wt/.fusion/x/material';
+  assert.deepEqual(env.fusionSynthesis, {
+    fusion: 'fusion-X',
+    base: pinned,
+    material: '/wt/.fusion/x/material',
+  });
+  // A synthesis is no candidate, and the two markers never go together.
+  assert.equal(env.fusionCandidate, undefined);
+  process.env[Env.SPAWN_FUSION_VAR] = 'fusion-X';
+  assert.throws(() => env.fusionCandidate, /never both/);
+  delete process.env[Env.SPAWN_FUSION_SYNTHESIS_VAR];
+  // A candidate is never shown the others' work.
+  assert.throws(() => env.fusionCandidate, /never shown the others' work/);
+});
+
+test('withFusionSynthesis: the synthesis markers set; no child it starts inherits them', () => {
+  const copy = env.withFusionSynthesis(
+    { spoolDir: '/spool', id: 'syn-001' },
+    { fusion: 'fusion-X', base: pinned, material: '/m' },
+    { PATH: '/bin', [Env.SPAWN_FUSION_VAR]: 'stale' }
+  );
+  assert.equal(copy[Env.SPAWN_FUSION_VAR], undefined);
+  assert.equal(copy[Env.SPAWN_FUSION_SYNTHESIS_VAR], 'fusion-X');
+  assert.equal(copy[Env.SPAWN_FUSION_MATERIAL_VAR], '/m');
+  assert.equal(copy[Env.SPAWN_FUSION_BASE_SHA_VAR], 'abc123');
+  assert.equal(copy[Env.SPAWN_REPORT_ID_VAR], 'syn-001');
+  const sibling = env.withSibling(
+    {
+      parent: { worktreePath: '/wt', branch: 'b' },
+      spoolDir: '/s',
+      id: 'sib-001',
+    },
+    copy
+  );
+  assert.equal(sibling[Env.SPAWN_FUSION_SYNTHESIS_VAR], undefined);
+  assert.equal(sibling[Env.SPAWN_FUSION_MATERIAL_VAR], undefined);
 });
 
 test('a2aToken is the trimmed E_A2A_TOKEN, undefined when unset or blank', () => {

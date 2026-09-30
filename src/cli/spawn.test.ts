@@ -68,6 +68,8 @@ const MARKERS = [
   Env.SPAWN_FUSION_BASE_SHA_VAR,
   Env.SPAWN_FUSION_BASE_REF_VAR,
   Env.SPAWN_FUSION_BASE_BRANCH_VAR,
+  Env.SPAWN_FUSION_SYNTHESIS_VAR,
+  Env.SPAWN_FUSION_MATERIAL_VAR,
   Env.TRIGGER_VAR,
   Env.EVENT_VAR,
   Env.EVENT_URL_VAR,
@@ -1746,6 +1748,51 @@ test("gatherSpawnFacts: a fusion candidate cuts from its fusion's base and reads
     assert.throws(
       () => gather(root, 'claudeCode', ['x']),
       /fusion candidate of fusion-X is started by its fusion, never by a trigger or the queue/
+    );
+  });
+});
+
+test("gatherSpawnFacts: a fusion synthesis reads its material's summary, and refuses one that is not an identifier", () => {
+  withStore(root => {
+    const material = path.join(root, 'material');
+    fs.mkdirSync(material);
+    const summary = {
+      schemaVersion: 1,
+      fusion: 'fusion-01K6ZQ4W0R1X2Y3Z4A5B6C7D8E',
+      profile: 'coding',
+      synthesizer: 'claudeCode',
+      base: { sha: 'abc1234', branch: 'main' },
+      task: 'Add retries',
+      candidates: [],
+    };
+    fs.writeFileSync(
+      path.join(material, 'fusion.json'),
+      JSON.stringify(summary)
+    );
+    process.env[Env.SPAWN_REPORT_SPOOL_VAR] = '/wt/.fusion/f';
+    process.env[Env.SPAWN_REPORT_ID_VAR] = 'syn-001';
+    process.env[Env.SPAWN_FUSION_SYNTHESIS_VAR] = summary.fusion;
+    process.env[Env.SPAWN_FUSION_MATERIAL_VAR] = material;
+    process.env[Env.SPAWN_FUSION_BASE_SHA_VAR] = 'abc1234';
+    process.env[Env.SPAWN_FUSION_BASE_REF_VAR] = 'refs/heads/main';
+    process.env[Env.SPAWN_FUSION_BASE_BRANCH_VAR] = 'main';
+    const facts = gather(root, 'claudeCode', ['x']);
+    assert.equal(facts.base?.sha, 'abc1234');
+    assert.deepEqual(facts.fusionSynthesis?.summary, summary);
+    assert.equal(facts.fusionSynthesis?.material, material);
+    assert.equal(facts.fusionCandidate, undefined);
+    fs.writeFileSync(
+      path.join(material, 'fusion.json'),
+      JSON.stringify({ ...summary, synthesizer: '@everyone' })
+    );
+    assert.throws(
+      () => gather(root, 'claudeCode', ['x']),
+      /Invalid fusion material at .*"synthesizer"/
+    );
+    fs.rmSync(path.join(material, 'fusion.json'));
+    assert.throws(
+      () => gather(root, 'claudeCode', ['x']),
+      /Cannot read the fusion material/
     );
   });
 });
