@@ -177,7 +177,7 @@ The `.e` directory holding e's on-disk state - **also called "eBaseDir" because 
 - Located by walking up from the working directory (or `--dir`), falling back to home
 - Avoid: calling it "workspace" in the Store context (the container's mounted checkout is the run's worktree)
 
-The next terms are the vocabulary of ADR-0016 (proposed; the autonomy contract - none of it is built yet):
+The next terms are the vocabulary of ADR-0016 (accepted; the autonomy contract, built through #157-#170 and #193):
 
 **Verify**:
 The command that decides whether a Run's work is accepted (ADR-0016), declared per Store in `config.json` as a string or as `{ command, image?, timeoutMs?, network?, cache?, guards? }`. It is the repository's check, not the Agent's, and runs as a **second container** against the Run's worktree after the commit - defaulting to the Run's harness image, installing its own dependencies (the harness images are alpine/musl), and never receiving provider credentials. Its exit code is the Verdict: non-zero or a timeout is **red** and the Loop iterates; a broken check (image missing, container will not start, command not found) aborts the Run. A Store with no Verify has no Loop: one Iteration, as today.

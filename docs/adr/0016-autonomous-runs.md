@@ -1,6 +1,6 @@
 # ADR-0016: Autonomous runs - the verify gate, the loop, and what may start a run without a human
 
-**Status:** Proposed
+**Status:** Accepted (implemented through #157-#170 and #193, 2026-09-30)
 **Date:** 2026-09-19
 **Related:** [ADR-0001 (per-run git worktree)](./0001-per-run-git-worktree.md), [ADR-0002 (host orchestrates git)](./0002-host-orchestrates-git.md), [ADR-0003 (run identity and ledger)](./0003-run-identity-and-ledger.md), [ADR-0005 (composed container groups)](./0005-runs-as-composed-container-groups.md), [ADR-0006 (per-harness config adapter)](./0006-per-harness-config-adapter.md), [ADR-0011 (egress blacklist netns)](./0011-egress-blacklist-netns.md), [ADR-0013 (nested spawn via runtime-broker)](./0013-nested-spawn-via-runtime-broker.md), [ADR-0015 (A2A vocabulary and remote agents)](./0015-a2a-vocabulary-facade-and-remote-agents.md)
 
