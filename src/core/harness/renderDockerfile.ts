@@ -11,6 +11,12 @@ export interface DockerfileParams {
   label: string;
   /** npm package installed globally, e.g. "@anthropic-ai/claude-code". */
   npmPackage: string;
+  /**
+   * Alpine packages the harness needs beyond `git`, installed in the same
+   * `apk add` layer, e.g. `["bash"]` for a CLI whose shell tool requires it.
+   * Default: [].
+   */
+  apkPackages?: string[];
   /** Extra flags for `npm install -g`, e.g. ["--ignore-scripts"]. Default: []. */
   npmFlags?: string[];
   /**
@@ -74,7 +80,7 @@ const TEMPLATE = `FROM {{{baseImage}}}
 ARG {{{argPackage}}}
 ARG {{{argVersion}}}
 ARG {{{argSkillsCli}}}
-{{#homeLine}}{{{.}}}{{/homeLine}}RUN apk add --no-cache git && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}@{{{versionRef}}}
+{{#homeLine}}{{{.}}}{{/homeLine}}RUN apk add --no-cache git{{#apkPackages}} {{{.}}}{{/apkPackages}} && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}@{{{versionRef}}}
 {{#setupSteps}}
 {{{.}}}
 {{/setupSteps}}
@@ -153,6 +159,7 @@ export function renderDockerfile(p: DockerfileParams): string {
   return Mustache.render(TEMPLATE, {
     baseImage: p.baseImage ?? 'node:lts-alpine',
     label: p.label,
+    apkPackages: p.apkPackages ?? [],
     flags: p.npmFlags ?? [],
     npmPackage: p.npmPackage,
     setupSteps: [

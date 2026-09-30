@@ -238,6 +238,10 @@ export const HARNESSES: Record<string, Harness> = {
     dockerfile: {
       label: 'Claude Code CLI harness.',
       npmPackage: '@anthropic-ai/claude-code',
+      // Claude's Bash tool runs commands through bash or zsh and refuses
+      // alpine's ash: without one, every tool call answers "No suitable shell
+      // found" (measured on 2.1.284).
+      apkPackages: ['bash'],
       skillCollections: SHIPPED_SKILL_COLLECTIONS,
       skillsAgent: 'claude-code',
       // Non-root runtime user (the template default); set `runtimeUser: 'root'`

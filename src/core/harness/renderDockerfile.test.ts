@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import test from 'node:test';
 import { renderDockerfile } from './renderDockerfile.js';
+import { HARNESSES } from './index.js';
 
 /** The valid outputs of the render - one `RUN skills add` per collection. */
 const pi = {
@@ -110,6 +111,21 @@ test('renderDockerfile: installs git so the skills CLI can clone at build time',
   assert.match(
     dockerfile,
     /RUN apk add --no-cache git && npm install -g --ignore-scripts @earendil-works\/pi-coding-agent/
+  );
+});
+
+test('renderDockerfile: extra apk packages join git in the one install line', () => {
+  const dockerfile = renderDockerfile({ ...pi, apkPackages: ['bash'] });
+  assert.match(
+    dockerfile,
+    /RUN apk add --no-cache git bash && npm install -g --ignore-scripts @earendil-works\/pi-coding-agent/
+  );
+});
+
+test("Claude Code's image has bash: its Bash tool finds no shell on plain alpine", () => {
+  assert.match(
+    renderDockerfile(HARNESSES.claudeCode.dockerfile),
+    /RUN apk add --no-cache git bash && npm install -g @anthropic-ai\/claude-code/
   );
 });
 
