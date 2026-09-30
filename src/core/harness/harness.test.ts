@@ -51,23 +51,48 @@ test('claude renderMcpArgs returns no args when there are no endpoints', () => {
   assert.deepEqual(claude.renderMcpArgs!([]), []);
 });
 
-test('claude renderMcpArgs passes remote auth headers through verbatim (for ${VAR} expansion)', () => {
-  const args = claude.renderMcpArgs!([
+test('claude renderMcpArgs references header secrets under e-owned E_MCP_<n> names (#204)', () => {
+  // Claude sends some credential names (NPM_TOKEN, ANTHROPIC_*, AWS_*) empty
+  // to a remote server; an index-only E_MCP_<n> name it never blanks.
+  const endpoints: McpEndpoint[] = [
     {
       name: 'hosted',
       url: 'https://mcp.example.com/mcp',
-      headers: { Authorization: 'Bearer ${TOKEN}' },
-    },
-  ]);
-  assert.deepEqual(JSON.parse(args[1]), {
-    mcpServers: {
-      hosted: {
-        type: 'http',
-        url: 'https://mcp.example.com/mcp',
-        headers: { Authorization: 'Bearer ${TOKEN}' },
+      headers: {
+        Authorization: 'Bearer ${NPM_TOKEN}',
+        'X-Pair': '${A_KEY}:${NPM_TOKEN}',
+        'X-Client': 'e',
       },
     },
+    {
+      name: 'other',
+      url: 'https://other.example.com/mcp',
+      headers: { Authorization: 'Token ${A_KEY}' },
+    },
+  ];
+  const args = claude.renderMcpArgs!(endpoints);
+  assert.deepEqual(JSON.parse(args[1]).mcpServers, {
+    hosted: {
+      type: 'http',
+      url: 'https://mcp.example.com/mcp',
+      headers: {
+        Authorization: 'Bearer ${E_MCP_0}',
+        'X-Pair': '${E_MCP_1}:${E_MCP_0}',
+        'X-Client': 'e',
+      },
+    },
+    other: {
+      type: 'http',
+      url: 'https://other.example.com/mcp',
+      headers: { Authorization: 'Token ${E_MCP_1}' },
+    },
   });
+  // What delivers the values under those names: by reference, never inline.
+  assert.deepEqual(claude.mcpHeaderEnv!(endpoints), [
+    { name: 'E_MCP_0', fromEnv: 'NPM_TOKEN' },
+    { name: 'E_MCP_1', fromEnv: 'A_KEY' },
+  ]);
+  assert.doesNotMatch(args[1], /NPM_TOKEN|A_KEY/);
 });
 
 test('claude renderMcpArgs omits headers when an endpoint has none', () => {

@@ -34,8 +34,10 @@ Two cross-cutting rules:
   `{env:NAME}`, pi `"apiKey": "${NAME}"` in `models.json`. pi used to be the
   exception, with the key's _value_ baked into its derived image; pi resolves
   `${NAME}` at request time, so that exception is gone (a bare `NAME` would be
-  the literal key). Remote MCP header secrets go by name the same way, and
-  Codex, whose `http_headers` are literal, gets `bearer_token_env_var` and
+  the literal key). Remote MCP header secrets go by name the same way.
+  Claude Code, which sends some credential names empty to a remote server,
+  gets each reference under an index-only `E_MCP_<n>` (#204); Codex, whose
+  `http_headers` are literal, gets `bearer_token_env_var` and
   `env_http_headers`, with its shell snapshot off and the secrets excluded from
   its agent's shell (`docs/research/harness-secret-delivery.md`).
 - **Protocol is validated against a per-harness set.** A provider's `protocol`

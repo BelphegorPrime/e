@@ -246,8 +246,9 @@ ${E_TEST_HDR}` as `Bearer <value>`. So `--mcp-config` expands too.
   credential" from Bash, hooks and MCP stdio servers while the parent keeps
   them; on Linux it also runs Bash in an isolated PID namespace
   ([env-vars](https://code.claude.com/docs/en/env-vars)). Whether that
-  namespace can be created inside `e`'s unprivileged container is
-  _unverified_.
+  namespace can be created inside `e`'s unprivileged container: **measured
+  for #204, it cannot** under Docker's defaults; see
+  [Claude Code 2.1.284 - measured for #204](#claude-code-21284---measured-for-204).
 
 ## Codex 0.159.0
 
@@ -467,11 +468,14 @@ apiKeyEnv }]` in `piAdapter.planProviderDelivery`, which already makes the
   where `E_MCP_GITHUB_TOKEN` carries the value of the user's `GITHUB_TOKEN`
   (`{ name: "E_MCP_GITHUB_TOKEN", fromEnv: "GITHUB_TOKEN" }`). The prefix is a
   choice to measure once against 2.1.284, since the binary's pattern list is
-  not fully readable.
+  not fully readable. **Measured for #204:** use an index, `E_MCP_<n>`, not
+  the source name; see
+  [Claude Code 2.1.284 - measured for #204](#claude-code-21284---measured-for-204).
 
 - Hardening: add `{ name: "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", value: "1" }` to
   `renderProviderEnv`, after checking that its PID namespace works in `e`'s
-  container.
+  container. **Measured for #204: do not**; it fails in the container and
+  disables `--dangerously-skip-permissions` (same section).
 
 ### Codex - `renderCodexConfig`, `renderCodexMcpServers`
 
@@ -532,3 +536,229 @@ No harness requires a value in a file. The only gaps are expressiveness: Codex
 cannot template around a reference, and Claude blanks some credential names.
 Both close with the same fallback: an `e`-owned env var, delivered through the
 scratch `--env-file` and referenced by name.
+
+---
+
+## Claude Code 2.1.284 - measured for #204
+
+Measured 2026-09-30 for [#204](https://github.com/BelphegorPrime/e/issues/204):
+which `${VAR}` references in a remote MCP header arrive empty, which `e`-owned
+name is safe, and whether `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` belongs in
+`claudeCodeAdapter.renderProviderEnv`.
+
+**Pinned sources:**
+
+| Package                                            | Integrity (npm lockfile)                                                                          | Used for                                      |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `@anthropic-ai/claude-code@2.1.284`                | `sha512-IuENsoLa+Y5fx5VaP0Md3n5UO7aYxjbFE/iydSDw6tMo2171oaxaaBa9oIepPG9NILd1owSx74ozsqAkTbEOjw==` | wrapper that selects the native binary        |
+| `@anthropic-ai/claude-code-linux-x64@2.1.284`      | `sha512-hjjPgN4u8DvnzZqWDYnU5xxQkykuUrkUoVeeutVLXjrhx4qeRPmwgZ69BFAHmV42FBRdiRwbLbiDE9nkQdAE8g==` | host runs; the source quotes below            |
+| `@anthropic-ai/claude-code-linux-x64-musl@2.1.284` | `sha512-6oPajQ/DRftfQOJ330vrnXsQQ9CkwSz6DkjjurfWZClpNNZbOv186EYk9llMR3PiKOA9W05DiPW86nddsgtP7w==` | container runs (`node:24-alpine`, like `e`'s) |
+
+2.1.284 ships no `cli.js`: the npm package is a wrapper (`cli-wrapper.cjs`)
+plus a Bun-compiled binary whose JavaScript is embedded as plain text. The
+code below was read from that text (`strings` on the binary) and is quoted by
+its minified names, which change with every release (_inference from the
+binary_ wherever a measurement does not back it).
+
+**Method.** Claude was run the way `e` runs it: `buildCommand` plus
+`renderMcpArgs`, that is `claude -p <prompt> --dangerously-skip-permissions
+--strict-mcp-config --settings '{"disableAllHooks":true}' --mcp-config
+'{"mcpServers":{"x":{"type":"http","url":"http://127.0.0.1:<port>/mcp","headers":{...}}}}'`,
+with stdin closed, and the env of `claudeCodeAdapter.renderProviderEnv`
+(`ANTHROPIC_BASE_URL` at the stub, `ANTHROPIC_MODEL`, `ANTHROPIC_AUTH_TOKEN`
+fake). Host runs used `env -i` with a scratch `HOME` (so the config home was
+`<HOME>/.claude`); container runs used `docker run` with only the options
+`buildRunArgs` emits (image `USER node`, default seccomp and AppArmor, no
+added capabilities), `/workspace` and `~/.claude/projects` bind-mounted from
+scratch dirs. One local Node stub served `POST /v1/messages` as SSE (text, or
+a scripted `tool_use` for the Bash tool followed by text once a `tool_result`
+came back) and a streamable-HTTP MCP endpoint (`initialize`, `tools/list`),
+logging every request's headers. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+was set to keep the runs off the network; `e` does not set it. Host: Linux
+7.1.5, bubblewrap 0.11.0, unprivileged user namespaces allowed, Docker 29.8.1.
+
+### Which names read as empty in a remote MCP header
+
+**Measured** (host; each header was `v=${VAR}`, each var set to a distinct
+fake value, the provider key only as `ANTHROPIC_AUTH_TOKEN` plus, for this
+table, a fake `ANTHROPIC_API_KEY`):
+
+| Reference                                                | Arrived, scrub off (`e` today) | Arrived, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` |
+| -------------------------------------------------------- | ------------------------------ | --------------------------------------------- |
+| `${NPM_TOKEN}`                                           | `v=` (empty)                   | `v=`                                          |
+| `${GITHUB_TOKEN}`                                        | value                          | value                                         |
+| `${ANTHROPIC_API_KEY}`                                   | `v=`                           | `v=`                                          |
+| `${ANTHROPIC_AUTH_TOKEN}`                                | `v=`                           | `v=`                                          |
+| `${OPENAI_API_KEY}`                                      | value                          | `v=`                                          |
+| `${AWS_SECRET_ACCESS_KEY}`                               | `v=`                           | `v=`                                          |
+| `${MY_SERVICE_TOKEN}`                                    | value                          | `v=`                                          |
+| `${E_MCP_GITHUB_TOKEN}`                                  | value                          | `v=`                                          |
+| `${E_MCP_NPM_TOKEN}`                                     | value                          | `v=`                                          |
+| `${E_MCP_X}`                                             | value                          | value                                         |
+| `${E_MCP_0}`, `${E_MCP_V1}`                              | value                          | value                                         |
+| `${E_MCP_GHP}` holding a `ghp_...`-shaped value          | value                          | value                                         |
+| `Authorization: Bearer ${E_MCP_AUTHZ}`                   | `Bearer <value>`               | `Bearer <value>`                              |
+| `${E_MCP_X}` holding `Bearer Abc0123456789defGHIJ`       | value                          | `v=`                                          |
+| `${E_MCP_V1}` holding `https://user:pw...@example.com/x` | value                          | `v=`                                          |
+| `${E_UNSET_VAR}` (unset)                                 | literal `v=${E_UNSET_VAR}`     | literal `v=${E_UNSET_VAR}`                    |
+
+**Measured** in the container (scrub off): `${NPM_TOKEN}` arrived empty,
+`${E_MCP_0}` and `${E_MCP_GITHUB_TOKEN}` with their values, `Bearer
+${E_MCP_0}` as `Bearer <value>`: the same as on the host.
+
+**Where the rule lives** (_inference from the binary_). Each header is
+expanded at connect time by `TXt`, which calls `UW(value, void 0, void 0,
+{remoteSink: !0, blankList: cV()})`; `UW` is the routine that logs
+"references credential variable(s) that are never expanded toward a remote
+server". A `${NAME}` reads as empty when any of these holds:
+
+- **Fixed names, always** (`cV().remoteSink`, compared upper-cased, each also
+  with an `INPUT_` prefix): Claude's own credentials (`H1t`, `r6e`:
+  `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, the
+  `*_FILE_DESCRIPTOR` vars, `MCP_CLIENT_SECRET`, `ENVIRONMENT_SERVICE_KEY`,
+  ...); the `ho` list (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_CUSTOM_HEADERS`, `ANTHROPIC_FOUNDRY_API_KEY`,
+  `ANTHROPIC_FOUNDRY_AUTH_TOKEN`, `ANTHROPIC_AWS_API_KEY`,
+  `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_BEARER_TOKEN_BEDROCK`,
+  `GOOGLE_APPLICATION_CREDENTIALS`, `AZURE_CLIENT_SECRET`, ...); and `tln`:
+  `AWS_CONTAINER_AUTHORIZATION_TOKEN`, `ANTHROPIC_IDENTITY_TOKEN`,
+  `CLOUDSDK_AUTH_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`,
+  `AZURE_CLIENT_CERTIFICATE_PASSWORD`, `AZURE_PASSWORD`,
+  `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE`, `CLAUDE_CODE_CLIENT_KEY`,
+  `CLAUDE_CODE_CLIENT_CERT`, `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` (and
+  lower case), `CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, `CODEARTIFACT_AUTH_TOKEN`,
+  `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `UV_INDEX_URL`, `UV_EXTRA_INDEX_URL`,
+  `UV_DEFAULT_INDEX`, `UV_INDEX`, `GOPROXY`, `GOAUTH`, `PYPI_TOKEN`,
+  `TWINE_PASSWORD`. `GITHUB_TOKEN` and `OPENAI_API_KEY` are on none of them,
+  which matches the table.
+- **Name patterns, always** (`Pge`, `Mge`): `^GIT_CONFIG_(?:PARAMETERS|(?:KEY|VALUE)_\d+)$`,
+  `^CARGO_REGISTRIES_[A-Z0-9_]+_TOKEN$`, `OTEL_*`, `CLAUDE_CODE_ARTIFACT*_BASE_URL`,
+  `^(?:INPUT_)?BUNDLE_..__` (`a1t`), user and password names under fixed
+  prefixes (`l1t`, anchored `^(?:INPUT_|ORG_GRADLE_PROJECT_|POETRY_PYPI_TOKEN_|POETRY_HTTP_BASIC_|CARGO_REGISTRIES_|...)`),
+  and an `ANTHROPIC_*_BASE_URL`-type name whose value carries credentials.
+- **Only while the scrub is on** (`Ige`, gated by `qYn()`: true when
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is truthy, or when
+  `CLAUDE_CODE_ENTRYPOINT=local-agent`): (a) every name the secret-name
+  regex `Yt` matches, whole `_`-separated words `TOKEN`, `SECRET`,
+  `PASSWORD`, `PASSWD`, `PASSPHRASE`, `KEY`, `AUTH`, `COOKIE`, `PAT`, `DSN`,
+  `WEBHOOK`, `CREDENTIAL(S)`, `CREDS`, `APIKEY`, `ACCESSKEY`, ... plus
+  `_PWD`, `_PASS`, `_JWT` and camelCase splits, except `GITHUB_TOKEN`,
+  `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` (`QBo`); and
+  (b) every value that looks like a credential (`aT`): a URL with userinfo,
+  `Bearer <x>` / `Basic <x>` / `Token <x>`, `authorization: ...`,
+  `password=...`-style pairs, a PEM private key, Slack/Discord/Teams webhook
+  URLs.
+
+So the earlier "credential names read as empty" is one fixed list plus
+patterns while the scrub is off, and it grows to every secret-looking name
+and value once the scrub is on.
+
+### A safe `e`-owned name
+
+- **`E_MCP_` itself is never blanked:** no fixed name starts with it, and
+  every pattern above is anchored on another prefix. **Measured:**
+  `E_MCP_GITHUB_TOKEN`, `E_MCP_NPM_TOKEN`, `E_MCP_X`, `E_MCP_0` all expanded
+  with the scrub off, on the host and in the container.
+- **The suffix decides once the scrub is on:** `E_MCP_GITHUB_TOKEN` and
+  `E_MCP_NPM_TOKEN` then read as empty (**measured**), because `_TOKEN` is a
+  secret word. The same would hit any suffix taken from user text: a server
+  or var name containing `AUTH`, `KEY`, `PAT`, `TOKEN`, ...
+- **Recommendation:** `E_MCP_<n>`, a decimal index assigned per referenced
+  source var at render time (`E_MCP_0`, `E_MCP_1`, ...), never the source
+  name or the server name. It contains no secret word, so it expands whether
+  or not the scrub is ever turned on (**measured:** `E_MCP_0` and `E_MCP_V1`
+  expanded in both columns). Keep the surrounding text in the header
+  template (`"Authorization": "Bearer ${E_MCP_0}"`) and put only the bare
+  secret in the var: a var whose value is itself `Bearer ...` or a URL with
+  credentials reads as empty under the scrub (**measured**).
+
+### `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`
+
+- **Without it (`e` today), the key reaches the transcript.** **Measured:**
+  the stub model called Bash with `env`; the tool result held
+  `ANTHROPIC_AUTH_TOKEN=<fake>` (and every other var), and so did
+  `<HOME>/.claude/projects/<cwd>/<session>.jsonl`, on the host and in the
+  container's mounted `projects/-workspace/`.
+- **It overrides `--dangerously-skip-permissions`.** **Measured:** with the
+  scrub, Claude prints "Permission mode forced to default ... Declare
+  allowedTools explicitly, or set CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0 to opt
+  out.", and the scripted Bash call came back as the error tool result "This
+  command requires approval"; the run still exited 0. The binary's `NLr`
+  returns mode `default` whenever the var is set, before it looks at
+  `dangerouslySkipPermissions` or `--permission-mode` (_inference from the
+  binary_). Adding `--allowedTools Bash` let Bash run (**measured**); other
+  tools (Edit, Write, WebFetch, ...) would need the same (_unverified_).
+- **When Bash does run, it hides the key and auth still works.**
+  **Measured** (host, `--allowedTools Bash`): Bash ran as `bwrap
+--new-session --die-with-parent ... --unshare-pid --unshare-user --cap-drop
+ALL --proc /proc -- /bin/bash -c ...` (the shell was PID 2, 5 processes
+  visible); `env` showed no `ANTHROPIC_AUTH_TOKEN`, `NPM_TOKEN`,
+  `AWS_SECRET_ACCESS_KEY`, `OPENAI_API_KEY`, `MY_SERVICE_TOKEN`,
+  `E_MCP_GITHUB_TOKEN`, `E_MCP_NPM_TOKEN`, but kept `GITHUB_TOKEN`,
+  `ANTHROPIC_BASE_URL` and `E_MCP_0`/`E_MCP_X`/`E_MCP_V1`/`E_MCP_AUTHZ`; the
+  session JSONL held no provider key. Every provider request, with and
+  without the scrub, carried `Authorization: Bearer <fake>`.
+- **It needs bubblewrap and socat.** **Measured** in the container: without
+  `bwrap`, Claude exits 1 at startup with "bubblewrap is required for
+  subprocess env scrubbing and isolation. ..."; with `bwrap` but without
+  `socat`, every Bash call answers "Sandbox is required but failed to
+  initialize: Sandbox dependencies not available: socat not installed." The
+  `e` image installs neither (`apkPackages: ['bash']`).
+- **It does not work in `e`'s container.** **Measured** (`node:24-alpine`
+  plus `bash bubblewrap socat`, user `node`, default Docker options): Bash
+  fails with "bwrap: No permissions to create a new namespace, likely because
+  the kernel does not allow non-privileged user namespaces." (Docker's
+  default seccomp profile refuses the user namespace, although the host
+  allows it). `--security-opt seccomp=unconfined` moves the failure to
+  "bwrap: Failed to make / slave: Permission denied"; adding
+  `apparmor=unconfined` to "bwrap: Can't mount proc on /proc: Operation not
+  permitted"; only with `systempaths=unconfined` as well did Bash run (PID 2,
+  no key). Other engines and hosts (rootless Docker, Podman, other AppArmor
+  policies) were not tried (_unverified_).
+- **It writes into the workspace and freezes files there.** **Measured:** at
+  startup with the scrub (`xWr`), Claude creates, when missing, empty
+  `.env`, `.env.local`, `.env.development`, `.env.development.local`,
+  `.env.test`, `.env.test.local`, `.env.production`, `.env.production.local`,
+  `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `bunfig.toml`, `package.json`,
+  `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `.gitmodules` and the
+  dirs `.claude/commands`, `.claude/agents`, `node_modules/.bin` in the
+  working directory (the same 19 entries appeared in the container's
+  `/workspace`), plus `.gitconfig`, `.bashrc`, `.profile`, `.zshrc`,
+  `.npmrc`, `.netrc`, ... in `HOME`. It binds them read-only into the Bash
+  sandbox: `echo {} > package.json` failed with "Read-only file system",
+  while a new file could be written; `.git` is masked by an empty read-only
+  dir. Since `e` captures and commits `/workspace` after the run, those
+  empty files would land in the run's commit (inference from `e`'s capture
+  step, not run end to end).
+
+### Permission mode
+
+`buildCommand`, `resumeCommand` and `buildInteractiveCommand` all pass
+`--dangerously-skip-permissions`. **Measured:** with it, the Bash tool ran
+headless (`-p`, stdin closed, no prompt) on the host and as `node` in the
+container. The scrub is the one setting found that silently turns this off
+(above).
+
+### Verdict for #204
+
+- **Prefix:** deliver each var an MCP header references as `E_MCP_<n>`
+  (decimal index, no user text), for example `{ name: 'E_MCP_0', fromEnv:
+'NPM_TOKEN' }` in the server's credential env-file, and rewrite
+  `${NPM_TOKEN}` to `${E_MCP_0}` in `renderMcpArgs`. **Measured:** a name of
+  that shape reaches the server with its value, with or without the scrub,
+  where `${NPM_TOKEN}` arrives empty. The issue's `E_MCP_GITHUB_TOKEN` form
+  works too while the scrub stays off, but breaks as soon as it is on.
+- **Scrub: do not add `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` to
+  `claudeCodeAdapter.renderProviderEnv`.** It exits 1 without `bwrap` in the
+  image, needs `socat`, cannot create its namespaces under Docker's defaults
+  unless seccomp, AppArmor and the masked `/proc` paths are all lifted (a net
+  loss of isolation for the whole container), forces the permission mode
+  back to `default` so Bash is refused headless, drops empty files into
+  `/workspace` that `e` would commit, and widens MCP header blanking to every
+  secret-looking name and value.
+- **Caveats:** the key stays visible to `env` in Claude's shell, so the
+  shared caveat in [Verdict](#verdict) holds for Claude as for pi and
+  opencode. The name lists and minified identifiers above are specific to
+  2.1.284; a Renovate bump of `HARNESSES.claudeCode.version` should re-run
+  this measurement. The host runs used the glibc binary, the container runs
+  the musl one; both gave the same header results.

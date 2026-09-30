@@ -8,6 +8,7 @@ import type {
   Protocol,
   HarnessAdapter,
   ConfigOverlayDelivery,
+  ContainerEnv,
 } from './adapter.js';
 import type { McpEndpoint } from '../mcp/index.js';
 import {
@@ -72,6 +73,13 @@ export interface Harness {
    * capability-gates on its presence. Grounding: `docs/research/harness-cli-facts.md`.
    */
   renderMcpArgs?(endpoints: McpEndpoint[]): string[];
+  /**
+   * Env the container needs for the header references {@link renderMcpArgs}
+   * wrote: e-owned names, each delivered from the Store variable the MCP
+   * server's `mcp.json` names (#204). Absent: the harness reads the user's
+   * names as written.
+   */
+  mcpHeaderEnv?(endpoints: McpEndpoint[]): ContainerEnv[];
   /**
    * Absolute in-container directory this harness reads Agent Skills from, outside
    * `/workspace` so skills never land in a run's branch (e.g. Claude
@@ -167,6 +175,56 @@ const CODEX_EXEC_POSTURE = [
 const OPENCODE_SESSION_DIR = `${NODE_HOME}/.local/share/opencode-session`;
 
 /** Available coding harnesses, keyed by name. */
+/** An e-owned MCP header variable: a bare index, no user text in the name. */
+const MCP_ALIAS_PREFIX = 'E_MCP_';
+
+/** A `${NAME}` reference in a header value. */
+const HEADER_REFERENCE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+/**
+ * Rewrites every `${NAME}` in the endpoints' headers to `${E_MCP_<n>}`, one
+ * index per distinct name in order of first use, and returns the env that
+ * delivers each from its name. Claude Code expands `${VAR}` in
+ * `--mcp-config`, but sends a fixed set of credential names (and patterns
+ * such as `GIT_CONFIG_*`) empty to a remote server; a name that is only an
+ * index matches none of them, with its env scrub on or off. Measured on
+ * 2.1.284: `docs/research/harness-secret-delivery.md`.
+ */
+export function aliasMcpHeaderVars(endpoints: McpEndpoint[]): {
+  endpoints: McpEndpoint[];
+  env: ContainerEnv[];
+} {
+  const aliases = new Map<string, string>();
+  const alias = (name: string): string => {
+    let named = aliases.get(name);
+    if (named === undefined) {
+      named = `${MCP_ALIAS_PREFIX}${aliases.size}`;
+      aliases.set(name, named);
+    }
+    return named;
+  };
+  const rewritten = endpoints.map(endpoint =>
+    endpoint.headers
+      ? {
+          ...endpoint,
+          headers: Object.fromEntries(
+            Object.entries(endpoint.headers).map(([header, value]) => [
+              header,
+              value.replace(
+                HEADER_REFERENCE,
+                (_, name: string) => `\${${alias(name)}}`
+              ),
+            ])
+          ),
+        }
+      : endpoint
+  );
+  return {
+    endpoints: rewritten,
+    env: [...aliases].map(([fromEnv, name]) => ({ name, fromEnv })),
+  };
+}
+
 export const HARNESSES: Record<string, Harness> = {
   pi: {
     name: 'pi',
@@ -274,6 +332,10 @@ export const HARNESSES: Record<string, Harness> = {
     // container env at runtime, so the secret is never written onto argv.
     renderMcpArgs: (endpoints: McpEndpoint[]) => {
       if (endpoints.length === 0) return [];
+      // Claude sends some credential names empty to a remote server
+      // (NPM_TOKEN, ANTHROPIC_*, AWS_*, measured on 2.1.284): every
+      // reference goes under an e-owned E_MCP_<n> instead (#204).
+      endpoints = aliasMcpHeaderVars(endpoints).endpoints;
       type HttpServer = {
         type: 'http';
         url: string;
@@ -287,6 +349,8 @@ export const HARNESSES: Record<string, Harness> = {
       }
       return ['--mcp-config', JSON.stringify({ mcpServers })];
     },
+    mcpHeaderEnv: (endpoints: McpEndpoint[]) =>
+      aliasMcpHeaderVars(endpoints).env,
     // Claude Code reads Agent Skills from `~/.claude/skills` (not `.agents/`).
     skillsDir: `${NODE_HOME}/.claude/skills`,
     // Measured on 2.1.284 against a stub endpoint (ADR-0017): a run in

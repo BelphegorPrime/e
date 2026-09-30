@@ -686,6 +686,11 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     );
     if (mcp.form === 'flag') {
       mcpArgs = mcp.args;
+      // The values behind the harness's own names for header references.
+      const headerEnv = harness.mcpHeaderEnv?.(selection.endpoints) ?? [];
+      if (headerEnv.length > 0) {
+        remoteCredentials.push(envRenderer.render(headerEnv, 'MCP header'));
+      }
     } else if (mcp.form === 'file') {
       configOverlay = mcp.overlay;
     }

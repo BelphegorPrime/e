@@ -461,6 +461,28 @@ test('planSpawn: pi gets no overlay without --mcp', () => {
   assert.equal(plan.configOverlay, undefined);
 });
 
+test('planSpawn: Claude gets MCP header secrets under E_MCP_<n>, their values in the credential env-file (#204)', () => {
+  const plan = planSpawn(
+    facts({
+      storeEnv: { NPM_TOKEN: 'npm-secret-value' },
+      mcpServers: [
+        {
+          name: 'hosted',
+          transport: 'remote',
+          url: 'https://mcp.example.com/mcp',
+          headers: { Authorization: 'Bearer ${NPM_TOKEN}' },
+          requiredEnv: ['NPM_TOKEN'],
+        },
+      ],
+    })
+  );
+  assert.match(plan.mcpArgs.join(' '), /Bearer \$\{E_MCP_0\}/);
+  assert.ok(
+    plan.remoteCredentials.some(c => c.includes('E_MCP_0=npm-secret-value'))
+  );
+  assert.doesNotMatch(plan.mcpArgs.join(' '), /npm-secret-value/);
+});
+
 test('planSpawn: a flag-MCP harness (claude) wires --mcp-config, no overlay', () => {
   const plan = planSpawn(facts({ mcpServers: [containerMcp] }));
   assert.equal(plan.sidecars.length, 1);
