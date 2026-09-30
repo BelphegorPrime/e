@@ -234,7 +234,7 @@ test('a missing key is created through OmniRoute and saved under the provider va
     );
     const { fetchImpl, urls } = omniRoute({
       login: { status: 200, token: 'tok' },
-      keys: { status: 200, body: { key: 'sk-new' } },
+      keys: { status: 200, body: { key: 'sk-new', id: 'k1' } },
     });
     const before = facts({
       root,
@@ -267,7 +267,7 @@ test('a key still set to the stack password counts as unconfigured', async () =>
     const envFile = writeStoreEnv(root, 'OPENAI_API_KEY=pw\n');
     const { fetchImpl, urls } = omniRoute({
       login: { status: 200, token: 'tok' },
-      keys: { status: 200, body: { key: 'sk-new' } },
+      keys: { status: 200, body: { key: 'sk-new', id: 'k1' } },
     });
     const after = await prepareLocalStack(
       facts({
@@ -295,7 +295,7 @@ test('a key OmniRoute rejects with 401 is replaced', async () => {
     const { fetchImpl, urls } = omniRoute({
       models: 401,
       login: { status: 200, token: 'tok' },
-      keys: { status: 200, body: { key: 'sk-fresh' } },
+      keys: { status: 200, body: { key: 'sk-fresh', id: 'k1' } },
     });
     const after = await prepareLocalStack(
       facts({

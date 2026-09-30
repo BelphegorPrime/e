@@ -8,6 +8,13 @@ export const STACK_NETWORK = 'e-net';
  */
 export const EGRESS_CONTAINER = 'e-egress';
 
+/**
+ * The local stack's OmniRoute gateway container. Fixed per host, like
+ * {@link EGRESS_CONTAINER}: a one-shot run counts the stack as present when
+ * both are running, whichever Store started them (ADR-0016 section 13).
+ */
+export const OMNIROUTE_CONTAINER = 'omniroute';
+
 /** Docker volume holding OmniRoute's persistent state. */
 export const OMNIROUTE_VOLUME = 'omniroute-data';
 

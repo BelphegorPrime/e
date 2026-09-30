@@ -4,7 +4,7 @@ import {
   type HardwareVendor,
 } from '../../ports/hardware/index.js';
 import Mustache from 'mustache';
-import { STACK_NETWORK } from '../../shared/constants.js';
+import { OMNIROUTE_CONTAINER, STACK_NETWORK } from '../../shared/constants.js';
 import {
   EGRESS_API_PORT,
   EGRESS_BLACKLIST_IP_MOUNT,
@@ -12,6 +12,15 @@ import {
   EGRESS_LOG_MOUNT,
 } from '../../sidecars/egress/contract/constants.js';
 import type { LocalRuntime } from '../../core/localRuntimes.js';
+
+/**
+ * The OmniRoute image, pinned by tag and digest: `latest` jumps across
+ * hundreds of changes each month, and a per-run key's `expiresAt` is taken on
+ * create only from v3.8.51 on (docs/research/omniroute-endpoint-keys.md).
+ * Bump deliberately, and re-check the `/api/keys` create schema when you do.
+ */
+export const OMNIROUTE_IMAGE =
+  'diegosouzapw/omniroute:3.8.51@sha256:8bd462c9f60d8eda79329cfbb6ea7ea723505fe7721beb944f3d43835409e218';
 
 /** Compose template; conditional blocks keep each local runtime self-contained. */
 const TEMPLATE = `# Local OmniRoute gateway with {{{runtimeSummary}}}.
@@ -60,8 +69,8 @@ services:
 {{/ollama}}{{#vllm}}      - "127.0.0.1:8000:8000"
 {{/vllm}}
   omniroute:
-    image: diegosouzapw/omniroute:latest
-    container_name: omniroute
+    image: ${OMNIROUTE_IMAGE}
+    container_name: ${OMNIROUTE_CONTAINER}
     restart: unless-stopped
     stop_grace_period: 40s
     network_mode: "service:egress"

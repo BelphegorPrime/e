@@ -366,7 +366,16 @@ defaults - which keeps the check with the repository. For a triggered run the
 target repo's settings come from its **Base Store** - the target's `.e/` as
 committed at the run's base - never from the checkout's working tree, which is
 whatever somebody left checked out, the same reason `HEAD` is refused as a base;
-agents, Dockerfiles, skills and `.env` stay the serving Store's (#199). The
+agents, Dockerfiles, skills and `.env` stay the serving Store's (#199). Only
+`config.json` moves, so it is read at the base's sha (`readConfigAtBase`)
+rather than materialized with the rest; a target with no `config.json` there
+keeps the serving Store's settings, a file on disk notwithstanding. For a
+repo-local Store serving and target are one, so there a `config.json` that
+HEAD tracks but base does not means no gate and the default caps; only an
+untracked one, the operator's own, is read from disk. A queued
+run of a repo-local Store gets this today, from the base `serve` recorded at
+claim; a home Store's `repo` target reuses the same function once the queue
+carries it. The
 queue and ledger stay with the **serving** Store: slots bound how many
 containers this machine runs.
 
@@ -984,9 +993,23 @@ base or, worse, from the head. With a stack, a provider that targets
 OmniRoute gets **one endpoint key per run**: minted at start with
 `OMNIROUTE_INITIAL_PASSWORD` from `--env-file`, deleted after teardown, and
 leftover `e-run-*` keys swept at the next start. A key an agent leaks is dead
-once its run is. This depends on OmniRoute deleting and listing keys over its
-API (#196); if it cannot, the key comes only from `--env-file`, checked, never
-minted and never asked for.
+once its run is. OmniRoute's API deletes and lists keys by id
+(`docs/research/omniroute-endpoint-keys.md`, #196), so the key is minted named
+`e-run-<run name>` with `expiresAt` at the run cap plus an hour, which covers the image builds
+before the cap starts counting,, and
+deleted by id after teardown on every way out - green, red, aborted. A delete
+that fails only warns: the expiry already makes the key useless, and the
+sweep removes the row. The sweep deletes an `e-run-*` key past its expiry, or
+one without an expiry created longer than the cap ago - never by prefix
+alone, since a concurrent run's live key has it too. The stack's image is
+pinned by digest to the first release that takes `expiresAt` on create
+(3.8.51), and on an older one the expiry is set by `PATCH`, or the key is
+deleted and the run refused. The password stays host-side, off the plan's
+whitelist; without it in `--env-file` the run exits 1 naming the variable,
+and nothing prompts. pi, the one harness that bakes its key's value (ADR-0006),
+carries the run key in its derived image and in the Base Store's scratch
+`models.json`: the image outlives the run, the key in it does not. A one-shot run marks its siblings `E_ONE_SHOT=1`, so each
+of them uses the running stack the same way and mints a key of its own.
 
 **Void in one-shot**: the queue and slot accounting, dedup, the `live/` ledger,
 `nextFireAt`/`lastFiredAt`, `GET /api/runs`, A2A cancel. Siblings and the

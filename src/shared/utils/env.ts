@@ -78,6 +78,15 @@ export class Env {
   static readonly STORE_ENV_FILE_VAR = 'E_STORE_ENV_FILE';
 
   /**
+   * `1` on each sibling a one-shot run (ADR-0016 section 13) starts: the
+   * sibling is of the one-shot shape too, so it uses a running local stack
+   * without ever starting one and mints its own endpoint key. Read only
+   * alongside the sibling markers, so a stale export never changes a run of
+   * the user's own; passed on to a sibling, never to a run of its own.
+   */
+  static readonly ONE_SHOT_VAR = 'E_ONE_SHOT';
+
+  /**
    * The bearer token `e serve` requires on its A2A endpoint (ADR-0015). Unset,
    * the endpoint is open on loopback only; a `serve` bound beyond loopback
    * without a token disables the endpoint rather than expose it.
@@ -267,6 +276,7 @@ export class Env {
       Env.SPAWN_SIBLING_ID_VAR,
       Env.LEDGER_FILE_VAR,
       Env.STORE_ENV_FILE_VAR,
+      Env.ONE_SHOT_VAR,
       ...PROVENANCE_VARS,
     ]) {
       delete copy[name];
@@ -279,6 +289,14 @@ export class Env {
   /** The Actions event name (see {@link Env.GITHUB_EVENT_NAME_VAR}), or undefined when unset or blank. */
   get githubEventName(): string | undefined {
     return process.env[Env.GITHUB_EVENT_NAME_VAR]?.trim() || undefined;
+  }
+
+  /** True when a one-shot parent marked this sibling (see {@link Env.ONE_SHOT_VAR}), and only with the sibling markers. */
+  get oneShotSibling(): boolean {
+    return (
+      this.sibling !== undefined &&
+      process.env[Env.ONE_SHOT_VAR]?.trim() === '1'
+    );
   }
 
   /** The file standing in for the Store's `.env` (see {@link Env.STORE_ENV_FILE_VAR}), or undefined. */

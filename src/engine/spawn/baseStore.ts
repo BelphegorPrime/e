@@ -2,10 +2,18 @@ import fs from 'fs';
 import path from 'path';
 import type { Git } from '../../ports/git/index.js';
 import {
+  configFilePath,
   dockerComposePath,
   eBaseDir,
   envFilePath,
 } from '../../core/store/paths.js';
+import {
+  chainConfig,
+  readConfig,
+  resolveConfig,
+  type StoreConfig,
+} from '../../core/store/config.js';
+import { errorMessage } from '../../shared/utils/errors.js';
 import type { RunBase } from '../runs/runSpawn.js';
 
 /**
@@ -171,4 +179,78 @@ export function materializeBaseStore(
     );
   }
   return { store: { root: dest, checkoutRoot }, warnings, notices };
+}
+
+/**
+ * **Hosted's half of the rule** (ADR-0016 section 5, #199): the config a
+ * queued run reads when its target repository's settings must come from
+ * base. `verify`, `loop` and `resources` resolve from the target's
+ * `.e/config.json` as committed at `base` - never from its working tree,
+ * which is whatever somebody left checked out, the same reason `HEAD` is
+ * refused as a base - over the serving Store's machine settings, as
+ * {@link chainConfig} layers them. A target with no `config.json` at base
+ * keeps the serving Store's settings, a file on disk notwithstanding.
+ *
+ * Only `config.json` moves: agents, Dockerfiles, skills and `.env` stay the
+ * serving Store's, which is what hosted means. So this reads the one file at
+ * the base commit rather than materializing a whole Base Store.
+ */
+export function readConfigAtBase(
+  git: Git,
+  input: { serving: string | undefined; target: string; base: RunBase }
+): StoreConfig {
+  const { serving, target, base } = input;
+  const file = configFilePath(target);
+  // The sha, not the ref: the commit the run is cut from is the one read.
+  const committed = git.readFileAt(base.sha, file);
+  if (committed === undefined) {
+    return readConfig(serving);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(committed);
+  } catch (err) {
+    throw new Error(
+      `${base.ref}:${path.relative(target, file)} is not valid JSON: ${errorMessage(err)}`,
+      { cause: err }
+    );
+  }
+  return chainConfig(readConfig(serving), resolveConfig(raw));
+}
+
+/**
+ * The config of a run `serve` queued and claimed with a base (ADR-0016
+ * section 6): a Store inside the repository the base was resolved in is
+ * that repository's own, so its settings come from base through
+ * {@link readConfigAtBase}. A Store outside it - a home Store - is in no
+ * repository and is read as always.
+ *
+ * Here the serving Store and the target are one, so "no `config.json` at
+ * base keeps the serving settings" would hand the gate straight back to the
+ * working tree. It does only when git tracks no `config.json` in HEAD
+ * either: then the file is the operator's own and no branch put it there.
+ * One that HEAD tracks came with whatever is checked out, and base, which
+ * declares none, has no gate and the default caps.
+ */
+export function readQueuedConfig(
+  git: Git,
+  root: string | undefined,
+  base: RunBase
+): StoreConfig {
+  const toplevel = git.toplevel();
+  if (
+    root === undefined ||
+    toplevel === undefined ||
+    !within(real(toplevel), real(root))
+  ) {
+    return readConfig(root);
+  }
+  const file = configFilePath(root);
+  if (
+    git.readFileAt(base.sha, file) === undefined &&
+    git.readFileAt('HEAD', file) !== undefined
+  ) {
+    return chainConfig(readConfig(root), resolveConfig(undefined));
+  }
+  return readConfigAtBase(git, { serving: root, target: root, base });
 }

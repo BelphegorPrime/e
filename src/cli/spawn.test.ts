@@ -23,6 +23,13 @@ import { RunScratch } from '../engine/runs/runScratch.js';
 import { Env } from '../shared/utils/env.js';
 import { SPAWN_FLAGS } from '../shared/spawnArgs.js';
 import {
+  EGRESS_CONTAINER,
+  OMNIROUTE_CONTAINER,
+  OMNIROUTE_PORT,
+} from '../shared/constants.js';
+import { PinnedRuntime } from '../engine/runs/runSpawn.testSupport.js';
+import { fakeOmniRoute } from '../engine/spawn/omniRoute.testSupport.js';
+import {
   readRequest,
   writeRunInfo,
 } from '../sidecars/broker/contract/spool.js';
@@ -53,6 +60,7 @@ const MARKERS = [
   Env.WORKTREES_DIR_VAR,
   Env.GITHUB_EVENT_NAME_VAR,
   Env.STORE_ENV_FILE_VAR,
+  Env.ONE_SHOT_VAR,
   Env.LEDGER_FILE_VAR,
   Env.TRIGGER_VAR,
   Env.EVENT_VAR,
@@ -1605,6 +1613,71 @@ test("a queued run's spawn cuts from the base serve resolved at claim; a manual 
   });
 });
 
+test("a queued run's gate and caps come from its base, not from the checkout's config.json (#199)", () => {
+  withStore(root => {
+    const live = path.join(root, '.e', 'runs', 'live');
+    fs.mkdirSync(live, { recursive: true });
+    const file = path.join(live, 'trg-x.json');
+    const base = { ref: ORIGIN_MAIN, sha: 'main-sha', branch: 'main' };
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        id: 'trg-x',
+        state: 'claimed',
+        slot: true,
+        agent: 'claudeCode',
+        run: null,
+        base,
+      })
+    );
+    // Whatever somebody left checked out, with a machine setting beside it.
+    fs.writeFileSync(
+      configFilePath(root),
+      JSON.stringify({
+        verify: 'true',
+        loop: { maxIterations: 99 },
+        siblingArtifacts: ['vendor'],
+      })
+    );
+    const git = new InMemoryGit({
+      toplevel: root,
+      files: {
+        'main-sha': {
+          [configFilePath(root)]: JSON.stringify({
+            verify: 'npm test',
+            loop: { maxIterations: 3 },
+          }),
+        },
+      },
+    });
+    process.env[Env.LEDGER_FILE_VAR] = file;
+    try {
+      const facts = gatherSpawnFacts(
+        'claudeCode',
+        ['x'],
+        { dir: root },
+        undefined,
+        git
+      );
+      assert.equal(facts.verify?.command, 'npm test');
+      assert.equal(facts.loop?.maxIterations, 3);
+      // The machine's settings stay the serving Store's.
+      assert.deepEqual(facts.siblingArtifacts, ['vendor']);
+    } finally {
+      delete process.env[Env.LEDGER_FILE_VAR];
+    }
+    // A manual spawn reads the checkout, as always.
+    const manual = gatherSpawnFacts(
+      'claudeCode',
+      ['x'],
+      { dir: root },
+      undefined,
+      git
+    );
+    assert.equal(manual.verify?.command, 'true');
+  });
+});
+
 test("a queued run's spawn and a sibling's read the provenance their host handed them", () => {
   process.env[Env.TRIGGER_VAR] = 'nightly';
   process.env[Env.EVENT_VAR] = 'github:issues.labeled:d-1';
@@ -1625,4 +1698,151 @@ test("a queued run's spawn and a sibling's read the provenance their host handed
   // A broken handover fails the run rather than write a trailer nobody vouched for.
   process.env[Env.EVENT_VAR] = 'github:issues';
   assert.throws(() => inheritedProvenance(), /Malformed provenance/);
+});
+
+// --- one-shot on a host with a running stack (#200) --------------------------
+
+const localAgent = {
+  name: 'local',
+  harness: 'claudeCode',
+  provider: {
+    baseUrl: `http://127.0.0.1:${OMNIROUTE_PORT}/v1`,
+    model: 'qwen3-coder',
+    protocol: 'anthropic-messages',
+    apiKeyEnv: 'OMNI_KEY',
+  },
+};
+
+test('--trigger with a running stack: the run key is minted before the container and deleted after a red run', async () => {
+  await withStoreAsync(async root => {
+    process.env[Env.WORKTREES_DIR_VAR] = path.join(root, 'wt');
+    const envFile = path.join(root, 'runner.env');
+    fs.writeFileSync(envFile, 'OMNIROUTE_INITIAL_PASSWORD=pw\n');
+    const omni = fakeOmniRoute({ password: 'pw' });
+    const runtime = new PinnedRuntime(1);
+    let keysDuringRun: string[] = [];
+    runtime.onRun = () => {
+      keysDuringRun = omni.keys.map(k => k.name);
+    };
+    const code = await runSpawnCommand(
+      undefined,
+      [],
+      { dir: root, trigger: 'fix', envFile },
+      {
+        scratch: new RunScratch(),
+        git: triggerGit(
+          root,
+          { ...nightlyTrigger, agent: 'local' },
+          { 'agents/local/agent.json': JSON.stringify(localAgent) }
+        ),
+        runtime,
+        fetchImpl: omni.fetchImpl,
+      }
+    );
+    assert.notEqual(code, 0);
+    assert.deepEqual(keysDuringRun, ['e-run-fix']);
+    assert.deepEqual(omni.keys, [], 'deleted after teardown');
+    // Used, never started; the run joined the egress namespace.
+    assert.deepEqual(runtime.composedUp, []);
+    assert.equal(runtime.runs[0].options.netns, EGRESS_CONTAINER);
+  });
+});
+
+test('--trigger with a running stack: an aborted run still deletes its key', async () => {
+  await withStoreAsync(async root => {
+    process.env[Env.WORKTREES_DIR_VAR] = path.join(root, 'wt');
+    const envFile = path.join(root, 'runner.env');
+    fs.writeFileSync(envFile, 'OMNIROUTE_INITIAL_PASSWORD=pw\n');
+    const omni = fakeOmniRoute({ password: 'pw' });
+    const runtime = new PinnedRuntime(0);
+    const cancel = new AbortController();
+    // The scheduler cancels while the agent runs.
+    runtime.onRun = () => cancel.abort();
+    await runSpawnCommand(
+      undefined,
+      [],
+      { dir: root, trigger: 'fix', envFile },
+      {
+        scratch: new RunScratch(),
+        git: triggerGit(
+          root,
+          { ...nightlyTrigger, agent: 'local' },
+          { 'agents/local/agent.json': JSON.stringify(localAgent) }
+        ),
+        runtime,
+        abort: cancel.signal,
+        fetchImpl: omni.fetchImpl,
+      }
+    );
+    assert.equal(runtime.ran, true);
+    assert.equal(
+      omni.calls.filter(c => c.method === 'POST' && c.path === '/api/keys')
+        .length,
+      1
+    );
+    assert.deepEqual(omni.keys, []);
+  });
+});
+
+test('--trigger with a running stack and no password in --env-file: exit 1, nothing prompts, no container', async () => {
+  await withStoreAsync(async root => {
+    process.env[Env.WORKTREES_DIR_VAR] = path.join(root, 'wt');
+    const envFile = path.join(root, 'runner.env');
+    fs.writeFileSync(envFile, 'OMNI_KEY=sk-whatever\n');
+    const omni = fakeOmniRoute({ password: 'pw' });
+    const runtime = new PinnedRuntime(0);
+    const code = await runSpawnCommand(
+      undefined,
+      [],
+      { dir: root, trigger: 'fix', envFile },
+      {
+        scratch: new RunScratch(),
+        git: triggerGit(
+          root,
+          { ...nightlyTrigger, agent: 'local' },
+          { 'agents/local/agent.json': JSON.stringify(localAgent) }
+        ),
+        runtime,
+        fetchImpl: omni.fetchImpl,
+      }
+    );
+    assert.equal(code, 1);
+    assert.equal(runtime.ran, false);
+    assert.deepEqual(omni.calls, []);
+  });
+});
+
+test('--trigger without a running stack: no netns, no key, no composeUp', async () => {
+  await withStoreAsync(async root => {
+    process.env[Env.WORKTREES_DIR_VAR] = path.join(root, 'wt');
+    const omni = fakeOmniRoute({ password: 'pw' });
+    const runtime = new PinnedRuntime(0);
+    runtime.crashed = new Set([EGRESS_CONTAINER, OMNIROUTE_CONTAINER]);
+    const code = await runSpawnCommand(
+      undefined,
+      [],
+      { dir: root, trigger: 'fix' },
+      {
+        scratch: new RunScratch(),
+        git: triggerGit(root, nightlyTrigger),
+        runtime,
+        fetchImpl: omni.fetchImpl,
+      }
+    );
+    assert.equal(code, 0);
+    assert.equal(runtime.runs[0].options.netns, undefined);
+    assert.deepEqual(runtime.composedUp, []);
+    assert.deepEqual(omni.calls, []);
+  });
+});
+
+test('gatherSpawnFacts: E_ONE_SHOT marks a sibling one-shot, and only a sibling', () => {
+  withStore(root => {
+    process.env[Env.ONE_SHOT_VAR] = '1';
+    assert.equal(
+      gatherSpawnFacts('claudeCode', ['hi'], { dir: root }).oneShotShape,
+      false,
+      'a stale export alone changes nothing'
+    );
+  });
 });

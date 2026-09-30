@@ -856,6 +856,7 @@ test('one-shot: a sibling gets --dir <Base Store> and the env file by marker, ne
         dirOpt: root,
         baseEnvFile: envFile,
         storeEnvFile: envFile,
+        oneShotShape: true,
       }),
       { ...emptyPlan, broker: defaultBrokerPlan() },
       {
@@ -886,6 +887,8 @@ test('one-shot: a sibling gets --dir <Base Store> and the env file by marker, ne
       'look into X',
     ]);
     assert.equal(launches[0].env[Env.STORE_ENV_FILE_VAR], envFile);
+    // The sibling is one-shot too: it uses the running stack, never starts one.
+    assert.equal(launches[0].env[Env.ONE_SHOT_VAR], '1');
   });
 });
 

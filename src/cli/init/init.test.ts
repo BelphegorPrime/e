@@ -12,7 +12,7 @@ import {
   seedStackSecrets,
   OMNIROUTE_STACK_SECRETS,
 } from './initPlan.js';
-import { renderCompose } from './renderCompose.js';
+import { OMNIROUTE_IMAGE, renderCompose } from './renderCompose.js';
 import { renderBootstrap } from './renderBootstrap.js';
 import {
   RUNTIME_CATALOGS,
@@ -188,7 +188,13 @@ test('renderCompose: starts OmniRoute, llama.cpp, and Redis with local networkin
     compose,
     /egress:\n\s+build:\n\s+context: \.\/egress\n\s+image: e-egress/
   );
-  assert.match(compose, /image: diegosouzapw\/omniroute:latest/);
+  assert.ok(compose.includes(`image: ${OMNIROUTE_IMAGE}\n`));
+  // Pinned by digest, never a moving tag.
+  assert.match(
+    OMNIROUTE_IMAGE,
+    /^diegosouzapw\/omniroute:3\.8\.51@sha256:[0-9a-f]{64}$/
+  );
+  assert.match(compose, /container_name: omniroute\n/);
   assert.match(compose, /image: ghcr\.io\/ggml-org\/llama\.cpp:server\n/);
   assert.match(compose, /LOCAL_HOSTNAMES: localhost/);
   assert.match(compose, /OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS: "true"/);
@@ -270,7 +276,7 @@ test('renderCompose: no runtime selection renders no bootstrap service and no ru
   assert.doesNotMatch(compose, /\n {2}vllm:/);
   assert.match(compose, /no local inference runtime selected/);
   // The gateway itself still renders.
-  assert.match(compose, /image: diegosouzapw\/omniroute:latest/);
+  assert.ok(compose.includes(`image: ${OMNIROUTE_IMAGE}\n`));
 });
 
 test('renderCompose: does not expose ports from services sharing the egress network namespace', () => {

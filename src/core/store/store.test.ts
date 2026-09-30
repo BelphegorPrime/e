@@ -10,6 +10,7 @@ import {
   serializeConfig,
   readConfig,
   readConfigChain,
+  chainConfig,
   writeConfig,
   readModelsJson,
   writeModelsJson,
@@ -542,6 +543,16 @@ test('readConfigChain: the gate and the caps come from the repository being work
     fs.rmSync(serving, { recursive: true, force: true });
     fs.rmSync(target, { recursive: true, force: true });
   }
+});
+
+test('chainConfig: no target config is the serving one, unchanged', () => {
+  const serving = resolveConfig({ verify: 'serving test' });
+  assert.equal(chainConfig(serving, undefined), serving);
+  assert.equal(
+    chainConfig(serving, resolveConfig({})).verify,
+    undefined,
+    'a target config without a gate has none'
+  );
 });
 
 test('readConfigChain: a repository that keeps a config and declares no gate has no gate', () => {

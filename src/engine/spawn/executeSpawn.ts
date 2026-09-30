@@ -444,6 +444,9 @@ async function executeSpawnWith(
           ...(facts.storeEnvFile
             ? { [Env.STORE_ENV_FILE_VAR]: facts.storeEnvFile }
             : {}),
+          // A one-shot run's sibling is one-shot too: it uses the running
+          // stack, never starts one, and mints a key of its own.
+          ...(facts.oneShotShape ? { [Env.ONE_SHOT_VAR]: '1' } : {}),
         },
       },
     }

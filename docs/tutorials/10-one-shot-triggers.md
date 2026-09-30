@@ -118,6 +118,17 @@ Dockerfiles `e init` wrote included: running `e init` on the runner changes
 nothing the run reads. A `compose.yaml` in it is not used, since one-shot
 never starts a local stack.
 
+**A stack that is already running is used.** On a box with local models - a
+systemd timer, say - where `e-egress` and `omniroute` are up, the run joins
+the egress namespace like a manual run, and an Agent whose provider points at
+the local OmniRoute gets a key of its own: `e` signs in with
+`OMNIROUTE_INITIAL_PASSWORD` from `--env-file`, mints `e-run-<run name>`
+before the container starts, and deletes it after teardown, red or aborted
+runs included. A key a crash left behind is swept at the next start. So put
+the stack's password in the `--env-file` there; it stays on the host, and
+without it the run exits 1 and says what to add. No stack running, as on a
+GitHub-hosted runner, means no stack.
+
 ## Step 3: the workflow
 
 ```yaml

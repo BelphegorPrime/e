@@ -12,7 +12,13 @@ import {
   dockerfilePath,
   envFilePath,
 } from '../../core/store/paths.js';
-import { materializeBaseStore, oneShotStoreRoot } from './baseStore.js';
+import { writeConfig, resolveConfig } from '../../core/store/config.js';
+import {
+  materializeBaseStore,
+  oneShotStoreRoot,
+  readConfigAtBase,
+  readQueuedConfig,
+} from './baseStore.js';
 
 /*
  * The Base Store (ADR-0016 section 13): a triggered run reads the
@@ -246,5 +252,164 @@ test('materializeBaseStore: a compose.yaml at base is left out, so no local stac
     },
     repo,
     dest
+  );
+});
+
+// --- hosted: the target repository's settings from base (#199) --------------
+
+test("readConfigAtBase: the target's verify, loop and resources come from base, not its working tree", () => {
+  const repo = initRepo('e-target-at-base-');
+  const serving = fs.mkdtempSync(path.join(os.tmpdir(), 'e-serving-'));
+  inDir(
+    repo,
+    () => {
+      put(
+        repo,
+        '.e/config.json',
+        JSON.stringify({
+          verify: 'npm test',
+          loop: { maxIterations: 4 },
+          resources: { cpus: 2 },
+        })
+      );
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'gate');
+      const sha = git(repo, 'rev-parse', 'HEAD');
+      // Whatever somebody left checked out weakens all three.
+      put(
+        repo,
+        '.e/config.json',
+        JSON.stringify({
+          verify: 'true',
+          loop: { maxIterations: 99 },
+          resources: { cpus: 64 },
+        })
+      );
+      writeConfig(resolveConfig({ defaultHarness: 'codex' }), serving);
+
+      const config = readConfigAtBase(new HostGit(), {
+        serving,
+        target: repo,
+        base: base(sha),
+      });
+      assert.equal(config.verify?.command, 'npm test');
+      assert.equal(config.loop.maxIterations, 4);
+      assert.equal(config.resources.cpus, 2);
+      // The machine's settings stay the serving Store's.
+      assert.equal(config.defaultHarness, 'codex');
+    },
+    repo,
+    serving
+  );
+});
+
+test('readConfigAtBase: a target with no config.json at base keeps the serving settings, even with one on disk', () => {
+  const repo = initRepo('e-target-no-config-');
+  const serving = fs.mkdtempSync(path.join(os.tmpdir(), 'e-serving-'));
+  inDir(
+    repo,
+    () => {
+      put(repo, 'README.md', 'no store\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'init');
+      const sha = git(repo, 'rev-parse', 'HEAD');
+      put(repo, '.e/config.json', JSON.stringify({ verify: 'true' }));
+      writeConfig(resolveConfig({ verify: 'serving test' }), serving);
+
+      const config = readConfigAtBase(new HostGit(), {
+        serving,
+        target: repo,
+        base: base(sha),
+      });
+      assert.equal(config.verify?.command, 'serving test');
+    },
+    repo,
+    serving
+  );
+});
+
+test('readConfigAtBase: a config.json at base that is not JSON names where it is', () => {
+  const memory = new InMemoryGit({
+    files: { 'base-sha': { [configFilePath('/repo')]: '{ not json' } },
+  });
+  assert.throws(
+    () =>
+      readConfigAtBase(memory, {
+        serving: undefined,
+        target: '/repo',
+        base: base('base-sha'),
+      }),
+    /refs\/heads\/main:\.e\/config\.json is not valid JSON/
+  );
+});
+
+test("readQueuedConfig: a repo-local Store's gate comes from base; a Store outside the repository is read as always", () => {
+  const repo = initRepo('e-queued-config-');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'e-home-store-'));
+  inDir(
+    repo,
+    () => {
+      put(repo, '.e/config.json', JSON.stringify({ verify: 'npm test' }));
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'gate');
+      const sha = git(repo, 'rev-parse', 'HEAD');
+      put(repo, '.e/config.json', JSON.stringify({ verify: 'true' }));
+      writeConfig(resolveConfig({ verify: 'home test' }), home);
+
+      const hostGit = new HostGit();
+      assert.equal(
+        readQueuedConfig(hostGit, repo, base(sha)).verify?.command,
+        'npm test'
+      );
+      assert.equal(
+        readQueuedConfig(hostGit, home, base(sha)).verify?.command,
+        'home test'
+      );
+    },
+    repo,
+    home
+  );
+});
+
+test("readQueuedConfig: a config.json HEAD tracks but base does not is no gate, never the checkout's", () => {
+  const repo = initRepo('e-queued-tracked-');
+  inDir(
+    repo,
+    () => {
+      put(repo, 'README.md', 'no store\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'init');
+      const sha = git(repo, 'rev-parse', 'HEAD');
+      // A branch checked out since commits a weak gate of its own.
+      put(repo, '.e/config.json', JSON.stringify({ verify: 'true' }));
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'weaken');
+      const config = readQueuedConfig(new HostGit(), repo, base(sha));
+      assert.equal(config.verify, undefined);
+      assert.equal(
+        config.loop.maxIterations,
+        resolveConfig({}).loop.maxIterations
+      );
+    },
+    repo
+  );
+});
+
+test("readQueuedConfig: an untracked config.json and none at base is the operator's own, and read", () => {
+  const repo = initRepo('e-queued-untracked-');
+  inDir(
+    repo,
+    () => {
+      put(repo, 'README.md', 'no store\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'init');
+      const sha = git(repo, 'rev-parse', 'HEAD');
+      put(repo, '.e/config.json', JSON.stringify({ verify: 'npm test' }));
+      assert.equal(
+        readQueuedConfig(new HostGit(), repo, base(sha)).verify?.command,
+        'npm test'
+      );
+    },
+    repo
   );
 });

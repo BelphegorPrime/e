@@ -2,11 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LocalApiKeyError,
+  RUN_KEY_PREFIX,
   createLocalApiKey,
+  deleteLocalApiKey,
+  listLocalApiKeys,
+  mintLocalApiKey,
   needsLocalApiKey,
   providerTargetsLocalStack,
+  signInLocalStack,
+  staleRunKeys,
   upsertEnvValue,
 } from './localApiKey.js';
+import { fakeOmniRoute as statefulOmniRoute } from './omniRoute.testSupport.js';
 
 const local = {
   baseUrl: 'http://localhost:20128/v1',
@@ -183,5 +190,185 @@ test('createLocalApiKey: a rejected password or a failed creation is a LocalApiK
       fetchImpl: empty.fetchImpl,
     }),
     /returned no API key/
+  );
+});
+
+const gateway = 'http://127.0.0.1:20128';
+
+test('mintLocalApiKey: sends the name and expiry, returns id, key and expiry', async () => {
+  const omni = statefulOmniRoute({ password: 'pw' });
+  const session = await signInLocalStack({
+    baseUrl: gateway,
+    password: 'pw',
+    fetchImpl: omni.fetchImpl,
+  });
+  const expiresAt = '2026-09-30T18:00:00.000Z';
+  const minted = await mintLocalApiKey(session, {
+    name: `${RUN_KEY_PREFIX}nightly`,
+    expiresAt,
+  });
+  assert.deepEqual(minted, { id: 'minted-1', key: 'sk-run-1', expiresAt });
+  const create = omni.calls.find(
+    c => c.method === 'POST' && c.path === '/api/keys'
+  );
+  assert.deepEqual(JSON.parse(String(create?.init.body)), {
+    name: 'e-run-nightly',
+    expiresAt,
+  });
+  // No management scope is ever asked for: the run's key cannot mint keys.
+  assert.equal('scopes' in JSON.parse(String(create?.init.body)), false);
+});
+
+test('mintLocalApiKey: an image that drops expiresAt on create gets it by PATCH', async () => {
+  const omni = statefulOmniRoute({ password: 'pw', echoExpiry: false });
+  const session = await signInLocalStack({
+    baseUrl: gateway,
+    password: 'pw',
+    fetchImpl: omni.fetchImpl,
+  });
+  const expiresAt = '2026-09-30T18:00:00.000Z';
+  const minted = await mintLocalApiKey(session, { name: 'e-run-x', expiresAt });
+  assert.equal(minted.expiresAt, expiresAt);
+  assert.equal(omni.keys[0].expiresAt, expiresAt);
+  assert.ok(
+    omni.calls.some(
+      c => c.method === 'PATCH' && c.path === '/api/keys/minted-1'
+    )
+  );
+});
+
+test('mintLocalApiKey: a key whose expiry cannot be set is deleted, not handed out', async () => {
+  const omni = statefulOmniRoute({
+    password: 'pw',
+    echoExpiry: false,
+    fail: { 'PATCH /api/keys/minted-1': 500 },
+  });
+  const session = await signInLocalStack({
+    baseUrl: gateway,
+    password: 'pw',
+    fetchImpl: omni.fetchImpl,
+  });
+  await assert.rejects(
+    mintLocalApiKey(session, {
+      name: 'e-run-x',
+      expiresAt: '2026-09-30T18:00:00.000Z',
+    }),
+    (err: unknown) =>
+      err instanceof LocalApiKeyError && /expiry/.test(err.message)
+  );
+  assert.deepEqual(omni.keys, []);
+});
+
+test('mintLocalApiKey: a create response without an id is refused: the key could never be deleted', async () => {
+  const omni = statefulOmniRoute({ password: 'pw' });
+  const session = await signInLocalStack({
+    baseUrl: 'http://x',
+    password: 'pw',
+    fetchImpl: omni.fetchImpl,
+  });
+  const noId = (async (input: string | URL | Request, init?: RequestInit) =>
+    String(input).endsWith('/api/keys')
+      ? new Response('{"key":"sk-1"}', { status: 201 })
+      : omni.fetchImpl(input, init)) as typeof fetch;
+  await assert.rejects(
+    mintLocalApiKey(
+      { ...session, fetchImpl: noId },
+      { name: 'e-run-x', expiresAt: '2026-09-30T18:00:00.000Z' }
+    ),
+    /no key id/
+  );
+});
+
+test('listLocalApiKeys and deleteLocalApiKey: list the table, delete by id, a 404 is already gone', async () => {
+  const omni = statefulOmniRoute({
+    password: 'pw',
+    keys: [
+      {
+        id: 'k1',
+        name: 'e-run-old',
+        key: 'sk-old-1234',
+        createdAt: '2026-09-29T00:00:00.000Z',
+        expiresAt: null,
+      },
+    ],
+  });
+  const session = await signInLocalStack({
+    baseUrl: gateway,
+    password: 'pw',
+    fetchImpl: omni.fetchImpl,
+  });
+  assert.deepEqual(await listLocalApiKeys(session), [
+    {
+      id: 'k1',
+      name: 'e-run-old',
+      createdAt: '2026-09-29T00:00:00.000Z',
+      expiresAt: null,
+    },
+  ]);
+  await deleteLocalApiKey(session, 'k1');
+  assert.deepEqual(omni.keys, []);
+  await deleteLocalApiKey(session, 'k1');
+  const failing = statefulOmniRoute({
+    password: 'pw',
+    fail: { 'DELETE /api/keys/k2': 500 },
+  });
+  await assert.rejects(
+    deleteLocalApiKey({ ...session, fetchImpl: failing.fetchImpl }, 'k2'),
+    /HTTP 500/
+  );
+});
+
+test('signInLocalStack: a wrong password is a LocalApiKeyError', async () => {
+  const omni = statefulOmniRoute({ password: 'pw' });
+  await assert.rejects(
+    signInLocalStack({
+      baseUrl: gateway,
+      password: 'nope',
+      fetchImpl: omni.fetchImpl,
+    }),
+    (err: unknown) =>
+      err instanceof LocalApiKeyError &&
+      /rejected OMNIROUTE_INITIAL_PASSWORD/.test(err.message)
+  );
+});
+
+test('staleRunKeys: e-run-* keys past their expiry, or without one and older than the cap', () => {
+  const now = new Date('2026-09-30T12:00:00.000Z');
+  const hour = 60 * 60 * 1000;
+  const key = (
+    id: string,
+    name: string,
+    createdAt: string,
+    expiresAt: string | null = null
+  ) => ({ id, name, createdAt, expiresAt });
+  const keys = [
+    key(
+      'live',
+      'e-run-a',
+      '2026-09-30T11:00:00.000Z',
+      '2026-09-30T15:00:00.000Z'
+    ),
+    // A run with a longer cap: old, but its expiry says it may still be live.
+    key(
+      'long',
+      'e-run-e',
+      '2026-09-30T06:00:00.000Z',
+      '2026-09-30T13:00:00.000Z'
+    ),
+    key('old', 'e-run-b', '2026-09-30T08:00:00.000Z'),
+    key('young', 'e-run-f', '2026-09-30T10:00:00.000Z'),
+    key(
+      'expired',
+      'e-run-c',
+      '2026-09-30T11:30:00.000Z',
+      '2026-09-30T11:59:00.000Z'
+    ),
+    key('human', 'my laptop', '2026-01-01T00:00:00.000Z'),
+    key('manual', 'e (claude)', '2026-01-01T00:00:00.000Z'),
+    key('undated', 'e-run-d', 'not a date'),
+  ];
+  assert.deepEqual(
+    staleRunKeys(keys, now, 3 * hour).map(k => k.id),
+    ['old', 'expired']
   );
 });

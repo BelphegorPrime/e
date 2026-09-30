@@ -498,7 +498,21 @@ export function readConfigChain(roots: {
   if (!roots.target || !fs.existsSync(configFilePath(roots.target))) {
     return serving;
   }
-  const target = readConfig(roots.target);
+  return chainConfig(serving, readConfig(roots.target));
+}
+
+/**
+ * The chain of {@link readConfigChain} on configs already read: the target's
+ * `verify`, `loop` and `resources` over the serving Store's machine settings,
+ * or the serving config alone when the target has no `config.json`. Split
+ * out for a target read from somewhere other than disk - its commit at a
+ * run's base (#199).
+ */
+export function chainConfig(
+  serving: StoreConfig,
+  target: StoreConfig | undefined
+): StoreConfig {
+  if (target === undefined) return serving;
   const machine = { ...serving };
   // The target's config is authoritative for the gate, its absence included.
   delete machine.verify;

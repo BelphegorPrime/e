@@ -318,6 +318,13 @@ export interface SpawnFacts {
   readonly sessionStoreDir?: string;
   /** `e resume`: continue this earlier Run on its own branch (ADR-0017). */
   readonly resume?: Readonly<ResumeRun>;
+  /**
+   * A run of the one-shot deployment shape (ADR-0016 section 13): `e spawn
+   * --trigger`, or a sibling of such a run. It uses a local stack that is
+   * already running and never starts one, minting its own endpoint key
+   * (`prepareOneShotStack`), and hands the marker on to its siblings.
+   */
+  readonly oneShotShape?: boolean;
 }
 
 /** True when the positional prompt carries anything but whitespace. */

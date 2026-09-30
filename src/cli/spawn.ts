@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import * as readline from 'node:readline/promises';
 import type { Command } from 'commander';
-import type { RunOptions } from '../ports/runtime/index.js';
+import type { ContainerRunner, RunOptions } from '../ports/runtime/index.js';
 import { resolveRuntime, RUNTIME_NAMES } from '../ports/runtime/registry.js';
 import {
   defaultWorktreesDir,
@@ -49,6 +49,10 @@ import {
   prepareLocalStack,
   type ApiKeyRequest,
 } from '../engine/spawn/prepareLocalStack.js';
+import {
+  NOTHING_TO_RELEASE,
+  prepareOneShotStack,
+} from '../engine/spawn/oneShotStack.js';
 import { executeSpawn } from '../engine/spawn/executeSpawn.js';
 import { findRoot } from '../core/store/root.js';
 import {
@@ -65,6 +69,7 @@ import { resolveOneShot } from '../engine/spawn/oneShot.js';
 import {
   materializeBaseStore,
   oneShotStoreRoot,
+  readQueuedConfig,
   type BaseStore,
 } from '../engine/spawn/baseStore.js';
 import { claimedBase, NO_LEDGER } from '../engine/queue/ledger.js';
@@ -213,11 +218,19 @@ export function gatherSpawnFacts(
   target: string | undefined,
   prompt: string[],
   opts: SpawnCommandOptions,
-  triggered?: TriggeredSpawn
+  triggered?: TriggeredSpawn,
+  git: Git = new HostGit()
 ): SpawnFacts {
   // A triggered run reads everything from its Base Store (ADR-0016 section 13).
   const root = triggered?.store.root ?? findRoot(opts.dir);
-  const config = readConfig(root);
+  // One-shot resolves its own base; a queued run's was resolved by `serve`,
+  // and its repository's gate and caps are read from that base, never from
+  // whatever the checkout has on disk (ADR-0016 section 5).
+  const base = triggered?.base ?? claimedBase();
+  const config =
+    triggered === undefined && base !== undefined
+      ? readQueuedConfig(git, root, base)
+      : readConfig(root);
   // Sessions stay with the checkout's Store, never a Base Store's scratch
   // copy, which goes with the run (ADR-0017).
   const sessionRoot = triggered?.store.checkoutRoot ?? root;
@@ -332,12 +345,14 @@ export function gatherSpawnFacts(
     // A trigger may move `loop` field-wise, and nothing else (ADR-0016).
     loop: triggered?.loop ? { ...config.loop, ...triggered.loop } : config.loop,
     resources: config.resources,
-    // One-shot resolves its own; a queued run's was resolved by `serve`.
-    base: triggered?.base ?? claimedBase(),
+    base,
     eventFile: triggered?.eventFile,
     provenance: triggered?.provenance ?? inheritedProvenance(),
     sessionStoreDir:
       sessionRoot !== undefined ? eBaseDir(sessionRoot) : undefined,
+    // One-shot uses a running stack and never starts one (ADR-0016 section
+    // 13), and so does a sibling its parent marked as one-shot.
+    oneShotShape: triggered !== undefined || env.oneShotSibling,
   };
 }
 
@@ -661,6 +676,10 @@ export interface SpawnCommandDeps {
   abort?: AbortSignal;
   /** The host's git; a test passes a fake. */
   git?: Git;
+  /** The container runtime; a test passes a fake, else `--runtime` resolves it. */
+  runtime?: ContainerRunner;
+  /** Override the global `fetch` for OmniRoute's key API, so a test can script it. */
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -717,25 +736,43 @@ export async function runSpawnCommand(
     }
     if (remote) return await runRemoteAgent({ ...remote, abort });
 
-    const gathered = gatherSpawnFacts(target, prompt, opts, triggered);
+    const gathered = gatherSpawnFacts(target, prompt, opts, triggered, git);
     validateSpawn(gathered);
-    const runtime = resolveRuntime(opts.runtime);
-    const facts = await prepareLocalStack(gathered, {
-      runtime,
-      askForKey: promptForLocalApiKey,
-    });
+    const runtime = deps.runtime ?? resolveRuntime(opts.runtime);
+    // One-shot uses a stack that is already running and mints the run's own
+    // key, which `release` deletes after teardown; a manual run brings its
+    // Store's stack up and keeps its key in `.e/.env`.
+    const prepared = gathered.oneShotShape
+      ? await prepareOneShotStack(gathered, {
+          runtime,
+          fetchImpl: deps.fetchImpl,
+        })
+      : {
+          facts: await prepareLocalStack(gathered, {
+            runtime,
+            askForKey: promptForLocalApiKey,
+          }),
+          release: NOTHING_TO_RELEASE,
+        };
+    const { facts } = prepared;
 
-    const result = await executeSpawn(facts, planSpawn(facts), {
-      git,
-      runtime,
-      scratch,
-      pullRequest: facts.gitPlatform ? new HostPullRequest() : undefined,
-      gitPlatform: facts.gitPlatform,
-      abort,
-      // The ledger is `serve`'s; in one-shot the outer scheduler owns what it
-      // describes (ADR-0016 section 13).
-      ...(triggered ? { ledger: NO_LEDGER } : {}),
-    });
+    let result;
+    try {
+      result = await executeSpawn(facts, planSpawn(facts), {
+        git,
+        runtime,
+        scratch,
+        pullRequest: facts.gitPlatform ? new HostPullRequest() : undefined,
+        gitPlatform: facts.gitPlatform,
+        abort,
+        // The ledger is `serve`'s; in one-shot the outer scheduler owns what
+        // it describes (ADR-0016 section 13).
+        ...(triggered ? { ledger: NO_LEDGER } : {}),
+      });
+    } finally {
+      // After teardown, on every way out: a red run, an abort, a throw.
+      await prepared.release();
+    }
 
     // Rendered env-files hold resolved secrets; each container already has its
     // own copy, so drop them before reporting and exiting. This is independent
@@ -838,13 +875,18 @@ export function registerSpawnCommand(program: Command): void {
         // that hang, the fallback below still drops the rendered secret files
         // and exits (Node's default would exit without any cleanup).
         const cancel = new AbortController();
-        process.once('SIGTERM', () => {
+        const onCancel = (): void => {
+          if (cancel.signal.aborted) return;
           cancel.abort();
           setTimeout(() => {
             scratch.dispose();
             process.exit(CANCELED_EXIT_CODE);
           }, CANCEL_GRACE_MS).unref();
-        });
+        };
+        process.once('SIGTERM', onCancel);
+        // A one-shot run's scheduler cancels with SIGINT first (a CI job, a
+        // systemd stop): a cancel too, so teardown still deletes its key.
+        if (opts.trigger !== undefined) process.once('SIGINT', onCancel);
         // A manual child request never runs a container: it writes one
         // sibling request into the parent run's broker spool and exits, the
         // host equivalent of the broker's `POST /spawn` (ADR-0013).

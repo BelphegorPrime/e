@@ -18,6 +18,7 @@ const VARS = [
   Env.A2A_TOKEN_VAR,
   Env.GITHUB_EVENT_NAME_VAR,
   Env.STORE_ENV_FILE_VAR,
+  Env.ONE_SHOT_VAR,
   Env.TRIGGER_VAR,
   Env.EVENT_VAR,
   Env.EVENT_URL_VAR,
@@ -274,6 +275,33 @@ test('storeEnvFile is the trimmed E_STORE_ENV_FILE; a sibling keeps it, a run of
     env.withLedger('/x.json', carrying),
   ]) {
     assert.equal(Env.STORE_ENV_FILE_VAR in copy, false);
+  }
+});
+
+test('oneShotSibling: E_ONE_SHOT counts only alongside the sibling markers, and a run of its own drops it', () => {
+  for (const name of [
+    Env.SPAWN_PARENT_WORKTREE_VAR,
+    Env.SPAWN_PARENT_BRANCH_VAR,
+    Env.SPAWN_SPOOL_VAR,
+    Env.SPAWN_SIBLING_ID_VAR,
+  ]) {
+    delete process.env[name];
+  }
+  process.env[Env.ONE_SHOT_VAR] = '1';
+  assert.equal(env.oneShotSibling, false, 'a stale export alone');
+  process.env[Env.SPAWN_PARENT_WORKTREE_VAR] = '/w';
+  process.env[Env.SPAWN_PARENT_BRANCH_VAR] = 'e/pi/x-1';
+  process.env[Env.SPAWN_SPOOL_VAR] = '/spool';
+  process.env[Env.SPAWN_SIBLING_ID_VAR] = 'sib-001';
+  assert.equal(env.oneShotSibling, true);
+  process.env[Env.ONE_SHOT_VAR] = '0';
+  assert.equal(env.oneShotSibling, false);
+  const carrying = { PATH: '/bin', [Env.ONE_SHOT_VAR]: '1' };
+  for (const copy of [
+    env.withReport({ spoolDir: '/spool', id: 'a2a-001' }, carrying),
+    env.withLedger('/x.json', carrying),
+  ]) {
+    assert.equal(Env.ONE_SHOT_VAR in copy, false);
   }
 });
 

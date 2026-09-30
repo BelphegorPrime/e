@@ -5,6 +5,7 @@ import type {
   SidecarSpec,
 } from '../../ports/runtime/index.js';
 import type { Harness } from '../../core/harness/index.js';
+import { PIN_BUILD_ARGS, PIN_LABELS } from '../../core/harness/pin.js';
 import type { Agent } from '../../core/agent/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -183,6 +184,25 @@ export class FakeRuntime implements ContainerRunner {
     _wipe?: boolean
   ): void {
     this.calls.push('copyDirToVolume');
+  }
+}
+
+/** A {@link FakeRuntime} whose builds carry the pin labels, as a pinned Dockerfile's do. */
+export class PinnedRuntime extends FakeRuntime {
+  private pinned: Record<string, string> | undefined;
+  override build(tag: string, dir: string, options: BuildOptions = {}): void {
+    super.build(tag, dir, options);
+    const args = options.buildArgs;
+    if (args) {
+      this.pinned = {
+        [PIN_LABELS.package]: args[PIN_BUILD_ARGS.package],
+        [PIN_LABELS.version]: args[PIN_BUILD_ARGS.version],
+        [PIN_LABELS.skillsCli]: args[PIN_BUILD_ARGS.skillsCli],
+      };
+    }
+  }
+  override imageLabels(_tag: string): Record<string, string> | undefined {
+    return this.pinned;
   }
 }
 

@@ -218,6 +218,10 @@ One of the concurrent Runs `e serve` may start from the queue (default 2), count
 Where the autonomy machinery runs (ADR-0016). **hosted** is a long-lived `e serve` owning the scheduler, the webhook listener (its own port at BFF+2, HMAC-only), the queue and the ledger. **one-shot** is a single `e spawn --trigger <name> [--event <path>]` driven by an outer scheduler - a CI job, a systemd timer, a k8s CronJob - which owns scheduling, dedup and concurrency instead; the Loop, Verify and the Caps are identical because they live in `runSpawn`. Both read the same Trigger declaration, and a triggered Run's repository settings, from the Base Store rather than the working tree.
 _Avoid_: ephemeral (the worktree is ephemeral in both), CI mode (any scheduler drives one-shot)
 
+**Run key**:
+An OmniRoute endpoint key minted for exactly one one-shot Run on a host whose local stack is already running (ADR-0016 section 13): named `e-run-<run name>`, expiring at the run cap plus a margin, handed to the Agent's provider through the run's env and never persisted in a Store, deleted after teardown, and swept at the next start if a crash left it. Minted with `OMNIROUTE_INITIAL_PASSWORD` from `--env-file`, which never reaches a container. A manual Run keeps its long-lived key in `.e/.env` instead.
+_Avoid_: session key, temporary key
+
 The next terms are the vocabulary of ADR-0017 (proposed; resumable runs):
 
 **Session**:
