@@ -66,6 +66,7 @@ test('parseFusionProfile: a full declaration is taken as it stands', () => {
       maxConcurrency: 1,
       minUsable: 2,
       timeouts: { candidatesMs: 60_000, totalMs: 120_000 },
+      retry: { maxAttempts: 3, backoffMs: 1_000, maxBackoffMs: 4_000 },
     },
     'coding',
     where,
@@ -77,6 +78,36 @@ test('parseFusionProfile: a full declaration is taken as it stands', () => {
     candidatesMs: 60_000,
     totalMs: 120_000,
   });
+  assert.deepEqual(profile.retry, {
+    maxAttempts: 3,
+    backoffMs: 1_000,
+    maxBackoffMs: 4_000,
+  });
+});
+
+test('parseFusionProfile: retries are off unless declared, and a declaration is resolved over the defaults', () => {
+  assert.equal(
+    parseFusionProfile(minimal, 'coding', where).retry,
+    undefined,
+    'no retry block: no retries'
+  );
+  assert.deepEqual(
+    parseFusionProfile(
+      { ...minimal, retry: { maxAttempts: 2 } },
+      'coding',
+      where
+    ).retry,
+    { maxAttempts: 2, backoffMs: 30_000, maxBackoffMs: 300_000 }
+  );
+  // An undeclared ceiling grows with a declared backoff above it.
+  assert.deepEqual(
+    parseFusionProfile(
+      { ...minimal, retry: { maxAttempts: 2, backoffMs: 600_000 } },
+      'coding',
+      where
+    ).retry,
+    { maxAttempts: 2, backoffMs: 600_000, maxBackoffMs: 600_000 }
+  );
 });
 
 test('parseFusionProfile: the same Agent may be a candidate twice, the same-provider baseline', () => {
@@ -193,6 +224,36 @@ test('parseFusionProfile: what it refuses to accept', () => {
       /declares the name "other"; the directory name is the profile's id/,
     ],
     ['an unknown key', { ...minimal, rounds: 2 }, /unknown key "rounds"/],
+    [
+      'retry not an object',
+      { ...minimal, retry: 2 },
+      /"retry" must be an object/,
+    ],
+    [
+      'an unknown retry key',
+      { ...minimal, retry: { jitter: 0.5 } },
+      /unknown retry key "jitter"/,
+    ],
+    [
+      'maxAttempts zero',
+      { ...minimal, retry: { maxAttempts: 0 } },
+      /"retry.maxAttempts" must be a positive integer/,
+    ],
+    [
+      'more attempts than a provider deserves',
+      { ...minimal, retry: { maxAttempts: 6 } },
+      /"retry.maxAttempts" must be at most 5/,
+    ],
+    [
+      'a backoff no timer can hold',
+      { ...minimal, retry: { backoffMs: 2 ** 31 } },
+      /"retry.backoffMs" must be at most 2147483647/,
+    ],
+    [
+      'a ceiling below the backoff',
+      { ...minimal, retry: { backoffMs: 2_000, maxBackoffMs: 1_000 } },
+      /"retry.maxBackoffMs" must not be less than "retry.backoffMs"/,
+    ],
   ];
   for (const [label, raw, message] of cases) {
     assert.throws(

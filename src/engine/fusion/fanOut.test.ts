@@ -17,6 +17,7 @@ import type {
   ChildLaunch,
   ChildLauncher,
 } from '../runs/childRun.js';
+import type { Sleep } from './clock.js';
 import { runFanOut, type FanOutDeps, type FanOutEvent } from './fanOut.js';
 import { readCandidateResults, readFusionRecord } from './record.js';
 
@@ -70,6 +71,10 @@ interface Script {
   launchFails?: string;
   /** Runs right after the child has ended on its own, in the same tick. */
   onEnd?: () => void;
+  /** The reason its run reports, a `LoopReason`. */
+  reason?: string;
+  /** The verify verdict its run reports. */
+  verify?: { verdict: 'green' | 'red' | 'broken'; attempts: number };
 }
 
 interface Scripted {
@@ -136,6 +141,8 @@ function scripted(scripts: Record<string, Script>): Scripted {
               branch: script.branch,
               exitCode: code,
               pushed: false,
+              ...(script.reason ? { reason: script.reason } : {}),
+              ...(script.verify ? { verify: script.verify } : {}),
               updatedAt: at(),
             });
             end(code);
@@ -178,6 +185,27 @@ const tips = {
   'refs/heads/e/codex/add-retries-1': 'tip-codex',
   'refs/heads/e/codex/add-retries-2': 'tip-codex-2',
 };
+
+/**
+ * A clock the test moves: `now` reads it, `advance` moves it, and `sleep`
+ * (for the loop's waits) moves it by exactly what the loop asked for, then
+ * yields a macrotask so real-time scripted children still get to run.
+ */
+function clock(start = Date.parse('2026-09-30T10:00:00.000Z')) {
+  let t = start;
+  const sleep: Sleep = async ms => {
+    t += ms;
+    await new Promise(resolve => setImmediate(resolve));
+  };
+  return {
+    now: () => new Date(t),
+    advance: (ms: number) => {
+      t += ms;
+    },
+    sleep,
+    start,
+  };
+}
 
 function deps(
   dirs: { storeDir: string; worktreesDir: string },
@@ -645,5 +673,542 @@ test('runFanOut: whatever breaks the loop, no candidate outlives it and the reco
     assert.equal(record.state, 'failed');
     assert.equal(record.reason, 'aborted:fusion-coordinator');
     assert.ok(record.endedAt);
+  });
+});
+
+// --- deadlines (ADR-0019 section 9) ------------------------------------------
+
+test('runFanOut: candidatesMs times out every outstanding candidate, keeps their commits, and the fan-out closes', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      // Committed before it hung: its work stays usable.
+      'cand-001': { branch: 'e/claude/add-retries-1', hang: true },
+      // Hung before its first commit.
+      'cand-002': { branch: 'e/codex/refused-1', hang: true },
+      // Never got a slot.
+      'cand-003': { branch: 'e/codex/add-retries-2' },
+    });
+    const d = deps(dirs, s.launcher);
+    const events: FanOutEvent[] = [];
+    const result = await runFanOut(
+      { ...d, now: c.now },
+      {
+        found: found(['claude', 'codex', 'codex'], {
+          maxConcurrency: 2,
+          timeouts: { candidatesMs: 60_000, totalMs: 120_000 },
+        }),
+        prompt: 'Add retries',
+        onEvent: event => {
+          events.push(event);
+          if (event.kind === 'launched' && event.candidate === 'cand-002') {
+            c.advance(60_000);
+          }
+        },
+      }
+    );
+    assert.deepEqual(s.killed.sort(), ['cand-001', 'cand-002']);
+    assert.equal(s.launches.length, 2, 'nothing starts past the deadline');
+    assert.deepEqual(
+      result.candidates.map(r => [r.candidate, r.outcome, r.tip]),
+      [
+        ['cand-001', 'timed-out', 'tip-claude'],
+        ['cand-002', 'timed-out', null],
+        ['cand-003', 'timed-out', null],
+      ]
+    );
+    // The fan-out closed as usual: the quorum rule decides, usable is pushed.
+    assert.equal(result.state, 'fanning-out');
+    assert.deepEqual(d.git.pushed, ['e/claude/add-retries-1']);
+    const exhausted = events.filter(e => e.kind === 'budget-exhausted');
+    assert.deepEqual(exhausted, [
+      {
+        kind: 'budget-exhausted',
+        budget: 'candidatesMs',
+        limitMs: 60_000,
+        stopped: ['cand-001', 'cand-002', 'cand-003'],
+      },
+    ]);
+    // The status says who stopped it.
+    assert.equal(readStatus(result.spoolDir, 'cand-001')?.status, 'canceled');
+    assert.match(
+      readStatus(result.spoolDir, 'cand-001')?.error ?? '',
+      /canceled by the fusion's candidatesMs/
+    );
+    const record = readFusionRecord(dirs.storeDir, FUSION)!;
+    assert.deepEqual(record.deadlines, {
+      candidatesMs: 60_000,
+      totalMs: 120_000,
+      candidatesAt: '2026-09-30T10:01:00.000Z',
+      totalAt: '2026-09-30T10:02:00.000Z',
+    });
+    assert.deepEqual(result.deadlines, record.deadlines);
+  });
+});
+
+test('runFanOut: candidatesMs with nothing usable fails the fusion by the quorum rule', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      'cand-001': { branch: 'e/claude/refused-1', hang: true },
+      'cand-002': { branch: 'e/codex/refused-1', hang: true },
+    });
+    const result = await runFanOut(
+      { ...deps(dirs, s.launcher), now: c.now },
+      {
+        found: found(['claude', 'codex'], {
+          timeouts: { candidatesMs: 1_000 },
+        }),
+        prompt: 'Add retries',
+        onEvent: event => {
+          if (event.kind === 'launched' && event.candidate === 'cand-002') {
+            c.advance(1_000);
+          }
+        },
+      }
+    );
+    assert.equal(result.state, 'failed');
+    assert.equal(result.reason, 'aborted:no-usable-candidate');
+  });
+});
+
+test('runFanOut: totalMs stops everything, pushes nothing, and the fusion ends exhausted', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      'cand-001': { branch: 'e/claude/add-retries-1', hang: true },
+      'cand-002': { branch: 'e/codex/add-retries-1', hang: true },
+      'cand-003': { branch: 'e/codex/add-retries-2' },
+    });
+    const d = deps(dirs, s.launcher);
+    const events: FanOutEvent[] = [];
+    const result = await runFanOut(
+      { ...d, now: c.now },
+      {
+        found: found(['claude', 'codex', 'codex'], {
+          maxConcurrency: 2,
+          timeouts: { candidatesMs: 60_000, totalMs: 120_000 },
+        }),
+        prompt: 'Add retries',
+        onEvent: event => {
+          events.push(event);
+          // Past both at once: the whole outranks the fan-out.
+          if (event.kind === 'launched' && event.candidate === 'cand-002') {
+            c.advance(120_000);
+          }
+        },
+      }
+    );
+    assert.equal(result.state, 'exhausted');
+    assert.equal(result.reason, 'exhausted:fusion-timeout');
+    assert.deepEqual(s.killed.sort(), ['cand-001', 'cand-002']);
+    // `canceled`, as ADR-0019 section 5 has it, and the reason says by what.
+    assert.deepEqual(
+      result.candidates.map(r => [r.candidate, r.outcome, r.reason]),
+      [
+        ['cand-001', 'canceled', 'exhausted:fusion-timeout'],
+        ['cand-002', 'canceled', 'exhausted:fusion-timeout'],
+        ['cand-003', 'canceled', 'exhausted:fusion-timeout'],
+      ]
+    );
+    // The fan-out never closed: its branches stay local.
+    assert.deepEqual(d.git.pushed, []);
+    assert.deepEqual(
+      events.filter(e => e.kind === 'budget-exhausted'),
+      [
+        {
+          kind: 'budget-exhausted',
+          budget: 'totalMs',
+          limitMs: 120_000,
+          stopped: ['cand-001', 'cand-002', 'cand-003'],
+        },
+      ]
+    );
+    const record = readFusionRecord(dirs.storeDir, FUSION)!;
+    assert.equal(record.state, 'exhausted');
+    assert.equal(record.reason, 'exhausted:fusion-timeout');
+    assert.ok(record.endedAt);
+    assert.equal(fs.existsSync(result.spoolDir), false, 'it ended here');
+  });
+});
+
+test('runFanOut: totalMs that passes after candidatesMs, while the stopped ones wind down, still exhausts', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    let first = true;
+    const slow: ChildLauncher = launch => {
+      // A child that takes its time to die once killed: long enough, on
+      // the fusion's clock, for the whole fusion's deadline to pass.
+      const handle = s.launcher(launch);
+      return {
+        exited: handle.exited,
+        kill: () => {
+          if (first) c.advance(60_000);
+          first = false;
+          setTimeout(() => handle.kill(), 5);
+        },
+      };
+    };
+    const s = scripted({
+      'cand-001': { branch: 'e/claude/add-retries-1', hang: true },
+      'cand-002': { branch: 'e/codex/add-retries-1', hang: true },
+    });
+    const result = await runFanOut(
+      { ...deps(dirs, slow), now: c.now },
+      {
+        found: found(['claude', 'codex'], {
+          timeouts: { candidatesMs: 60_000, totalMs: 120_000 },
+        }),
+        prompt: 'Add retries',
+        onEvent: event => {
+          if (event.kind === 'launched' && event.candidate === 'cand-002') {
+            c.advance(60_000);
+          }
+        },
+      }
+    );
+    assert.equal(result.state, 'exhausted');
+    assert.equal(result.reason, 'exhausted:fusion-timeout');
+    // Each stopped once, by the deadline that reached it first.
+    assert.deepEqual(
+      result.candidates.map(r => r.outcome),
+      ['timed-out', 'timed-out']
+    );
+  });
+});
+
+test("runFanOut: undeclared deadlines are derived from the Store's loop caps", async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      'cand-001': { branch: 'e/claude/add-retries-1' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+      'cand-003': { branch: 'e/codex/add-retries-2' },
+    });
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        now: c.now,
+        loop: { totalTimeoutMs: 1_000 },
+      },
+      {
+        // Two rounds of a 1 s Run, and 15 min of margin each.
+        found: found(['claude', 'codex', 'codex'], { maxConcurrency: 2 }),
+        prompt: 'Add retries',
+      }
+    );
+    assert.equal(result.state, 'fanning-out');
+    assert.equal(result.deadlines?.candidatesMs, 2_000 + 15 * 60_000);
+    assert.equal(
+      result.deadlines?.totalMs,
+      2_000 + 15 * 60_000 + 1_000 + 15 * 60_000
+    );
+    // Without the Store's caps, the built-in ones: 3 h per Run.
+    const dirs2 = { ...dirs, storeDir: path.join(dirs.storeDir, 'other') };
+    const s2 = scripted({
+      'cand-001': { branch: 'e/claude/add-retries-1' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+    });
+    const plain = await runFanOut(deps(dirs2, s2.launcher), {
+      found: found(['claude', 'codex']),
+      prompt: 'Add retries',
+    });
+    assert.equal(plain.deadlines?.candidatesMs, 3 * 3_600_000 + 15 * 60_000);
+  });
+});
+
+// --- retries (ADR-0019 section 9) --------------------------------------------
+
+const retries = { maxAttempts: 2, backoffMs: 1_000, maxBackoffMs: 1_000 };
+
+test('runFanOut: a failed launch is retried as a new record, after its backoff, and the first envelope stays', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      'cand-001': { launchFails: 'provider unavailable' },
+      'cand-002': { launchFails: 'provider unavailable' },
+      'cand-003': { branch: 'e/claude/add-retries-1' },
+      'cand-004': { branch: 'e/codex/add-retries-1' },
+    });
+    const events: FanOutEvent[] = [];
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        now: c.now,
+        sleep: c.sleep,
+        random: () => 0.5,
+      },
+      {
+        found: found(['claude', 'codex'], { retry: retries }),
+        prompt: 'Add retries',
+        onEvent: event => events.push(event),
+      }
+    );
+    assert.equal(result.state, 'fanning-out');
+    assert.deepEqual(
+      result.candidates.map(r => [
+        r.candidate,
+        r.agent,
+        r.outcome,
+        r.attempt,
+        r.retryOf,
+      ]),
+      [
+        ['cand-001', 'claude', 'failed', 1, null],
+        ['cand-002', 'codex', 'failed', 1, null],
+        ['cand-003', 'claude', 'succeeded', 2, 'cand-001'],
+        ['cand-004', 'codex', 'succeeded', 2, 'cand-002'],
+      ]
+    );
+    // Half the backoff fixed, half jitter: 500 + 0.5 x 500.
+    const scheduled = events.filter(e => e.kind === 'retry-scheduled');
+    assert.deepEqual(
+      scheduled.map(e => [e.candidate, e.retryOf, e.attempt, e.delayMs]),
+      [
+        ['cand-003', 'cand-001', 2, 750],
+        ['cand-004', 'cand-002', 2, 750],
+      ]
+    );
+    // It waited out exactly its backoff, on the injected clock.
+    const retry = result.candidates[2];
+    assert.equal(Date.parse(retry.startedAt), c.start + 750);
+    assert.equal(
+      scheduled[0].kind === 'retry-scheduled' && scheduled[0].notBefore,
+      new Date(c.start + 750).toISOString()
+    );
+    assert.deepEqual(
+      events
+        .filter(e => e.kind === 'launched')
+        .map(e => e.kind === 'launched' && [e.candidate, e.attempt, e.retryOf]),
+      [
+        ['cand-003', 2, 'cand-001'],
+        ['cand-004', 2, 'cand-002'],
+      ]
+    );
+    // Every attempt is its own record, never reused.
+    const record = readFusionRecord(dirs.storeDir, FUSION)!;
+    assert.deepEqual(record.candidates, [
+      'cand-001',
+      'cand-002',
+      'cand-003',
+      'cand-004',
+    ]);
+    assert.deepEqual(
+      readCandidateResults(dirs.storeDir, FUSION).map(l => [
+        l.candidate,
+        l.result?.attempt,
+      ]),
+      [
+        ['cand-001', 1],
+        ['cand-002', 1],
+        ['cand-003', 2],
+        ['cand-004', 2],
+      ]
+    );
+  });
+});
+
+test('runFanOut: retries stop at maxAttempts, and the last failure is terminal', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      'cand-001': { launchFails: 'provider unavailable' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+      'cand-003': { launchFails: 'provider unavailable' },
+    });
+    const events: FanOutEvent[] = [];
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        now: c.now,
+        sleep: c.sleep,
+        random: () => 0,
+      },
+      {
+        found: found(['claude', 'codex'], { retry: retries }),
+        prompt: 'Add retries',
+        onEvent: event => events.push(event),
+      }
+    );
+    assert.deepEqual(
+      result.candidates.map(r => [r.candidate, r.outcome, r.attempt]),
+      [
+        ['cand-001', 'failed', 1],
+        ['cand-002', 'succeeded', 1],
+        ['cand-003', 'failed', 2],
+      ]
+    );
+    assert.deepEqual(
+      events.filter(e => e.kind === 'retry-skipped'),
+      [
+        {
+          kind: 'retry-skipped',
+          candidate: 'cand-003',
+          agent: 'claude',
+          attempt: 2,
+          why: 'max-attempts',
+        },
+      ]
+    );
+  });
+});
+
+test('runFanOut: a candidate with commits or a gate verdict is never retried; a harness exit is', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      // Failed, but it committed: an attempt the synthesizer learns from.
+      'cand-001': {
+        branch: 'e/claude/add-retries-1',
+        exitCode: 2,
+        reason: 'exhausted:iterations',
+      },
+      // The repository's check said red: an answer, not an accident.
+      'cand-002': {
+        branch: 'e/codex/refused-1',
+        exitCode: 2,
+        verify: { verdict: 'red', attempts: 3 },
+      },
+      // The harness itself died before a commit.
+      'cand-003': {
+        branch: 'e/codex/refused-2',
+        exitCode: 1,
+        reason: 'aborted:harness-exit',
+      },
+      'cand-004': { branch: 'e/codex/add-retries-2' },
+    });
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        now: c.now,
+        sleep: c.sleep,
+        random: () => 0,
+      },
+      {
+        found: found(['claude', 'codex', 'codex'], {
+          retry: { ...retries, maxAttempts: 3 },
+        }),
+        prompt: 'Add retries',
+      }
+    );
+    assert.deepEqual(
+      result.candidates.map(r => [r.candidate, r.outcome, r.retryOf]),
+      [
+        ['cand-001', 'failed', null],
+        ['cand-002', 'failed', null],
+        ['cand-003', 'failed', null],
+        ['cand-004', 'succeeded', 'cand-003'],
+      ]
+    );
+  });
+});
+
+test('runFanOut: a retry never extends candidatesMs', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      'cand-001': { launchFails: 'provider unavailable' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+    });
+    const events: FanOutEvent[] = [];
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        now: c.now,
+        sleep: c.sleep,
+        random: () => 0,
+      },
+      {
+        found: found(['claude', 'codex'], {
+          // The backoff (at least 2.5 s) would end past the fan-out's 2 s.
+          retry: { maxAttempts: 2, backoffMs: 5_000, maxBackoffMs: 5_000 },
+          timeouts: { candidatesMs: 2_000, totalMs: 10_000 },
+        }),
+        prompt: 'Add retries',
+        onEvent: event => events.push(event),
+      }
+    );
+    assert.equal(result.candidates.length, 2, 'no retry was scheduled');
+    assert.deepEqual(
+      events
+        .filter(e => e.kind === 'retry-skipped')
+        .map(e => e.kind === 'retry-skipped' && [e.candidate, e.why]),
+      [['cand-001', 'candidates-deadline']]
+    );
+  });
+});
+
+test('runFanOut: the classification is a seam a caller can replace', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({
+      // A refusal, which the default never retries.
+      'cand-001': { branch: 'e/claude/refused-1' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+      'cand-003': { branch: 'e/claude/add-retries-1' },
+    });
+    const seen: string[] = [];
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        now: c.now,
+        sleep: c.sleep,
+        random: () => 0,
+        classifyAttempt: r => {
+          seen.push(r.candidate);
+          return r.outcome === 'empty' ? 'retryable' : 'terminal';
+        },
+      },
+      {
+        found: found(['claude', 'codex'], { retry: retries }),
+        prompt: 'Add retries',
+      }
+    );
+    assert.deepEqual(
+      result.candidates.map(r => [r.candidate, r.outcome, r.retryOf]),
+      [
+        ['cand-001', 'empty', null],
+        ['cand-002', 'succeeded', null],
+        ['cand-003', 'succeeded', 'cand-001'],
+      ]
+    );
+    assert.deepEqual(seen.sort(), ['cand-001', 'cand-002', 'cand-003']);
+  });
+});
+
+test('runFanOut: a cancel during a backoff cancels the retry too, and it says which attempt it was', async () => {
+  await withDirs(async dirs => {
+    const abort = new AbortController();
+    const s = scripted({
+      'cand-001': { launchFails: 'provider unavailable' },
+      'cand-002': { branch: 'e/codex/add-retries-1', hang: true },
+    });
+    const result = await runFanOut(deps(dirs, s.launcher), {
+      found: found(['claude', 'codex'], { retry: retries }),
+      prompt: 'Add retries',
+      abort: abort.signal,
+      onEvent: event => {
+        if (event.kind === 'retry-scheduled') abort.abort();
+      },
+    });
+    assert.equal(result.state, 'canceled');
+    assert.deepEqual(
+      result.candidates.map(r => [
+        r.candidate,
+        r.outcome,
+        r.attempt,
+        r.retryOf,
+      ]),
+      [
+        ['cand-001', 'failed', 1, null],
+        ['cand-002', 'canceled', 1, null],
+        ['cand-003', 'canceled', 2, 'cand-001'],
+      ]
+    );
+    assert.equal(
+      s.launches.some(l => l.request.id === 'cand-003'),
+      false,
+      'the retry never started'
+    );
   });
 });

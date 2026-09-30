@@ -206,6 +206,18 @@ export interface FusionAgentSnapshot {
   skills: string[];
 }
 
+/**
+ * A Fusion run's two deadlines (ADR-0019 section 9), as it runs with them:
+ * their lengths - declared or derived from the Store's `loop` - and the
+ * moments they fall on, counted from the fusion's start.
+ */
+export interface FusionDeadlineRecord {
+  candidatesMs: number;
+  totalMs: number;
+  candidatesAt: string;
+  totalAt: string;
+}
+
 /** `fusion.json`: one Fusion run, from its prompt to its end. */
 export interface FusionRecord {
   schemaVersion: 1;
@@ -220,8 +232,14 @@ export interface FusionRecord {
   prompt: string;
   /** The pinned base: its commit, full ref and the branch a PR targets. */
   base: RunBase;
-  /** The candidate attempts' record ids, in launch order. */
+  /**
+   * Every candidate attempt's record id, in the order they were created: the
+   * profile's candidates first, then each retry as it is scheduled. A retry's
+   * envelope names the attempt it retries (`retryOf`).
+   */
   candidates: string[];
+  /** The deadlines the fusion runs with; absent in a record written before they existed. */
+  deadlines?: FusionDeadlineRecord;
   /** Set when the fan-out closed: how many candidates are usable, and what was pushed. */
   fanOut?: {
     closedAt: string;
