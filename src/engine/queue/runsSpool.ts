@@ -119,6 +119,12 @@ export interface RunRequest {
   prompt: string;
   /** The branch the run cuts from. */
   base?: string;
+  /**
+   * A home Store trigger's target repository: the base resolves there, and
+   * the run's `e spawn` starts there on the serving Store (#201). Absent, the
+   * repository `serve` runs in.
+   */
+  repo?: string;
   /** The trigger's field-wise `loop` override. */
   loop?: Partial<LoopCaps>;
   event?: RequestEvent;

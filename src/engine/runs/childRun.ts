@@ -48,6 +48,8 @@ export interface ChildLaunch {
   logFile: string;
   /** The spool the child reports its status into, under `request.id`. */
   spoolDir: string;
+  /** Where the child starts; the parent's cwd when absent. */
+  cwd?: string;
 }
 
 /** Starts one child run; production re-invokes the CLI, tests script one. */
@@ -87,7 +89,11 @@ export function spawnChildProcess(
     child = spawnProcess(
       invocation.command,
       [...invocation.prefix, ...launch.args],
-      { cwd: process.cwd(), env: launch.env, stdio: ['ignore', out, out] }
+      {
+        cwd: launch.cwd ?? process.cwd(),
+        env: launch.env,
+        stdio: ['ignore', out, out],
+      }
     );
   } catch (err) {
     fs.closeSync(out);

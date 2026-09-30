@@ -27,6 +27,7 @@
  * failed before it had a branch. Anything with a branch stays in the ledger.
  */
 
+import { SPAWN_FLAGS } from '../../shared/spawnArgs.js';
 import path from 'node:path';
 import {
   DEFAULT_DEAD_CONFIG,
@@ -105,7 +106,13 @@ export interface RunQueueDeps {
    * when it does not resolve. Absent, a run cuts from wherever its `e spawn`
    * would by hand.
    */
-  resolveBase?: (name: string | undefined) => RunBase;
+  resolveBase?: (name: string | undefined, repo?: string) => RunBase;
+  /**
+   * The serving Store's root, which a request with a `repo` gets as `--dir`:
+   * its child starts in the target repository, where no walk from the cwd
+   * would find this Store (#201).
+   */
+  servingRoot?: string;
   /** True while a container of this name is running: what a restart checks entries against. */
   containerRunning(name: string): boolean;
   /** Starts a claimed request's `e spawn` child; defaults to re-invoking this CLI. */
@@ -340,7 +347,7 @@ export class RunQueue {
       // error. Anything else that fails here is a launch failure.
       let base: RunBase;
       try {
-        base = this.deps.resolveBase(request.base);
+        base = this.deps.resolveBase(request.base, request.repo);
       } catch (err) {
         const reason = errorMessage(err);
         this.bury(entry, isBaseError(err) ? 'base' : 'launch', reason);
@@ -358,7 +365,13 @@ export class RunQueue {
     try {
       child = (this.deps.launch ?? spawnChildProcess)({
         request: spawnRequest,
-        args: childCliArgs(spawnRequest, this.deps.passthroughArgs),
+        args: childCliArgs(spawnRequest, [
+          ...(request.repo !== undefined && this.deps.servingRoot !== undefined
+            ? [SPAWN_FLAGS.dir, this.deps.servingRoot]
+            : []),
+          ...(this.deps.passthroughArgs ?? []),
+        ]),
+        ...(request.repo !== undefined ? { cwd: request.repo } : {}),
         env: { ...env.withLedger(file), ...provenanceEnv(request) },
         logFile: path.join(this.deps.dirs.logs, `${request.id}.log`),
         spoolDir: this.deps.dirs.live,

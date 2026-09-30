@@ -534,6 +534,28 @@ test('spawnChildProcess: runs the invocation with the args, logs its output, rep
   }
 });
 
+test('spawnChildProcess: a launch with a cwd starts the child there', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-sibling-proc-'));
+  try {
+    const logFile = path.join(dir, 'logs', 'sib-001.log');
+    const child = spawnChildProcess(
+      {
+        request: someRequest,
+        args: [],
+        env: process.env,
+        logFile,
+        spoolDir: dir,
+        cwd: dir,
+      },
+      scripted('console.log(process.cwd())')
+    );
+    assert.equal(await child.exited, 0);
+    assert.equal(fs.readFileSync(logFile, 'utf8').trim(), fs.realpathSync(dir));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('spawnChildProcess: kill ends a running sibling (exit code 1); a missing executable is exit code 1', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e-sibling-proc-'));
   try {

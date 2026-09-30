@@ -343,7 +343,7 @@ test('readConfigAtBase: a config.json at base that is not JSON names where it is
   );
 });
 
-test("readQueuedConfig: a repo-local Store's gate comes from base; a Store outside the repository is read as always", () => {
+test("readQueuedConfig: the gate comes from the target repository's base, whether the Store is in it or a home Store", () => {
   const repo = initRepo('e-queued-config-');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'e-home-store-'));
   inDir(
@@ -361,9 +361,11 @@ test("readQueuedConfig: a repo-local Store's gate comes from base; a Store outsi
         readQueuedConfig(hostGit, repo, base(sha)).verify?.command,
         'npm test'
       );
+      // A home Store serves the repository the run is cut in (#201): the
+      // gate is the repository's, as committed at base.
       assert.equal(
         readQueuedConfig(hostGit, home, base(sha)).verify?.command,
-        'home test'
+        'npm test'
       );
     },
     repo,
@@ -411,5 +413,27 @@ test("readQueuedConfig: an untracked config.json and none at base is the operato
       );
     },
     repo
+  );
+});
+
+test('readQueuedConfig: a home Store serving a repository with no config.json at base keeps its own settings', () => {
+  const repo = initRepo('e-queued-home-bare-');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'e-home-store-'));
+  inDir(
+    repo,
+    () => {
+      put(repo, 'README.md', 'no store\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'init');
+      const sha = git(repo, 'rev-parse', 'HEAD');
+      put(repo, '.e/config.json', JSON.stringify({ verify: 'true' }));
+      writeConfig(resolveConfig({ verify: 'home test' }), home);
+      assert.equal(
+        readQueuedConfig(new HostGit(), home, base(sha)).verify?.command,
+        'home test'
+      );
+    },
+    repo,
+    home
   );
 });

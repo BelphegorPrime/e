@@ -1023,3 +1023,29 @@ test('HostGit.exportTree: a directory as committed, nested dirs, executable bits
     dest
   );
 });
+
+test('HostGit with a cwd works on that repository, wherever the process stands (#201)', () => {
+  const repo = seedRepo();
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'e-host-plain-'));
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(plain);
+    const there = new HostGit(repo);
+    assert.equal(there.isRepo(), true);
+    assert.equal(
+      fs.realpathSync(there.toplevel() ?? ''),
+      fs.realpathSync(repo)
+    );
+    const sha = there.resolveCommit('HEAD');
+    assert.match(sha ?? '', /^[0-9a-f]{40}$/);
+    fs.writeFileSync(path.join(repo, 'x.txt'), 'x\n');
+    git(repo, 'add', 'x.txt');
+    git(repo, 'commit', '-q', '-m', 'x');
+    assert.equal(there.readFileAt('HEAD', path.join(repo, 'x.txt')), 'x\n');
+    assert.equal(new HostGit().isRepo(), false);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(plain, { recursive: true, force: true });
+  }
+});

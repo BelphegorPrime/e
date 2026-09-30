@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Git } from '../../ports/git/index.js';
+import { HostGit } from '../../ports/git/host.js';
 import type { Trigger, TriggerContext } from '../../core/trigger/index.js';
 import { parseTriggerFiles } from '../../core/trigger/load.js';
 import {
@@ -115,6 +116,19 @@ function resolveBase(git: Git, name: string): RunBase {
   throw baseError(
     `base "${name}" does not resolve to a branch or tag of the target repository (tried ${candidates.candidates.join(', ')}); in CI, check out with fetch-depth: 0`
   );
+}
+
+/**
+ * The git of a home Store trigger's `repo` (#201), refused as a base error
+ * when it is no repository: the request dies before a child exists, with the
+ * reason, rather than as a confusing checkout failure.
+ */
+export function targetGit(repo: string): Git {
+  const git = new HostGit(repo);
+  if (!fs.existsSync(repo) || !git.isRepo()) {
+    throw baseError(`repo ${repo} is not a git repository`);
+  }
+  return git;
 }
 
 /**

@@ -11,10 +11,15 @@ import {
   triggerConfigPath,
   triggerPromptPath,
 } from '../../core/store/paths.js';
-import { EVENT_PAYLOAD_MAX_BYTES } from '../../core/trigger/oneShot.js';
+import {
+  EVENT_PAYLOAD_MAX_BYTES,
+  isBaseError,
+} from '../../core/trigger/oneShot.js';
+import { initRepo } from '../../ports/git/host.testSupport.js';
 import {
   resolveOneShot,
   resolveRunBase,
+  targetGit,
   type OneShotInput,
 } from './oneShot.js';
 
@@ -520,4 +525,22 @@ test('resolveRunBase: a queued run cuts from the default branch, or its declared
     () => resolveRunBase(new InMemoryGit({}), undefined),
     /Base error: cannot determine the repository's default branch/
   );
+});
+
+test('targetGit: a repo that is no git repository is a base error, a real one its git (#201)', () => {
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'e-target-plain-'));
+  const repo = initRepo('e-target-repo-');
+  try {
+    for (const bad of [plain, path.join(plain, 'missing')]) {
+      assert.throws(
+        () => targetGit(bad),
+        (err: unknown) =>
+          isBaseError(err) && /not a git repository/.test(String(err))
+      );
+    }
+    assert.equal(targetGit(repo).isRepo(), true);
+  } finally {
+    fs.rmSync(plain, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });

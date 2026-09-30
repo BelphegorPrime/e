@@ -41,8 +41,21 @@ export function overwrittenPaths(stderr: string): string[] {
  * (e.g. bump the run counter and retry on an atomic-create collision).
  */
 export class HostGit implements Git {
+  /**
+   * `cwd`: the repository to work on, when it is not the process's cwd - a
+   * home Store trigger's target, resolved by `serve` (#201). Absent, every
+   * call runs where the process stands, as it always did.
+   */
+  constructor(private readonly cwd?: string) {}
+
+  /** Where git runs and host paths are relative to. */
+  private get here(): string {
+    return this.cwd ?? process.cwd();
+  }
+
   isRepo(): boolean {
     const result = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+      cwd: this.here,
       stdio: 'ignore',
       shell: false,
     });
@@ -59,6 +72,7 @@ export class HostGit implements Git {
 
   currentBranch(): string {
     const result = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd: this.here,
       encoding: 'utf8',
       shell: false,
     });
@@ -88,10 +102,10 @@ export class HostGit implements Git {
   }
 
   readFileAt(ref: string, filePath: string): string | undefined {
-    const result = this.spawnGit(['show', revPath(ref, filePath)]);
+    const result = this.spawnGit(['show', revPath(ref, filePath, this.here)]);
     if (result.status !== 0) {
       log.debug(
-        `No ${path.relative(process.cwd(), filePath)} at ${ref}: ${result.stderr?.trim() ?? 'git show failed'}`
+        `No ${path.relative(this.here, filePath)} at ${ref}: ${result.stderr?.trim() ?? 'git show failed'}`
       );
       return undefined;
     }
@@ -99,7 +113,7 @@ export class HostGit implements Git {
   }
 
   exportTree(ref: string, dirPath: string, dest: string): void {
-    const tree = revPath(ref, dirPath);
+    const tree = revPath(ref, dirPath, this.here);
     const description = `export ${tree}`;
     // `-z`: NUL-terminated and never quoted, so every file name survives;
     // the paths are relative to that tree. Submodules are commits, not blobs.
@@ -402,7 +416,7 @@ export class HostGit implements Git {
     const result = spawnSync(
       'git',
       [...(cwd ? ['-C', cwd] : []), 'rev-parse', '--verify', '--quiet', ref],
-      { stdio: 'ignore', shell: false }
+      { cwd: this.here, stdio: 'ignore', shell: false }
     );
     return result.status === 0;
   }
@@ -429,6 +443,7 @@ export class HostGit implements Git {
   private readBlobs(objects: string[], description: string): Buffer[] {
     if (objects.length === 0) return [];
     const result = spawnSync('git', ['cat-file', '--batch'], {
+      cwd: this.here,
       input: `${objects.join('\n')}\n`,
       maxBuffer: EXPORT_MAX_BYTES,
       shell: false,
@@ -448,7 +463,11 @@ export class HostGit implements Git {
 
   /** Runs `git <args>` capturing stdout/stderr; callers decide what the exit status means. */
   private spawnGit(args: string[]): SpawnSyncReturns<string> {
-    return spawnSync('git', args, { encoding: 'utf8', shell: false });
+    return spawnSync('git', args, {
+      cwd: this.here,
+      encoding: 'utf8',
+      shell: false,
+    });
   }
 
   /** The error for a git call that failed to start or exited non-zero. */
@@ -477,8 +496,8 @@ const EXPORT_MAX_BYTES = 512 * 1024 * 1024;
  * `ref`. The `./` makes it relative to the cwd, which is where every other
  * call here runs too; a bare `<ref>:<path>` would be the repo root's.
  */
-function revPath(ref: string, filePath: string): string {
-  const relative = path.relative(process.cwd(), filePath);
+function revPath(ref: string, filePath: string, cwd: string): string {
+  const relative = path.relative(cwd, filePath);
   return `${ref}:${relative.startsWith('..') ? relative : `./${relative}`}`;
 }
 

@@ -24,7 +24,7 @@ import { RunQueue } from '../../engine/queue/runQueue.js';
 import { runsDirs } from '../../engine/queue/runsSpool.js';
 import { HostGit } from '../../ports/git/host.js';
 import { resolveRuntime } from '../../ports/runtime/registry.js';
-import { resolveRunBase } from '../../engine/spawn/oneShot.js';
+import { resolveRunBase, targetGit } from '../../engine/spawn/oneShot.js';
 import { errorMessage } from '../../shared/utils/errors.js';
 import { a2aAccess } from '../../engine/a2a/access.js';
 import {
@@ -168,7 +168,10 @@ export function registerServeCommand(program: Command): void {
           containerRunning: name => runtime.isRunning(name),
           // The base rule at claim, against the repository serve runs in -
           // the one its runs' worktrees are cut from.
-          resolveBase: name => resolveRunBase(git, name),
+          resolveBase: (name, repo) =>
+            resolveRunBase(repo !== undefined ? targetGit(repo) : git, name),
+          // A home Store trigger's run starts in its `repo`, on this Store.
+          servingRoot: root,
           dueTriggers: now => cron.tick(now),
         });
         const cron = new CronScheduler({

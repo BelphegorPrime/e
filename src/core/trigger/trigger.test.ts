@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseTrigger } from './index.js';
+import { triggerRequest } from './fire.js';
 
 /*
  * The trigger (ADR-0016): a named Store entity binding exactly one event
@@ -231,4 +232,32 @@ test('parseTrigger: the directory name must be a value a commit trailer can hold
     parseTrigger(webhook, 'fix-issues_v2.1', where).name,
     'fix-issues_v2.1'
   );
+});
+
+test('parseTrigger: a repo-local store ignores repo, a home store keeps it (#201)', () => {
+  const declared = { ...webhook, repo: '/home/me/e' };
+  assert.equal(
+    parseTrigger(declared, 'nightly', where, { repoLocal: true }).repo,
+    undefined
+  );
+  assert.equal(
+    parseTrigger(declared, 'nightly', where, { repoLocal: false }).repo,
+    '/home/me/e'
+  );
+});
+
+test('triggerRequest: the request carries the repo a home store trigger targets', () => {
+  const trigger = parseTrigger(
+    { ...webhook, repo: '/home/me/e', dedup: undefined },
+    'nightly',
+    where,
+    { repoLocal: false }
+  );
+  const fired = triggerRequest(trigger, {
+    dedupValue: 'd-1',
+    event: { source: 'github', event: 'issues.labeled', id: 'd-1' },
+    payload: { issue: { number: 7 }, label: { name: 'agent' } },
+  });
+  assert.ok('request' in fired, 'dropped' in fired ? fired.dropped : '');
+  assert.equal(fired.request.repo, '/home/me/e');
 });

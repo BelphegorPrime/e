@@ -537,3 +537,46 @@ test('tick: the age cap sweeps dead/ on the tick', () => {
     fs.rmSync(store, { recursive: true, force: true });
   }
 });
+
+test('a request with a repo resolves its base there and starts its e spawn in it, on the serving Store (#201)', () => {
+  const store = fs.mkdtempSync(path.join(os.tmpdir(), 'e-queue-'));
+  try {
+    const dirs = runsDirs(store);
+    const launcher = new ScriptedLauncher();
+    const asked: [string | undefined, string | undefined][] = [];
+    const queue = new RunQueue({
+      dirs,
+      config: DEFAULT_QUEUE_CONFIG,
+      containerRunning: () => false,
+      launch: launcher.launch,
+      servingRoot: '/home/me',
+      resolveBase: (name, repo) => {
+        asked.push([name, repo]);
+        return {
+          ref: 'refs/remotes/origin/main',
+          sha: 'abc1234',
+          branch: 'main',
+        };
+      },
+    });
+    queue.enqueue({ ...req('t:far'), repo: '/home/me/projects/e' });
+    queue.enqueue(req('t:here'));
+    assert.deepEqual(asked, [
+      [undefined, '/home/me/projects/e'],
+      [undefined, undefined],
+    ]);
+    const [far, here] = launcher.launches;
+    assert.equal(far.cwd, '/home/me/projects/e');
+    assert.deepEqual(far.args.slice(0, 4), [
+      'spawn',
+      'pi',
+      '--dir',
+      '/home/me',
+    ]);
+    // A request of the serving repository runs where serve does, as before.
+    assert.equal(here.cwd, undefined);
+    assert.ok(!here.args.includes('--dir'));
+  } finally {
+    fs.rmSync(store, { recursive: true, force: true });
+  }
+});

@@ -18,6 +18,8 @@ export interface TriggerRequest {
   agent: string;
   prompt: string;
   base?: string;
+  /** A home Store trigger's target repository: where the run is cut (#201). */
+  repo?: string;
   loop?: Partial<LoopCaps>;
   /** The raw event: the queue's acceptance validates its id. */
   event: ProvenanceEvent;
@@ -85,6 +87,7 @@ export function triggerRequest(trigger: Trigger, fire: FireEvent): TriggerFire {
       agent: trigger.agent,
       prompt: prompt.text,
       ...(base !== undefined ? { base } : {}),
+      ...(trigger.repo !== undefined ? { repo: trigger.repo } : {}),
       ...(trigger.loop ? { loop: trigger.loop } : {}),
       event: fire.event,
       ...(fire.payload !== undefined ? { payload: fire.payload } : {}),

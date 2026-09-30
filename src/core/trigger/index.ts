@@ -173,7 +173,14 @@ export function parseTrigger(
     overlap: p.overlap === 'allow' ? 'allow' : 'skip',
     on: parseOn(p.on, name, where),
   };
-  if (typeof p.repo === 'string' && p.repo !== '') trigger.repo = p.repo;
+  // A repo-local Store targets its own repository and ignores `repo`.
+  if (
+    context.repoLocal !== true &&
+    typeof p.repo === 'string' &&
+    p.repo !== ''
+  ) {
+    trigger.repo = p.repo;
+  }
   if (typeof p.base === 'string' && p.base !== '') trigger.base = p.base;
   if (typeof p.dedup === 'string' && p.dedup !== '') trigger.dedup = p.dedup;
   const loop = parseLoopOverride(p.loop, name, where);

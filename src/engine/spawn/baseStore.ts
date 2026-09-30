@@ -220,17 +220,17 @@ export function readConfigAtBase(
 
 /**
  * The config of a run `serve` queued and claimed with a base (ADR-0016
- * section 6): a Store inside the repository the base was resolved in is
- * that repository's own, so its settings come from base through
- * {@link readConfigAtBase}. A Store outside it - a home Store - is in no
- * repository and is read as always.
+ * section 6): the gate and the caps belong to the repository the run is cut
+ * in, `git`'s, and come from its base through {@link readConfigAtBase}. A
+ * Store inside that repository is its own and serves it; a home Store serves
+ * a trigger's `repo`, where `serve` starts the run (#201).
  *
- * Here the serving Store and the target are one, so "no `config.json` at
- * base keeps the serving settings" would hand the gate straight back to the
- * working tree. It does only when git tracks no `config.json` in HEAD
- * either: then the file is the operator's own and no branch put it there.
- * One that HEAD tracks came with whatever is checked out, and base, which
- * declares none, has no gate and the default caps.
+ * A repo-local Store is the serving Store and the target at once, so "no
+ * `config.json` at base keeps the serving settings" would hand the gate
+ * straight back to the working tree. It does only when git tracks no
+ * `config.json` in HEAD either: then the file is the operator's own and no
+ * branch put it there. One that HEAD tracks came with whatever is checked
+ * out, and base, which declares none, has no gate and the default caps.
  */
 export function readQueuedConfig(
   git: Git,
@@ -238,12 +238,9 @@ export function readQueuedConfig(
   base: RunBase
 ): StoreConfig {
   const toplevel = git.toplevel();
-  if (
-    root === undefined ||
-    toplevel === undefined ||
-    !within(real(toplevel), real(root))
-  ) {
-    return readConfig(root);
+  if (root === undefined || toplevel === undefined) return readConfig(root);
+  if (!within(real(toplevel), real(root))) {
+    return readConfigAtBase(git, { serving: root, target: toplevel, base });
   }
   const file = configFilePath(root);
   if (

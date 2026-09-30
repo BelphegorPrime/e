@@ -373,10 +373,11 @@ keeps the serving Store's settings, a file on disk notwithstanding. For a
 repo-local Store serving and target are one, so there a `config.json` that
 HEAD tracks but base does not means no gate and the default caps; only an
 untracked one, the operator's own, is read from disk. A queued
-run of a repo-local Store gets this today, from the base `serve` recorded at
-claim; a home Store's `repo` target reuses the same function once the queue
-carries it. The
-queue and ledger stay with the **serving** Store: slots bound how many
+run gets this from the base `serve` recorded at claim. A home Store's
+trigger carries its `repo` on the request: the base resolves in that
+repository, and its `e spawn` starts there with `--dir` naming the serving
+Store, so the worktree, the base and the gate are all the target's (#201).
+The queue and ledger stay with the **serving** Store: slots bound how many
 containers this machine runs.
 
 **Dedup**: absent, the source supplies its own identity (the delivery id, the
