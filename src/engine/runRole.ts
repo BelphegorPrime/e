@@ -39,9 +39,25 @@ export function brokerUrl(
   return `http://${host}:${port}`;
 }
 
-/** The `-e` entries that deliver the role contract to one container. */
-export function roleEnv(role: RunRole, url: string): string[] {
-  return [`${ROLE_ENV}=${role}`, `${BROKER_URL_ENV}=${url}`];
+/**
+ * Whether a run's containers can reach a runtime-broker: a parent only when
+ * it brings its own (it carries the `spawn-brother` skill), a child always,
+ * through its parent's. A run without one is never pointed at an endpoint
+ * nothing listens on, which otherwise costs the agent turns probing it.
+ */
+export function brokerReachable(role: RunRole, ownBroker: boolean): boolean {
+  return ownBroker || role === 'child';
+}
+
+/**
+ * The `-e` entries that deliver the role contract to one container:
+ * `E_ROLE` always, `E_BROKER_URL` only when a broker is reachable (`url`).
+ */
+export function roleEnv(role: RunRole, url: string | undefined): string[] {
+  return [
+    `${ROLE_ENV}=${role}`,
+    ...(url === undefined ? [] : [`${BROKER_URL_ENV}=${url}`]),
+  ];
 }
 
 /**
@@ -56,16 +72,26 @@ export function isRoleContractEntry(entry: string): boolean {
 
 /**
  * The launch-prompt sentence that points a one-shot agent at the contract. It
- * promises only what the env delivers: the broker endpoint is named, not
- * guaranteed to answer (the sidecar itself is a later ticket of ADR-0013).
+ * promises only what the env delivers: with a reachable broker the endpoint is
+ * named, not guaranteed to answer; without one the agent is told up front that
+ * sibling spawning is unavailable, and `$E_BROKER_URL` goes unmentioned
+ * because {@link roleEnv} does not set it.
  */
-export function runRoleInstructions(role: RunRole): string {
+export function runRoleInstructions(
+  role: RunRole,
+  broker: boolean = brokerReachable(role, false)
+): string {
+  const siblings = broker
+    ? `$${BROKER_URL_ENV} names the runtime-broker endpoint for spawning sibling runs; ` +
+      `if nothing answers there, or a request never leaves "requested", sibling ` +
+      `spawning is unavailable in this run - record follow-up tasks as files in the ` +
+      `worktree instead. `
+    : `This run has no runtime-broker, so sibling spawning is unavailable - record ` +
+      `follow-up tasks as files in the worktree instead. `;
   return (
     `Your role in this run is "${role}": read it from $${ROLE_ENV}. ` +
-    `$${BROKER_URL_ENV} names the runtime-broker endpoint for spawning sibling runs; ` +
-    `if nothing answers there, or a request never leaves "requested", sibling ` +
-    `spawning is unavailable in this run - record follow-up tasks as files in the ` +
-    `worktree instead. Roles are set by the host ` +
+    siblings +
+    `Roles are set by the host ` +
     `through the environment; do not create or rely on parent/child marker files ` +
     `in the worktree.`
   );

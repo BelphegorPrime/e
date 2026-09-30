@@ -5,6 +5,7 @@ import {
   BROKER_PORT,
 } from '../sidecars/broker/contract/constants.js';
 import {
+  brokerReachable,
   brokerUrl,
   isRoleContractEntry,
   roleEnv,
@@ -68,6 +69,16 @@ test('roleEnv: renders the two -e entries, role first', () => {
   ]);
 });
 
+test('roleEnv: without a reachable broker only E_ROLE is set', () => {
+  assert.deepEqual(roleEnv('parent', undefined), ['E_ROLE=parent']);
+});
+
+test('brokerReachable: a parent only with its own broker, a child always', () => {
+  assert.equal(brokerReachable('parent', false), false);
+  assert.equal(brokerReachable('parent', true), true);
+  assert.equal(brokerReachable('child', false), true);
+});
+
 test('isRoleContractEntry: matches the two contract keys only, by key', () => {
   assert.equal(isRoleContractEntry('E_ROLE=child'), true);
   assert.equal(isRoleContractEntry('E_BROKER_URL=http://x:1'), true);
@@ -86,4 +97,14 @@ test('runRoleInstructions: names the role, both variables, the fallback, and for
   assert.match(text, /files in the worktree/);
   assert.match(text, /marker files/i);
   assert.match(runRoleInstructions('parent'), /"parent"/);
+});
+
+test('runRoleInstructions: without a broker, says so and never names $E_BROKER_URL', () => {
+  const text = runRoleInstructions('parent');
+  assert.match(text, /"parent"/);
+  assert.doesNotMatch(text, /\$E_BROKER_URL/);
+  assert.match(text, /no runtime-broker, so sibling spawning is unavailable/);
+  assert.match(text, /files in the worktree/);
+  assert.match(text, /marker files/i);
+  assert.match(runRoleInstructions('parent', true), /\$E_BROKER_URL/);
 });

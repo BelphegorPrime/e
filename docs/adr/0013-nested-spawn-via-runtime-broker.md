@@ -19,6 +19,8 @@ An agent inside a run can request **sibling** runs (e.g. "I'll do A, spawn broth
 
 **Amendment (2026-09-12, ticket 02):** the broker does **not** own the docker socket after all. Mounting it into any per-run container would have moved the ADR-0002 trust line into the run's network; the ticket kept the line. The broker is an HTTP front for a host-owned **spool** directory bind-mounted into it: `POST /spawn` writes `requests/<id>.json`, the host `e` process (the only party with a runtime and git) consumes those and writes `status/<id>.json`, `GET /status` merges the two. The spool lives under the worktrees dir, the one host path every engine bind-mounts; it works identically on a private run network and in the shared `e-egress` namespace, where a published port could not. The broker sidecar is planned for a run exactly when the run carries the `spawn-brother` skill, which is also how the agent learns to call it.
 
+**Amendment (2026-09-30, role contract without a broker):** `E_BROKER_URL` is set only where a broker is reachable: a parent run that brings its own (it carries `spawn-brother`), and every child, which reaches its parent's. A parent without one gets `E_ROLE` alone, and its launch prompt says sibling spawning is unavailable instead of naming an endpoint nothing listens on; a traced run against a live model showed the agent spending turns probing that endpoint (`brokerReachable` in `src/engine/runRole.ts`).
+
 ### Non-blocking, parallel fan-out
 
 - `POST /spawn` returns immediately (run created + starting). Multiple siblings run concurrently.

@@ -97,6 +97,7 @@ import {
 } from '../core/trigger/provenance.js';
 import { newUlid } from '../engine/queue/runsSpool.js';
 import { SPAWN_COMMAND, SPAWN_FLAGS } from '../shared/spawnArgs.js';
+import { collectRepeatable } from './repeatable.js';
 /** How long a canceled `e spawn` may take to stop its container and tear down before it is exited by force. */
 export const CANCEL_GRACE_MS = 60_000;
 
@@ -112,9 +113,9 @@ export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {
   dir?: string;
   /** Raw `--env-file <path>` value from the CLI (a single path). */
   envFile?: string;
-  /** `--mcp <name...>`: MCP servers to wire for this run (container sidecars and/or remote URLs). */
+  /** `--mcp <name>`, repeatable: MCP servers to wire for this run (container sidecars and/or remote URLs). */
   mcp?: string[];
-  /** `--skill <name...>`: Skills to add for this run (comma-separated or repeated). */
+  /** `--skill <name>`, repeatable: Skills to add for this run (comma-separated or repeated). */
   skill?: string[];
   /** `--keep-worktree`: leave the run's worktree in place after the container exits. */
   keepWorktree?: boolean;
@@ -689,6 +690,44 @@ export function spawnReport(result: RunSpawnResult): ReportLine[] {
   return lines;
 }
 
+/** What {@link spawnCancelHandling} needs from the process; a test fakes all of it. */
+export interface SpawnCancelDeps {
+  /** Aborted by the first signal; the run tears down on it. */
+  cancel: AbortController;
+  warn(text: string): void;
+  /** Starts the grace timer (unref'd in production, so it never holds the run open). */
+  setTimer(fn: () => void, ms: number): void;
+  /** Drops the rendered secret files. */
+  dispose(): void;
+  exit(code: number): void;
+}
+
+/**
+ * The signal handler of `e spawn` (ADR-0015). The first SIGINT or SIGTERM
+ * cancels: the container is stopped and the run tears down - worktree,
+ * sidecars, network, rendered secret files - pushing nothing. Every later
+ * one is acknowledged and waited out, never taken as leave to exit: a Ctrl-C
+ * had no handler at all, so it killed `e` wherever it was and left the
+ * worktree and the secret files behind - and a second Ctrl-C to leave a
+ * harness TUI (Codex quits on the first) reached `e` while it captured the
+ * run. Only when the grace is spent does `e` exit, and it still drops the
+ * secret files first.
+ */
+export function spawnCancelHandling(deps: SpawnCancelDeps): () => void {
+  return () => {
+    if (deps.cancel.signal.aborted) {
+      deps.warn('Still canceling: waiting for the run to tear down.');
+      return;
+    }
+    deps.warn('Canceling the run: stopping its container and tearing down...');
+    deps.cancel.abort();
+    deps.setTimer(() => {
+      deps.dispose();
+      deps.exit(CANCELED_EXIT_CODE);
+    }, CANCEL_GRACE_MS);
+  };
+}
+
 /** What a spawn needs from the process it runs in; the action supplies both. */
 export interface SpawnCommandDeps {
   /** Owns every rendered secret file this run writes; one dispose() cleans up. */
@@ -837,12 +876,14 @@ export function registerSpawnCommand(program: Command): void {
       'load environment variables from a file'
     )
     .option(
-      `${SPAWN_FLAGS.mcp} <name...>`,
-      'MCP server(s) to wire for this run - container (sidecar) or remote (hosted URL); repeatable'
+      `${SPAWN_FLAGS.mcp} <name>`,
+      'MCP server to wire for this run - container (sidecar) or remote (hosted URL); repeatable',
+      collectRepeatable
     )
     .option(
-      `${SPAWN_FLAGS.skill} <name...>`,
-      'Skill(s) to add for this run, from .e/skills (comma-separated or repeated)'
+      `${SPAWN_FLAGS.skill} <name>`,
+      'Skill(s) to add for this run, from .e/skills (comma-separated or repeated)',
+      collectRepeatable
     )
     .option(
       SPAWN_FLAGS.rebuild,
@@ -876,12 +917,14 @@ export function registerSpawnCommand(program: Command): void {
       "with --event: the provider's event name (default: $GITHUB_EVENT_NAME)"
     )
     .option(
-      '-p, --port <port...>',
-      'publish a container port, e.g. 8080:80 (repeatable)'
+      '-p, --port <port>',
+      'publish a container port, e.g. 8080:80 (repeatable)',
+      collectRepeatable
     )
     .option(
-      '-e, --env <env...>',
-      'set an environment variable, e.g. KEY=value (repeatable)'
+      '-e, --env <env>',
+      'set an environment variable, e.g. KEY=value (repeatable)',
+      collectRepeatable
     )
     .action(
       async (
@@ -890,24 +933,20 @@ export function registerSpawnCommand(program: Command): void {
         opts: SpawnCommandOptions
       ) => {
         const scratch = new RunScratch();
-        // SIGTERM is a cancel (ADR-0015): a sibling its parent canceled or
-        // gave up on, an A2A task its client canceled. The run stops its
-        // container and tears down as usual (`RunSpawnParams.abort`); should
-        // that hang, the fallback below still drops the rendered secret files
-        // and exits (Node's default would exit without any cleanup).
+        // SIGTERM and SIGINT are a cancel (ADR-0015): a sibling its parent
+        // canceled or gave up on, an A2A task its client canceled, a one-shot
+        // run's scheduler, a human's Ctrl-C. The run stops its container and
+        // tears down as usual (`RunSpawnParams.abort`).
         const cancel = new AbortController();
-        const onCancel = (): void => {
-          if (cancel.signal.aborted) return;
-          cancel.abort();
-          setTimeout(() => {
-            scratch.dispose();
-            process.exit(CANCELED_EXIT_CODE);
-          }, CANCEL_GRACE_MS).unref();
-        };
-        process.once('SIGTERM', onCancel);
-        // A one-shot run's scheduler cancels with SIGINT first (a CI job, a
-        // systemd stop): a cancel too, so teardown still deletes its key.
-        if (opts.trigger !== undefined) process.once('SIGINT', onCancel);
+        const onCancel = spawnCancelHandling({
+          cancel,
+          warn: text => log.warn(text),
+          setTimer: (fn, ms) => setTimeout(fn, ms).unref(),
+          dispose: () => scratch.dispose(),
+          exit: code => process.exit(code),
+        });
+        process.on('SIGTERM', onCancel);
+        process.on('SIGINT', onCancel);
         // A manual child request never runs a container: it writes one
         // sibling request into the parent run's broker spool and exits, the
         // host equivalent of the broker's `POST /spawn` (ADR-0013).

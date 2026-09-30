@@ -167,3 +167,16 @@ test('renderDockerfile: no skills when no collections or agent', () => {
   });
   assert.doesNotMatch(agentless, /npx -y skills@/);
 });
+
+test('renderDockerfile: env becomes ENV lines before the install; none by default', () => {
+  const withEnv = renderDockerfile({ ...pi, env: { A_FLAG: '1', B: 'two' } });
+  assert.match(withEnv, /^ENV A_FLAG=1\nENV B=two\nRUN apk add/m);
+  assert.doesNotMatch(renderDockerfile(pi), /^ENV (?!HOME=)/m);
+});
+
+test("Claude Code's image turns its self-update off: the pinned version is the one e verified", () => {
+  assert.match(
+    renderDockerfile(HARNESSES.claudeCode.dockerfile),
+    /^ENV DISABLE_AUTOUPDATER=1$/m
+  );
+});

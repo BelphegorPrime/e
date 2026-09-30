@@ -356,8 +356,30 @@ test('runResumeCommand: continues the session on the Run branch, with its record
           v.host === path.join(runSessionDirFor(eBaseDir(root), run), 'harness')
       )
     );
+    // Regression: the resumed container ran without --rm and kept the run's
+    // name, so the next resume of the same run failed on a name conflict.
+    assert.equal(runtime.options?.rm, true);
     assert.deepEqual(git.pushed, [branch]);
   });
+});
+
+test('resume CLI: -e takes one value, so the prompt after it stays the prompt', async () => {
+  const program = new Command();
+  program.exitOverride();
+  registerResumeCommand(program);
+  const resume = program.commands.find(c => c.name() === 'resume');
+  assert.ok(resume);
+  let parsed: { prompt: string[]; env?: string[] } | undefined;
+  resume.action(
+    (_branch: string, prompt: string[], opts: { env?: string[] }) => {
+      parsed = { prompt, env: opts.env };
+    }
+  );
+  await program.parseAsync(
+    ['resume', 'e/pi/x-1', '-e', 'A=1', 'keep going', '-e', 'B=2'],
+    { from: 'user' }
+  );
+  assert.deepEqual(parsed, { prompt: ['keep going'], env: ['A=1', 'B=2'] });
 });
 
 test('registerResumeCommand declares `e resume <branch> [prompt...]`', () => {

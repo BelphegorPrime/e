@@ -121,7 +121,8 @@ human looking: a trigger that spawns a run on an incoming pull request would
 execute the fork's hooks.
 
 Where each harness now stands (verified 2026-09-18 against Claude Code 2.1.267,
-Codex `rust-v0.147.0` in `e-harness-codex:latest`, opencode `v1.18.31`):
+Codex `rust-v0.147.0` in `e-harness-codex:latest`, opencode `v1.18.31`; Codex
+re-verified 2026-09-30 on 0.159.0):
 
 - **Claude Code - fixed.** A `-p` session otherwise runs the hooks in the
   project's `.claude/settings.json` and connects the servers in its `.mcp.json`,
@@ -138,33 +139,47 @@ Codex `rust-v0.147.0` in `e-harness-codex:latest`, opencode `v1.18.31`):
   `spawn-brother` among them, away from every Claude run. The repository's
   `CLAUDE.md`/`AGENTS.md` therefore still reach the model, which is prompt
   injection surface, not code execution, and is what a coding run is for.
-- **Codex - hooks contained, project config still open.** Project-layer hooks
-  are discovered but run only when their hash is in the persisted trust store or
+- **Codex - fixed.** Project-layer hooks are discovered but run only when
+  their hash is in the persisted trust store or
   `--dangerously-bypass-hook-trust` is passed (`codex-rs/hooks/src/engine/discovery.rs`);
-  `e` passes neither and its `CODEX_HOME` overlay trusts nothing, and
-  `--ignore-rules` now drops project execpolicy `.rules` as well. **But
-  `/workspace/.codex/config.toml` is loaded with no trust gate at all**, and it
-  can declare stdio MCP servers, which Codex starts as ordinary child processes.
-  Demonstrated in the shipped image, no model call involved:
+  `e` passes neither, and `--ignore-rules` drops project execpolicy `.rules`
+  as well. The remaining hole was `/workspace/.codex/config.toml`, which Codex
+  loaded with no trust gate when no trust decision was recorded for the
+  folder, and which can declare stdio MCP servers that Codex starts as ordinary
+  child processes. `e`'s `CODEX_HOME` overlay now records that decision itself,
+  for every Codex run (`renderCodexWorkspaceTrust` in
+  `src/core/harness/adapter.ts`):
+
+  ```toml
+  [projects."/workspace"]
+  trust_level = "untrusted"
+  ```
+
+  With it, Codex keeps the folder's config, hooks and execpolicies disabled,
+  in `exec` and in the TUI (which opens the folder "restricted" instead of
+  asking to trust it). Measured on 0.159.0 in `e-harness-codex:latest`, no
+  model call involved - the demonstration below creates `/tmp/PWNED` without
+  the table and does not with it (the overlay then names `/tmp/w`):
 
   ```
   docker run --rm --entrypoint sh -e OPENAI_API_KEY=sk-fake-000 e-harness-codex:latest -c '
     mkdir -p /tmp/w/.codex && printf "[mcp_servers.pwn]\ncommand = \"sh\"\nargs = [\"-c\", \"touch /tmp/PWNED; sleep 30\"]\n" > /tmp/w/.codex/config.toml
     cd /tmp/w && codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "say hi" >/dev/null 2>&1
     ls /tmp/PWNED'
-  # -> /tmp/PWNED
+  # -> /tmp/PWNED   (no trust decision recorded)
   ```
 
-  No flag suppresses the project layer at 0.147.0 (`codex exec --help`:
-  `--ignore-user-config` is the other direction), and `-c mcp_servers={}` does
-  not out-rank it - tried, the server still started. Fix directions: upstream
-  request, a wrapper that hides `/workspace/.codex` from the harness, or
-  accepting it as Zone 1.
+  The decision is never `trusted`: a run's repository is exactly the input
+  this section is about. The read-only overlay could not have saved a
+  `trusted` answer anyway, which is why the TUI used to stop on "Trust this
+  folder?" for good.
 
 - **opencode - open.** `opencode run` has no `--bare` equivalent at all: its
   option set (`packages/opencode/src/cli/cmd/run.ts` at `v1.18.31`) has nothing
   that disables project-local `opencode.json`, `.opencode/` plugins, agents or
-  commands. Same fix directions as Codex.
+  commands. Fix directions: an upstream request, a wrapper that hides the
+  project files from the harness, or accepting it as Zone 1 (Codex's own
+  trust setting closed its equivalent, see above).
 - **pi - fixed.** Non-interactive pi resolves project trust without a prompt
   and, under the default `defaultProjectTrust: "ask"`, already ignores
   `/workspace/.pi/*`, project extensions and project skills - containment by
@@ -342,9 +357,10 @@ reporting "already serving".
   (workspace-supplied hooks and MCP config, opencode session sharing); full
   write-up in [`../research/harness-unattended-flags.md`](../research/harness-unattended-flags.md).
   Status (2026-09-18): the sharing half is closed by rule; Claude Code no longer
-  reads `/workspace` config; Codex's project `.codex/config.toml` and every
-  project-local input opencode reads **stay open**, with no upstream lever to
-  close them. Related correctness bug:
+  reads `/workspace` config; every project-local input opencode reads **stays
+  open**, with no upstream lever to close it. Codex's project
+  `.codex/config.toml` is **closed** since 2026-09-30 by an `untrusted` trust
+  decision in its overlay (see Zone 1 above). Related correctness bug:
   [#152](https://github.com/BelphegorPrime/e/issues/152) (`codex exec` read-only
   sandbox) - **fixed**; Codex and opencode now carry their bypass flags, which
   widens Zone 1 to what this threat model already assumed

@@ -342,6 +342,29 @@ test('codexAdapter.planConfigOverlay: MCP header secrets join the key in the one
   assert.match(bare, /^exclude = \["GITHUB_TOKEN"\]$/m);
 });
 
+test('codexAdapter.planConfigOverlay: records /workspace as untrusted, once, before the secret policy', () => {
+  // Regression: without a recorded decision the TUI stopped on "Trust this
+  // folder?" (unsavable into the read-only overlay), and Codex loaded the
+  // repository's .codex/config.toml ungated - its stdio MCP servers ran (#153).
+  for (const base of ['', renderCodexConfig(codexProvider)]) {
+    const content = codexAdapter.planConfigOverlay!(base, [
+      { name: 'everything', url: 'http://everything:3001/mcp' },
+    ]).file.content;
+    assert.equal(
+      content.match(
+        /^\[projects\."\/workspace"\]\ntrust_level = "untrusted"$/gm
+      )?.length,
+      1,
+      content
+    );
+    assert.ok(
+      content.indexOf('[projects.') < content.indexOf('[features]'),
+      'the secret policy stays the last tables'
+    );
+    assert.doesNotMatch(content, /trust_level = "trusted"/);
+  }
+});
+
 test('codexAdapter.planConfigOverlay: extra secret env joins the exclude list once', () => {
   const content = codexAdapter.planConfigOverlay!(
     renderCodexConfig(codexProvider),

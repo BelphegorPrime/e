@@ -26,7 +26,6 @@ import {
 } from '../engine/runs/runSession.js';
 import type { TaskState } from '../sidecars/broker/contract/types.js';
 import { RunScratch } from '../engine/runs/runScratch.js';
-import { CANCELED_EXIT_CODE } from '../engine/runs/runSpawn.js';
 import {
   planSpawn,
   validateSpawn,
@@ -39,10 +38,11 @@ import { SPAWN_FLAGS } from '../shared/spawnArgs.js';
 import { env } from '../shared/utils/env.js';
 import { log } from '../shared/utils/log.js';
 import { errorMessage } from '../shared/utils/errors.js';
+import { collectRepeatable } from './repeatable.js';
 import {
-  CANCEL_GRACE_MS,
   gatherSpawnFacts,
   promptForLocalApiKey,
+  spawnCancelHandling,
   spawnReport,
   type SpawnCommandOptions,
 } from './spawn.js';
@@ -234,6 +234,11 @@ export async function runResumeCommand(
       // The Run's sidecars are started again, empty (ADR-0017).
       mcp: record.mcp,
       skill: record.skills,
+      // As disposable as a spawned one: the session lives in the host mount.
+      // `resume` declares no --rm of its own, and without this the container
+      // outlived the run under the run's name, so the next resume of that
+      // run failed on "The container name ... is already in use".
+      rm: true,
     });
     const resumed: SpawnFacts = {
       ...gathered,
@@ -297,21 +302,24 @@ export function registerResumeCommand(program: Command): void {
     )
     .option(SPAWN_FLAGS.keepWorktree, 'keep the worktree after container exits')
     .option(
-      '-e, --env <env...>',
-      'set an environment variable, e.g. KEY=value (repeatable)'
+      '-e, --env <env>',
+      'set an environment variable, e.g. KEY=value (repeatable)',
+      collectRepeatable
     )
     .action(
       async (branch: string, prompt: string[], opts: ResumeCommandOptions) => {
         const scratch = new RunScratch();
-        // SIGTERM is a cancel, exactly as for `e spawn` (ADR-0015).
+        // SIGTERM and SIGINT are a cancel, exactly as for `e spawn` (ADR-0015).
         const cancel = new AbortController();
-        process.once('SIGTERM', () => {
-          cancel.abort();
-          setTimeout(() => {
-            scratch.dispose();
-            process.exit(CANCELED_EXIT_CODE);
-          }, CANCEL_GRACE_MS).unref();
+        const onCancel = spawnCancelHandling({
+          cancel,
+          warn: text => log.warn(text),
+          setTimer: (fn, ms) => setTimeout(fn, ms).unref(),
+          dispose: () => scratch.dispose(),
+          exit: code => process.exit(code),
         });
+        process.on('SIGTERM', onCancel);
+        process.on('SIGINT', onCancel);
         process.exit(
           await runResumeCommand(branch, prompt, opts, {
             scratch,

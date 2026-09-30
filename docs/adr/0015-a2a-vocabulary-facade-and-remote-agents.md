@@ -46,6 +46,17 @@ routes, Node built-ins only). It gains what A2A's lifecycle has and it lacked:
   (`RunSpawnParams.abort`): the container is removed, the normal teardown
   runs, nothing is committed. Before, SIGTERM exited the process and left the
   container running.
+
+  **Amendment (2026-09-30, SIGINT):** SIGINT is the same cancel for every
+  `e spawn` and `e resume`, not only a `--trigger` run's; before, a Ctrl-C had
+  no handler and killed the process wherever it was, leaving the worktree and
+  the rendered secret files (`e-scratch-*`) behind. A second Ctrl-C to leave a
+  harness TUI - Codex quits on the first - reached `e` while it captured the
+  run. The first signal cancels; later ones are acknowledged and waited out,
+  as `e fuse` does (`spawnCancelHandling` in `src/cli/spawn.ts`). A worktree
+  the teardown keeps because it holds uncommitted work is now named in the
+  output rather than left for nobody to find.
+
 - `GET /status/events` (A2A streaming): the status as server-sent events, one
   `status` event now and one per change, polled off the spool because
   `fs.watch` is unreliable on bind mounts. The skill's `--watch [id]` blocks

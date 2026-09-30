@@ -1,8 +1,9 @@
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { log } from '../../shared/utils/log.js';
 import { InMemoryGit } from '../../ports/git/memory.js';
 import type { PullRequest, PullRequestSpec } from '../../ports/github/index.js';
 import type { Harness } from '../../core/harness/index.js';
@@ -231,10 +232,26 @@ test('never force-removes a worktree that is still dirty: a commit failure leave
       fail: { commitAll: 'pre-commit hook failed' },
     }),
   });
-  await assert.rejects(runSpawn(deps, makeParams()), /pre-commit hook failed/);
+  const warned: string[] = [];
+  mock.method(log, 'warn', (msg: string) => warned.push(msg));
+  try {
+    await assert.rejects(
+      runSpawn(deps, makeParams()),
+      /pre-commit hook failed/
+    );
+  } finally {
+    mock.restoreAll();
+  }
   assert.deepEqual(git.removedWorktrees, []);
   // The failed commit leaves the worktree as it was: still dirty, still there.
   assert.equal(git.isDirty(git.worktrees[0]!.path), true);
+  // And says where it is, since nothing else points at it.
+  assert.ok(
+    warned.some(w =>
+      w.startsWith(`Worktree kept at ${git.worktrees[0]!.path}: it holds work`)
+    ),
+    warned.join('\n')
+  );
 });
 
 test('--name overrides the slug and flows into the branch', async () => {
@@ -696,8 +713,13 @@ test('launchPrompt: worktree rules, then the role contract, then the task', () =
   assert.ok(prompt.endsWith('\n\nFix the flaky test'));
   assert.match(prompt, /role in this run is "parent"/);
   assert.match(prompt, /\$E_ROLE/);
-  assert.match(prompt, /\$E_BROKER_URL/);
+  // A parent without a broker is told so, never pointed at $E_BROKER_URL.
+  assert.doesNotMatch(prompt, /\$E_BROKER_URL/);
+  assert.match(prompt, /no runtime-broker, so sibling spawning is unavailable/);
   assert.match(prompt, /do not create or rely on parent\/child marker files/);
+  // With one (its own, or a child's parent's), the endpoint is named.
+  assert.match(launchPrompt('x', 'parent', undefined, true), /\$E_BROKER_URL/);
+  assert.match(launchPrompt('x', 'child'), /\$E_BROKER_URL/);
 });
 
 test('a child run is launched with the child role named in its prompt', async () => {
@@ -750,8 +772,14 @@ test('a planned broker starts as a sidecar on the run network with the spool mou
         container: '/var/lib/e-broker',
       },
     ]);
-    // The agent joins the same network, so `runtime-broker` resolves for it.
+    // The agent joins the same network, so `runtime-broker` resolves for it,
+    // and its prompt names the endpoint (a run without a broker's does not).
     assert.deepEqual(runtime.options?.networks, [`${runName}-net`]);
+    assert.deepEqual(runtime.command, [
+      'demo',
+      '-p',
+      launchPrompt('Fix the flaky test', 'parent', undefined, true),
+    ]);
     // Teardown: broker removed, network removed, spool gone.
     assert.deepEqual(runtime.removedContainers, [`${runName}-broker`]);
     assert.deepEqual(runtime.removedNetworks, [`${runName}-net`]);

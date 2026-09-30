@@ -61,6 +61,7 @@ import {
 } from '../sidecarPlan.js';
 import { SPAWN_BROTHER_SKILL } from '../../sidecars/broker/contract/constants.js';
 import {
+  brokerReachable,
   brokerUrl,
   isRoleContractEntry,
   roleEnv,
@@ -820,21 +821,23 @@ export function planSpawn(facts: SpawnFacts): SpawnPlan {
     runtimeUser: harness.dockerfile.runtimeUser,
   });
 
-  // The role contract (ADR-0013): `E_ROLE` and `E_BROKER_URL` as `-e` entries,
-  // never baked into an image. The broker is reached like any sidecar - on
-  // loopback in the shared egress namespace, by alias on a private network.
-  const roleContract = roleEnv(
-    facts.role ?? 'parent',
-    brokerUrl(facts.localStackPresent === true)
-  );
-
+  const role = facts.role ?? 'parent';
   const wantsSiblings = [...facts.bakedSkills, ...facts.perRunSkills].includes(
     SPAWN_BROTHER_SKILL
   );
   const broker: BrokerPlan | undefined =
-    wantsSiblings && (facts.role ?? 'parent') !== 'child'
-      ? defaultBrokerPlan()
-      : undefined;
+    wantsSiblings && role !== 'child' ? defaultBrokerPlan() : undefined;
+
+  // The role contract (ADR-0013): `E_ROLE` and, when a broker is reachable,
+  // `E_BROKER_URL` as `-e` entries, never baked into an image. The broker is
+  // reached like any sidecar - on loopback in the shared egress namespace, by
+  // alias on a private network.
+  const roleContract = roleEnv(
+    role,
+    brokerReachable(role, broker !== undefined)
+      ? brokerUrl(facts.localStackPresent === true)
+      : undefined
+  );
 
   return {
     delivery,

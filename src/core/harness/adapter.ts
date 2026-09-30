@@ -427,6 +427,30 @@ export const CODEX_CONFIG_DIR = `${NODE_HOME}/.codex`;
 const CODEX_CONFIG_FILE = 'config.toml';
 
 /**
+ * The run's worktree, as Codex sees it: `e` mounts it at `/workspace`.
+ */
+const CODEX_WORKSPACE = '/workspace';
+
+/**
+ * The trust decision for the run's worktree, recorded up front as untrusted.
+ * Without one the TUI opens on "Trust this folder?", whose answer it cannot
+ * save into the read-only overlay (so an interactive run never got past it);
+ * and without one Codex loaded `/workspace/.codex/config.toml` with no gate at
+ * all, starting any stdio MCP server a repository declared (#153,
+ * docs/security/attack-surface.md). `untrusted` keeps the project's config,
+ * hooks and execpolicies disabled - in `exec` and in the TUI, which opens it
+ * "restricted" - and needs no write. Measured on 0.159.0.
+ */
+function renderCodexWorkspaceTrust(): string {
+  return (
+    [
+      `[projects.${tomlBasicString(CODEX_WORKSPACE)}]`,
+      `trust_level = "untrusted"`,
+    ].join('\n') + '\n'
+  );
+}
+
+/**
  * Codex's adapter. Codex is configured through `config.toml`, so the provider is
  * rendered into a file baked into the derived agent image; only the API key is
  * delivered at runtime, by name.
@@ -471,6 +495,8 @@ export const codexAdapter: FileHarnessAdapter = {
     const content =
       (provider.trim() ? provider.trimEnd() + '\n\n' : '') +
       (endpoints.length > 0 ? renderCodexMcpServers(endpoints) + '\n' : '') +
+      renderCodexWorkspaceTrust() +
+      '\n' +
       renderCodexSecretPolicy(vars);
     return {
       file: { fileName: CODEX_CONFIG_FILE, content },

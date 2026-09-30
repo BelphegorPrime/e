@@ -368,7 +368,20 @@ test('interactive commands start each harness without a one-shot prompt', () => 
     '--settings',
     '{"disableAllHooks":true}',
   ]);
-  assert.deepEqual(HARNESSES.codex.buildInteractiveCommand(), ['codex']);
+  // Codex's bubblewrap sandbox cannot start in the run container (no user
+  // namespaces): under it every TUI command failed. Approvals stay attended.
+  assert.deepEqual(HARNESSES.codex.buildInteractiveCommand(), [
+    'codex',
+    '--sandbox',
+    'danger-full-access',
+  ]);
+  assert.deepEqual(HARNESSES.codex.buildInteractiveCommand('gpt-6'), [
+    'codex',
+    '--sandbox',
+    'danger-full-access',
+    '-m',
+    'gpt-6',
+  ]);
   assert.deepEqual(HARNESSES.opencode.buildInteractiveCommand(), ['opencode']);
   assert.deepEqual(
     HARNESSES.opencode.buildInteractiveCommand('e/auto/coding'),

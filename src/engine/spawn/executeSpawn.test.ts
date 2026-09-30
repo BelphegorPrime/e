@@ -1,4 +1,4 @@
-import { mock, test } from 'node:test';
+import { afterEach, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
@@ -16,6 +16,19 @@ import {
   SKILLS_CLI_VERSION,
 } from '../../core/harness/pin.js';
 import { RunScratch } from '../runs/runScratch.js';
+
+// executeSpawn leaves the scratch to its caller (the CLI disposes it in a
+// `finally`), so every test's scratch is dropped here: a spawn that throws
+// after rendering its env-file would otherwise leave an `e-scratch-*` dir.
+const scratches: RunScratch[] = [];
+function newScratch(): RunScratch {
+  const scratch = new RunScratch();
+  scratches.push(scratch);
+  return scratch;
+}
+afterEach(() => {
+  for (const scratch of scratches.splice(0)) scratch.dispose();
+});
 import { Env } from '../../shared/utils/env.js';
 import {
   listLedger,
@@ -200,7 +213,7 @@ class RecordingRuntime implements ContainerRunner {
 // failing one must leave the runtime entirely untouched.
 test('errors before any build when not in a git repository', async () => {
   const untouched = new RecordingRuntime();
-  const scratch = new RunScratch();
+  const scratch = newScratch();
   const result = await executeSpawn(facts(), emptyPlan, {
     git: new InMemoryGit({ repo: false }),
     runtime: untouched,
@@ -257,7 +270,7 @@ test('pin: a missing base image is built with the pinned versions as build args'
     const result = await executeSpawn(facts({ root }), emptyPlan, {
       git: new InMemoryGit(),
       runtime,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(result.ran, true);
     assert.deepEqual(runtime.builtWith, [
@@ -281,7 +294,7 @@ test('pin: an image whose labels match the pin is not rebuilt', async () => {
     const result = await executeSpawn(facts({ root }), derivedPlan, {
       git: new InMemoryGit(),
       runtime,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(result.ran, true);
     assert.deepEqual(runtime.built, []);
@@ -297,7 +310,7 @@ test('pin: a base built from another version is rebuilt once, and the derived im
     const result = await executeSpawn(facts({ root }), derivedPlan, {
       git: new InMemoryGit(),
       runtime,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(result.ran, true);
     // Base first, then the derived image on it - or the derived one would keep
@@ -318,7 +331,7 @@ test('pin: a derived image left behind a pinned base is rebuilt alone', async ()
     await executeSpawn(facts({ root }), derivedPlan, {
       git: new InMemoryGit(),
       runtime,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.deepEqual(runtime.built, ['e-agent-demo']);
   });
@@ -335,7 +348,7 @@ test('pin: an unlabelled image from before pinning is rebuilt once, then aborts 
       executeSpawn(facts({ root }), emptyPlan, {
         git,
         runtime,
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       }),
       /still carries no version labels.*e init --force/s
     );
@@ -372,7 +385,7 @@ test('rebuild: a default spawn builds every image it needs; --no-rebuild builds 
       executeSpawn(
         facts({ root, rebuild, worktreesDir: path.join(root, 'wt') }),
         plan,
-        { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+        { git: new InMemoryGit(), runtime, scratch: newScratch() }
       );
 
     const rebuilt = present();
@@ -401,7 +414,7 @@ test('rebuild: an image rebuilt off its pin still aborts the spawn before any wo
       executeSpawn(facts({ root, rebuild: true }), emptyPlan, {
         git,
         runtime,
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       }),
       /still carries no version labels/
     );
@@ -421,7 +434,7 @@ test('siblingPassthroughArgs: a sibling inherits the store and env-file, and ski
 test('a sidecar with credentials gets its own env-file; one without gets none', async () => {
   await withDemoStore(async root => {
     const runtime = new RecordingRuntime();
-    const scratch = new RunScratch();
+    const scratch = newScratch();
     const result = await executeSpawn(
       facts({ root }),
       {
@@ -450,7 +463,7 @@ test('--keep-worktree reaches the orchestrator: a clean worktree is left in plac
     await executeSpawn(facts({ root, keepWorktree: true }), emptyPlan, {
       git: kept,
       runtime: new RecordingRuntime(),
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.deepEqual(kept.removedWorktrees, []);
 
@@ -458,7 +471,7 @@ test('--keep-worktree reaches the orchestrator: a clean worktree is left in plac
     await executeSpawn(facts({ root }), emptyPlan, {
       git: removed,
       runtime: new RecordingRuntime(),
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(removed.removedWorktrees.length, 1);
   });
@@ -475,7 +488,7 @@ test('worktreesDir reaches the orchestrator: the run worktree is cut under it', 
       {
         git,
         runtime: new RecordingRuntime(),
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       }
     );
     assert.equal(git.worktrees.length, 1);
@@ -504,7 +517,7 @@ test('one-shot: the declared base and the payload mount reach the run, outside t
     await executeSpawn(f, planSpawn(f), {
       git,
       runtime,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(git.worktrees[0].base, 'main-sha');
     const volumes = runtime.options?.volumes ?? [];
@@ -536,7 +549,7 @@ test("a triggered run's provenance reaches its commits as trailers", async () =>
     await executeSpawn(f, planSpawn(f), {
       git,
       runtime: new RecordingRuntime(),
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.match(
       git.commits[0]?.message ?? '',
@@ -561,7 +574,7 @@ test('does not attach the agent to a Compose network when the stack is present',
     const result = await executeSpawn(facts({ root: tmp }), emptyPlan, {
       git: new InMemoryGit(),
       runtime: withStack,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(result.ran, true);
     assert.equal(withStack.options?.networks, undefined);
@@ -573,7 +586,7 @@ test('does not attach the agent to a Compose network when the stack is present',
     await executeSpawn(facts({ root: tmp }), emptyPlan, {
       git: new InMemoryGit(),
       runtime: plain,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(plain.options?.networks, undefined);
     assert.equal(plain.options?.extraHosts, undefined);
@@ -612,7 +625,7 @@ test('filters the base .e/.env to the plan whitelist before the container gets i
       ...emptyPlan,
       baseEnvWhitelist: ['ANTHROPIC_BASE_URL', 'MY_GATEWAY_KEY'],
     };
-    const scratch = new RunScratch();
+    const scratch = newScratch();
     const result = await executeSpawn(
       facts({ root: tmp, baseEnvFile: base, userEnvFile: user }),
       plan,
@@ -654,7 +667,7 @@ test('refuses a user --env-file that declares a never-forwarded variable', async
     );
 
     const runtime = new RecordingRuntime();
-    const scratch = new RunScratch();
+    const scratch = newScratch();
     const result = await executeSpawn(
       facts({ root: tmp, userEnvFile: user }),
       emptyPlan,
@@ -677,7 +690,7 @@ test('a prompt runs one-shot: the harness gets the prompt, no TTY', async () => 
     const result = await executeSpawn(
       facts({ root, prompt: 'print hello' }),
       emptyPlan,
-      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: newScratch() }
     );
     assert.equal(result.ran, true);
     assert.equal(runtime.options?.interactive, false);
@@ -692,7 +705,7 @@ test('no prompt opens the harness TUI: interactive run, no one-shot command', as
     const result = await executeSpawn(facts({ root, prompt: '' }), emptyPlan, {
       git: new InMemoryGit(),
       runtime,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(result.ran, true);
     assert.equal(runtime.options?.interactive, true);
@@ -706,7 +719,7 @@ test("the browser terminal's headless child (no prompt, E_TTY_HEADLESS) stays in
     await executeSpawn(
       facts({ root, prompt: '', headlessTty: true, name: 'from-browser' }),
       emptyPlan,
-      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: newScratch() }
     );
     assert.equal(runtime.options?.interactive, true);
     assert.equal(runtime.options?.headlessTty, true);
@@ -720,7 +733,7 @@ test('the role reaches the orchestrator: a child run is launched with the child 
     await executeSpawn(
       facts({ root, role: 'child' }),
       { ...emptyPlan, agentEnv: ['E_ROLE=child'] },
-      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: newScratch() }
     );
     // The plan's `-e` env is passed through untouched (the plan decided it) ...
     assert.deepEqual(runtime.options?.env, ['E_ROLE=child']);
@@ -739,7 +752,7 @@ test('a planned broker seeds .e/broker on demand, builds e-broker, and starts th
         ...emptyPlan,
         broker: defaultBrokerPlan(),
       },
-      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: newScratch() }
     );
     assert.equal(result.ran, true);
     // Build context written without e init having done so.
@@ -771,7 +784,7 @@ test('an edited .e/broker/Dockerfile is never clobbered by a spawn', async () =>
       {
         git: new InMemoryGit(),
         runtime: new RecordingRuntime(),
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       }
     );
     assert.equal(
@@ -814,7 +827,7 @@ test('a sibling spawn joins the parent network, syncs the configured artifacts, 
         },
       }),
       emptyPlan,
-      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: newScratch() }
     );
     assert.equal(result.ran, true);
     assert.deepEqual(runtime.options?.networks, ['e-demo-parent-1-net']);
@@ -870,7 +883,7 @@ test('one-shot: a sibling gets --dir <Base Store> and the env file by marker, ne
       {
         git: new InMemoryGit(),
         runtime: new RequestingRuntime(),
-        scratch: new RunScratch(),
+        scratch: newScratch(),
         launchSibling: launch => {
           launches.push(launch);
           writeStatus(spool, launch.request.id, {
@@ -909,7 +922,7 @@ test("the store's verify declaration reaches the orchestrator: the check runs as
       {
         git: new InMemoryGit({ dirty: true }),
         runtime,
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       }
     );
     assert.deepEqual(runtime.ranCommands.at(-1), ['sh', '-c', 'npm test']);
@@ -923,7 +936,7 @@ test('a store with no verify declaration starts exactly one container', async ()
     await executeSpawn(facts({ root }), emptyPlan, {
       git: new InMemoryGit({ dirty: true }),
       runtime,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.equal(runtime.ranCommands.length, 1);
   });
@@ -937,7 +950,7 @@ test('ledger: a manual e spawn writes its own entry, takes no slot, and ends it 
     const result = await executeSpawn(facts({ root }), emptyPlan, {
       git: new InMemoryGit(),
       runtime,
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     const entries = listLedger(runsDirs(path.join(root, '.e')));
     assert.equal(entries.length, 1);
@@ -969,7 +982,7 @@ test('ledger: started by the queue, the spawn patches the entry serve claimed in
       await executeSpawn(facts({ root }), emptyPlan, {
         git: new InMemoryGit(),
         runtime: new RecordingRuntime(),
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       });
     } finally {
       if (previous === undefined) delete process.env[Env.LEDGER_FILE_VAR];
@@ -991,7 +1004,7 @@ test('ledger: a run that dies before runSpawn - an image build - still ends its 
       executeSpawn(facts({ root }), emptyPlan, {
         git: new InMemoryGit(),
         runtime,
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       })
     );
     const [entry] = listLedger(runsDirs(path.join(root, '.e')));
@@ -1030,7 +1043,7 @@ test('resume: the session and the resumed branch reach the orchestrator (ADR-001
           skills: [],
         },
       },
-      { git, runtime, scratch: new RunScratch() }
+      { git, runtime, scratch: newScratch() }
     );
     assert.equal(result.branch, branch);
     assert.deepEqual(git.worktrees, []);
@@ -1075,7 +1088,7 @@ test('session guard: an image older than the session mount runs without a sessio
         sessionStoreDir: path.join(root, '.e'),
       }),
       { ...emptyPlan, session: init },
-      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: newScratch() }
     );
     assert.equal(fresh.exitCode, 0);
     assert.ok(
@@ -1101,7 +1114,7 @@ test('session guard: an image older than the session mount runs without a sessio
       {
         git: new InMemoryGit({ branches: ['e/demo/x-1'] }),
         runtime,
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       }
     );
     assert.equal(resumed.ran, false);
@@ -1120,7 +1133,7 @@ test('session guard: an image older than the session mount runs without a sessio
         sessionStoreDir: path.join(root, '.e'),
       }),
       { ...emptyPlan, session: init },
-      { git: new InMemoryGit(), runtime, scratch: new RunScratch() }
+      { git: new InMemoryGit(), runtime, scratch: newScratch() }
     );
     assert.ok(
       runtime.options?.volumes?.some(
@@ -1175,7 +1188,7 @@ test('an old pi models.json holding the key value is re-rendered by name, and th
       await executeSpawn(run.facts, run.plan, {
         git: new InMemoryGit(),
         runtime: new RecordingRuntime(),
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       });
     } finally {
       mock.restoreAll();
@@ -1205,7 +1218,7 @@ test('a hand-edited pi models.json with a literal key is kept and warned about, 
       await executeSpawn(run.facts, run.plan, {
         git: new InMemoryGit(),
         runtime: new RecordingRuntime(),
-        scratch: new RunScratch(),
+        scratch: newScratch(),
       });
     } finally {
       mock.restoreAll();
@@ -1281,7 +1294,7 @@ test('namespace: the repositories a home Store serves reach the run counter (#20
       {
         git: new InMemoryGit(),
         runtime: new RecordingRuntime(),
-        scratch: new RunScratch(),
+        scratch: newScratch(),
         gitAt: repo => {
           asked.push(repo);
           return other;
@@ -1299,7 +1312,7 @@ test('namespace: a run records the repository it is cut in with its Store (#208)
     await executeSpawn(facts({ root, sessionStoreDir: storeDir }), emptyPlan, {
       git: new InMemoryGit({ toplevel: '/src/here' }),
       runtime: new RecordingRuntime(),
-      scratch: new RunScratch(),
+      scratch: newScratch(),
     });
     assert.deepEqual(recordedRunRepositories(storeDir), [
       path.resolve('/src/here'),

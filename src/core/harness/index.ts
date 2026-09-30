@@ -168,6 +168,17 @@ const CODEX_EXEC_POSTURE = [
 ] as const;
 
 /**
+ * The attended posture of the Codex TUI, a fresh session and a `resume` alike.
+ * Codex's own sandbox (bubblewrap) needs user namespaces the run container
+ * does not grant, so under its default every command the model ran failed
+ * ("bwrap: No permissions to create a new namespace") while the model went on
+ * as if it had worked. The container is the isolation boundary (ADR-0002/0011),
+ * as for `exec`; unlike `exec`, approvals stay Codex's own, because a human is
+ * at the keyboard. Measured on 0.159.0 with a traced TUI run.
+ */
+const CODEX_TUI_POSTURE = ['--sandbox', 'danger-full-access'] as const;
+
+/**
  * opencode's session dir (ADR-0017): a dir of its own under the data home,
  * where `OPENCODE_DB` puts the db - outside `~/.local/share/opencode`, which
  * holds its credential files.
@@ -296,6 +307,12 @@ export const HARNESSES: Record<string, Harness> = {
     dockerfile: {
       label: 'Claude Code CLI harness.',
       npmPackage: '@anthropic-ai/claude-code',
+      // The version is pinned (ADR-0016 section 10) and the argv verified
+      // against it; Claude Code would otherwise try to update itself at every
+      // interactive start ("Auto-update failed: no write permission to npm
+      // prefix", seen in a traced TUI run) - failing only by accident of the
+      // npm prefix's owner.
+      env: { DISABLE_AUTOUPDATER: '1' },
       // Claude's Bash tool runs commands through bash or zsh and refuses
       // alpine's ash: without one, every tool call answers "No suitable shell
       // found" (measured on 2.1.284).
@@ -394,6 +411,12 @@ export const HARNESSES: Record<string, Harness> = {
     dockerfile: {
       label: 'OpenAI Codex CLI harness.',
       npmPackage: '@openai/codex',
+      // The interactive TUI starts a pid-managed app-server daemon and reads
+      // its start time through procps `ps`; busybox's cannot answer, so the
+      // TUI (and `resume` into it) died with "failed to read start time for
+      // pid-managed app server". `codex exec` runs in-process and never
+      // needed it. Measured on 0.159.0 with a traced run (docs/agents/e2e.md).
+      apkPackages: ['procps'],
       // CODEX_HOME exists before the session mount lands inside it
       // (`sessionDir` below), so the build's final chown hands it to `node`.
       sessionParent: CODEX_CONFIG_DIR,
@@ -416,8 +439,11 @@ export const HARNESSES: Record<string, Harness> = {
       ...(model ? ['-m', model] : []),
       prompt,
     ],
-    buildInteractiveCommand: (model?: string) =>
-      model ? ['codex', '-m', model] : ['codex'],
+    buildInteractiveCommand: (model?: string) => [
+      'codex',
+      ...CODEX_TUI_POSTURE,
+      ...(model ? ['-m', model] : []),
+    ],
     // Codex reads Agent Skills from the shared `~/.agents/skills`.
     skillsDir: AGENTS_SKILLS_DIR,
     // Codex's own session store (ADR-0017): every thread is a rollout at
@@ -445,6 +471,7 @@ export const HARNESSES: Record<string, Harness> = {
             'resume',
             '--last',
             '--include-non-interactive',
+            ...CODEX_TUI_POSTURE,
             ...(model ? ['-m', model] : []),
           ]
         : [

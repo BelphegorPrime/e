@@ -94,7 +94,8 @@ node ~/.agents/skills/spawn-brother/spawn-brother.mjs --cancel <id>  # stop a si
   like any other; it has no branch, its answer is the `answer` field of its
   status and the `## Answer` section of its report (`merge.status: skipped`).
 - Your role is set via env vars - check `$E_ROLE` (`parent` | `child`) and
-  `$E_BROKER_URL` (`http://<host>:<port>`, no trailing slash). Do not create
+  `$E_BROKER_URL` (`http://<host>:<port>`, no trailing slash; set only when a
+  broker is reachable). Do not create
   or depend on `child` / `parent` marker files in the worktree; role is not a
   filesystem concept here. If the broker does not answer, or a request stays
   `requested`, fall back to writing the follow-up task down in `/workspace`

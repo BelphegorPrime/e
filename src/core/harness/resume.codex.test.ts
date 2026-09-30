@@ -53,16 +53,21 @@ test('codex resumeCommand without a prompt reopens the session in the TUI, exec 
     'resume',
     '--last',
     '--include-non-interactive',
+    '--sandbox',
+    'danger-full-access',
   ]);
   assert.deepEqual(codex.resumeCommand!(undefined, 'gpt-6'), [
     'codex',
     'resume',
     '--last',
     '--include-non-interactive',
+    '--sandbox',
+    'danger-full-access',
     '-m',
     'gpt-6',
   ]);
-  // The TUI keeps buildInteractiveCommand's attended posture.
+  // The TUI keeps buildInteractiveCommand's attended posture: no bubblewrap
+  // sandbox (the container cannot host it), approvals still Codex's own.
   assert.ok(
     !codex.resumeCommand!(undefined).includes(
       '--dangerously-bypass-approvals-and-sandbox'
@@ -95,5 +100,14 @@ test("codex's image says in a label that it created CODEX_HOME for the mount", (
   assert.match(
     renderDockerfile(HARNESSES.codex.dockerfile),
     /e\.harness\.session-parent="\/home\/node\/\.codex"/
+  );
+});
+
+test("codex's image installs procps: the TUI's app-server daemon reads its start time through ps", () => {
+  // Regression: with busybox's ps the interactive TUI (and `e resume` into
+  // it) died with "failed to read start time for pid-managed app server".
+  assert.match(
+    renderDockerfile(HARNESSES.codex.dockerfile),
+    /^RUN apk add --no-cache git procps && npm install -g @openai\/codex@/m
   );
 });

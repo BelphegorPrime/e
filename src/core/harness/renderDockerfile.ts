@@ -17,6 +17,12 @@ export interface DockerfileParams {
    * Default: [].
    */
   apkPackages?: string[];
+  /**
+   * Image-level env the harness CLI needs on every run (one-shot, TUI,
+   * resume alike), each an `ENV` line: fixed values the harness registry
+   * owns, never a secret. Default: {}.
+   */
+  env?: Readonly<Record<string, string>>;
   /** Extra flags for `npm install -g`, e.g. ["--ignore-scripts"]. Default: []. */
   npmFlags?: string[];
   /**
@@ -80,7 +86,8 @@ const TEMPLATE = `FROM {{{baseImage}}}
 ARG {{{argPackage}}}
 ARG {{{argVersion}}}
 ARG {{{argSkillsCli}}}
-{{#homeLine}}{{{.}}}{{/homeLine}}RUN apk add --no-cache git{{#apkPackages}} {{{.}}}{{/apkPackages}} && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}@{{{versionRef}}}
+{{#homeLine}}{{{.}}}{{/homeLine}}{{#envLines}}{{{.}}}
+{{/envLines}}RUN apk add --no-cache git{{#apkPackages}} {{{.}}}{{/apkPackages}} && npm install -g {{#flags}}{{{.}}} {{/flags}}{{{npmPackage}}}@{{{versionRef}}}
 {{#setupSteps}}
 {{{.}}}
 {{/setupSteps}}
@@ -169,6 +176,7 @@ export function renderDockerfile(p: DockerfileParams): string {
     skillsBlock,
     workdir: p.workdir ?? '/workspace',
     homeLine: nonRoot ? `ENV HOME=${NODE_HOME}\n` : '',
+    envLines: Object.entries(p.env ?? {}).map(([k, v]) => `ENV ${k}=${v}`),
     ownerLine: nonRoot ? `RUN chown -R node:node ${NODE_HOME}\n` : '',
     userLine: nonRoot ? `\nUSER node` : '',
     argPackage: PIN_BUILD_ARGS.package,

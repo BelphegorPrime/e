@@ -11,7 +11,9 @@ import {
   resolveRemoteTarget,
   resolveTriggerSpawn,
   inheritedProvenance,
+  CANCEL_GRACE_MS,
   runSpawnCommand,
+  spawnCancelHandling,
   spawnReport,
   type SpawnCommandOptions,
   type TriggeredSpawn,
@@ -28,6 +30,7 @@ import {
   OMNIROUTE_PORT,
 } from '../shared/constants.js';
 import { PinnedRuntime } from '../engine/runs/runSpawn.testSupport.js';
+import { CANCELED_EXIT_CODE } from '../engine/runs/runSpawn.js';
 import { fakeOmniRoute } from '../engine/spawn/omniRoute.testSupport.js';
 import {
   readRequest,
@@ -447,6 +450,7 @@ test('spawn CLI: every option parses to the field the action reads', async () =>
     'user.env',
     '--mcp',
     'a',
+    '--mcp',
     'b',
     '--skill',
     's1,s2',
@@ -482,6 +486,32 @@ test('spawn CLI: every option parses to the field the action reads', async () =>
   assert.equal(opts.parent, 'e/demo/my-run-1');
   assert.deepEqual(opts.port, ['8080:80', '9000:90']);
   assert.deepEqual(opts.env, ['X=1', 'Y=2']);
+});
+
+test('spawn CLI: a repeatable option takes one value, so a prompt after it stays the prompt', async () => {
+  // Regression: `--skill <name...>` was variadic and read the prompt as a
+  // second skill name ("Unknown skill \"<prompt>\"").
+  const { target, prompt, opts } = await parseSpawn([
+    'demo',
+    '--skill',
+    'spawn-brother',
+    'split the work',
+    '--mcp',
+    'everything',
+    'and',
+    '-e',
+    'X=1',
+    'integrate',
+    '-p',
+    '8080:80',
+    'it',
+  ]);
+  assert.equal(target, 'demo');
+  assert.deepEqual(prompt, ['split the work', 'and', 'integrate', 'it']);
+  assert.deepEqual(opts.skill, ['spawn-brother']);
+  assert.deepEqual(opts.mcp, ['everything']);
+  assert.deepEqual(opts.env, ['X=1']);
+  assert.deepEqual(opts.port, ['8080:80']);
 });
 
 test('a shipped skill missing from an older store is seeded when a spawn asks for it', () => {
@@ -1965,4 +1995,37 @@ test('gatherSpawnFacts: E_ONE_SHOT marks a sibling one-shot, and only a sibling'
       'a stale export alone changes nothing'
     );
   });
+});
+
+test('spawnCancelHandling: the first signal cancels; later ones wait; a spent grace drops the secrets, then exits', () => {
+  // Regression: a Ctrl-C had no handler, so it killed `e` wherever it was -
+  // mid-teardown included - and left the worktree and the rendered secret
+  // files behind.
+  const cancel = new AbortController();
+  const warned: string[] = [];
+  const events: string[] = [];
+  const timers: Array<{ fn: () => void; ms: number }> = [];
+  const onSignal = spawnCancelHandling({
+    cancel,
+    warn: text => warned.push(text),
+    setTimer: (fn, ms) => timers.push({ fn, ms }),
+    dispose: () => events.push('dispose'),
+    exit: code => events.push(`exit ${code}`),
+  });
+
+  onSignal();
+  assert.equal(cancel.signal.aborted, true);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].ms, CANCEL_GRACE_MS);
+  assert.match(warned[0], /Canceling the run/);
+
+  // A second Ctrl-C is acknowledged, never a hard exit, never a second timer.
+  onSignal();
+  onSignal();
+  assert.equal(timers.length, 1);
+  assert.deepEqual(events, []);
+  assert.match(warned[1], /Still canceling/);
+
+  timers[0].fn();
+  assert.deepEqual(events, ['dispose', `exit ${CANCELED_EXIT_CODE}`]);
 });

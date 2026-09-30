@@ -827,14 +827,30 @@ test('planSpawn: baked skills go to the derived image; per-run skills become mou
 
 // The role contract (ADR-0013, ticket 01): every agent container receives its
 // role and broker endpoint as host-set `-e` env, decided purely in the plan.
-test('planSpawn: a run is a parent by default, reaching the broker by alias', () => {
+test('planSpawn: a run is a parent by default; without a broker it gets no broker URL', () => {
   const plan = planSpawn(facts({}));
-  assert.deepEqual(plan.agentEnv, [
+  assert.equal(plan.broker, undefined);
+  // No endpoint nothing listens on: the agent would only spend turns probing it.
+  assert.deepEqual(plan.agentEnv, ['E_ROLE=parent']);
+  // The contract is `-e` only; it is never whitelisted out of `.e/.env`.
+  assert.equal(plan.baseEnvWhitelist.includes('E_ROLE'), false);
+});
+
+test('planSpawn: a parent with spawn-brother reaches its broker by alias', () => {
+  const plan = planSpawn(facts({ perRunSkills: ['spawn-brother'] }));
+  assert.ok(plan.broker);
+  assert.deepEqual(plan.agentEnv.slice(-2), [
     'E_ROLE=parent',
     'E_BROKER_URL=http://runtime-broker:20130',
   ]);
-  // The contract is `-e` only; it is never whitelisted out of `.e/.env`.
-  assert.equal(plan.baseEnvWhitelist.includes('E_ROLE'), false);
+});
+
+test("planSpawn: a child reaches its parent's broker without one of its own", () => {
+  const plan = planSpawn(
+    facts({ role: 'child', perRunSkills: ['spawn-brother'] })
+  );
+  assert.equal(plan.broker, undefined);
+  assert.ok(plan.agentEnv.includes('E_BROKER_URL=http://runtime-broker:20130'));
 });
 
 test('planSpawn: a child run receives E_ROLE=child', () => {
@@ -844,13 +860,17 @@ test('planSpawn: a child run receives E_ROLE=child', () => {
 });
 
 test('planSpawn: with the local stack the broker URL is on loopback', () => {
-  const plan = planSpawn(facts({ localStackPresent: true }));
+  const plan = planSpawn(
+    facts({ localStackPresent: true, perRunSkills: ['spawn-brother'] })
+  );
   assert.ok(plan.agentEnv.includes('E_BROKER_URL=http://localhost:20130'));
 });
 
 test('planSpawn: the host-set role contract follows the user -e entries', () => {
-  const plan = planSpawn(facts({ env: ['FOO=bar'] }));
-  assert.deepEqual(plan.agentEnv, [
+  const plan = planSpawn(
+    facts({ env: ['FOO=bar'], perRunSkills: ['spawn-brother'] })
+  );
+  assert.deepEqual(plan.agentEnv.slice(-3), [
     'FOO=bar',
     'E_ROLE=parent',
     'E_BROKER_URL=http://runtime-broker:20130',

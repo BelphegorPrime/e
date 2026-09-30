@@ -36,7 +36,11 @@ import { verifyFeedback } from './verifyFeedback.js';
 
 import { waitForAllReady, type ReadinessPolicy } from './runSidecars.js';
 import { worktreePathFor } from './worktreesDir.js';
-import { runRoleInstructions, type RunRole } from '../runRole.js';
+import {
+  brokerReachable,
+  runRoleInstructions,
+  type RunRole,
+} from '../runRole.js';
 import {
   artifactsDirFor,
   removeArtifacts,
@@ -100,12 +104,14 @@ export const RUN_GIT_INSTRUCTIONS =
 
 /**
  * The one-shot launch prompt: e's worktree rules, the role contract (ADR-0013:
- * check `$E_ROLE` / `$E_BROKER_URL`, no marker files), then the task itself.
+ * check `$E_ROLE`, and `$E_BROKER_URL` when `broker` is reachable; no marker
+ * files), then the task itself.
  */
 export function launchPrompt(
   prompt: string,
   role: RunRole = 'parent',
-  verify?: VerifyConfig
+  verify?: VerifyConfig,
+  broker: boolean = brokerReachable(role, false)
 ): string {
   // Iteration 1 states the acceptance criterion up front, or the first attempt
   // flies blind against a bar that was knowable in advance - with the caveat
@@ -115,7 +121,7 @@ export function launchPrompt(
   const gate = verify
     ? `\n\nWhen your run ends, e runs \`${verify.command}\` in a separate container against this worktree; its exit code decides whether the work is accepted. That container is not this one - do not assume you can run the command here.`
     : '';
-  return `${RUN_GIT_INSTRUCTIONS}\n${runRoleInstructions(role)}${gate}\n\n${prompt}`;
+  return `${RUN_GIT_INSTRUCTIONS}\n${runRoleInstructions(role, broker)}${gate}\n\n${prompt}`;
 }
 
 /** What a resumed Run is told before its follow-up (ADR-0017). */
@@ -133,10 +139,11 @@ export const RESUME_DEFAULT_PROMPT = 'Continue the task where you left off.';
 export function resumePrompt(
   prompt: string,
   role: RunRole = 'parent',
-  verify?: VerifyConfig
+  verify?: VerifyConfig,
+  broker: boolean = brokerReachable(role, false)
 ): string {
   const followUp = prompt.trim() === '' ? RESUME_DEFAULT_PROMPT : prompt;
-  return launchPrompt(`${RESUME_NOTE}\n\n${followUp}`, role, verify);
+  return launchPrompt(`${RESUME_NOTE}\n\n${followUp}`, role, verify, broker);
 }
 
 /** What the orchestrator needs to build a run. */
@@ -543,6 +550,9 @@ export async function runSpawn(
   let sessionRun: RunName | undefined;
   let loopStartedAt: number | undefined;
   const role = params.role ?? 'parent';
+  // Siblings reach a broker (ours, or a child's parent's): only then is the
+  // agent pointed at $E_BROKER_URL.
+  const hasBroker = brokerReachable(role, params.broker !== undefined);
   const maxSiblings = params.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
   if (params.candidate && !params.report) {
     throw new Error(
@@ -905,7 +915,8 @@ export async function runSpawn(
           ? resumeCommand(
               params.interactive
                 ? undefined
-                : resumePrompt(params.prompt, role, params.verify) + feedback,
+                : resumePrompt(params.prompt, role, params.verify, hasBroker) +
+                    feedback,
               params.model
             )
           : params.interactive
@@ -914,7 +925,8 @@ export async function runSpawn(
                 // The task is restated in full every time: a fresh container
                 // has no conversational memory, and the feedback is a suffix
                 // so the composition above it stays intact.
-                launchPrompt(params.prompt, role, params.verify) + feedback,
+                launchPrompt(params.prompt, role, params.verify, hasBroker) +
+                  feedback,
                 params.model
               );
 
@@ -1307,6 +1319,12 @@ export async function runSpawn(
         (gateRan || !deps.git.isDirty(worktreePath))
       ) {
         deps.git.removeWorktree(worktreePath);
+      } else if (worktreePath && !params.keepWorktree) {
+        // Kept for the work in it (a cancel, a failed commit, a stuck merge):
+        // say where, or the only trace of it is a directory nobody knows of.
+        log.warn(
+          `Worktree kept at ${worktreePath}: it holds work the run branch does not (uncommitted changes or an unfinished merge).`
+        );
       }
     } catch {
       // Teardown is best-effort.
