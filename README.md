@@ -809,6 +809,11 @@ counts against its fusion's `candidatesMs`. The slots are lease files under
 the worktrees dir; a lease whose `e fuse` died is reclaimed by the next one
 that needs the slot.
 
+Whether a fusion beats a single Agent on your tasks is measured, not assumed:
+`node scripts/eval/eval.mjs run <suite>` runs benchmark tasks under single and
+fusion arms, scores every result branch with a hidden check, and writes
+machine-readable records and a comparison. See [bench/README.md](bench/README.md).
+
 ### `e` as an A2A agent
 
 `e serve` publishes an [Agent2Agent](https://a2a-protocol.org) agent card at

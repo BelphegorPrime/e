@@ -107,6 +107,11 @@ Testing, verifying or reproducing an `e` feature for real (built CLI, real
 containers, scripted model, git, a driven TUI): `node scripts/e2e/e2e.mjs`, see
 `docs/agents/e2e.md`.
 
+### Fusion evaluation
+
+Comparing single-agent and fusion arms on benchmark tasks (#179):
+`node scripts/eval/eval.mjs run bench/suites/smoke.json`, see `bench/README.md`.
+
 ### Common things
 
 - if you want to execute commands be aware that `&amp;` should be replaced with `&`

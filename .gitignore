@@ -64,3 +64,6 @@ src/sidecars/broker/bundle.generated.ts
 
 # e2e tracer sandboxes (node scripts/e2e/e2e.mjs)
 .e2e/
+
+# evaluation runs (node scripts/eval/eval.mjs)
+.eval/

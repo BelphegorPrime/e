@@ -1,0 +1,9 @@
+{
+  "store": "../store",
+  "tasks": ["fix-sum", "greet"],
+  "trials": 1,
+  "arms": [
+    { "name": "single-pi", "agent": "pi" },
+    { "name": "fusion-pi-pair", "profile": "pi-pair" }
+  ]
+}

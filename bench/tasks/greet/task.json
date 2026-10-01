@@ -1,0 +1,15 @@
+{
+  "prompt": "greet.js must export greet(name) returning \"Hello, <name>!\". Make the tests in test/ pass.",
+  "verify": "node --test 'test/*.test.mjs'",
+  "check": { "command": "node --test '.eval-check/*.test.mjs'" },
+  "stub": {
+    "turns": [
+      {
+        "tool": "bash",
+        "args": {
+          "command": "cat > greet.js <<'EOF'\nexport function greet(name) {\n  return `Hello, ${name}!`;\n}\nEOF"
+        }
+      }
+    ]
+  }
+}

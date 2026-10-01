@@ -1,0 +1,12 @@
+{
+  "prompt": "sum.js has a bug: sum(a, b) must return the sum of a and b. Fix it.",
+  "check": { "command": "node --test '.eval-check/*.test.mjs'" },
+  "stub": {
+    "turns": [
+      {
+        "tool": "bash",
+        "args": { "command": "sed -i 's/a - b/a + b/' sum.js" }
+      }
+    ]
+  }
+}

@@ -14,9 +14,8 @@
 //   node scripts/e2e/e2e.mjs list
 //   node scripts/e2e/e2e.mjs clean <name> [--images]
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -32,13 +31,21 @@ import {
   tailLines,
 } from './lib.mjs';
 import { parseKeys, runTui } from './tui.mjs';
+import {
+  CLI,
+  ENGINE,
+  REPO,
+  bridgeGateway,
+  ensureBuild as ensureBuildOf,
+  freePort,
+  initSandboxStore,
+  seedRepo,
+  sh,
+} from './host.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.resolve(HERE, '..', '..');
-const CLI = path.join(REPO, 'dist', 'index.js');
 const DEFAULT_ROOT = path.join(REPO, '.e2e');
 const OMNIROUTE = process.env.OMNIROUTE_URL ?? 'http://127.0.0.1:20128';
-const ENGINE = process.env.E_RUNTIME ?? 'docker';
 
 /** Agents every sandbox gets; names are e2e-* so their images never collide. */
 const AGENTS = [
@@ -70,13 +77,6 @@ const die = msg => {
   process.exit(2);
 };
 
-const sh = (cmd, args, opts = {}) =>
-  spawnSync(cmd, args, {
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-    ...opts,
-  });
-
 const git = (cwd, ...args) => {
   const r = sh('git', args, { cwd });
   return r.status === 0
@@ -84,58 +84,13 @@ const git = (cwd, ...args) => {
     : `(git ${args.join(' ')} failed: ${r.stderr.trim()})\n`;
 };
 
-/** The host address containers on the default bridge reach the host at. */
-function bridgeGateway() {
-  const r = sh(ENGINE, [
-    'network',
-    'inspect',
-    'bridge',
-    '-f',
-    '{{(index .IPAM.Config 0).Gateway}}',
-  ]);
-  const ip = r.stdout?.trim();
-  return r.status === 0 && ip ? ip : '172.17.0.1';
-}
-
-function freePort(host) {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.on('error', reject);
-    s.listen(0, host, () => {
-      const { port } = s.address();
-      s.close(() => resolve(port));
-    });
-  });
-}
-
-/** Newest mtime under a directory, skipping generated and dependency dirs. */
-function newestMtime(dir) {
-  let newest = 0;
-  const walk = d => {
-    for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
-      if (ent.name === 'node_modules' || ent.name.endsWith('.generated.ts'))
-        continue;
-      const p = path.join(d, ent.name);
-      if (ent.isDirectory()) walk(p);
-      else newest = Math.max(newest, fs.statSync(p).mtimeMs);
-    }
-  };
-  walk(dir);
-  return newest;
-}
-
-/** Rebuilds dist/ when src/ is newer than the compiled CLI (or dist is missing). */
+/** Rebuilds dist/ when it is stale; a failed build ends the tracer. */
 function ensureBuild(logFile, force) {
-  const stale =
-    force ||
-    !fs.existsSync(CLI) ||
-    newestMtime(path.join(REPO, 'src')) > fs.statSync(CLI).mtimeMs;
-  if (!stale) return 'up to date';
-  process.stderr.write('e2e: building (npm run build:ts)...\n');
-  const r = sh('npm', ['run', 'build:ts'], { cwd: REPO });
-  fs.writeFileSync(logFile, r.stdout + r.stderr);
-  if (r.status !== 0) die(`build failed, see ${logFile}`);
-  return 'rebuilt';
+  try {
+    return ensureBuildOf(logFile, force);
+  } catch (err) {
+    die(err.message);
+  }
 }
 
 function sandboxDir(root, name) {
@@ -171,26 +126,13 @@ async function cmdNew(positionals, values) {
   fs.mkdirSync(dir, { recursive: true });
   ensureBuild(path.join(dir, 'build.log'), false);
 
-  // The Store: rendered by the CLI under test, so a sandbox always exercises
-  // the current code's `e init`. No compose.yaml: a sandbox never touches the
-  // user's local stack (its container names are global).
-  const init = sh(process.execPath, [CLI, 'init', '-y', '--dir', dir], {
-    cwd: dir,
-    env: { ...process.env, NO_COLOR: '1' },
-  });
-  fs.writeFileSync(path.join(dir, 'init.log'), init.stdout + init.stderr);
-  if (init.status !== 0) die(`e init failed, see ${dir}/init.log`);
-  const store = path.join(dir, '.e');
-  fs.rmSync(path.join(store, 'compose.yaml'), { force: true });
-  const configFile = path.join(store, 'config.json');
-  const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-  config.localRuntimes = [];
-  delete config.gitPlatform;
-  writeJson(configFile, config);
+  let store;
+  try {
+    ({ store } = initSandboxStore(dir));
+  } catch (err) {
+    die(err.message);
+  }
 
-  // Agents: the default ones are named like the harnesses and would build
-  // `e-agent-pi` & co over the user's real images, so they go.
-  fs.rmSync(path.join(store, 'agents'), { recursive: true, force: true });
   const host = bridgeGateway();
   const port = await freePort(host);
   const modelId =
@@ -220,17 +162,13 @@ async function cmdNew(positionals, values) {
   // The repo e runs in, with a local bare origin so pushes are observable.
   const repo = path.join(dir, 'repo');
   const origin = path.join(dir, 'origin.git');
-  fs.mkdirSync(repo);
-  git(dir, 'init', '-q', '--bare', origin);
-  git(repo, 'init', '-q', '-b', 'main');
-  git(repo, 'config', 'user.name', 'e2e');
-  git(repo, 'config', 'user.email', 'e2e@example.invalid');
-  fs.writeFileSync(path.join(repo, 'README.md'), '# e2e sandbox repo\n');
-  fs.writeFileSync(path.join(repo, '.gitignore'), 'node_modules\n.env\n');
-  git(repo, 'add', '-A');
-  git(repo, 'commit', '-q', '-m', 'seed');
-  git(repo, 'remote', 'add', 'origin', origin);
-  git(repo, 'push', '-q', '-u', 'origin', 'main');
+  seedRepo(repo, origin, {
+    user: 'e2e',
+    files: {
+      'README.md': '# e2e sandbox repo\n',
+      '.gitignore': 'node_modules\n.env\n',
+    },
+  });
   fs.mkdirSync(path.join(dir, 'worktrees'));
   fs.mkdirSync(path.join(dir, 'steps'));
 
