@@ -82,6 +82,7 @@ import { siblingSummaryLine } from '../engine/runs/runSiblings.js';
 import { describeGateRemovals } from '../engine/runs/gateRemovals.js';
 import { mergeLanded } from '../engine/runs/runMergeBack.js';
 import {
+  CANCEL_GRACE_MS,
   CANCELED_EXIT_CODE,
   type IterationOutcome,
   type RunBase,
@@ -98,8 +99,6 @@ import {
 import { newUlid } from '../engine/queue/runsSpool.js';
 import { SPAWN_COMMAND, SPAWN_FLAGS } from '../shared/spawnArgs.js';
 import { collectRepeatable } from './repeatable.js';
-/** How long a canceled `e spawn` may take to stop its container and tear down before it is exited by force. */
-export const CANCEL_GRACE_MS = 60_000;
 
 /** The parsed `e spawn` CLI options, as Commander hands them to the action. */
 export interface SpawnCommandOptions extends Omit<RunOptions, 'envFile'> {

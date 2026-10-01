@@ -250,6 +250,10 @@ A named Store entity at `fusions/<name>/fusion.json` declaring the candidate Age
 One execution of a Fusion profile against one prompt, `fusion-<ulid>`, driven by `e fuse <profile> "<prompt>"` (`src/cli/fuse.ts`, ADR-0019; exit code the Synthesis run's Verdict, `1` without one, `2` on `totalMs`, `143` on a cancel): a host-side record at `.e/runs/fusions/<id>/` (0700, git-ignored, pruned after 14 days) grouping its Candidate runs and its Synthesis run, with states `prepared` -> `fanning-out` -> `synthesizing` -> `completed` | `failed` | `canceled` | `exhausted` | `interrupted`. Not a Run: it has no branch, worktree or container, and it counts toward no sibling depth.
 _Avoid_: calling it a Run, fusion job
 
+**Host slot**:
+One of the `fusion.hostConcurrency` leases (`config.json`, ADR-0019 section 9) that bound Candidate runs alive at once across every `e fuse` of one host user: a file under `<worktrees dir>/.fusion/.slots/`, held from a candidate's launch until it is collected, in use while its coordinator or its `e spawn` runs. A candidate that finds none free waits, against its fusion's `candidatesMs`. Absent the key, only the profile's `maxConcurrency` bounds.
+_Avoid_: Slot (ADR-0016's unit of `e serve` admission, which `e fuse` never takes)
+
 **Candidate run**:
 An ordinary Run of one candidate Agent of a Fusion run, cut from the fusion's pinned base sha and reporting into the fusion's spool. Neither pushes nor opens a PR itself: the coordinator pushes every usable candidate branch once the fan-out has closed. Keeps no Session and is not judged. **Usable** when its branch has commits beyond the base, whatever its verdict.
 _Avoid_: sibling (a sibling branches from a moving parent and comes back by merge-back; a candidate is never merged)

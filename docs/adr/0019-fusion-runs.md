@@ -476,11 +476,43 @@ remote branch, for a fusion as for any run.
   matters more than a straggler's partial work.
 - **Concurrency is the profile's `maxConcurrency`**, counted by the
   coordinator. `e fuse` is a human act and consumes **no Slot** (ADR-0016): Slots
-  gate what autonomy may start. A host-wide bound across concurrent `e fuse`
-  invocations, which #178 asks for, is **not** decided here; the one
-  constraint is that it is counted in a file-backed place every coordinator on
-  the host reads, like `.e/runs/live/`, never in one process's memory, and
-  that it is a `config.json` key `e init` must carry over (ADR-0016).
+  gate what autonomy may start.
+- **A host-wide bound is opt-in** (decided, #178): `config.json`'s
+  `fusion.hostConcurrency`, a positive integer, which `e init` carries over;
+  absent, only `maxConcurrency` bounds. It counts candidates alive at once
+  across every `e fuse` on the host, in a file-backed place every coordinator
+  reads, never one process's memory: lease files `slot-0.json` to
+  `slot-<N-1>.json` under `<worktrees dir>/.fusion/.slots/`, the worktrees dir
+  being the one directory every coordinator of one host user shares (a Store
+  is per checkout). A lease is written temp + `link`, which fails on an
+  existing name, so of two coordinators reaching for one slot exactly one gets
+  it, with no lock. Each coordinator tries only the slots below its own bound,
+  so Stores with different bounds never hold more than the larger. A lease
+  names the coordinator's pid and, once launched, the candidate's `e spawn`,
+  which runs in a process group of its own and outlives a coordinator killed
+  outright; a lease whose processes are both gone, or that cannot be read, is
+  reclaimed by the next coordinator that wants the slot. Accepted rather than
+  locked against: three coordinators racing for one dead slot can admit one
+  candidate too many for a few system calls' window, a reused pid holds a
+  dead lease's slot until that process ends, and waiting is polling, not a
+  queue. A candidate holds
+  its slot from its launch until it is collected. One that is next but finds
+  every slot taken **waits** (`host-slot-wait`, once per attempt) and holds
+  back the candidates behind it, so the launch order stays the profile's; the
+  wait counts against `candidatesMs` like any other, and a candidate still
+  waiting when it fires is `timed-out` without having launched. The synthesis
+  takes no slot: it is one run per fusion, and a fusion whose candidates have
+  ended must not wait on another's to finish.
+- **The fusion's wall clock is hard** (decided, #178). A child the fusion
+  stopped - a deadline or a cancel - gets SIGTERM and tears down; one that has
+  not exited `FUSION_KILL_GRACE_MS` later (each `e spawn`'s own cancel grace
+  plus 30 s, so a child that tears down in time is never cut short) is
+  killed outright by the coordinator, candidate and synthesis alike. A fusion
+  therefore ends at most that grace past its `totalMs`. The `e fuse` CLI's own
+  fallback (it kills every child and exits 143) waits 30 s longer still: it is
+  the last resort of a coordinator that hangs itself, not the way a child is
+  stopped. A child killed outright may leave its container behind, as any
+  SIGKILLed `e spawn` does.
 - **The deadlines are enforced by the coordinator** (decided, #178). Both
   count from the fusion's start and are written into `fusion.json` as
   `deadlines` (`candidatesMs`, `totalMs`, and the moments `candidatesAt`,
@@ -541,15 +573,17 @@ remote branch, for a fusion as for any run.
     any other.
   - **Per-provider buckets are not built.** The fixed half of the backoff
     already keeps two candidates of one provider that failed together from
-    retrying at once, and a bucket shared across fusions is the host-wide
-    bound above, which stays undecided.
+    retrying at once, and a bucket shared across fusions would be a second
+    host-wide bound beside `fusion.hostConcurrency`, with nothing yet that
+    tells one provider's limit from another's.
 - **Accounting is a seam, not a store.** The coordinator emits one event per
   candidate start, attempt, end and budget exhaustion, with `usage` when known,
   through one interface a later control plane can consume (#188); the fusion
   record is its per-fusion view, not a second accounting store, and its 14-day
   retention bounds only that view. Concretely (#178) the interface is the
   coordinator's `onEvent`: `launched` (with `attempt` and `retryOf`),
-  `settled` (the envelope, `usage` included), `retry-scheduled` (the new id,
+  `settled` (the envelope, `usage` included), `host-slot-wait` (the
+  candidate and the host bound it waits on), `retry-scheduled` (the new id,
   the attempt it retries, the delay), `retry-skipped` (a retryable failure
   that got no other attempt, `max-attempts` or `candidates-deadline`, only
   when the profile declares retries) and `budget-exhausted` (`candidatesMs`
@@ -674,6 +708,6 @@ The threat model belongs to #180; the lines it must work within are these:
 | #174   | The coordinator: pinned base, image pre-build, bounded fan-out, markers, cancel, `fusion.json`, prune, reconcile | 3, 4, 6, 9 |
 | #176   | The synthesis run: the `/run/e/fusion/` mount, the preamble, the PR block                                        | 7, 8       |
 | #177   | `e fuse` and its progress output                                                                                 | 3, 8       |
-| #178   | Deadlines, retry classification, backoff, provider buckets                                                       | 9          |
+| #178   | Deadlines, retry classification, backoff, host-wide bound, hard wall clock                                       | 9          |
 | #180   | Threat model, provider policy, retention                                                                         | 10, 6      |
 | #179   | Evaluation: single Agent vs fusion, same-provider sampling, select vs synthesize                                 | 2, 11      |

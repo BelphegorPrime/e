@@ -79,6 +79,9 @@ export type { ReadinessPolicy } from './runSidecars.js';
 /** The exit code of a canceled run (SIGTERM's 128 + 15), so no commit path takes it for a success. */
 export const CANCELED_EXIT_CODE = 143;
 
+/** How long a canceled `e spawn` may take to stop its container and tear down before it is exited by force. */
+export const CANCEL_GRACE_MS = 60_000;
+
 /**
  * A run that ended on something other than its own verdict (ADR-0016): the
  * harness died, it was OOM-killed, or the check could not run. Generic on

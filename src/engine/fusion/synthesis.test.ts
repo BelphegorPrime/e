@@ -61,6 +61,8 @@ interface Ending {
   pullRequestUrl?: string;
   reason?: string;
   hang?: boolean;
+  /** Ignores its SIGTERM: only SIGKILL ends it. */
+  stubborn?: boolean;
   /** Runs when the child starts, before it reports anything. */
   onStart?: (launch: ChildLaunch) => void;
 }
@@ -71,6 +73,7 @@ const startErrors: unknown[] = [];
 function launcher(endings: Record<string, Ending>) {
   const launches: ChildLaunch[] = [];
   const killed: string[] = [];
+  const signals: string[] = [];
   const launch: ChildLauncher = l => {
     launches.push(l);
     const id = l.request.id;
@@ -115,15 +118,17 @@ function launcher(endings: Record<string, Ending>) {
     }, 3);
     const handle: ChildHandle = {
       exited,
-      kill: () => {
+      kill: (signal = 'SIGTERM') => {
+        signals.push(`${id}:${signal}`);
+        if (ending.stubborn && signal !== 'SIGKILL') return;
         killed.push(id);
         clearTimeout(timer);
-        resolve(143);
+        resolve(signal === 'SIGKILL' ? 1 : 143);
       },
     };
     return handle;
   };
-  return { launch, launches, killed };
+  return { launch, launches, killed, signals };
 }
 
 async function withFusion(
@@ -133,6 +138,7 @@ async function withFusion(
     fanOut: FanOutResult;
     launches: ChildLaunch[];
     killed: string[];
+    signals: string[];
     storeDir: string;
   }) => Promise<void>
 ): Promise<void> {
@@ -169,6 +175,7 @@ async function withFusion(
       fanOut,
       launches: l.launches,
       killed: l.killed,
+      signals: l.signals,
       storeDir,
     });
   } finally {
@@ -582,6 +589,51 @@ test('runSynthesis: a totalMs that passes mid-synthesis stops it: exhausted, exi
       assert.equal(synthesis.canceled, true);
       assert.equal(synthesis.exitCode, 143);
       assert.equal(synthesis.reason, 'exhausted:fusion-timeout');
+    }
+  );
+});
+
+test('runSynthesis: a synthesis that ignores its SIGTERM is killed outright once the grace is spent', async () => {
+  await withFusion(
+    {
+      'cand-001': { branch: 'e/claude/add-retries-1' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+      'syn-001': {
+        branch: 'e/reviewer/add-retries-1',
+        hang: true,
+        stubborn: true,
+      },
+    },
+    async ({ deps, fanOut, signals, storeDir }) => {
+      let t = Date.parse('2026-09-30T12:00:00.000Z');
+      const start = t;
+      const now = () => new Date(t);
+      const sleep: Sleep = async (ms, signal) => {
+        if (signal.aborted) return;
+        t += ms;
+        await new Promise(resolve => setImmediate(resolve));
+      };
+      // No totalMs: the grace is the only wait on this clock.
+      const stored = readFusionRecord(storeDir, FUSION)!;
+      delete stored.deadlines;
+      writeFusionRecord(storeDir, stored);
+      const bare: FanOutResult = { ...fanOut };
+      delete bare.deadlines;
+      const abort = new AbortController();
+      const result = await runSynthesis(
+        { ...deps, now, sleep, killGraceMs: 5_000 },
+        {
+          fanOut: bare,
+          abort: abort.signal,
+          onEvent: event => {
+            if (event.kind === 'synthesis-launched') abort.abort();
+          },
+        }
+      );
+      assert.deepEqual(signals, ['syn-001:SIGTERM', 'syn-001:SIGKILL']);
+      assert.equal(result.state, 'canceled');
+      assert.equal(result.exitCode, 143);
+      assert.equal(t - start, 5_000, 'killed when the grace was spent');
     }
   );
 });

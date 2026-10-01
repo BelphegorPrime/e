@@ -11,7 +11,6 @@ import {
   resolveRemoteTarget,
   resolveTriggerSpawn,
   inheritedProvenance,
-  CANCEL_GRACE_MS,
   runSpawnCommand,
   spawnCancelHandling,
   spawnReport,
@@ -30,7 +29,10 @@ import {
   OMNIROUTE_PORT,
 } from '../shared/constants.js';
 import { PinnedRuntime } from '../engine/runs/runSpawn.testSupport.js';
-import { CANCELED_EXIT_CODE } from '../engine/runs/runSpawn.js';
+import {
+  CANCEL_GRACE_MS,
+  CANCELED_EXIT_CODE,
+} from '../engine/runs/runSpawn.js';
 import { fakeOmniRoute } from '../engine/spawn/omniRoute.testSupport.js';
 import {
   readRequest,

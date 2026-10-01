@@ -18,7 +18,10 @@ import {
   fuseCancelHandling,
   FUSE_CANCEL_GRACE_MS,
 } from './fuse.js';
-import { CANCEL_GRACE_MS, type ReportLine } from './spawn.js';
+import type { ReportLine } from './spawn.js';
+import { CANCEL_GRACE_MS } from '../engine/runs/runSpawn.js';
+import { FUSION_KILL_GRACE_MS } from '../engine/fusion/fanOut.js';
+import { hostSlotsDir, type HostSlots } from '../engine/fusion/hostSlots.js';
 import type { FusionProfile } from '../core/fusion/profile.js';
 import type { CandidateResult } from '../core/fusion/result.js';
 import { InMemoryGit } from '../ports/git/memory.js';
@@ -877,6 +880,47 @@ test('fuseEventLines: retries and exhausted budgets are said in their stage', ()
     }),
     ['[fusion] totalMs (5000 ms) exhausted']
   );
+  assert.deepEqual(
+    lines({
+      kind: 'host-slot-wait',
+      candidate: 'cand-002',
+      agent: 'codex',
+      limit: 4,
+    }),
+    [
+      '[candidates] cand-002 codex: waiting for a host slot (fusion.hostConcurrency 4, shared with every e fuse on this host)',
+    ]
+  );
+});
+
+test("runFuseCommand: config.json's fusion.hostConcurrency bounds the fan-out host-wide, through the worktrees dir", async () => {
+  await withStore(async root => {
+    const seen: unknown[] = [];
+    const run = async () => {
+      const deps = refusingDeps([]);
+      deps.worktreesDir = path.join(root, 'worktrees');
+      deps.fanOut = async d => {
+        seen.push(d.hostSlots);
+        return fanOut({ state: 'canceled' });
+      };
+      await runFuseCommand('coding', ['go'], { dir: root }, deps);
+    };
+    // Unset: only the profile's maxConcurrency bounds.
+    await run();
+    fs.writeFileSync(
+      path.join(root, '.e', 'config.json'),
+      JSON.stringify({ fusion: { hostConcurrency: 4 } })
+    );
+    await run();
+    assert.equal(seen[0], undefined);
+    const slots = seen[1] as HostSlots;
+    assert.equal(slots.limit, 4);
+    assert.ok(slots.tryAcquire({ fusion: 'fusion-x', candidate: 'cand-001' }));
+    assert.equal(
+      fs.readdirSync(hostSlotsDir(path.join(root, 'worktrees'))).length,
+      1
+    );
+  });
 });
 
 test("runFuseCommand: the Store's loop caps reach the fan-out, which derives its deadlines from them", async () => {
@@ -917,9 +961,11 @@ test('fuseCancelHandling: the first signal cancels; later ones wait; only a spen
   onSignal();
   assert.equal(cancel.signal.aborted, true);
   assert.equal(timers.length, 1);
-  // Past every child's own grace, so none is cut short.
+  // Past every child's own grace, so none is cut short, and past the
+  // coordinator's, which kills a stubborn child itself first.
   assert.equal(timers[0].ms, FUSE_CANCEL_GRACE_MS);
-  assert.ok(FUSE_CANCEL_GRACE_MS > CANCEL_GRACE_MS);
+  assert.ok(FUSION_KILL_GRACE_MS > CANCEL_GRACE_MS);
+  assert.ok(FUSE_CANCEL_GRACE_MS > FUSION_KILL_GRACE_MS);
   // A second Ctrl-C never leaves the children running on their own.
   onSignal();
   assert.equal(timers.length, 1);

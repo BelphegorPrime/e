@@ -37,6 +37,7 @@ function state(): InitState {
     currentLoop: DEFAULT_LOOP_CAPS,
     currentQueue: DEFAULT_QUEUE_CONFIG,
     currentDead: DEFAULT_DEAD_CONFIG,
+    currentFusion: {},
     currentMaxSiblings: 3,
     existingEnvContent: undefined,
     runtimeCatalogs: WIZARD_STATE.runtimeCatalogs,

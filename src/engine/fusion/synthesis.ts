@@ -21,6 +21,9 @@
  *   passes is stopped like a cancel, but the fusion ends `exhausted`
  *   (`exhausted:fusion-timeout`, exit 2), never `canceled`: a deadline is
  *   not a human (ADR-0019 sections 8, 9).
+ * - **A stop is hard**: a synthesis that has not exited once
+ *   {@link FUSION_KILL_GRACE_MS} is spent after its SIGTERM is killed
+ *   outright, as a candidate is.
  */
 
 import fs from 'node:fs';
@@ -59,6 +62,7 @@ import {
 import { CANCELED_EXIT_CODE, EXHAUSTED_EXIT_CODE } from '../runs/runSpawn.js';
 import { realSleep, untilTime, type Sleep } from './clock.js';
 import {
+  FUSION_KILL_GRACE_MS,
   FUSION_TIMEOUT_REASON,
   removeFusionSpool,
   type BudgetExhaustedEvent,
@@ -94,6 +98,8 @@ export interface SynthesisDeps {
   now?: () => Date;
   /** The wait until the fusion's `totalMs`; a timer by default. Tests advance an injected clock instead. */
   sleep?: Sleep;
+  /** See {@link FUSION_KILL_GRACE_MS}. */
+  killGraceMs?: number;
 }
 
 /** What one synthesis is asked. */
@@ -289,6 +295,7 @@ export async function runSynthesis(
         abort: params.abort,
         totalAt,
         clock: { now, sleep: deps.sleep ?? realSleep },
+        killGraceMs: deps.killGraceMs ?? FUSION_KILL_GRACE_MS,
       });
       code = ended.code;
       killed = ended.killedBy !== undefined;
@@ -413,8 +420,9 @@ function buildMaterial(
 /**
  * The child's exit code, and what killed it, if anything: on a cancel or
  * when `totalAt` passes, the child is killed and its exit awaited - unless it
- * had already exited, in which case nothing was stopped. The deadline's wait
- * ends with the child, so no timer outlives the synthesis.
+ * had already exited, in which case nothing was stopped - and killed outright
+ * once `killGraceMs` has passed without an exit. Every wait ends with the
+ * child, so no timer outlives the synthesis.
  */
 async function untilExitCancelOrDeadline(
   handle: ChildHandle,
@@ -422,20 +430,29 @@ async function untilExitCancelOrDeadline(
     abort: AbortSignal | undefined;
     totalAt: number | undefined;
     clock: { now: () => Date; sleep: Sleep };
+    killGraceMs: number;
   }
 ): Promise<{ code: number; killedBy?: 'cancel' | 'deadline' }> {
-  const { abort, totalAt } = opts;
+  const { abort, totalAt, clock, killGraceMs } = opts;
   let exited = false;
   let killedBy: 'cancel' | 'deadline' | undefined;
+  const stopWaiting = new AbortController();
   const kill = (by: 'cancel' | 'deadline'): void => {
     if (exited || killedBy !== undefined) return;
     killedBy = by;
     handle.kill();
+    const graceEnds = clock.now().getTime() + killGraceMs;
+    void untilTime(graceEnds, clock, stopWaiting.signal).then(reached => {
+      if (!reached || exited) return;
+      log.warn(
+        `The synthesis did not stop within ${killGraceMs} ms; killing it outright.`
+      );
+      handle.kill('SIGKILL');
+    });
   };
   const onAbort = (): void => kill('cancel');
   if (abort?.aborted) onAbort();
   abort?.addEventListener('abort', onAbort, { once: true });
-  const stopWaiting = new AbortController();
   if (totalAt !== undefined) {
     void untilTime(totalAt, opts.clock, stopWaiting.signal).then(reached => {
       if (reached) kill('deadline');

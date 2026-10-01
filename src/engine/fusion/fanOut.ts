@@ -30,6 +30,13 @@
  *   them: a failed attempt the classifier calls retryable gets a fresh
  *   `cand-NNN` after a backoff with jitter, never past `candidatesMs`, and
  *   its first envelope stays.
+ * - **A host-wide bound**, when `config.json` sets `fusion.hostConcurrency`:
+ *   a candidate also needs one of the host's slots, shared with every other
+ *   `e fuse` on this host, and waits for one - the wait counts against
+ *   `candidatesMs` like any other.
+ * - **A hard wall clock**: a candidate the fusion stopped that has not exited
+ *   once {@link FUSION_KILL_GRACE_MS} is spent is killed outright, so no
+ *   teardown that hangs holds the fusion past its deadline by more than that.
  */
 
 import fs from 'node:fs';
@@ -69,9 +76,10 @@ import {
   type ChildHandle,
   type ChildLauncher,
 } from '../runs/childRun.js';
-import type { RunBase } from '../runs/runSpawn.js';
+import { CANCEL_GRACE_MS, type RunBase } from '../runs/runSpawn.js';
 import { Waker, realSleep, type Sleep } from './clock.js';
 import { collectCandidateResult, type SettledCandidate } from './collect.js';
+import type { HostSlotLease, HostSlots } from './hostSlots.js';
 import {
   pruneFusions,
   reconcileFusions,
@@ -100,6 +108,14 @@ const LAUNCH_FAILED_EXIT_CODE = 1;
  * longer holds every other candidate back (its own caps are #178's).
  */
 export const DEFAULT_BUILD_GATE_MS = 20 * 60 * 1000;
+
+/**
+ * How long a child the fusion stopped may take to exit before it is killed
+ * outright (SIGKILL): past its own {@link CANCEL_GRACE_MS}, so a child that
+ * tears down in time is never cut short. A fusion therefore ends at most this
+ * long after a deadline or a cancel.
+ */
+export const FUSION_KILL_GRACE_MS = CANCEL_GRACE_MS + 30_000;
 
 const newUlid = monotonicFactory();
 
@@ -139,6 +155,13 @@ export interface FanOutDeps {
   loop?: Pick<LoopCaps, 'totalTimeoutMs'>;
   /** Which failed attempts are retried; `classifyAttempt` by default. */
   classifyAttempt?: RetryClassifier;
+  /**
+   * The host-wide bound (`fusion.hostConcurrency`), shared with every other
+   * coordinator on this host; absent, only `maxConcurrency` bounds.
+   */
+  hostSlots?: HostSlots;
+  /** See {@link FUSION_KILL_GRACE_MS}. */
+  killGraceMs?: number;
   newFusionId?: () => string;
   /** Whether a recorded coordinator is still running; for reconciling old records. */
   isAlive?: (pid: number) => boolean;
@@ -195,6 +218,16 @@ export type FanOutEvent =
       retryOf?: string;
     }
   | { kind: 'settled'; candidate: string; result: CandidateResult }
+  | {
+      /**
+       * The candidate is next, but every host slot is held (`limit`, across
+       * every `e fuse` on this host): it waits for one. Once per attempt.
+       */
+      kind: 'host-slot-wait';
+      candidate: string;
+      agent: string;
+      limit: number;
+    }
   | {
       /** A failed attempt gets another: a new record, launched once `notBefore` has passed. */
       kind: 'retry-scheduled';
@@ -276,6 +309,14 @@ interface Slot {
   code?: number;
   /** Set when the fusion stopped it. */
   stop?: Stop;
+  /** When the fusion's SIGTERM went out (epoch ms); SIGKILL follows past the grace. */
+  stoppedAt?: number;
+  /** True once the grace was spent and SIGKILL sent. */
+  forced?: boolean;
+  /** The host slot it holds, from its launch until it is collected. */
+  lease?: HostSlotLease;
+  /** True once its wait for a host slot was reported. */
+  waitReported?: boolean;
 }
 
 /**
@@ -377,6 +418,8 @@ export async function runFanOut(
 
   const results = new Map<string, CandidateResult>();
   const collect = (slot: Slot): CandidateResult => {
+    // Its host slot goes back as soon as it has ended, whatever became of it.
+    slot.lease?.release();
     const status = readStatus(spoolDir, slot.request.id);
     const ended = now();
     const reason = slot.stop?.reason ?? status?.reason;
@@ -511,6 +554,8 @@ export async function runFanOut(
       return;
     }
     slot.handle = handle;
+    // The slot is in use while the child runs, even past this coordinator.
+    if (handle.pid !== undefined) slot.lease?.attach(handle.pid);
     // The one reaction per child: record the code and wake the loop.
     void handle.exited.then(code => {
       slot.code = code;
@@ -547,6 +592,7 @@ export async function runFanOut(
     }
     for (const slot of live) {
       slot.stop = stop;
+      slot.stoppedAt = now().getTime();
       slot.handle!.kill();
     }
     for (const slot of waiting) {
@@ -555,16 +601,51 @@ export async function runFanOut(
     }
   };
 
+  /**
+   * A host slot for `slot`, when the host is bounded; false, reported once,
+   * when every one is held.
+   */
+  const acquireHostSlot = (slot: Slot): boolean => {
+    if (!deps.hostSlots) return true;
+    const lease = deps.hostSlots.tryAcquire({
+      fusion,
+      candidate: slot.request.id,
+    });
+    if (lease) {
+      slot.lease = lease;
+      return true;
+    }
+    if (!slot.waitReported) {
+      slot.waitReported = true;
+      params.onEvent?.({
+        kind: 'host-slot-wait',
+        candidate: slot.request.id,
+        agent: slot.agent.name,
+        limit: deps.hostSlots.limit,
+      });
+    }
+    return false;
+  };
+
   const pollMs = deps.pollIntervalMs ?? 1000;
   const gateMs = deps.buildGateMs ?? DEFAULT_BUILD_GATE_MS;
+  const killGraceMs = deps.killGraceMs ?? FUSION_KILL_GRACE_MS;
+  /** Set while a ready candidate waits for a host slot: the loop polls for one. */
+  let hostBlocked = false;
   /**
    * How long the loop may sleep: a poll while anything is alive, and never
    * past the next moment something is due - a deadline that has not fired,
-   * the end of a retry's backoff.
+   * the end of a retry's backoff, the end of a stopped child's grace.
    */
   const nextWait = (): number => {
     const t = now().getTime();
-    let wait = alive.length > 0 ? pollMs : Number.POSITIVE_INFINITY;
+    let wait =
+      alive.length > 0 || hostBlocked ? pollMs : Number.POSITIVE_INFINITY;
+    for (const slot of alive) {
+      if (slot.stoppedAt !== undefined && !slot.forced) {
+        wait = Math.min(wait, slot.stoppedAt + killGraceMs - t);
+      }
+    }
     if (!canceled && stopping !== 'total') wait = Math.min(wait, totalAt - t);
     if (stopping === undefined) wait = Math.min(wait, candidatesAt - t);
     for (const slot of pending) {
@@ -594,6 +675,17 @@ export async function runFanOut(
         maybeRetry(slot, collect(slot));
       }
       const t = now().getTime();
+      // A stopped child that is still there past its grace is killed
+      // outright: the fusion's deadlines are hard (ADR-0019 section 9).
+      for (const slot of alive) {
+        if (slot.stoppedAt === undefined || slot.forced) continue;
+        if (t - slot.stoppedAt < killGraceMs) continue;
+        slot.forced = true;
+        log.warn(
+          `${slot.request.id} (${slot.agent.name}) did not stop within ${killGraceMs} ms; killing it outright.`
+        );
+        slot.handle!.kill('SIGKILL');
+      }
       // A cancel outranks a deadline, and the whole outranks the fan-out.
       if (params.abort?.aborted && !canceled) {
         canceled = true;
@@ -633,10 +725,17 @@ export async function runFanOut(
       // still building - unless it has been at it past the gate, so one hung
       // build cannot hold every other candidate back forever. A retry waits
       // out its backoff without holding back the candidates behind it.
+      // A candidate that is next but finds every host slot held waits for
+      // one, and holds back the ones behind it: the order stays the profile's.
+      hostBlocked = false;
       while (!stopping && !building && alive.length < profile.maxConcurrency) {
         const at = now().getTime();
         const ready = pending.findIndex(slot => (slot.notBefore ?? 0) <= at);
         if (ready < 0) break;
+        if (!acquireHostSlot(pending[ready])) {
+          hostBlocked = true;
+          break;
+        }
         const [slot] = pending.splice(ready, 1);
         launch(slot);
         if (slot.handle) building = true;
@@ -656,6 +755,11 @@ export async function runFanOut(
     throw err;
   } finally {
     params.abort?.removeEventListener('abort', onAbort);
+    // No lease outlives the fan-out, except a child's the loop broke away
+    // from: that one names the child, and is free once the child is gone.
+    for (const slot of slots) {
+      if (!alive.includes(slot)) slot.lease?.release();
+    }
   }
 
   // The fan-out is closed: every candidate has stopped.

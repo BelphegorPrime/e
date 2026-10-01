@@ -19,6 +19,7 @@ import type {
 } from '../runs/childRun.js';
 import type { Sleep } from './clock.js';
 import { runFanOut, type FanOutDeps, type FanOutEvent } from './fanOut.js';
+import { fileHostSlots, hostSlotsDir } from './hostSlots.js';
 import { readCandidateResults, readFusionRecord } from './record.js';
 
 /*
@@ -687,6 +688,57 @@ test('runFanOut: whatever breaks the loop, no candidate outlives it and the reco
   });
 });
 
+test('runFanOut: a broken loop keeps the host slots of children it could not wait for', async () => {
+  await withDirs(async dirs => {
+    const s = scripted({
+      'cand-001': { branch: 'e/claude/add-retries-1', hang: true },
+      'cand-002': { branch: 'e/codex/add-retries-1', hang: true },
+    });
+    // A child still tearing down when the coordinator gives up on it.
+    const handles: ChildHandle[] = [];
+    const tearingDown: ChildLauncher = launch => {
+      const handle = s.launcher(launch);
+      handles.push(handle);
+      return { ...handle, pid: 4242, kill: () => {} };
+    };
+    await assert.rejects(
+      runFanOut(
+        { ...deps(dirs, tearingDown), hostSlots: hostBound(dirs, 2) },
+        {
+          found: found(['claude', 'codex']),
+          prompt: 'Add retries',
+          onEvent: event => {
+            if (event.kind === 'launched' && event.candidate === 'cand-002') {
+              throw new Error('renderer crashed');
+            }
+          },
+        }
+      ),
+      /renderer crashed/
+    );
+    // Its teardown done, so no scripted timer outlives the test.
+    for (const handle of handles) handle.kill();
+    // Still held, now naming the child: freed once it is gone, not before.
+    const leases = fs
+      .readdirSync(hostSlotsDir(dirs.worktreesDir))
+      .map(name =>
+        JSON.parse(
+          fs.readFileSync(
+            path.join(hostSlotsDir(dirs.worktreesDir), name),
+            'utf8'
+          )
+        )
+      );
+    assert.deepEqual(
+      leases.map(l => [l.candidate, l.childPid]),
+      [
+        ['cand-001', 4242],
+        ['cand-002', 4242],
+      ]
+    );
+  });
+});
+
 // --- deadlines (ADR-0019 section 9) ------------------------------------------
 
 test('runFanOut: candidatesMs times out every outstanding candidate, keeps their commits, and the fan-out closes', async () => {
@@ -1221,5 +1273,232 @@ test('runFanOut: a cancel during a backoff cancels the retry too, and it says wh
       false,
       'the retry never started'
     );
+  });
+});
+
+/** This coordinator's host-wide bound of `limit`, every pid it meets alive. */
+function hostBound(dirs: { worktreesDir: string }, limit: number) {
+  return fileHostSlots(hostSlotsDir(dirs.worktreesDir), limit, {
+    isAlive: () => true,
+  });
+}
+
+/** Another `e fuse` on this host, holding host slots of its own. */
+function otherCoordinator(worktreesDir: string, limit = 1) {
+  return fileHostSlots(hostSlotsDir(worktreesDir), limit, {
+    pid: 999_999,
+    isAlive: () => true,
+  });
+}
+
+test('runFanOut: the host-wide bound holds a candidate until a slot frees, and says so', async () => {
+  await withDirs(async dirs => {
+    const s = scripted({
+      'cand-001': { branch: 'e/claude/add-retries-1', runMs: 5 },
+      'cand-002': { branch: 'e/codex/add-retries-1', runMs: 5 },
+    });
+    const other = otherCoordinator(dirs.worktreesDir).tryAcquire({
+      fusion: 'fusion-other',
+      candidate: 'cand-001',
+    })!;
+    const events: FanOutEvent[] = [];
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        hostSlots: hostBound(dirs, 1),
+      },
+      {
+        found: found(['claude', 'codex'], { maxConcurrency: 2 }),
+        prompt: 'Add retries',
+        onEvent: event => {
+          events.push(event);
+          // The other fusion's candidate ends a little later.
+          if (
+            event.kind === 'host-slot-wait' &&
+            event.candidate === 'cand-001'
+          ) {
+            setTimeout(() => other.release(), 20);
+          }
+        },
+      }
+    );
+    assert.equal(result.state, 'fanning-out');
+    assert.equal(s.maxAlive(), 1, 'the host bound, below maxConcurrency');
+    assert.deepEqual(
+      result.candidates.map(r => r.outcome),
+      ['succeeded', 'succeeded']
+    );
+    // Reported once per waiting candidate, before its launch.
+    assert.deepEqual(
+      events.filter(e => e.kind === 'host-slot-wait'),
+      [
+        {
+          kind: 'host-slot-wait',
+          candidate: 'cand-001',
+          agent: 'claude',
+          limit: 1,
+        },
+        {
+          kind: 'host-slot-wait',
+          candidate: 'cand-002',
+          agent: 'codex',
+          limit: 1,
+        },
+      ]
+    );
+    // Every lease went back with its candidate.
+    assert.deepEqual(fs.readdirSync(hostSlotsDir(dirs.worktreesDir)), []);
+  });
+});
+
+test('runFanOut: a candidate still waiting for a host slot at candidatesMs is timed out, never launched', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const s = scripted({});
+    assert.ok(
+      otherCoordinator(dirs.worktreesDir).tryAcquire({
+        fusion: 'fusion-other',
+        candidate: 'cand-001',
+      })
+    );
+    const events: FanOutEvent[] = [];
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        now: c.now,
+        sleep: c.sleep,
+        pollIntervalMs: 10_000,
+        hostSlots: hostBound(dirs, 1),
+      },
+      {
+        found: found(['claude'], {
+          timeouts: { candidatesMs: 60_000, totalMs: 120_000 },
+        }),
+        prompt: 'Add retries',
+        onEvent: event => events.push(event),
+      }
+    );
+    assert.equal(s.launches.length, 0);
+    assert.deepEqual(
+      result.candidates.map(r => [r.candidate, r.outcome]),
+      [['cand-001', 'timed-out']]
+    );
+    assert.deepEqual(
+      events.find(e => e.kind === 'budget-exhausted'),
+      {
+        kind: 'budget-exhausted',
+        budget: 'candidatesMs',
+        limitMs: 60_000,
+        stopped: ['cand-001'],
+      }
+    );
+    // The wait polled the slots; it never ran past the deadline.
+    assert.equal(c.now().getTime() - c.start, 60_000);
+    assert.equal(
+      fs.readdirSync(hostSlotsDir(dirs.worktreesDir)).length,
+      1,
+      "only the other fusion's lease is left"
+    );
+  });
+});
+
+test('runFanOut: a launch that fails gives its host slot back', async () => {
+  await withDirs(async dirs => {
+    const s = scripted({
+      'cand-001': { launchFails: 'no docker' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+    });
+    const result = await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        hostSlots: hostBound(dirs, 1),
+      },
+      { found: found(['claude', 'codex']), prompt: 'Add retries' }
+    );
+    assert.deepEqual(
+      result.candidates.map(r => r.outcome),
+      ['failed', 'succeeded']
+    );
+    assert.deepEqual(fs.readdirSync(hostSlotsDir(dirs.worktreesDir)), []);
+  });
+});
+
+test('runFanOut: a canceled fusion gives back every host slot it held', async () => {
+  await withDirs(async dirs => {
+    const abort = new AbortController();
+    const s = scripted({
+      'cand-001': { branch: 'e/claude/add-retries-1', hang: true },
+      'cand-002': { branch: 'e/codex/add-retries-1', hang: true },
+    });
+    await runFanOut(
+      {
+        ...deps(dirs, s.launcher),
+        hostSlots: hostBound(dirs, 2),
+      },
+      {
+        found: found(['claude', 'codex']),
+        prompt: 'Add retries',
+        abort: abort.signal,
+        onEvent: event => {
+          if (event.kind === 'launched' && event.candidate === 'cand-002') {
+            setTimeout(() => abort.abort(), 5);
+          }
+        },
+      }
+    );
+    assert.deepEqual(s.killed.sort(), ['cand-001', 'cand-002']);
+    assert.deepEqual(fs.readdirSync(hostSlotsDir(dirs.worktreesDir)), []);
+  });
+});
+
+test('runFanOut: a candidate that ignores its SIGTERM is killed outright once the grace is spent', async () => {
+  await withDirs(async dirs => {
+    const c = clock();
+    const signals: string[] = [];
+    // A child whose teardown hangs: SIGTERM does nothing, SIGKILL ends it.
+    const stubborn: ChildLauncher = launch => {
+      let resolve!: (code: number) => void;
+      const exited = new Promise<number>(r => (resolve = r));
+      writeStatus(launch.spoolDir, launch.request.id, {
+        status: 'running',
+        branch: 'e/claude/add-retries-1',
+        updatedAt: new Date().toISOString(),
+      });
+      return {
+        exited,
+        kill: (signal = 'SIGTERM') => {
+          signals.push(signal);
+          if (signal === 'SIGKILL') resolve(1);
+        },
+      };
+    };
+    const result = await runFanOut(
+      {
+        ...deps(dirs, stubborn),
+        now: c.now,
+        sleep: c.sleep,
+        pollIntervalMs: 1_000,
+        killGraceMs: 5_000,
+      },
+      {
+        found: found(['claude'], {
+          timeouts: { candidatesMs: 60_000, totalMs: 120_000 },
+        }),
+        prompt: 'Add retries',
+        onEvent: event => {
+          if (event.kind === 'launched') c.advance(120_000);
+        },
+      }
+    );
+    assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+    assert.equal(result.state, 'exhausted');
+    assert.deepEqual(
+      result.candidates.map(r => [r.outcome, r.reason]),
+      [['canceled', 'exhausted:fusion-timeout']]
+    );
+    // The fusion's wall clock is hard: totalMs plus the grace, and the one
+    // poll the test clock spends whole where a real exit would cut it short.
+    const overrun = c.now().getTime() - c.start - 120_000;
+    assert.ok(overrun >= 5_000 && overrun <= 6_000, `overran by ${overrun} ms`);
   });
 });

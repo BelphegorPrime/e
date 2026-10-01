@@ -104,6 +104,7 @@ test('resolveConfig: a missing config yields the built-in defaults', () => {
     loop: DEFAULT_LOOP_CAPS,
     queue: DEFAULT_QUEUE_CONFIG,
     dead: DEFAULT_DEAD_CONFIG,
+    fusion: {},
   });
 });
 
@@ -119,6 +120,7 @@ test('resolveConfig: an explicit defaultHarness is kept', () => {
     loop: DEFAULT_LOOP_CAPS,
     queue: DEFAULT_QUEUE_CONFIG,
     dead: DEFAULT_DEAD_CONFIG,
+    fusion: {},
   });
 });
 
@@ -182,6 +184,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
         loop: DEFAULT_LOOP_CAPS,
         queue: DEFAULT_QUEUE_CONFIG,
         dead: DEFAULT_DEAD_CONFIG,
+        fusion: {},
       },
       root
     );
@@ -197,6 +200,7 @@ test('config round-trip: writeConfig then readConfig returns the written value',
       loop: DEFAULT_LOOP_CAPS,
       queue: DEFAULT_QUEUE_CONFIG,
       dead: DEFAULT_DEAD_CONFIG,
+      fusion: {},
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -217,6 +221,7 @@ test('readConfig: a missing config.json returns the defaults, no file written', 
       loop: DEFAULT_LOOP_CAPS,
       queue: DEFAULT_QUEUE_CONFIG,
       dead: DEFAULT_DEAD_CONFIG,
+      fusion: {},
     });
     assert.ok(!fs.existsSync(configFilePath(root)));
   } finally {
@@ -580,6 +585,24 @@ test('resolveConfig: the dead block defaults to seven days and 100 entries, per 
     resolveConfig({ dead: { maxAgeMs: 'forever', maxCount: 10 } }).dead,
     { maxAgeMs: DEFAULT_DEAD_CONFIG.maxAgeMs, maxCount: 10 }
   );
+});
+
+test('resolveConfig: fusion.hostConcurrency is a positive integer, or no host-wide bound', () => {
+  assert.deepEqual(resolveConfig({}).fusion, {});
+  assert.deepEqual(
+    resolveConfig({ fusion: { hostConcurrency: 4 } } as Record<string, unknown>)
+      .fusion,
+    { hostConcurrency: 4 }
+  );
+  for (const bad of [0, -1, 1.5, 'four']) {
+    assert.deepEqual(
+      resolveConfig({ fusion: { hostConcurrency: bad } } as Record<
+        string,
+        unknown
+      >).fusion,
+      {}
+    );
+  }
 });
 
 test('resolveConfig: the queue block resolves per key; a malformed field keeps its default', () => {

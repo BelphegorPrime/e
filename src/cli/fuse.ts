@@ -23,6 +23,7 @@ import {
   EXHAUSTED_EXIT_CODE,
 } from '../engine/runs/runSpawn.js';
 import {
+  FUSION_KILL_GRACE_MS,
   runFanOut,
   type FanOutDeps,
   type FanOutEvent,
@@ -40,11 +41,16 @@ import {
   fusionRecordDirFor,
   type FusionState,
 } from '../engine/fusion/record.js';
+import {
+  fileHostSlots,
+  hostSlotsDir,
+  type HostSlots,
+} from '../engine/fusion/hostSlots.js';
 import { SPAWN_FLAGS } from '../shared/spawnArgs.js';
 import { env } from '../shared/utils/env.js';
 import { log } from '../shared/utils/log.js';
 import { errorMessage } from '../shared/utils/errors.js';
-import { CANCEL_GRACE_MS, type ReportLine } from './spawn.js';
+import type { ReportLine } from './spawn.js';
 
 /**
  * **`e fuse <profile> "<prompt>"`** (ADR-0019 sections 3, 8 and 9): one task
@@ -167,6 +173,13 @@ export function fuseEventLines(
         {
           level: 'warn',
           text: `${event.budget === 'candidatesMs' ? CANDIDATES_STAGE : '[fusion]'} ${event.budget} (${event.limitMs} ms) exhausted${event.stopped.length > 0 ? `: stopped ${event.stopped.join(', ')}` : ''}`,
+        },
+      ];
+    case 'host-slot-wait':
+      return [
+        {
+          level: 'info',
+          text: `${CANDIDATES_STAGE} ${event.candidate} ${event.agent}: waiting for a host slot (fusion.hostConcurrency ${event.limit}, shared with every e fuse on this host)`,
         },
       ];
     case 'settled':
@@ -358,11 +371,12 @@ const detachedLauncher: ChildLauncher = launch =>
   spawnChildProcess(launch, undefined, { detached: true });
 
 /**
- * How long `e fuse` waits for its children after a cancel before it kills
- * them outright: past each child's own grace, so a child that tears down in
- * time is never cut short (every `e spawn` exits by {@link CANCEL_GRACE_MS}).
+ * How long `e fuse` waits after a cancel before it kills its children and
+ * exits on its own: past the coordinator's own {@link FUSION_KILL_GRACE_MS},
+ * so this is the last resort of a coordinator that hangs itself, never the
+ * way a stubborn child is stopped.
  */
-export const FUSE_CANCEL_GRACE_MS = CANCEL_GRACE_MS + 30_000;
+export const FUSE_CANCEL_GRACE_MS = FUSION_KILL_GRACE_MS + 30_000;
 
 /** What {@link fuseCancelHandling} works on; the action gives it the process, tests fakes. */
 export interface FuseCancelDeps {
@@ -441,7 +455,15 @@ export async function runFuseCommand(
 
     // The Store's loop caps derive the fusion's default deadlines (ADR-0019
     // section 9), so a candidate's own caps always fire first.
-    const loop = readConfig(root).loop;
+    const config = readConfig(root);
+    const loop = config.loop;
+    // The host-wide bound, shared with every other `e fuse` on this host
+    // through the worktrees dir (ADR-0019 section 9).
+    const limit = config.fusion.hostConcurrency;
+    const hostSlots: HostSlots | undefined =
+      limit !== undefined
+        ? fileHostSlots(hostSlotsDir(worktreesDir), limit)
+        : undefined;
     const fanOut = await (deps.fanOut ?? runFanOut)(
       {
         git,
@@ -451,6 +473,7 @@ export async function runFuseCommand(
         passthroughArgs,
         keepSpool,
         ...(loop ? { loop } : {}),
+        ...(hostSlots ? { hostSlots } : {}),
       },
       { found, prompt, abort: deps.abort, onEvent }
     );

@@ -40,6 +40,7 @@ function state(overrides: Partial<InitState> = {}): InitState {
     currentLoop: DEFAULT_LOOP_CAPS,
     currentQueue: DEFAULT_QUEUE_CONFIG,
     currentDead: DEFAULT_DEAD_CONFIG,
+    currentFusion: {},
     existingEnvContent: undefined,
     runtimeCatalogs: RUNTIME_CATALOGS,
     gitPlatforms: [...GIT_PLATFORMS],
@@ -66,6 +67,7 @@ test('planInit: blank or unanswered answers keep the configured current', () => 
     loop: DEFAULT_LOOP_CAPS,
     queue: DEFAULT_QUEUE_CONFIG,
     dead: DEFAULT_DEAD_CONFIG,
+    fusion: {},
   });
 });
 
@@ -143,6 +145,7 @@ test('planInit: a named git platform is recorded in the config', () => {
     loop: DEFAULT_LOOP_CAPS,
     queue: DEFAULT_QUEUE_CONFIG,
     dead: DEFAULT_DEAD_CONFIG,
+    fusion: {},
   });
 });
 
@@ -489,9 +492,11 @@ test('planInit: a re-init carries the gate and the caps over instead of wiping t
       iterationTimeoutMs: 1_800_000,
       totalTimeoutMs: 14_400_000,
     },
+    currentFusion: { hostConcurrency: 4 },
   };
   const config = planInit(state(current), {}).config;
   assert.deepEqual(config.verify, current.currentVerify);
   assert.deepEqual(config.resources, current.currentResources);
   assert.deepEqual(config.loop, current.currentLoop);
+  assert.deepEqual(config.fusion, current.currentFusion);
 });

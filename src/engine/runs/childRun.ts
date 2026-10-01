@@ -35,6 +35,8 @@ import { spawnArgs } from '../../shared/spawnArgs.js';
 export interface ChildHandle {
   /** Resolves with the exit code once the process is gone (1 when it failed to start or was killed). */
   exited: Promise<number>;
+  /** The process id, when there is a process; a scripted child has none. */
+  pid?: number;
   /**
    * Asks the process to stop (a cancel, or a child that never became ready):
    * SIGTERM, on which a child tears down. `SIGKILL` is the last resort of a
@@ -121,6 +123,7 @@ export function spawnChildProcess(
   }).finally(() => fs.closeSync(out));
   return {
     exited,
+    ...(child.pid !== undefined ? { pid: child.pid } : {}),
     kill: (signal = 'SIGTERM') => {
       child.kill(signal);
     },

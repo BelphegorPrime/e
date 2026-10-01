@@ -25,6 +25,7 @@ import type {
   LoopCaps,
   QueueConfig,
   DeadConfig,
+  FusionHostConfig,
 } from '../../core/store/config.js';
 import {
   LOCAL_RUNTIMES,
@@ -118,6 +119,7 @@ export interface InitState {
   currentLoop: LoopCaps;
   currentQueue: QueueConfig;
   currentDead: DeadConfig;
+  currentFusion: FusionHostConfig;
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
   /**
@@ -206,6 +208,7 @@ export interface InitPlan {
     loop: LoopCaps;
     queue: QueueConfig;
     dead: DeadConfig;
+    fusion: FusionHostConfig;
   };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
@@ -442,6 +445,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       loop: state.currentLoop,
       queue: state.currentQueue,
       dead: state.currentDead,
+      fusion: state.currentFusion,
     },
     defaultHarness,
     models,

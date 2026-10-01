@@ -111,6 +111,7 @@ async function runInit(opts: InitCommandOptions): Promise<void> {
     currentLoop: config.loop,
     currentQueue: config.queue,
     currentDead: config.dead,
+    currentFusion: config.fusion,
     hardware: detectHardware(),
     force: opts.force,
   };

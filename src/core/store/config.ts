@@ -186,6 +186,20 @@ export const DEFAULT_DEAD_CONFIG: DeadConfig = {
   maxCount: 100,
 };
 
+/**
+ * The host's bounds on Fusion runs (ADR-0019 section 9), beside what each
+ * profile declares for itself.
+ */
+export type FusionHostConfig = {
+  /**
+   * Fusion candidates alive at once across every `e fuse` on this host, a
+   * positive integer; absent, only each profile's `maxConcurrency` bounds.
+   * A candidate past it waits for a slot, and the wait counts against its
+   * fusion's `candidatesMs`.
+   */
+  hostConcurrency?: number;
+};
+
 /** Host-only orchestration settings, persisted in `config.json`. */
 export type StoreConfig = {
   /** The favorite harness `e spawn` resolves to when no target is named. */
@@ -215,6 +229,8 @@ export type StoreConfig = {
   queue: QueueConfig;
   /** Bounds of the dead-request spool (ADR-0016 section 6). */
   dead: DeadConfig;
+  /** The host's bounds on Fusion runs (ADR-0019 section 9). */
+  fusion: FusionHostConfig;
 };
 
 export type ModelDataEntry = {
@@ -277,6 +293,18 @@ function resolveDead(raw: unknown): DeadConfig {
     maxAgeMs: positiveInt(block.maxAgeMs) ?? DEFAULT_DEAD_CONFIG.maxAgeMs,
     maxCount: positiveInt(block.maxCount) ?? DEFAULT_DEAD_CONFIG.maxCount,
   };
+}
+
+/** Resolves the `fusion` block per key; a malformed field is dropped. */
+function resolveFusionHost(raw: unknown): FusionHostConfig {
+  const block = asBlock(raw);
+  const hostConcurrency = positiveInt(block.hostConcurrency);
+  if (block.hostConcurrency !== undefined && hostConcurrency === undefined) {
+    log.warn(
+      'Ignoring fusion.hostConcurrency: expected a positive integer; no host-wide bound applies'
+    );
+  }
+  return hostConcurrency !== undefined ? { hostConcurrency } : {};
 }
 
 function resolveLoop(raw: unknown): LoopCaps {
@@ -422,6 +450,7 @@ export function resolveConfig(raw: unknown): StoreConfig {
     loop: resolveLoop(parsed.loop),
     queue: resolveQueue((parsed as { queue?: unknown }).queue),
     dead: resolveDead((parsed as { dead?: unknown }).dead),
+    fusion: resolveFusionHost((parsed as { fusion?: unknown }).fusion),
   };
 }
 

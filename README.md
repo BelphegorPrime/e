@@ -793,6 +793,22 @@ nothing more, and lets each tear down. The record of each fusion, with every
 Candidate result and patch, stays in `.e/runs/fusions/<id>/` for 14 days;
 `--keep-worktree` also keeps the runs' logs in the fusion's spool.
 
+A run the fusion stopped (a deadline or a cancel) that has not exited 90 s
+after its SIGTERM is killed outright, so a fusion ends at most that long past
+its `totalMs`. To bound candidates across every `e fuse` on the host, not just
+within one profile, set a host-wide limit in `.e/config.json` (`e init` keeps
+it):
+
+```jsonc
+{ "fusion": { "hostConcurrency": 4 } } // candidates alive at once, host-wide
+```
+
+A candidate that finds every host slot taken waits for one
+(`[candidates] cand-002 codex: waiting for a host slot ...`), and the wait
+counts against its fusion's `candidatesMs`. The slots are lease files under
+the worktrees dir; a lease whose `e fuse` died is reclaimed by the next one
+that needs the slot.
+
 ### `e` as an A2A agent
 
 `e serve` publishes an [Agent2Agent](https://a2a-protocol.org) agent card at
