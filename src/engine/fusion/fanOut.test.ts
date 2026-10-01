@@ -20,6 +20,7 @@ import type {
 import type { Sleep } from './clock.js';
 import { runFanOut, type FanOutDeps, type FanOutEvent } from './fanOut.js';
 import { fileHostSlots, hostSlotsDir } from './hostSlots.js';
+import { secretRedactor } from '../../core/fusion/redact.js';
 import { readCandidateResults, readFusionRecord } from './record.js';
 
 /*
@@ -1500,5 +1501,42 @@ test('runFanOut: a candidate that ignores its SIGTERM is killed outright once th
     // poll the test clock spends whole where a real exit would cut it short.
     const overrun = c.now().getTime() - c.start - 120_000;
     assert.ok(overrun >= 5_000 && overrun <= 6_000, `overran by ${overrun} ms`);
+  });
+});
+
+test('runFanOut: known secrets are out of what the record keeps of each candidate', async () => {
+  await withDirs(async dirs => {
+    const s = scripted({
+      'cand-001': { branch: 'e/claude/add-retries-1' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+    });
+    const git = new InMemoryGit({
+      headSha: 'pinned-sha',
+      currentBranch: 'main',
+      refCommits: tips,
+      diff: '+const key = "sk-live-0123456789";\n',
+    });
+    await runFanOut(
+      {
+        ...deps(dirs, s.launcher, git),
+        redact: secretRedactor({ OPENAI_API_KEY: 'sk-live-0123456789' }),
+      },
+      { found: found(['claude', 'codex']), prompt: 'Add retries' }
+    );
+    for (const id of ['cand-001', 'cand-002']) {
+      const patch = fs.readFileSync(
+        path.join(
+          dirs.storeDir,
+          'runs',
+          'fusions',
+          FUSION,
+          'candidates',
+          id,
+          'patch.diff'
+        ),
+        'utf8'
+      );
+      assert.equal(patch, '+const key = "[redacted:OPENAI_API_KEY]";\n');
+    }
   });
 });

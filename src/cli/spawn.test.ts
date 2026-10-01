@@ -9,6 +9,7 @@ import {
   manualSiblingRequest,
   registerSpawnCommand,
   resolveRemoteTarget,
+  cliEnvValues,
   resolveTriggerSpawn,
   inheritedProvenance,
   runSpawnCommand,
@@ -197,6 +198,48 @@ test('a home Store spans its run namespace over every repository its triggers na
       else process.env.HOME = home;
     }
   });
+});
+
+test('the provider policy and every env layer the container receives reach validateSpawn', () => {
+  withStore(root => {
+    assert.equal(gather(root, 'pi', ['hi']).providerPolicy, undefined);
+    fs.writeFileSync(
+      configFilePath(root),
+      JSON.stringify({ providers: { deny: ['gw.example'] } })
+    );
+    const envFile = path.join(root, 'extra.env');
+    fs.writeFileSync(envFile, 'OPENAI_BASE_URL=https://gw.example/v1\n');
+    const facts = gather(root, 'pi', ['hi'], {
+      envFile,
+      env: ['ANTHROPIC_BASE_URL=http://other.example'],
+    });
+    assert.deepEqual(facts.providerPolicy, { deny: ['gw.example'] });
+    assert.deepEqual(facts.containerEnvLayers, [
+      { OPENAI_BASE_URL: 'https://gw.example/v1' },
+      { ANTHROPIC_BASE_URL: 'http://other.example' },
+    ]);
+    // pi has no provider here: the --env-file's base URL is where it sends.
+    assert.throws(
+      () => validateSpawn(facts),
+      /agent "pi" sends to gw\.example: denied by "gw\.example"/
+    );
+  });
+});
+
+test('cliEnvValues: K=V as given, a bare K as the host value the engine passes', () => {
+  process.env.E_TEST_PASSED = 'from-host';
+  try {
+    assert.deepEqual(
+      cliEnvValues(['A=1', 'B=x=y', 'E_TEST_PASSED', 'UNSET_X']),
+      {
+        A: '1',
+        B: 'x=y',
+        E_TEST_PASSED: 'from-host',
+      }
+    );
+  } finally {
+    delete process.env.E_TEST_PASSED;
+  }
 });
 
 test('an unknown first positional is prompt text for the favorite harness', () => {
@@ -581,6 +624,24 @@ test('resolveRemoteTarget: a remote agent target yields the agent, the joined pr
     assert.throws(
       () => gatherSpawnFacts('remote', ['what is X'], { dir: root }),
       /remote A2A agent and has no harness/
+    );
+  });
+});
+
+test("resolveRemoteTarget: the provider policy is checked against the remote agent's URL", () => {
+  withStore(root => {
+    writeAgent(root, {
+      name: 'remote',
+      transport: 'a2a',
+      url: 'https://agents.example.com/a2a',
+    });
+    fs.writeFileSync(
+      configFilePath(root),
+      JSON.stringify({ providers: { allow: ['localhost'] } })
+    );
+    assert.throws(
+      () => resolveRemoteTarget('remote', ['hi'], { dir: root }),
+      /agent "remote" sends to agents\.example\.com: not in the allow list/
     );
   });
 });

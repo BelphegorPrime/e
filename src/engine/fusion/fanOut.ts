@@ -51,6 +51,7 @@ import {
   type RetryClassifier,
 } from '../../core/fusion/budget.js';
 import type { FoundFusionProfile } from '../../core/fusion/load.js';
+import type { Redactor } from '../../core/fusion/redact.js';
 import {
   isUsable,
   type CandidateEnd,
@@ -162,6 +163,8 @@ export interface FanOutDeps {
   hostSlots?: HostSlots;
   /** See {@link FUSION_KILL_GRACE_MS}. */
   killGraceMs?: number;
+  /** Known secrets out of every candidate's patch and files before they are kept (#180). */
+  redact?: Redactor;
   newFusionId?: () => string;
   /** Whether a recorded coordinator is still running; for reconciling old records. */
   isAlive?: (pid: number) => boolean;
@@ -444,7 +447,9 @@ export async function runFanOut(
     };
     let result: CandidateResult;
     try {
-      result = collectCandidateResult(deps.git, deps.storeDir, settled);
+      result = collectCandidateResult(deps.git, deps.storeDir, settled, {
+        ...(deps.redact ? { redact: deps.redact } : {}),
+      });
     } catch (err) {
       // One unreadable branch costs the fusion that candidate, not the rest.
       log.warn(

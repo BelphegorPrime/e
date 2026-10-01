@@ -21,6 +21,7 @@ import {
   type CandidateUsage,
   type ChangedFile,
 } from '../../core/fusion/result.js';
+import type { Redactor } from '../../core/fusion/redact.js';
 import type { Git } from '../../ports/git/index.js';
 import { prepareCandidateDir, writeCandidateResult } from './record.js';
 
@@ -84,10 +85,15 @@ export interface SettledCandidate {
 /** The reason of a candidate whose branch could not be read. */
 export const COLLECT_FAILED_REASON = 'aborted:collect-failed';
 
-/** The byte budgets of one collect; the defaults are {@link PATCH_MAX_BYTES} and {@link FILES_MAX_BYTES}. */
-export interface CollectBudgets {
+/** How one collect runs: its byte budgets ({@link PATCH_MAX_BYTES}, {@link FILES_MAX_BYTES} by default) and what it redacts. */
+export interface CollectOptions {
   patchMaxBytes?: number;
   filesMaxBytes?: number;
+  /**
+   * Known secrets out of the patch and files before they are kept (#180):
+   * what the record keeps is what the synthesizer will read.
+   */
+  redact?: Redactor;
 }
 
 /**
@@ -99,8 +105,9 @@ export function collectCandidateResult(
   git: Git,
   storeDir: string,
   settled: SettledCandidate,
-  budgets: CollectBudgets = {}
+  options: CollectOptions = {}
 ): CandidateResult {
+  const { redact } = options;
   const dir = prepareCandidateDir(storeDir, settled.fusion, settled.candidate);
   // The full ref for both questions, so a tag of the same name answers neither.
   const ref =
@@ -126,11 +133,13 @@ export function collectCandidateResult(
     const diff = git.diff(
       settled.base.sha,
       tip,
-      budgets.patchMaxBytes ?? PATCH_MAX_BYTES
+      options.patchMaxBytes ?? PATCH_MAX_BYTES
     );
-    fs.writeFileSync(path.join(dir, CANDIDATE_PATCH_FILE), diff.patch, {
-      mode: 0o600,
-    });
+    fs.writeFileSync(
+      path.join(dir, CANDIDATE_PATCH_FILE),
+      redact ? redact.bytes(withoutBinaryHunks(diff.patch)) : diff.patch,
+      { mode: 0o600 }
+    );
     patchTruncated = diff.truncated;
     const filesDir = path.join(dir, CANDIDATE_FILES_DIR);
     fs.mkdirSync(filesDir, { mode: 0o700 });
@@ -138,8 +147,9 @@ export function collectCandidateResult(
       tip,
       files.map(file => file.path),
       filesDir,
-      budgets.filesMaxBytes ?? FILES_MAX_BYTES
+      options.filesMaxBytes ?? FILES_MAX_BYTES
     ).truncated;
+    if (redact && !redact.empty) redactTree(filesDir, redact);
   }
 
   const { agent } = settled;
@@ -193,4 +203,49 @@ export function collectCandidateResult(
   if (settled.verify !== undefined) result.verify = { ...settled.verify };
   writeCandidateResult(dir, result);
   return result;
+}
+
+/** Rewrites every file under `dir` that holds a known secret, in place. */
+function redactTree(dir: string, redact: Redactor): void {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      redactTree(file, redact);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const content = fs.readFileSync(file);
+    const clean = redact.bytes(content);
+    if (clean !== content) fs.writeFileSync(file, clean);
+  }
+}
+
+/** Where git starts a binary file's base85 payload in a `--binary` diff. */
+const BINARY_HUNK = 'GIT binary patch\n';
+/** Where the next file's diff starts, which ends a binary payload. */
+const NEXT_FILE = '\ndiff --git ';
+
+/**
+ * The patch with every binary payload replaced by a note: base85 hides a
+ * secret from any redaction, and the same file is in `files/`, redacted, for
+ * whoever reads it. Text hunks are untouched.
+ */
+export function withoutBinaryHunks(patch: Buffer): Buffer {
+  const text = patch.toString('latin1');
+  if (!text.includes(BINARY_HUNK)) return patch;
+  let out = '';
+  let from = 0;
+  for (
+    let at = text.indexOf(BINARY_HUNK);
+    at >= 0;
+    at = text.indexOf(BINARY_HUNK, from)
+  ) {
+    const end = text.indexOf(NEXT_FILE, at);
+    out +=
+      text.slice(from, at) +
+      'Binary content omitted: the file is in files/, redacted.\n';
+    from = end < 0 ? text.length : end + 1;
+  }
+  out += text.slice(from);
+  return Buffer.from(out, 'latin1');
 }

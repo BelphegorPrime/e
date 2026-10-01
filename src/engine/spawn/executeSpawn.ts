@@ -43,7 +43,7 @@ import {
 } from '../../core/harness/pin.js';
 import { log } from '../../shared/utils/log.js';
 import { GLOBAL_BASE_URL_ENV } from '../../core/harness/renderEnvTemplate.js';
-import { secretsToRedact } from '../runs/redactSession.js';
+import { secretsToRedact } from '../../shared/utils/secrets.js';
 import { errorMessage } from '../../shared/utils/errors.js';
 import { openRunLedger, type RunLedger } from '../queue/ledger.js';
 import { Env } from '../../shared/utils/env.js';

@@ -9,6 +9,10 @@ import {
   modelsFilePath,
 } from './paths.js';
 import { log } from '../../shared/utils/log.js';
+import {
+  parseProviderPolicy,
+  type ProviderPolicy,
+} from '../policy/providerPolicy.js';
 
 /**
  * The Store's **state files** (host-only): `config.json` orchestration
@@ -231,6 +235,11 @@ export type StoreConfig = {
   dead: DeadConfig;
   /** The host's bounds on Fusion runs (ADR-0019 section 9). */
   fusion: FusionHostConfig;
+  /**
+   * Where this Store's code and prompts may go (#180): checked before every
+   * spawn and every fusion. Absent, nothing is refused; malformed, everything.
+   */
+  providers?: ProviderPolicy;
 };
 
 export type ModelDataEntry = {
@@ -305,6 +314,20 @@ function resolveFusionHost(raw: unknown): FusionHostConfig {
     );
   }
   return hostConcurrency !== undefined ? { hostConcurrency } : {};
+}
+
+/**
+ * The `providers` block, as a key to spread: absent stays absent, and a
+ * malformed one is kept as invalid - it fails closed, never dropped.
+ */
+function providersKey(raw: unknown): { providers?: ProviderPolicy } {
+  const providers = parseProviderPolicy(raw);
+  if (providers?.invalid !== undefined) {
+    log.warn(
+      `config.json "providers" is invalid (${providers.invalid}); every run is refused until it is fixed`
+    );
+  }
+  return providers ? { providers } : {};
 }
 
 function resolveLoop(raw: unknown): LoopCaps {
@@ -451,6 +474,9 @@ export function resolveConfig(raw: unknown): StoreConfig {
     queue: resolveQueue((parsed as { queue?: unknown }).queue),
     dead: resolveDead((parsed as { dead?: unknown }).dead),
     fusion: resolveFusionHost((parsed as { fusion?: unknown }).fusion),
+    // Spread like `verify`: a Store with no policy resolves to the object it
+    // did before this key existed.
+    ...providersKey((parsed as { providers?: unknown }).providers),
   };
 }
 

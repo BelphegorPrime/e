@@ -12,6 +12,10 @@
  * effects the plan names (ADR-0008).
  */
 
+import {
+  assertProviderPolicy,
+  type ProviderPolicy,
+} from '../../core/policy/providerPolicy.js';
 import type { HarnessAgent } from '../../core/agent/index.js';
 import type { Harness } from '../../core/harness/index.js';
 import {
@@ -197,6 +201,14 @@ export interface SpawnFacts {
   readonly harness: Harness;
   /** Parsed `.e/.env` (secrets resolved by name from here; never baked). */
   readonly storeEnv: Readonly<Record<string, string>>;
+  /** Where the Store lets code and prompts go (`config.json` `providers`, #180); absent, anywhere. */
+  readonly providerPolicy?: ProviderPolicy;
+  /**
+   * What the container receives beyond the filtered Store env - the
+   * `--env-file` layer and `-e` - as values: a global base URL from them is
+   * a destination too. Gathered only under a policy.
+   */
+  readonly containerEnvLayers?: readonly Readonly<Record<string, string>>[];
   /** The requested `--mcp` servers, already resolved from disk (existence checked). */
   readonly mcpServers: readonly McpServer[];
   /** Per-run `--skill` names (existence checked on disk during gather). */
@@ -407,6 +419,20 @@ function hasTerminalForTui(
 export function validateSpawn(facts: SpawnFacts): void {
   const { agent, harness } = facts;
   const caps = harnessCapabilities(harness);
+
+  // Where the repository and the prompt would go, against where the Store
+  // lets them go (#180): refused before any image or worktree exists.
+  assertProviderPolicy(
+    facts.providerPolicy,
+    [{ role: 'agent', agent }],
+    {
+      store: facts.storeEnv,
+      ...(facts.containerEnvLayers
+        ? { container: facts.containerEnvLayers }
+        : {}),
+    },
+    `this run of "${agent.name}"`
+  );
 
   // An interactive run attaches the harness TUI to the host terminal. A
   // script or CI job that lost its prompt has no terminal, so it is refused

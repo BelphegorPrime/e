@@ -923,6 +923,53 @@ test("runFuseCommand: config.json's fusion.hostConcurrency bounds the fan-out ho
   });
 });
 
+test('runFuseCommand: the provider policy refuses a profile before anything starts, naming every refused role', async () => {
+  await withStore(async root => {
+    fs.writeFileSync(
+      path.join(root, '.e', 'config.json'),
+      JSON.stringify({ providers: { deny: ['harness:codex'] } })
+    );
+    const printed: ReportLine[] = [];
+    const code = await runFuseCommand(
+      'coding',
+      ['go'],
+      { dir: root },
+      refusingDeps(printed)
+    );
+    assert.equal(code, 1);
+    assert.match(
+      printed[0].text,
+      /refuses fusion profile "coding":\n {2}candidate "codex" sends to harness:codex: denied by "harness:codex"/
+    );
+    assert.doesNotMatch(printed[0].text, /claudeCode/);
+  });
+});
+
+test("runFuseCommand: the stages get a redactor for the Store's secrets, and an allowed profile runs", async () => {
+  await withStore(async root => {
+    fs.writeFileSync(
+      path.join(root, '.e', 'config.json'),
+      JSON.stringify({
+        providers: {
+          allow: ['harness:claudeCode', 'harness:codex'],
+        },
+      })
+    );
+    fs.writeFileSync(
+      path.join(root, '.e', '.env'),
+      'GITHUB_TOKEN=ghp_abcdefghij\n'
+    );
+    let redacted: string | undefined;
+    const deps = refusingDeps([]);
+    deps.fanOut = async d => {
+      redacted = d.redact?.text('token ghp_abcdefghij');
+      return fanOut({ state: 'canceled' });
+    };
+    await runFuseCommand('coding', ['go'], { dir: root }, deps);
+    assert.equal(redacted, 'token [redacted:GITHUB_TOKEN]');
+  });
+});
+
 test("runFuseCommand: the Store's loop caps reach the fan-out, which derives its deadlines from them", async () => {
   await withStore(async root => {
     fs.writeFileSync(

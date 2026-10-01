@@ -21,33 +21,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { errorMessage } from '../../shared/utils/errors.js';
 import { log } from '../../shared/utils/log.js';
 
-/**
- * The shortest value treated as a secret. Shorter ones (`1`, `true`, a port)
- * would mask ordinary text all over the transcript; no API key is that short.
- */
-export const MIN_SECRET_LENGTH = 8;
-
 /** The first bytes of every SQLite 3 database file. */
 const SQLITE_MAGIC = Buffer.from('SQLite format 3\0', 'latin1');
 
 /** Files SQLite owns beside a database, handled by opening the database. */
 const SQLITE_SIDE_FILE = /-(wal|shm|journal)$/;
-
-/**
- * The values to mask: unique, at least {@link MIN_SECRET_LENGTH} long, and
- * longest first, so a value that contains another is masked whole.
- */
-export function secretsToRedact(
-  values: Iterable<string | undefined>
-): string[] {
-  const unique = new Set<string>();
-  for (const value of values) {
-    if (value !== undefined && value.length >= MIN_SECRET_LENGTH) {
-      unique.add(value);
-    }
-  }
-  return [...unique].sort((a, b) => b.length - a.length);
-}
 
 /** `value`'s mask: `*` of the same byte length. */
 function maskOf(value: Buffer): Buffer {

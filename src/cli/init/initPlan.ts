@@ -27,6 +27,7 @@ import type {
   DeadConfig,
   FusionHostConfig,
 } from '../../core/store/config.js';
+import type { ProviderPolicy } from '../../core/policy/providerPolicy.js';
 import {
   LOCAL_RUNTIMES,
   composeModelCatalog,
@@ -120,6 +121,8 @@ export interface InitState {
   currentQueue: QueueConfig;
   currentDead: DeadConfig;
   currentFusion: FusionHostConfig;
+  /** The provider policy (#180); a re-init must never drop it. */
+  currentProviders?: ProviderPolicy;
   /** Detected GPU vendor (resolved by the executor, so planning stays pure). */
   hardware: HardwareVendor;
   /**
@@ -209,6 +212,7 @@ export interface InitPlan {
     queue: QueueConfig;
     dead: DeadConfig;
     fusion: FusionHostConfig;
+    providers?: ProviderPolicy;
   };
   /** Resolved choices (post-answers; blank keeps the configured current). */
   defaultHarness: string;
@@ -446,6 +450,7 @@ export function planInit(state: InitState, answers: InitAnswers): InitPlan {
       queue: state.currentQueue,
       dead: state.currentDead,
       fusion: state.currentFusion,
+      ...(state.currentProviders ? { providers: state.currentProviders } : {}),
     },
     defaultHarness,
     models,

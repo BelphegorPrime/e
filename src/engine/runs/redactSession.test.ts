@@ -4,11 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import {
-  MIN_SECRET_LENGTH,
-  redactSessionDir,
-  secretsToRedact,
-} from './redactSession.js';
+import { redactSessionDir } from './redactSession.js';
 
 // #205: every harness records tool output in its session, and the session
 // outlives the run in the Store (ADR-0017). An agent that ran `env` wrote the
@@ -42,14 +38,6 @@ function withDir(fn: (dir: string) => void): void {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
-
-test('secretsToRedact: unique, long enough to be a secret, longest first', () => {
-  assert.deepEqual(
-    secretsToRedact([KEY, undefined, '', '1', 'true', KEY, `${KEY}-longer`]),
-    [`${KEY}-longer`, KEY]
-  );
-  assert.equal(MIN_SECRET_LENGTH, 8);
-});
 
 test('redactSessionDir: a JSONL transcript keeps its shape, the values are masked', () => {
   withDir(dir => {

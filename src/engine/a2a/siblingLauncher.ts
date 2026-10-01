@@ -15,6 +15,8 @@ import { spawnChildProcess, type ChildLauncher } from '../runs/childRun.js';
 import { findAgent, isRemoteAgent } from '../../core/agent/index.js';
 import { remoteSiblingProcess } from './remoteSibling.js';
 import { A2aClient } from './client.js';
+import { assertProviderPolicy } from '../../core/policy/providerPolicy.js';
+import { readConfig } from '../../core/store/config.js';
 
 /**
  * The production sibling launcher (ADR-0013, ADR-0015): a request for a
@@ -29,6 +31,9 @@ export function productionSiblingLauncher(
   root: string | undefined,
   storeEnv: Record<string, string>
 ): ChildLauncher {
+  // A harness sibling is its own `e spawn`, which checks itself; a remote
+  // one is answered here, so the Store's provider policy is checked here.
+  const policy = readConfig(root).providers;
   return launch => {
     let agent;
     try {
@@ -37,6 +42,12 @@ export function productionSiblingLauncher(
       agent = undefined;
     }
     if (agent && isRemoteAgent(agent)) {
+      assertProviderPolicy(
+        policy,
+        [{ role: 'sibling', agent }],
+        { store: storeEnv },
+        `sibling ${launch.request.id} of "${agent.name}"`
+      );
       return remoteSiblingProcess({
         agent,
         request: launch.request,

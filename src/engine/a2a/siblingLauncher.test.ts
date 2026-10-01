@@ -110,3 +110,24 @@ test('a harness agent in the Store also takes the child-process path', () => {
     );
   });
 });
+
+test('a remote sibling the provider policy refuses is never contacted', async () => {
+  await withStore(async (root, spool) => {
+    fs.writeFileSync(
+      path.join(root, '.e', 'config.json'),
+      JSON.stringify({ providers: { deny: ['127.0.0.1'] } })
+    );
+    const launch = productionSiblingLauncher(root, {});
+    assert.throws(
+      () =>
+        launch({
+          request: request('remote-researcher'),
+          args: ['spawn', 'remote-researcher'],
+          env: {},
+          logFile: childLogFile(spool, 'sib-001'),
+          spoolDir: spool,
+        }),
+      /refuses sibling sib-001 of "remote-researcher":\n {2}sibling "remote-researcher" sends to 127\.0\.0\.1: denied by "127\.0\.0\.1"/
+    );
+  });
+});

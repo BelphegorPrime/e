@@ -8,9 +8,9 @@ GitHub issues exist (see `docs/agents/issue-tracker.md`).
 
 ## Documents
 
-| File                                     | What it is                                                                                                                              | Status                                            |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| [`attack-surface.md`](attack-surface.md) | The written attack-surface review: four execution zones (container, store, compose stack, `serve` BFF), threat model, recommended fixes | Review draft; refreshed 2026-09-11 and 2026-09-13 |
+| File                                     | What it is                                                                                                                                                               | Status                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [`attack-surface.md`](attack-surface.md) | The written attack-surface review: four execution zones (container, store, compose stack, `serve` BFF), threat model, the judge and fusion data flows, recommended fixes | Review draft; refreshed 2026-09-11, 2026-09-13 and 2026-10-01 (fusion, #180) |
 
 ## Findings (write-up first, 2026-09-13)
 

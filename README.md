@@ -317,7 +317,7 @@ flowchart TB
         portM["runtime - git - github - hardware"]
     end
     subgraph core["<b>core/</b> - domain vocabulary"]
-        coreM["agent - harness - skill - mcp - store<br/>identity - mount - modelStatus - localRuntimes"]
+        coreM["agent - harness - skill - mcp - store - fusion - policy<br/>trigger - identity - mount - modelStatus - localRuntimes"]
     end
     subgraph sidecars["<b>sidecars/</b> - code shipped into containers"]
         sideM["broker - egress<br/>each: contract + server + render"]
@@ -808,6 +808,25 @@ A candidate that finds every host slot taken waits for one
 counts against its fusion's `candidatesMs`. The slots are lease files under
 the worktrees dir; a lease whose `e fuse` died is reclaimed by the next one
 that needs the slot.
+
+A fusion sends the repository and the prompt to every candidate's provider,
+and every candidate's work to the synthesizer's. To keep a sensitive
+repository's code away from some providers, name where it may go in
+`.e/config.json`; every `e spawn` and every `e fuse` is checked before
+anything is built, and a fusion's candidates and synthesizer all at once:
+
+```jsonc
+{
+  "providers": {
+    "allow": ["*.anthropic.com", "localhost", "harness:claudeCode"], // host, *.domain, harness:<name>, *
+    "deny": ["api.example.com"], // deny wins
+  },
+}
+```
+
+The values of secret-looking keys in `.e/.env` are redacted from what a
+fusion keeps and hands the synthesizer. The data flow and its threat model
+are in [docs/security/attack-surface.md](docs/security/attack-surface.md).
 
 Whether a fusion beats a single Agent on your tasks is measured, not assumed:
 `node scripts/eval/eval.mjs run <suite>` runs benchmark tasks under single and

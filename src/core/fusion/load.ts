@@ -118,3 +118,23 @@ export function findFusionProfile(
   }
   return { profile, agents };
 }
+
+/**
+ * Every Agent of a found profile with the role it fills, candidates in
+ * profile order and the synthesizer last: what a check over the whole
+ * fusion (the provider policy, #180) walks.
+ */
+export function fusionRoles(
+  found: FoundFusionProfile
+): { role: 'candidate' | 'synthesizer'; agent: HarnessAgent }[] {
+  return [
+    ...found.profile.candidates.map(name => ({
+      role: 'candidate' as const,
+      agent: found.agents.get(name)!,
+    })),
+    {
+      role: 'synthesizer' as const,
+      agent: found.agents.get(found.profile.synthesizer)!,
+    },
+  ];
+}

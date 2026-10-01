@@ -212,6 +212,51 @@ test('isInteractiveRun: a whitespace-only prompt is no prompt', () => {
 
 // --- validateSpawn (pure, fail-fast) ---
 
+test('validateSpawn: the provider policy refuses an Agent whose destination it denies, before anything is built', () => {
+  const agent = {
+    name: 'codex',
+    harness: 'claudeCode',
+    provider: {
+      // Claude Code sends to the literal baseUrl, whatever baseUrlEnv says.
+      baseUrl: 'https://api.example.com/v1',
+      baseUrlEnv: 'CODEX_BASE_URL',
+      model: 'm',
+      protocol: 'anthropic-messages' as const,
+      apiKeyEnv: 'K',
+    },
+  };
+  const denied = facts({
+    agent,
+    storeEnv: { CODEX_BASE_URL: 'https://allowed.example/v1' },
+    providerPolicy: { deny: ['*.example.com'] },
+  });
+  assert.throws(
+    () => validateSpawn(denied),
+    /refuses this run of "codex":\n {2}agent "codex" sends to api\.example\.com: denied by "\*\.example\.com"/
+  );
+  // The same Agent, allowed; and no policy at all.
+  assert.doesNotThrow(() =>
+    validateSpawn({ ...denied, providerPolicy: { allow: ['api.example.com'] } })
+  );
+  assert.doesNotThrow(() =>
+    validateSpawn({ ...denied, providerPolicy: undefined })
+  );
+  // An Agent without a provider is its harness's default, unless a global
+  // base URL reaches the container.
+  assert.throws(
+    () => validateSpawn(facts({ providerPolicy: { allow: ['localhost'] } })),
+    /agent "demo" sends to harness:claudeCode: not in the allow list/
+  );
+  assert.doesNotThrow(() =>
+    validateSpawn(
+      facts({
+        providerPolicy: { allow: ['localhost'] },
+        containerEnvLayers: [{ ANTHROPIC_BASE_URL: 'http://localhost:20128' }],
+      })
+    )
+  );
+});
+
 test('validateSpawn: rejects a provider protocol the harness does not speak', () => {
   const f = facts({
     agent: {

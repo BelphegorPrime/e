@@ -568,9 +568,7 @@ export function renderPiModelsJson(
   provider: Provider,
   storeEnv: Record<string, string>
 ): string {
-  const baseUrl = provider.baseUrlEnv
-    ? storeEnv[provider.baseUrlEnv]
-    : provider.baseUrl;
+  const baseUrl = providerBaseUrl('pi', provider, storeEnv);
   // By name, braces included: pi resolves `${NAME}` from the process env at
   // request time, and takes a bare `NAME` as the literal key.
   const apiKey = `\${${provider.apiKeyEnv}}`;
@@ -722,8 +720,7 @@ export function renderOpencodeConfig(
   provider: Provider,
   storeEnv: Record<string, string>
 ): string {
-  const baseURL =
-    (provider.baseUrlEnv && storeEnv[provider.baseUrlEnv]) || provider.baseUrl;
+  const baseURL = providerBaseUrl('opencode', provider, storeEnv);
   const model = `${OPENCODE_PROVIDER_ID}/${provider.model}`;
   const config = {
     $schema: 'https://opencode.ai/config.json',
@@ -898,5 +895,31 @@ export class EnvFileRenderer {
     });
     log.debug(`Rendered ${lines.length} env lines for ${subject}`);
     return lines.join('\n') + '\n';
+  }
+}
+
+/**
+ * The base URL a harness's rendered config sends to for `provider`, as the
+ * renderers above resolve it: Claude Code and Codex take the literal
+ * `baseUrl`; pi takes the `baseUrlEnv` value from the Store's env when it
+ * names one (`undefined` when that is unset); opencode takes that value and
+ * falls back to `baseUrl`. The one place this is decided, so what the
+ * provider policy checks (#180) is where the run goes.
+ */
+export function providerBaseUrl(
+  harness: string,
+  provider: Provider,
+  storeEnv: Readonly<Record<string, string>>
+): string | undefined {
+  const fromEnv = provider.baseUrlEnv
+    ? storeEnv[provider.baseUrlEnv]
+    : undefined;
+  switch (harness) {
+    case 'pi':
+      return provider.baseUrlEnv ? fromEnv : provider.baseUrl;
+    case 'opencode':
+      return fromEnv || provider.baseUrl;
+    default:
+      return provider.baseUrl;
   }
 }

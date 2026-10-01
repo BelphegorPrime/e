@@ -493,10 +493,12 @@ test('planInit: a re-init carries the gate and the caps over instead of wiping t
       totalTimeoutMs: 14_400_000,
     },
     currentFusion: { hostConcurrency: 4 },
+    currentProviders: { allow: ['*.anthropic.com'] },
   };
   const config = planInit(state(current), {}).config;
   assert.deepEqual(config.verify, current.currentVerify);
   assert.deepEqual(config.resources, current.currentResources);
   assert.deepEqual(config.loop, current.currentLoop);
   assert.deepEqual(config.fusion, current.currentFusion);
+  assert.deepEqual(config.providers, current.currentProviders);
 });

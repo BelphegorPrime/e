@@ -33,6 +33,7 @@ import {
   type RemoteA2aAgent,
 } from '../core/agent/index.js';
 import { runRemoteAgent } from '../engine/a2a/remoteSpawn.js';
+import { assertProviderPolicy } from '../core/policy/providerPolicy.js';
 import { readDotenvFile } from '../shared/utils/dotenv.js';
 import {
   ensureShippedSkill,
@@ -310,6 +311,15 @@ export function gatherSpawnFacts(
     agent,
     harness,
     storeEnv,
+    ...(config.providers
+      ? {
+          providerPolicy: config.providers,
+          containerEnvLayers: [
+            readDotenvFile(triggered ? undefined : opts.envFile),
+            cliEnvValues(opts.env ?? []),
+          ],
+        }
+      : {}),
     mcpServers,
     perRunSkills,
     bakedSkills,
@@ -485,11 +495,36 @@ export function resolveRemoteTarget(
   const agent = findAgent(resolved.agentTarget, root);
   if (!isRemoteAgent(agent)) return undefined;
   const baseEnvPath = root !== undefined ? envFilePath(root) : undefined;
+  const storeEnv = readDotenvFile(baseEnvPath);
+  // The prompt goes to the agent's URL: the Store's policy decides first.
+  assertProviderPolicy(
+    readConfig(root).providers,
+    [{ role: 'agent', agent }],
+    { store: storeEnv },
+    `this run of "${agent.name}"`
+  );
   return {
     agent,
     prompt: resolved.prompt.join(' '),
-    storeEnv: readDotenvFile(baseEnvPath),
+    storeEnv,
   };
+}
+
+/**
+ * The values `-e` hands the container: `K=V` as given, a bare `K` as the
+ * host's own value, which is what the engine passes for it.
+ */
+export function cliEnvValues(
+  entries: readonly string[]
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const entry of entries) {
+    const eq = entry.indexOf('=');
+    if (eq > 0) values[entry.slice(0, eq)] = entry.slice(eq + 1);
+    else if (process.env[entry] !== undefined)
+      values[entry] = process.env[entry]!;
+  }
+  return values;
 }
 
 /**

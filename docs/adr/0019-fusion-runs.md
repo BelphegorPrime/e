@@ -592,13 +592,40 @@ remote branch, for a fusion as for any run.
 
 ### 10. Security boundaries
 
-The threat model belongs to #180; the lines it must work within are these:
+The threat model is #180's, written down with its data-flow diagram in
+`docs/security/attack-surface.md` ("Fusion: one task, several providers").
+The lines it works within:
 
 - **A profile is consent to disclosure.** The prompt and the repository go to
   every candidate's provider, and every candidate's patch goes to the
   synthesizer's. A **provider policy** check sits beside the profile
   validation of section 2, pure, evaluated before anything is built, so a
   profile whose provider set a Store forbids is refused rather than run.
+  Decided (#180): `config.json` `providers: { allow, deny }` of host patterns
+  (`api.anthropic.com`, `*.example.com`), `harness:<name>`, or `*`. An
+  Agent's destinations are where its run sends: a Remote agent's URL; with a
+  provider, the base URL its harness's config adapter renders
+  (`providerBaseUrl`, the one place that is decided); without one, every
+  global base URL the container receives from `.e/.env`, `--env-file` or
+  `-e`, else `harness:<name>`. Deny wins, an allow list admits only what it
+  names, and it fails closed: a malformed block refuses every run, a
+  destination that does not resolve is refused under any policy. It is
+  checked for **every** run too - `e spawn` of a harness Agent in
+  `validateSpawn`, of a Remote agent and a Remote sibling where they are
+  answered - since a policy a plain spawn could bypass would protect
+  nothing; `e fuse` checks every candidate and the synthesizer at once,
+  before the fan-out.
+- **Known secrets stay out of the record and the material** (decided, #180).
+  Every value of a secret-looking key in the Store's `.env` and the
+  `--env-file` and of every Agent's `apiKeyEnv`, 8 characters or more, is
+  replaced by `[redacted:<NAME>]` in a candidate's patch and files before the
+  record keeps them, and in `synthesis.json`'s `error`; a binary payload is
+  dropped from the patch, its file being in `files/`, redacted. Base URLs and
+  model ids are configuration and stay, so code that mentions them is not
+  mangled.
+- **The synthesizer weighs the work, not the brand** (decided, #180): its
+  copy of each `result.json` has no `provider` and no `harness`; the record
+  keeps both.
 - **Credentials stay per Run.** Each candidate is its own run whose plan
   renders its own env file (ADR-0008), so a provider key reaches only the
   containers of an Agent that names it. The synthesis container receives no
@@ -607,7 +634,8 @@ The threat model belongs to #180; the lines it must work within are these:
   two manual runs do; per-run keys are the one-shot trigger path's (ADR-0016
   section 13), which a fusion is not (section 11).
 - **Candidate output is untrusted input** to the synthesizer (section 7): a
-  mounted file, never prompt text.
+  mounted file, never prompt text. The host writes a candidate's files but
+  never follows a link among them.
 - **At rest**: the record is 0600/0700, git-ignored, never exported, pruned at
   14 days (section 6); the logs, which hold tool output, are not kept.
 

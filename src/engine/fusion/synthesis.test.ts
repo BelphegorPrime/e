@@ -7,6 +7,7 @@ import type { HarnessAgent } from '../../core/agent/agent.js';
 import type { FoundFusionProfile } from '../../core/fusion/load.js';
 import { parseFusionMaterial } from '../../core/fusion/material.js';
 import type { CandidateResult } from '../../core/fusion/result.js';
+import { secretRedactor } from '../../core/fusion/redact.js';
 import { InMemoryGit } from '../../ports/git/memory.js';
 import { writeStatus } from '../../sidecars/broker/contract/spool.js';
 import { Env } from '../../shared/utils/env.js';
@@ -56,6 +57,8 @@ const found: FoundFusionProfile = {
 
 /** How each scripted child ends: candidates by id, the synthesis as `syn-001`. */
 interface Ending {
+  /** What a child that dies before its branch reports as its error. */
+  error?: string;
   branch?: string;
   exitCode?: number;
   pullRequestUrl?: string;
@@ -90,7 +93,7 @@ function launcher(endings: Record<string, Ending>) {
       if (ending.branch === undefined) {
         writeStatus(l.spoolDir, id, {
           status: 'failed',
-          error: 'x',
+          error: ending.error ?? 'x',
           updatedAt: at(),
         });
         resolve(ending.exitCode ?? 1);
@@ -218,6 +221,10 @@ test('runSynthesis: the synthesizer runs once, from the pinned base, with every 
               )
             ) as CandidateResult;
             assert.equal(result.candidate, id);
+            // The work, not whose it was (#180).
+            assert.equal('provider' in result, false);
+            assert.equal('harness' in result, false);
+            assert.equal(typeof result.agent, 'string');
           }
           assert.equal(
             fs.readFileSync(
@@ -330,6 +337,33 @@ test('runSynthesis: a synthesis that dies before its branch ends the fusion with
       assert.equal(result.exitCode, 1);
       assert.equal(result.branch, undefined);
       assert.equal(result.pushed, false);
+    }
+  );
+});
+
+test("runSynthesis: a known secret in the run's own failure is out of synthesis.json", async () => {
+  await withFusion(
+    {
+      'cand-001': { branch: 'e/claude/add-retries-1' },
+      'cand-002': { branch: 'e/codex/add-retries-1' },
+      'syn-001': {
+        exitCode: 1,
+        error: 'exited 1: curl -H "Authorization: Bearer sk-live-0123456789"',
+      },
+    },
+    async ({ deps, fanOut, storeDir }) => {
+      await runSynthesis(
+        {
+          ...deps,
+          redact: secretRedactor({ OPENAI_API_KEY: 'sk-live-0123456789' }),
+        },
+        { fanOut }
+      );
+      const synthesis = readSynthesisRecord(storeDir, FUSION)!;
+      assert.equal(
+        synthesis.error,
+        'exited 1: curl -H "Authorization: Bearer [redacted:OPENAI_API_KEY]"'
+      );
     }
   );
 });

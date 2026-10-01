@@ -4,7 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { InMemoryGit } from '../../ports/git/memory.js';
-import { collectCandidateResult, type SettledCandidate } from './collect.js';
+import { secretRedactor } from '../../core/fusion/redact.js';
+import {
+  collectCandidateResult,
+  withoutBinaryHunks,
+  type SettledCandidate,
+} from './collect.js';
 import { readCandidateResults } from './record.js';
 
 /*
@@ -263,4 +268,73 @@ test('collectCandidateResult: an Agent without a provider, a retry, reported usa
     assert.equal(result.retryOf, 'cand-001');
     assert.deepEqual(result.usage, { outputTokens: 900 });
   });
+});
+
+test('collectCandidateResult: known secrets are out of the patch and the files before they are kept', () => {
+  withStore(storeDir => {
+    const key = 'sk-live-0123456789';
+    const git = gitWithWork({
+      diff: `diff --git a/.env b/.env\n+OPENAI_API_KEY=${key}\n`,
+      files: {
+        tip00000: {
+          'src/retry.ts': `const key = '${key}';\n`,
+          'logo.png': 'PNG',
+        },
+      },
+    });
+    collectCandidateResult(git, storeDir, settled(), {
+      redact: secretRedactor({ OPENAI_API_KEY: key }),
+    });
+    const dir = path.join(
+      storeDir,
+      'runs',
+      'fusions',
+      FUSION,
+      'candidates',
+      'cand-002'
+    );
+    const patch = fs.readFileSync(path.join(dir, 'patch.diff'), 'utf8');
+    assert.equal(patch.includes(key), false);
+    assert.match(patch, /\[redacted:OPENAI_API_KEY\]/);
+    assert.equal(
+      fs.readFileSync(path.join(dir, 'files', 'src', 'retry.ts'), 'utf8'),
+      "const key = '[redacted:OPENAI_API_KEY]';\n"
+    );
+    assert.equal(
+      fs.readFileSync(path.join(dir, 'files', 'logo.png'), 'utf8'),
+      'PNG'
+    );
+  });
+});
+
+test('withoutBinaryHunks: a binary payload, where base85 would hide a secret, becomes a note', () => {
+  const patch = [
+    'diff --git a/a.txt b/a.txt',
+    '+text',
+    'diff --git a/blob.bin b/blob.bin',
+    'GIT binary patch',
+    'literal 12',
+    'zcmZ?wbhEHbRA2xA',
+    '',
+    'literal 0',
+    'HcmV?d00001',
+    '',
+    'diff --git a/b.txt b/b.txt',
+    '+more',
+    '',
+  ].join('\n');
+  assert.equal(
+    withoutBinaryHunks(Buffer.from(patch)).toString(),
+    [
+      'diff --git a/a.txt b/a.txt',
+      '+text',
+      'diff --git a/blob.bin b/blob.bin',
+      'Binary content omitted: the file is in files/, redacted.',
+      'diff --git a/b.txt b/b.txt',
+      '+more',
+      '',
+    ].join('\n')
+  );
+  const plain = Buffer.from('diff --git a/x b/x\n+x\n');
+  assert.equal(withoutBinaryHunks(plain), plain);
 });

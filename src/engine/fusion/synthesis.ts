@@ -35,6 +35,11 @@ import {
   materialSummary,
 } from '../../core/fusion/material.js';
 import {
+  CANDIDATE_RESULT_FILE,
+  type CandidateResult,
+} from '../../core/fusion/result.js';
+import type { Redactor } from '../../core/fusion/redact.js';
+import {
   ensureSpool,
   nextRequestId,
   readStatus,
@@ -100,6 +105,8 @@ export interface SynthesisDeps {
   sleep?: Sleep;
   /** See {@link FUSION_KILL_GRACE_MS}. */
   killGraceMs?: number;
+  /** Known secrets out of what `synthesis.json` keeps of the run's own failure (#180). */
+  redact?: Redactor;
 }
 
 /** What one synthesis is asked. */
@@ -340,7 +347,9 @@ export async function runSynthesis(
       ...(reason !== undefined ? { reason } : {}),
       ...(st?.verify !== undefined ? { verify: st.verify } : {}),
       // Why a synthesis that never reported failed: the log goes with the spool.
-      ...(st?.error !== undefined ? { error: st.error } : {}),
+      ...(st?.error !== undefined
+        ? { error: deps.redact ? deps.redact.text(st.error) : st.error }
+        : {}),
       pushed: st?.pushed === true,
       ...(st?.pullRequestUrl !== undefined
         ? { pullRequestUrl: st.pullRequestUrl }
@@ -395,10 +404,23 @@ function buildMaterial(
   fs.rmSync(material, { recursive: true, force: true });
   privateDir(path.join(material, FUSION_MATERIAL_CANDIDATES_DIR));
   for (const result of fanOut.candidates) {
+    const copy = path.join(
+      material,
+      FUSION_MATERIAL_CANDIDATES_DIR,
+      result.candidate
+    );
     fs.cpSync(
       candidateDirFor(storeDir, record.fusion, result.candidate),
-      path.join(material, FUSION_MATERIAL_CANDIDATES_DIR, result.candidate),
-      { recursive: true }
+      copy,
+      {
+        recursive: true,
+      }
+    );
+    // What the synthesizer weighs is the work, not whose it was: no
+    // provider and no harness in its copy (#180). The record keeps both.
+    writePrivateFileAtomic(
+      path.join(copy, CANDIDATE_RESULT_FILE),
+      JSON.stringify(materialResult(result), null, 2) + '\n'
     );
   }
   const summary = materialSummary({
@@ -466,4 +488,18 @@ async function untilExitCancelOrDeadline(
     stopWaiting.abort();
     abort?.removeEventListener('abort', onAbort);
   }
+}
+
+/**
+ * A candidate's result as the synthesis material carries it: the record's,
+ * without the provider and the harness, so the synthesizer judges the work
+ * and not the brand, and no provider learns which other ones took part.
+ */
+export function materialResult(
+  result: CandidateResult
+): Omit<CandidateResult, 'provider' | 'harness'> {
+  const rest: Partial<CandidateResult> = { ...result };
+  delete rest.provider;
+  delete rest.harness;
+  return rest as Omit<CandidateResult, 'provider' | 'harness'>;
 }

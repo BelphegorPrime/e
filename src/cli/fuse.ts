@@ -5,13 +5,17 @@ import { HostGit } from '../ports/git/host.js';
 import type { Git } from '../ports/git/index.js';
 import {
   findFusionProfile,
+  fusionRoles,
   type FoundFusionProfile,
 } from '../core/fusion/load.js';
 import type { FusionProfile } from '../core/fusion/profile.js';
 import type { CandidateResult } from '../core/fusion/result.js';
 import { findRoot } from '../core/store/root.js';
 import { readConfig } from '../core/store/config.js';
-import { eBaseDir } from '../core/store/paths.js';
+import { eBaseDir, envFilePath } from '../core/store/paths.js';
+import { assertProviderPolicy } from '../core/policy/providerPolicy.js';
+import { secretRedactor } from '../core/fusion/redact.js';
+import { readDotenvFile } from '../shared/utils/dotenv.js';
 import { defaultWorktreesDir } from '../engine/runs/worktreesDir.js';
 import {
   spawnChildProcess,
@@ -436,6 +440,19 @@ export async function runFuseCommand(
     const prompt = fusePrompt(profileName, words);
     const root = findRoot(opts.dir);
     const found = (deps.findProfile ?? findFusionProfile)(profileName, root);
+    // Where the repository and the prompt would go - every candidate's
+    // provider and the synthesizer's - against where the Store lets them
+    // go (#180), before anything is built.
+    const config = readConfig(root);
+    const storeEnv = readDotenvFile(envFilePath(root));
+    // `--env-file` reaches every candidate's and the synthesis's container.
+    const userEnv = readDotenvFile(opts.envFile);
+    assertProviderPolicy(
+      config.providers,
+      fusionRoles(found),
+      { store: storeEnv, container: [userEnv] },
+      `fusion profile "${found.profile.name}"`
+    );
     const git = deps.git ?? new HostGit();
     if (!git.isRepo()) {
       throw new Error(
@@ -455,8 +472,14 @@ export async function runFuseCommand(
 
     // The Store's loop caps derive the fusion's default deadlines (ADR-0019
     // section 9), so a candidate's own caps always fire first.
-    const config = readConfig(root);
     const loop = config.loop;
+    // Known secrets out of what the record keeps and the synthesizer reads.
+    const redact = secretRedactor(
+      { ...userEnv, ...storeEnv },
+      [...found.agents.values()].flatMap(a =>
+        a.provider ? [a.provider.apiKeyEnv] : []
+      )
+    );
     // The host-wide bound, shared with every other `e fuse` on this host
     // through the worktrees dir (ADR-0019 section 9).
     const limit = config.fusion.hostConcurrency;
@@ -474,13 +497,21 @@ export async function runFuseCommand(
         keepSpool,
         ...(loop ? { loop } : {}),
         ...(hostSlots ? { hostSlots } : {}),
+        redact,
       },
       { found, prompt, abort: deps.abort, onEvent }
     );
     const synthesis =
       fanOut.state === 'fanning-out'
         ? await (deps.synthesis ?? runSynthesis)(
-            { storeDir, worktreesDir, launch, passthroughArgs, keepSpool },
+            {
+              storeDir,
+              worktreesDir,
+              launch,
+              passthroughArgs,
+              keepSpool,
+              redact,
+            },
             { fanOut, abort: deps.abort, onEvent }
           )
         : undefined;

@@ -605,6 +605,22 @@ test('resolveConfig: fusion.hostConcurrency is a positive integer, or no host-wi
   }
 });
 
+test('resolveConfig: the providers policy is kept as declared, and a malformed one fails closed', () => {
+  assert.equal('providers' in resolveConfig({}), false);
+  assert.deepEqual(
+    resolveConfig({ providers: { deny: ['API.openai.com'] } } as Record<
+      string,
+      unknown
+    >).providers,
+    { deny: ['api.openai.com'] }
+  );
+  const broken = resolveConfig({ providers: { deny: 'x' } } as Record<
+    string,
+    unknown
+  >).providers;
+  assert.ok(broken?.invalid, 'kept as invalid rather than dropped');
+});
+
 test('resolveConfig: the queue block resolves per key; a malformed field keeps its default', () => {
   assert.deepEqual(resolveConfig({}).queue, DEFAULT_QUEUE_CONFIG);
   assert.deepEqual(
