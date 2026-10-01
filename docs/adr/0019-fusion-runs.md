@@ -1,6 +1,6 @@
 # ADR-0019: Fusion runs - one task, several Agents, one result
 
-**Status:** Proposed
+**Status:** Accepted (implemented through #173-#180, 2026-10-01)
 **Date:** 2026-09-30
 **Related:** [ADR-0001 (per-run git worktree)](./0001-per-run-git-worktree.md), [ADR-0002 (host orchestrates git)](./0002-host-orchestrates-git.md), [ADR-0003 (run identity and ledger)](./0003-run-identity-and-ledger.md), [ADR-0005 (composed container groups)](./0005-runs-as-composed-container-groups.md), [ADR-0006 (per-harness config adapter)](./0006-per-harness-config-adapter.md), [ADR-0008 (spawn is a pure plan)](./0008-spawn-is-a-pure-plan.md), [ADR-0013 (nested spawn via runtime-broker)](./0013-nested-spawn-via-runtime-broker.md), [ADR-0015 (A2A vocabulary)](./0015-a2a-vocabulary-facade-and-remote-agents.md), [ADR-0016 (autonomous runs)](./0016-autonomous-runs.md), [ADR-0017 (resumable runs)](./0017-resumable-runs.md), [ADR-0018 (judge shadow mode)](./0018-judge-shadow-mode.md), issue #172
 
